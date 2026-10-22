@@ -1,9 +1,8 @@
 // R11.4 (DL-166): "Shares" (owner only): every share with its members, uses and expiry, and Revoke.
 import { useEffect, useState } from 'react';
-import { sessionTitle } from '../app/sessions';
+import { relativeAge, sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ShareInfo, ShareKind, ShareRole, SpaceView, StationView } from '../gen';
-import { untilText } from '../automations/automations';
 import { useSettings } from '../settings/context';
 import type { ElevationAsk } from '../settings/elevation';
 import { useFleetElevation } from '../spawn/useFleetElevation';
@@ -101,11 +100,14 @@ type RowProps = {
   readonly onStopHistory: () => void;
 };
 
-/** The expiry of a share, relative to now: `in 5 days`, `revoked 2026-10-13`, `expired 2026-10-12`. */
+/** The expiry of a share, relative to now: `in 5 d`, `revoked 2026-10-13`, `expired 2026-10-12`.
+ *  A live share writes the time left in the board's duration format (DESIGN-SYSTEM §5): `in 14 min`,
+ *  `in 5 h`, `in 2 d`. */
 function expiryText(share: ShareInfo, state: ReturnType<typeof shareState>, now: number): string {
   if (state === 'revoked') return `revoked ${day(share.revoked_at ?? 0)}`;
   if (state === 'expired') return `expired ${day(share.expires_at)}`;
-  return untilText(share.expires_at, now);
+  const left = relativeAge(now, share.expires_at);
+  return left === 'now' ? 'due now' : `in ${left}`;
 }
 
 function ShareRow({
@@ -139,7 +141,7 @@ function ShareRow({
       </td>
       <td data-label="Role">
         <span className="fd-cellbadges">
-          <span className="fd-cell-dim">{ROLE[share.role]}</span>
+          <span>{ROLE[share.role]}</span>
           {share.role !== 'viewer' ? (
             <span className="fd-badge" data-tone="muted">
               {share.steering === 'mob' ? 'Mob' : 'Open'}
@@ -153,10 +155,12 @@ function ShareRow({
           )}
         </span>
       </td>
-      <td data-label="Members">
+      <td data-label="Members" className={share.members.length === 0 ? 'fd-cell-dim' : undefined}>
         {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
       </td>
-      <td data-label="Uses left">{share.uses_left}</td>
+      <td data-label="Uses left" className="fd-num">
+        {share.uses_left}
+      </td>
       <td
         data-label="Expires"
         title={day(state === 'revoked' ? (share.revoked_at ?? 0) : share.expires_at)}
@@ -321,7 +325,9 @@ export function SharesView({
                 <th scope="col">Shared</th>
                 <th scope="col">Role</th>
                 <th scope="col">Members</th>
-                <th scope="col">Uses left</th>
+                <th scope="col" className="fd-num">
+                  Uses left
+                </th>
                 <th scope="col">Expires</th>
                 <th scope="col">
                   <span className="fd-vh">Actions</span>
@@ -357,7 +363,6 @@ export function SharesView({
   return (
     <Page
       title="Shares"
-      wide
       description={
         <>
           People join through a link. A revoke ends the link and every login that came from it. See{' '}

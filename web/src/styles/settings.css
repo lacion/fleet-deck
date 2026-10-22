@@ -5,15 +5,24 @@
 
 /* ── the tabs ───────────────────────────────────────────────────── */
 /* A 36px row under the page header: the selected tab has --text and a 2px --text underline
-   (§4.5: never yellow). The tabs line up with the left edge of the page. */
+   (§4.5: never yellow). The tab labels have no side padding: they line up with the left edge of
+   the page (the title, the section headings). The row scrolls sideways, so it clips an outward
+   focus ring: the ring goes inside the tab, and the focused tab grows by --sp-1 at each side (a
+   negative margin keeps the row still) so that the ring does not touch the label. The row keeps
+   --sp-1 of room at each side for that ring (a negative margin keeps the labels on the page
+   edge); its rule is drawn inside that room, so that it starts and ends on the page edges. */
 .fd-set-tabs {
   display: flex;
   gap: var(--sp-5);
   height: 36px;
-  padding: 0;
+  margin-inline: calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1);
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid transparent;
+  background:
+    linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
+    no-repeat border-box;
   scrollbar-width: none;
 }
 .fd-set-tabs::-webkit-scrollbar {
@@ -24,7 +33,7 @@
   flex: none;
   height: 100%;
   margin-bottom: -1px;
-  padding: 0 2px;
+  padding: 0;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -44,10 +53,40 @@
   border-bottom-color: var(--text);
   color: var(--text);
 }
-.fd-set-tabs [role="tab"]:focus-visible {
+.fd-set-tabs [role="tab"]:focus-visible,
+.fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+  margin-inline: calc(-1 * var(--sp-1));
+  padding-inline: var(--sp-1);
   outline: 2px solid var(--focus);
   outline-offset: -2px;
   border-radius: var(--r-chip);
+}
+/* Forced colors: the transparent underline of a tab and the gradient rule of the row are not
+   drawn as they are. An unselected tab hides its underline (Canvas), the selected tab draws it in
+   Highlight, and the row draws its rule as a real edge (without the room at its sides). The tabs
+   get --sp-1 of side padding, so that the Highlight ring of the selected tab (base.css) and the
+   focus ring do not touch the label. */
+@media (forced-colors: active) {
+  .fd-set-tabs {
+    margin-inline: 0;
+    padding: 0;
+    border-bottom-color: CanvasText;
+  }
+  .fd-set-tabs [role="tab"],
+  .fd-set-tabs [role="tab"]:hover:not(:disabled),
+  .fd-set-tabs [role="tab"]:focus-visible,
+  .fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+    margin-inline: 0;
+    padding: 0 var(--sp-1);
+  }
+  .fd-set-tabs [role="tab"]:not([aria-selected="true"]),
+  .fd-set-tabs [role="tab"]:not([aria-selected="true"]):hover:not(:disabled) {
+    border-bottom-color: Canvas;
+  }
+  .fd-set-tabs [role="tab"][aria-selected="true"],
+  .fd-set-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+    border-bottom-color: Highlight;
+  }
 }
 @media (pointer: coarse) {
   .fd-set-tabs {
@@ -79,7 +118,7 @@
 /* ── a tab ──────────────────────────────────────────────────────── */
 .fd-set-tab {
   display: grid;
-  gap: 20px;
+  gap: var(--sp-5);
   min-width: 0;
   /* room for the save bar so that it never covers the last field */
   padding-bottom: 72px;
@@ -94,7 +133,7 @@
 
 .fd-settings [role="tabpanel"] {
   display: grid;
-  gap: 20px;
+  gap: var(--sp-5);
   min-width: 0;
 }
 .fd-settings [role="tabpanel"] > * {
@@ -109,7 +148,7 @@
   min-width: 0;
 }
 .fd-set-sec ~ .fd-set-sec {
-  padding-top: 20px;
+  padding-top: var(--sp-5);
   border-top: 1px solid var(--border-soft);
 }
 .fd-set-sechead,
@@ -165,14 +204,34 @@ input[data-mono="true"] {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
+  input[data-mono="true"] {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 /* A folder row: the picker's own row (path, pin, Browse…) and the remove button share one line
    and one center line. */
 .fd-set-row > .fd-folder .fd-folder-row {
   align-items: center;
 }
-@media (max-width: 640px) {
-  /* A phone: the path takes line 1; the pin, Browse… and the remove button take line 2, and the
-     remove button keeps to the right end. The picker's boxes give their items to this row. */
+/* A plain button of a folder row (Browse…) sits on the page --bg: it keeps the --btn-edge
+   hairline of the light theme, like Browse… in the New session sheet. */
+.fd-set-grid .fd-folder-row > button:not(.fd-iconbtn) {
+  border-color: var(--btn-edge);
+}
+@media (min-width: 721px) {
+  /* The path input of a folder ends at the 360px edge of the other one-value fields; the pin,
+     Browse… (and in a list the remove button) follow it. */
+  .fd-set-grid .fd-folder-row > input {
+    flex: 0 1 360px;
+    max-width: 360px;
+  }
+}
+@media (max-width: 640px), (min-width: 721px) {
+  /* A folder in a list: the picker's boxes give their items to the row, so that the remove
+     button follows Browse… and the well (when open) takes a line of its own at the full width
+     of the list. */
   .fd-set-row:has(> .fd-folder) {
     flex-wrap: wrap;
     align-items: center;
@@ -181,15 +240,24 @@ input[data-mono="true"] {
   .fd-set-row > .fd-folder > .fd-folder-row {
     display: contents;
   }
-  .fd-set-row > .fd-folder > .fd-folder-row > input {
-    flex: 1 0 100%;
-  }
   .fd-set-row > .fd-folder > :not(.fd-folder-row) {
     flex: 1 0 100%;
     order: 1;
   }
+}
+@media (max-width: 640px) {
+  /* A phone: the path takes line 1; the pin, Browse… and the remove button take line 2, side by
+     side at the left. */
+  .fd-set-row > .fd-folder > .fd-folder-row > input {
+    flex: 1 0 100%;
+  }
   .fd-set-row:has(> .fd-folder) > .fd-set-remove {
-    margin-left: auto;
+    margin-left: 0;
+  }
+  /* The first icon button of line 2 (the pin) gives back the inset of its centered 16px glyph,
+     so that the glyph lines up with the left edge of the path input. */
+  .fd-set-row:has(> .fd-folder) .fd-folder-row > .fd-iconbtn:first-of-type {
+    margin-left: calc((16px - var(--ctl-h)) / 2);
   }
   /* A pair: the first value takes line 1; the second value and the remove button line 2. */
   .fd-set-pair {
@@ -304,6 +372,19 @@ input[data-mono="true"] {
   .fd-set-grid .fd-fieldcontrol > .fd-switch {
     margin-block: 0;
   }
+  /* A switch field (touch settings): the switch ends the label row, and the hint takes the line
+     under both. */
+  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) > .fd-fieldcontrol > .fd-switch {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) > :is(.fd-fieldhint, .fd-fielderror) {
+    grid-column: 1 / -1;
+  }
 }
 
 /* the provider logins */
@@ -362,8 +443,8 @@ input[data-mono="true"] {
 }
 
 /* ── notices ────────────────────────────────────────────────────── */
-/* §4.7: a 36px row on --surface with a 3px tone holder at the left. The holder carries the
-   tone; the text stays readable in every tone. */
+/* §4.7: a 36px row on --surface with a 3px tone holder at the left and a tone icon. The holder
+   and the icon carry the tone; the text stays readable in every tone. */
 .fd-set-notices {
   display: grid;
   gap: var(--sp-2);
@@ -411,6 +492,33 @@ input[data-mono="true"] {
 }
 .fd-set-notice[data-tone="ok"] {
   box-shadow: inset 3px 0 0 var(--ok);
+}
+/* The tone icon (NoticeIcon): the tone also shows by a shape, not only by the holder's hue (WCAG
+   1.4.1: the red and the green holders), in the color of the holder. */
+.fd-set-notice > .fd-icon {
+  flex: none;
+  color: var(--faint);
+}
+.fd-set-notice[data-tone="info"] > .fd-icon {
+  color: var(--focus);
+}
+.fd-set-notice[data-tone="warn"] > .fd-icon {
+  color: var(--act);
+}
+.fd-set-notice[data-tone="error"] > .fd-icon {
+  color: var(--hazard);
+}
+.fd-set-notice[data-tone="ok"] > .fd-icon {
+  color: var(--ok);
+}
+/* Forced colors drop the box-shadow holder: a real edge takes its place (§6). */
+/* The edge is straight: only the right corners keep the --r-card radius (a rounded left corner
+   would bend the edge into a bracket). */
+@media (forced-colors: active) {
+  .fd-set-notice {
+    border-left: 3px solid CanvasText;
+    border-radius: 0 var(--r-card) var(--r-card) 0;
+  }
 }
 
 /* ── the save bar ───────────────────────────────────────────────── */

@@ -16,6 +16,7 @@ import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
+import { submitKeyHint } from '../spawn/keyHint';
 
 type Props = {
   readonly enabled: boolean;
@@ -52,6 +53,8 @@ type Props = {
   readonly model?: string;
   /** Opens the model picker of the session menu; absent: the chip only shows the model. */
   readonly onModel?: () => void;
+  /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
+  readonly callsign?: string | null;
 };
 
 /** The most rows the text box grows to. */
@@ -98,6 +101,36 @@ export function inputOf(
 /** On a touch screen Enter is a newline; the send button sends. */
 function coarsePointer(): boolean {
   return typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
+}
+
+/** The keys of one key press that the composer reads. */
+export type SendKey = {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  readonly shiftKey: boolean;
+};
+
+/**
+ * What a key press in the text box sends, or `null` (not a send key: Shift+↵, or ↵ on a touch
+ * screen, is a newline). ↵ sends the prompt, or queues a follow-up while a turn runs. §4.5:
+ * ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
+ * a `!` shell command); else it is the same as ↵.
+ */
+export function enterSend(
+  event: SendKey,
+  at: { readonly working: boolean; readonly steerable: boolean; readonly coarse: boolean },
+): InputKind | null {
+  if (event.key !== 'Enter') return null;
+  const force = event.ctrlKey || event.metaKey;
+  if (!force && (event.shiftKey || at.coarse)) return null;
+  if (force && at.steerable) return 'steer';
+  return at.working ? 'follow_up' : 'prompt';
+}
+
+/** `steerable` of {@link enterSend}: a turn runs, the provider steers and the text is no shell command. */
+export function canSteer(working: boolean, steer: boolean, shell: boolean): boolean {
+  return working && steer && !shell;
 }
 
 /** The wait after the last key before the `@` search starts. */
@@ -149,6 +182,7 @@ export function ComposerMenu(props: {
             id={`${props.id}-${n}`}
             role="option"
             tabIndex={-1}
+            className="fd-selbar"
             aria-selected={n === props.current}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onChoose(n)}
@@ -205,6 +239,8 @@ export function Composer(props: Props) {
     empty ||
     (problem !== null && !bangOn) ||
     (meaning.kind === 'shell' && (props.working || meaning.command === ''));
+  // "Steer now" is offered: a turn runs, the provider can steer, the text is a prompt.
+  const steerable = canSteer(props.working, props.steer, bangOn);
   const commands = props.slashCommands ?? [];
   const hasCommands = commands.length > 0;
   const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
@@ -388,19 +424,24 @@ export function Composer(props: Props) {
         return;
       }
     }
-    if (event.key !== 'Enter') return;
-    const force = event.ctrlKey || event.metaKey;
-    if (!force && (event.shiftKey || coarsePointer())) return;
+    const kind = enterSend(event, {
+      working: props.working,
+      steerable,
+      coarse: coarsePointer(),
+    });
+    if (kind === null) return;
     event.preventDefault();
-    submit();
+    if (!blocked) send(kind);
   };
 
   const reason = !props.enabled && props.disabledReason ? props.disabledReason : null;
+  // The placeholder names the session, so that the owner sees where the text goes.
+  const target = props.callsign ? props.callsign : 'the agent';
   const placeholder = bangOn
     ? 'Shell command (runs in the session folder)'
     : hasCommands
-      ? 'Message the agent… (/ for commands)'
-      : 'Message the agent…';
+      ? `Message ${target}… (/ for commands)`
+      : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
     return (
@@ -545,14 +586,18 @@ export function Composer(props: Props) {
             </button>
           ) : props.working ? (
             <>
-              {props.steer ? (
+              {steerable ? (
                 <button
                   type="button"
                   className="fd-ghost"
                   disabled={blocked}
+                  aria-keyshortcuts="Meta+Enter Control+Enter"
                   onClick={() => send('steer')}
                 >
                   Steer now
+                  <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                    {submitKeyHint()}
+                  </span>
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>

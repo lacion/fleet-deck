@@ -13,6 +13,12 @@
   margin: 0;
 }
 
+/* The projects table: the cells share one baseline (the 12px mono folder sits on the line of
+   the 13px name and station). */
+.fd-int-projects td {
+  vertical-align: baseline;
+}
+
 /* The projects table: the name is the row's title, not a blue link. */
 .fd-int-projects .fd-cell-name a {
   color: var(--text);
@@ -108,6 +114,16 @@
   .fd-int-projects td[colspan] {
     order: 4;
     margin-top: var(--sp-1);
+  }
+}
+
+/* A phone card on touch: the name keeps its 44px target (.fd-tap), but the target reaches into
+   the card padding and the meta line instead of adding space above the name. */
+@media (max-width: 640px) and (pointer: coarse) {
+  .fd-int-projects .fd-cell-name > .fd-tap {
+    position: relative;
+    z-index: 1;
+    margin-block: calc((var(--tap-min) - 1lh) / -2);
   }
 }
 
@@ -309,11 +325,10 @@
 .fd-int-row:focus-visible {
   outline-offset: -2px;
 }
-/* The open row: selected (the --raised-hi fill and the blue marker). */
+/* The open row: selected (the --raised-hi fill and the blue marker of .fd-selbar). */
 .fd-int-list > li[data-open="true"],
 .fd-int-tab .fd-int-list > li[data-open="true"]:hover {
   background: var(--raised-hi);
-  box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-int-key {
   flex: none;
@@ -557,6 +572,12 @@ a.fd-int-projectchip:hover {
   resize: vertical;
   font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-int-secrets textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
 }
 .fd-int-secret-scroll {
   overflow-x: auto;

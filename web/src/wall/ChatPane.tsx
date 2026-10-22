@@ -7,6 +7,14 @@ import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { displayChatLines } from './displayLines';
 
+/** The words that a screen reader says for the node of a call that is not done (the node shape
+ * shows the state only to the eye). */
+const STATE_WORD = {
+  running: 'Running',
+  waiting: 'Waiting for your answer',
+  ended: 'Ended',
+} as const;
+
 /** The most items that the pane draws. */
 export const CHAT_ITEMS = 120;
 
@@ -112,6 +120,9 @@ function ChatLine({ line }: { readonly line: Line }) {
             <span className="fd-wall-tool-mark">{line.mark}</span>
           </>
         )}
+        {line.state === undefined ? null : (
+          <span className="fd-vh"> · {STATE_WORD[line.state]}</span>
+        )}
       </p>
     );
   }
@@ -141,9 +152,7 @@ export function ChatPane({
       {unavailable ? (
         <p className="fd-wall-note">Unavailable</p>
       ) : lines.length === 0 ? (
-        ready ? null : (
-          <p className="fd-wall-note">Loading…</p>
-        )
+        <p className="fd-wall-note">{ready ? 'No chat yet.' : 'Loading…'}</p>
       ) : (
         <div className="fd-wall-chatlines">
           {lines.map((l) => (

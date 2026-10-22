@@ -77,11 +77,14 @@ function Row({
   route,
   now,
   starred,
+  list,
 }: {
   card: DeckSession;
   route: Route;
   now: number;
   starred: boolean;
+  /** The phone list: line 2 is the "now" line of a strip (§1.3), the callsign first. */
+  list: boolean;
 }) {
   const s = card.summary;
   const open =
@@ -96,7 +99,7 @@ function Row({
     <li>
       <a
         href={href}
-        className="fd-srow"
+        className="fd-srow fd-selbar"
         data-status={card.status}
         aria-current={open ? 'page' : undefined}
       >
@@ -115,23 +118,40 @@ function Row({
           {s.terminal != null ? <span className="fd-badge">In terminal</span> : null}
         </span>
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
-        <FocusLine summary={s} />
-        <span className="fd-srow-meta">
-          <span className="fd-srow-model">{shortModel(s.model)}</span>
-          {s.branch != null && s.branch !== '' ? (
-            <span className="fd-srow-place">
-              <Icon of={GitBranch} size={12} />
-              {s.branch}
-            </span>
-          ) : s.cwd != null ? (
-            <span className="fd-srow-place">
-              <Icon of={Folder} size={12} />
-              {basename(s.cwd)}
-            </span>
-          ) : null}
-        </span>
+        {list ? (
+          <span className="fd-srow-line">
+            {s.callsign ? <span className="fd-srow-call fd-callsign">{s.callsign}</span> : null}
+            <RowNow card={card} />
+          </span>
+        ) : (
+          <RowNow card={card} />
+        )}
       </a>
     </li>
+  );
+}
+
+/** The focus line when the agent set one, and the model + branch (or folder) line. */
+function RowNow({ card }: { card: DeckSession }) {
+  const s = card.summary;
+  return (
+    <>
+      <FocusLine summary={s} />
+      <span className="fd-srow-meta">
+        <span className="fd-srow-model">{shortModel(s.model)}</span>
+        {s.branch != null && s.branch !== '' ? (
+          <span className="fd-srow-place">
+            <Icon of={GitBranch} size={12} />
+            {s.branch}
+          </span>
+        ) : s.cwd != null ? (
+          <span className="fd-srow-place">
+            <Icon of={Folder} size={12} />
+            {basename(s.cwd)}
+          </span>
+        ) : null}
+      </span>
+    </>
   );
 }
 
@@ -140,17 +160,28 @@ function Rows({
   route,
   now,
   starred,
+  list,
 }: {
   cards: readonly DeckSession[];
   route: Route;
   now: number;
   starred: ReadonlySet<string>;
+  list: boolean;
 }) {
   return (
     <ul className="fd-srows">
       {cards.map((card) => {
         const ref = sessionRef(card.station_id, card.summary.session_id);
-        return <Row key={ref} card={card} route={route} now={now} starred={starred.has(ref)} />;
+        return (
+          <Row
+            key={ref}
+            card={card}
+            route={route}
+            now={now}
+            starred={starred.has(ref)}
+            list={list}
+          />
+        );
       })}
     </ul>
   );
@@ -215,6 +246,7 @@ function Groups({
   now,
   withNeeds,
   starred,
+  list,
 }: {
   model: SidebarModel;
   by: SidebarGroup;
@@ -222,6 +254,7 @@ function Groups({
   now: number;
   withNeeds: boolean;
   starred: ReadonlySet<string>;
+  list: boolean;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   // A session that needs you lists once: in "Needs you". The count of a group is its shown rows.
@@ -237,12 +270,13 @@ function Groups({
               {model.needs.length}
             </span>
           </h3>
-          <Rows cards={model.needs} route={route} now={now} starred={starred} />
+          <Rows cards={model.needs} route={route} now={now} starred={starred} list={list} />
         </section>
       ) : null}
       {model.groups.map((group) => {
         const live = needsApart ? group.live.filter((c) => c.status !== 'needs_you') : group.live;
-        // The station total (with its needs-you and ended sessions) goes in the title only.
+        // The station total (with its needs-you and ended sessions): a title for the pointer, and
+        // the same words in a visually hidden text for a screen reader and a touch screen.
         const total =
           group.count === live.length
             ? undefined
@@ -257,6 +291,11 @@ function Groups({
           >
             <h3 className="fd-sgroup-title">
               <span className="fd-sgroup-name fd-wide">{group.name}</span>
+              {/* The count right after the name, as in the Needs you group and the fleet lanes. */}
+              <span className="fd-count" title={total}>
+                {live.length}
+              </span>
+              {total === undefined ? null : <span className="fd-vh">{`, ${total}`}</span>}
               {by === 'project' ? null : (
                 <span
                   className="fd-rdot"
@@ -267,17 +306,14 @@ function Groups({
               {by === 'project' ? null : (
                 <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
               )}
-              <span className="fd-count" title={total}>
-                {live.length}
-              </span>
             </h3>
-            <Rows cards={live} route={route} now={now} starred={starred} />
+            <Rows cards={live} route={route} now={now} starred={starred} list={list} />
             {group.ended.length > 0 ? (
               <details className="fd-sended">
                 <summary className="fd-label">
                   Ended <span className="fd-count">{group.ended.length}</span>
                 </summary>
-                <Rows cards={group.ended} route={route} now={now} starred={starred} />
+                <Rows cards={group.ended} route={route} now={now} starred={starred} list={list} />
                 <button
                   type="button"
                   className="fd-ghost fd-sm fd-sended-clear"
@@ -308,7 +344,7 @@ function Groups({
             <Icon of={Archive} size={14} /> Archived ({model.archived.length})
           </button>
           {showArchived ? (
-            <Rows cards={model.archived} route={route} now={now} starred={starred} />
+            <Rows cards={model.archived} route={route} now={now} starred={starred} list={list} />
           ) : null}
         </section>
       ) : null}
@@ -349,29 +385,47 @@ function BoardLinks({
   return (
     <nav className="fd-sidebar-links" aria-label="Board pages">
       {/* The home and the Fleet page are the same screen on a desktop. */}
+      {/* The name says what the number means: "Fleet, 3 need you". (A text inside the pill would
+          read "Fleet , 3": the pill is a flex item, and the name gets a space before it.) */}
       <a
         href="#/fleet"
+        aria-label={
+          needs > 0 ? `Fleet, ${needs} ${needs === 1 ? 'needs you' : 'need you'}` : undefined
+        }
         aria-current={route.name === 'fleet' || route.name === 'home' ? 'page' : undefined}
+        className="fd-selbar"
       >
         <Icon of={LayoutGrid} />
         Fleet
         {needs > 0 ? (
-          <span className="fd-count" data-tone="act">
+          <span className="fd-count" data-tone="act" aria-hidden="true">
             {needs}
           </span>
         ) : null}
       </a>
-      <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
+      <a
+        href="#/watch"
+        aria-current={route.name === 'watch' ? 'page' : undefined}
+        className="fd-selbar"
+      >
         <Icon of={Eye} />
         Watch
       </a>
       {guest ? null : (
         <>
-          <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
+          <a
+            href="#/activity"
+            aria-current={route.name === 'activity' ? 'page' : undefined}
+            className="fd-selbar"
+          >
             <Icon of={Activity} />
             Activity
           </a>
-          <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
+          <a
+            href="#/stations"
+            aria-current={route.name === 'stations' ? 'page' : undefined}
+            className="fd-selbar"
+          >
             <Icon of={Server} />
             Stations
             <span className="fd-count">{stations.length}</span>
@@ -396,13 +450,18 @@ function BoardLinks({
           </summary>
           {guest ? null : (
             <>
-              <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
+              <a
+                href="#/plans"
+                aria-current={route.name === 'plans' ? 'page' : undefined}
+                className="fd-selbar"
+              >
                 <Icon of={FileText} />
                 Plans
               </a>
               <a
                 href="#/automations"
                 aria-current={route.name === 'automations' ? 'page' : undefined}
+                className="fd-selbar"
               >
                 <Icon of={Workflow} />
                 Automations
@@ -412,6 +471,7 @@ function BoardLinks({
                 aria-current={
                   route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
                 }
+                className="fd-selbar"
               >
                 <Icon of={Paperclip} />
                 Artifacts
@@ -422,12 +482,17 @@ function BoardLinks({
                   aria-current={
                     route.name === 'projects' || route.name === 'project' ? 'page' : undefined
                   }
+                  className="fd-selbar"
                 >
                   <Icon of={FolderGit2} />
                   Projects
                 </a>
               ) : null}
-              <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
+              <a
+                href="#/files"
+                aria-current={route.name === 'files' ? 'page' : undefined}
+                className="fd-selbar"
+              >
                 <Icon of={Folder} />
                 Files
               </a>
@@ -437,6 +502,7 @@ function BoardLinks({
             <a
               href="#/shares"
               aria-current={route.name === 'shares' || route.name === 'spaces' ? 'page' : undefined}
+              className="fd-selbar"
             >
               <Icon of={Users} />
               Shares
@@ -522,36 +588,43 @@ export function Sidebar({
             <LivePill chrome={chrome} />
           </div>
         ) : null}
-        {full && !guest ? (
-          <button
-            type="button"
-            className="fd-primary fd-newbtn"
-            onClick={() => onNavigate({ name: 'new' })}
-          >
-            <Icon of={Plus} /> New session{' '}
+        {/* One row (§4.2): New session, then the search. On the desktop the search folds to its
+            icon and "/" until it has the focus or a text; then New session folds to its icon. */}
+        <div className="fd-sidebar-actions" data-query={query === '' ? undefined : 'true'}>
+          {full && !guest ? (
+            // On #/new the button is the current nav row, not a second general primary (§2.2).
+            <button
+              type="button"
+              className={route.name === 'new' ? 'fd-newbtn fd-selbar' : 'fd-primary fd-newbtn'}
+              aria-current={route.name === 'new' ? 'page' : undefined}
+              onClick={() => onNavigate({ name: 'new' })}
+            >
+              <Icon of={Plus} /> <span className="fd-newbtn-text">New session</span>{' '}
+              <span className="fd-kbd" aria-hidden="true">
+                N
+              </span>
+            </button>
+          ) : null}
+          <div className="fd-field fd-sidebar-search">
+            <Icon of={Search} />
+            <input
+              id="fd-sidebar-search"
+              type="search"
+              aria-label="Search sessions"
+              aria-keyshortcuts="/"
+              placeholder="Search sessions"
+              autoComplete="off"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
             <span className="fd-kbd" aria-hidden="true">
-              N
+              /
             </span>
-          </button>
-        ) : null}
-        <div className="fd-field">
-          <Icon of={Search} />
-          <input
-            id="fd-sidebar-search"
-            type="search"
-            aria-label="Search sessions"
-            placeholder="Search sessions"
-            autoComplete="off"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <span className="fd-kbd" aria-hidden="true">
-            /
-          </span>
+          </div>
+          {/* The phone: the grouping sits in the search row; the list has no head row. */}
+          {full ? null : groupSeg}
+          {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
         </div>
-        {/* The phone: the grouping sits in the search row; the list has no head row. */}
-        {full ? null : groupSeg}
-        {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
       </div>
       {full ? (
         <BoardLinks
@@ -572,27 +645,39 @@ export function Sidebar({
           </div>
         ) : null}
         {empty ? (
-          <p className="fd-empty">No sessions yet.</p>
+          // The phone list names the New of its bottom bar; a guest cannot start a session.
+          <p className="fd-empty">
+            {full || guest ? 'No sessions yet.' : 'No sessions yet. Start one with New.'}
+          </p>
         ) : nothingFound ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : (
-          <Groups model={model} by={by} route={route} now={now} withNeeds starred={starred} />
+          <Groups
+            model={model}
+            by={by}
+            route={route}
+            now={now}
+            withNeeds
+            starred={starred}
+            list={!full}
+          />
         )}
       </div>
       {full ? (
         <div className="fd-sidebar-foot">
+          {/* §4.2 item 5: settings, the theme segments, the compact toggle, then the avatar. */}
+          {settingsLink && !guest ? (
+            <a
+              href="#/settings"
+              className="fd-iconbtn fd-sidebar-settings"
+              aria-label="Settings"
+              aria-current={route.name === 'settings' ? 'page' : undefined}
+            >
+              <Icon of={Settings} />
+            </a>
+          ) : null}
           <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
           <div className="fd-sidebar-account">
-            {settingsLink && !guest ? (
-              <a
-                href="#/settings"
-                className="fd-iconbtn"
-                aria-label="Settings"
-                aria-current={route.name === 'settings' ? 'page' : undefined}
-              >
-                <Icon of={Settings} />
-              </a>
-            ) : null}
             {chrome === undefined ? null : (
               <Menu summary={<Avatar />} summaryClass="fd-iconbtn" label="Account">
                 {(close) => (

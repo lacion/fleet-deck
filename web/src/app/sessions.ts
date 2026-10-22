@@ -43,6 +43,18 @@ export function basename(path: string): string {
 }
 
 const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
+
+/** When a session started to wait: its oldest open request, else its last update. */
+const waitingSince = (card: DeckSession): number =>
+  card.summary.open_requests.reduce(
+    (oldest, r) => Math.min(oldest, r.requested_at),
+    card.summary.open_requests[0]?.requested_at ?? card.summary.updated_at,
+  );
+
+/** The order of the needs-you sessions: the longest wait first, as the Needs you panel of the
+ * fleet home lists its requests (NeedsYouRail). */
+const byLongestWait = (a: DeckSession, b: DeckSession) =>
+  waitingSince(a) - waitingSince(b) || byNewest(a, b);
 const rank = (card: DeckSession) => {
   const at = LIVE_ORDER.indexOf(card.status);
   return at < 0 ? LIVE_ORDER.length : at;
@@ -81,7 +93,20 @@ export const isHidden = (card: DeckSession, archived: ReadonlySet<string>): bool
   archived.has(refOf(card));
 
 /**
- * The sidebar groups: needs you, then one group per station sorted by name. Starred rows first.
+ * The order of the station groups: the stations in the order of the station list, then the other
+ * station ids by id. It is the lane order of the fleet board (FleetBoard `laneOrder`), so that the
+ * sidebar and the lanes list the stations in one order.
+ */
+export function stationOrder(ids: readonly string[], stations: readonly StationView[]): string[] {
+  const present = new Set(ids);
+  const known = stations.map((s) => s.station_id).filter((id) => present.has(id));
+  const rest = [...present].filter((id) => !known.includes(id)).sort();
+  return [...new Set([...known, ...rest])];
+}
+
+/**
+ * The sidebar groups: needs you, then one group per station in the lane order of the board
+ * (`stationOrder`). Starred rows first.
  * With `projects` (DL-176) the groups are the projects that hold a shown session, by name, and "No
  * project" last; their `reachable` is always true.
  */
@@ -109,9 +134,14 @@ export function sidebarModel(
     live: own.filter(isLive).sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b)),
     ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
   });
-  const ids = [
-    ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
-  ];
+  // The sidebar lists a needs-you session once, in "Needs you": a group shows only its other rows.
+  // A group without such a row would show an empty header, so a search (or a project) drops it.
+  const showsRows = (g: StationGroup) =>
+    g.ended.length > 0 || g.live.some((c) => c.status !== 'needs_you');
+  const ids = stationOrder(
+    [...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)],
+    stations,
+  );
   const groups =
     projects === undefined
       ? ids
@@ -123,13 +153,14 @@ export function sidebarModel(
               shown.filter((c) => c.station_id === id),
             ),
           )
-          .filter((g) => query.trim() === '' || g.count > 0)
-          .sort((a, b) => a.name.localeCompare(b.name))
-      : projectGroups(shown, projects).map((g) => group(g.id, g.name, true, g.cards));
+          .filter((g) => query.trim() === '' || showsRows(g))
+      : projectGroups(shown, projects)
+          .map((g) => group(g.id, g.name, true, g.cards))
+          .filter(showsRows);
   return {
     needs: shown
       .filter((c) => c.status === 'needs_you')
-      .sort((a, b) => starFirst(a, b) || byNewest(a, b)),
+      .sort((a, b) => starFirst(a, b) || byLongestWait(a, b)),
     groups,
     archived: matching.filter((c) => isHidden(c, sets.archived)).sort(byNewest),
   };
@@ -145,17 +176,20 @@ export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
   ];
 }
 
-/** Sessions for the palette: needs you first, then the newest; at most `max`. */
+/** Sessions for the palette: needs you first (the longest wait first, as the Needs you panel),
+ * then the newest; at most `max`. */
 export function paletteMatches(
   sessions: readonly DeckSession[],
   query: string,
   max = 12,
 ): readonly DeckSession[] {
+  const needs = (c: DeckSession) => c.status === 'needs_you';
   return sessions
     .filter((c) => matchesQuery(c, query))
     .sort(
       (a, b) =>
-        Number(b.status === 'needs_you') - Number(a.status === 'needs_you') || byNewest(a, b),
+        Number(needs(b)) - Number(needs(a)) ||
+        (needs(a) && needs(b) ? byLongestWait(a, b) : byNewest(a, b)),
     )
     .slice(0, max);
 }

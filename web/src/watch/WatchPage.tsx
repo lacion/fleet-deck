@@ -1,7 +1,7 @@
 // R6.2 (DL-169): `#/watch`, the first explored form of "watch many sessions" (DL-157): a wall of
 // compact live tiles, one per live session, and a Focus mode that cycles through the sessions
 // that need you. The page is isolated: no other screen imports it.
-import { useEffect, useMemo, useState } from 'react';
+import { type FocusEvent, useEffect, useMemo, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename } from '../app/sessions';
 import { repoName, stationName } from '../board/fleet';
@@ -9,9 +9,9 @@ import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../ge
 import type { Freshness, Timeline } from '../runtime/state';
 import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
-import { Eye, Icon, TriangleAlert } from '../ui/icons';
+import { Eye, Icon, MessageSquare, Shield } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
-import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
+import { FocusLine, focusOf, UnreadMark, unreadOf } from '../views/marks';
 import { displayTileLines } from '../wall/displayLines';
 import {
   ALL,
@@ -52,6 +52,41 @@ const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | 
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
 
 /**
+ * A tool call on one line (DESIGN-SYSTEM §4.1, §4.5): the tool name in sans weight 600, the
+ * target in mono, then a plain note ("(failed)", a subagent title).
+ */
+function ToolCall({
+  name,
+  target,
+  note,
+}: {
+  readonly name: string;
+  readonly target: string;
+  readonly note: string;
+}) {
+  return (
+    <>
+      <b className="fd-wtile-toolname">{name}</b>
+      {target === '' ? null : (
+        <>
+          {' '}
+          <code>{target}</code>
+        </>
+      )}
+      {note === '' ? null : ` ${note}`}
+    </>
+  );
+}
+
+/** The handlers that pause Focus while the pointer or the keyboard is in the tile. */
+type TileHold = {
+  readonly onPointerEnter: () => void;
+  readonly onPointerLeave: () => void;
+  readonly onFocus: () => void;
+  readonly onBlur: (event: FocusEvent<HTMLElement>) => void;
+};
+
+/**
  * One tile. With `readOnly` (the wall, R13 P1) it has no answer button and no other control: the
  * tile shows the request as text, and it is a focus target for the keyboard instead of a link.
  */
@@ -64,6 +99,7 @@ export function Tile({
   focused,
   readOnly = false,
   unavailable = false,
+  hold,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -74,6 +110,8 @@ export function Tile({
   readonly readOnly?: boolean;
   /** The timeline subscription of the tile failed (the wall, R13 P1). */
   readonly unavailable?: boolean;
+  /** Focus mode: the tile tells the page while the pointer or the keyboard is in it. */
+  readonly hold?: TileHold | undefined;
 }) {
   const s = card.summary;
   const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
@@ -137,22 +175,29 @@ export function Tile({
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
       ) : lines.length === 0 ? (
-        // A tile without chat shows no filler (DESIGN-SYSTEM §1 rule 7): "Loading…" only.
-        timeline?.ready === true ? null : (
+        // The empty state of a tile: a loaded tile without chat says so, unlike a broken one. A
+        // running tool or a focus line already shows what the session does (principle 7).
+        timeline?.ready !== true ? (
           <span className="fd-wtile-empty">Loading…</span>
-        )
+        ) : tool === undefined && focusOf(s) === null ? (
+          <span className="fd-wtile-empty">No chat yet.</span>
+        ) : null
       ) : (
         <span className="fd-wtile-lines">
           {lines.map((l) => (
             <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
-              {l.text}
+              {l.name === undefined ? (
+                l.text
+              ) : (
+                <ToolCall name={l.name} target={l.target ?? ''} note={l.note ?? ''} />
+              )}
             </span>
           ))}
         </span>
       )}
       {tool === undefined ? null : (
         <span className="fd-wtile-tool" title="Running now">
-          {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
+          <ToolCall name={tool.title} target={tool.input_summary} note="" />
         </span>
       )}
     </>
@@ -165,6 +210,7 @@ export function Tile({
       data-session={s.session_id}
       data-ref={readOnly ? `${card.station_id}/${s.session_id}` : undefined}
       tabIndex={readOnly ? 0 : undefined}
+      {...hold}
     >
       <span className="fd-holder" data-status={card.status} aria-hidden="true" />
       {readOnly ? (
@@ -177,7 +223,8 @@ export function Tile({
       {ask === null ? null : (
         <div className="fd-wtile-ask" role="group" aria-label={`Needs you: ${ask.request.title}`}>
           <span className="fd-card-ask">
-            <Icon of={TriangleAlert} size={12} /> {ask.request.title}
+            <Icon of={ask.request.request_kind === 'question' ? MessageSquare : Shield} size={12} />{' '}
+            {ask.request.title}
           </span>
           {answerable ? (
             <span className="fd-options">
@@ -223,6 +270,10 @@ export function WatchPage({
   const [filter, setFilter] = useState<WatchFilter>(initialFilter);
   const [focusOn, setFocusOn] = useState(initialFocus);
   const [focused, setFocused] = useState<string | null>(initialFocused);
+  // Focus waits while the pointer or the keyboard is in the shown tile (WCAG 2.2.1, 2.2.2).
+  const [hovered, setHovered] = useState(false);
+  const [focusWithin, setFocusWithin] = useState(false);
+  const paused = focusOn && (hovered || focusWithin);
   const choices = filterChoices(sessions);
   const matching = watchSessions(sessions, filter);
   const shown = matching.slice(0, MAX_TILES);
@@ -237,11 +288,30 @@ export function WatchPage({
   useEffect(() => {
     if (!focusOn) return undefined;
     setFocused((now) => (now !== null && order.includes(now) ? now : (order[0] ?? null)));
-    if (order.length < 2) return undefined;
+    if (order.length < 2 || paused) return undefined;
     const timer = setInterval(() => setFocused((now) => nextFocus(order, now)), FOCUS_MS);
     return () => clearInterval(timer);
     // `orderKey` stands for the content of `order`.
-  }, [focusOn, orderKey]);
+  }, [focusOn, orderKey, paused]);
+  // A removed tile sends no leave or blur event: a new shown tile (or none) ends the pause. The
+  // pointer pauses again when it moves on the new tile.
+  const shownRef = focusOn ? current : null;
+  useEffect(() => {
+    if (shownRef === null) return;
+    return () => {
+      setHovered(false);
+      setFocusWithin(false);
+    };
+  }, [shownRef]);
+  const hold: TileHold = {
+    onPointerEnter: () => setHovered(true),
+    onPointerLeave: () => setHovered(false),
+    onFocus: () => setFocusWithin(true),
+    onBlur: (event) => {
+      const next = event.relatedTarget;
+      if (!(next instanceof Node) || !event.currentTarget.contains(next)) setFocusWithin(false);
+    },
+  };
 
   // Focus picks from every matching session; the tile limit is for the wall only.
   const visible = focusOn ? matching.filter((c) => refOf(c) === current) : shown;
@@ -338,10 +408,15 @@ export function WatchPage({
       >
         Focus
       </button>
+      {paused ? (
+        <span className="fd-watch-paused" role="status">
+          Paused
+        </span>
+      ) : null}
     </>
   );
   return (
-    <Page title="Watch" className="fd-watch" description={summary} actions={filters} wide>
+    <Page title="Watch" className="fd-watch" description={summary} filters={filters} wide>
       {matching.length > MAX_TILES && !focusOn ? (
         <p className="fd-note">
           Showing {MAX_TILES} of {matching.length} sessions. Filter to see the others.
@@ -380,6 +455,7 @@ export function WatchPage({
               })}
               freshness={freshness}
               focused={focusOn}
+              hold={focusOn ? hold : undefined}
             />
           ))}
         </ul>

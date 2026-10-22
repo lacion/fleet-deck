@@ -25,7 +25,7 @@ import type { StationView } from '../gen';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { Page } from '../ui/page';
-import { PrefsRow } from './Prefs';
+import { CompactSwitch, MotionSwitch, PrefsRow } from './Prefs';
 
 type Props = {
   readonly stationCount: number;
@@ -52,9 +52,13 @@ export function More({
   // R11.4: a guest sees the Watch page only; the owner also sees Shares.
   const people = usePeople();
   const guest = people.member !== null;
+  // DL-172: the settings are the owner's login only.
+  const settings = settingsLink && !guest;
+  const tools = onPalette !== undefined || settings || onHelp !== undefined;
   return (
     <Page title="More" className="fd-more">
-      <nav aria-label="More pages">
+      {/* The pages in the order of the desktop sidebar, then the tools (§4.2, §4.8). */}
+      <nav aria-label="More pages" className="fd-more-nav">
         <ul className="fd-more-links">
           <li>
             <a href="#/watch">
@@ -68,6 +72,13 @@ export function More({
                 <a href="#/activity">
                   <Icon of={Activity} />
                   Activity
+                </a>
+              </li>
+              <li>
+                <a href="#/stations">
+                  <Icon of={Server} />
+                  Stations
+                  <span className="fd-count">{stationCount}</span>
                 </a>
               </li>
               <li>
@@ -102,13 +113,6 @@ export function More({
                   Files
                 </a>
               </li>
-              <li>
-                <a href="#/stations">
-                  <Icon of={Server} />
-                  Stations
-                  <span className="fd-count">{stationCount}</span>
-                </a>
-              </li>
             </>
           )}
           {canShare(people) ? (
@@ -116,14 +120,6 @@ export function More({
               <a href="#/shares">
                 <Icon of={Users} />
                 Shares
-              </a>
-            </li>
-          ) : null}
-          {settingsLink && !guest ? (
-            <li>
-              <a href="#/settings">
-                <Icon of={Settings} />
-                Settings
               </a>
             </li>
           ) : null}
@@ -136,32 +132,55 @@ export function More({
               </a>
             </li>
           )}
-          {onPalette === undefined ? null : (
-            <li>
-              <button type="button" onClick={onPalette}>
-                <Icon of={Search} />
-                Search sessions
-              </button>
-            </li>
-          )}
-          {onHelp === undefined ? null : (
-            <li>
-              <button type="button" onClick={onHelp}>
-                <Icon of={CircleHelp} />
-                Help
-              </button>
-            </li>
-          )}
         </ul>
+        {tools ? (
+          <ul className="fd-more-links">
+            {onPalette === undefined ? null : (
+              <li>
+                <button type="button" onClick={onPalette}>
+                  <Icon of={Search} />
+                  Search sessions
+                </button>
+              </li>
+            )}
+            {settings ? (
+              <li>
+                <a href="#/settings">
+                  <Icon of={Settings} />
+                  Settings
+                </a>
+              </li>
+            ) : null}
+            {onHelp === undefined ? null : (
+              <li>
+                <button type="button" onClick={onHelp}>
+                  <Icon of={CircleHelp} />
+                  Help
+                </button>
+              </li>
+            )}
+          </ul>
+        ) : null}
       </nav>
-      {/* The second group: how the board looks, and the devices of this login. */}
+      {/* The last group: how the board looks, and the devices of this login. */}
       <ul className="fd-more-links">
         <li className="fd-more-row">
           <span className="fd-more-rowlabel">
             <Icon of={Sun} />
             Appearance
           </span>
-          <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
+          <PrefsRow
+            stations={stations}
+            getPalette={chrome?.getPalette}
+            density={false}
+            iconSize={16}
+          />
+        </li>
+        <li>
+          <CompactSwitch />
+        </li>
+        <li>
+          <MotionSwitch />
         </li>
         {chrome?.addDevice === undefined ? null : (
           <li>

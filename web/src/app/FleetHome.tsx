@@ -11,6 +11,7 @@ import {
   emptyFilter,
   type FleetFilter,
   filterFleet,
+  fleetVersion,
   repoNames,
   stationName,
 } from '../board/fleet';
@@ -53,13 +54,6 @@ type Props = {
   /** DL-141: loads `GET /api/fleet/extras` (the card chips); absent in tests without a deck. */
   readonly extras?: (() => Promise<FleetExtras>) | undefined;
 };
-
-/** Changes when any session changes, so derived panels load again. */
-function fleetVersion(sessions: readonly DeckSession[]): string {
-  let newest = 0;
-  for (const s of sessions) newest = Math.max(newest, s.summary.updated_at);
-  return `${sessions.length}/${newest}`;
-}
 
 /** How often the card extras load again while the home is open. */
 const EXTRAS_MS = 15_000;
@@ -137,6 +131,26 @@ export function statusMatches(s: DeckSession, status: StatusFilter): boolean {
   if (status === 'needs_you') return s.status === 'needs_you' || s.summary.open_requests.length > 0;
   if (status === 'idle') return s.status === 'idle';
   return s.status === 'working' || s.status === 'verifying' || s.status === 'queued';
+}
+
+/**
+ * The sessions of the home under the filters: `scoped` without the status filter (the usage
+ * glance and the Usage panel: a rate limit belongs to an account, not to a status), `visible` with
+ * it (the board).
+ */
+export function scopeFleet(
+  shown: readonly DeckSession[],
+  stations: readonly StationView[],
+  filter: FleetFilter,
+  status: StatusFilter,
+): { readonly scoped: readonly DeckSession[]; readonly visible: readonly DeckSession[] } {
+  const scoped = filterFleet(shown, stations, filter);
+  return { scoped, visible: scoped.filter((s) => statusMatches(s, status)) };
+}
+
+/** The header words when nothing needs you: "All clear" only without a conflict (§4.4). */
+export function clearText(conflicts: number): string {
+  return conflicts > 0 ? 'Nothing needs you' : 'All clear';
 }
 
 /** One active filter, as the removable chip under the toolbar shows it. */
@@ -248,9 +262,7 @@ export function FleetHome({
   const archivedCount = sessions.filter((s) => archivedHidden(s, cleared)).length;
   const showArchived = archivedOn && archivedCount > 0;
   const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
-  const visible = filterFleet(shown, stations, filter).filter((s) =>
-    statusMatches(s, phone ? 'all' : status),
-  );
+  const { scoped, visible } = scopeFleet(shown, stations, filter, phone ? 'all' : status);
   const repos = repoNames(shown);
   const contested = contestedBy(list ?? []);
   const conflictCount = list?.length ?? 0;
@@ -384,16 +396,23 @@ export function FleetHome({
             on <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>
           </span>
           .{' '}
-          {needsYou === 0 ? (
-            <span className="fd-home-needs" data-clear="true">
-              All clear
-            </span>
-          ) : (
-            <span className="fd-home-needs">
-              {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
-            </span>
-          )}
-          .
+          {/* "Nothing needs you." next to a conflict is the calm part: a narrow header drops it
+              first (home.css), so that the conflict stays readable. */}
+          <span
+            className="fd-home-state"
+            data-calm={needsYou === 0 && conflictCount > 0 ? 'true' : undefined}
+          >
+            {needsYou === 0 ? (
+              <span className="fd-home-needs" data-clear="true">
+                {clearText(conflictCount)}
+              </span>
+            ) : (
+              <span className="fd-home-needs">
+                {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
+              </span>
+            )}
+            .
+          </span>
           {conflictCount > 0 ? (
             <>
               {' '}
@@ -441,7 +460,7 @@ export function FleetHome({
       {phone ? null : (
         <select
           aria-label="Group by"
-          className="fd-sm fd-home-group"
+          className="fd-ghost fd-sm fd-home-group"
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >
@@ -462,7 +481,8 @@ export function FleetHome({
           <Icon of={Users} size={14} /> <span className="fd-home-share-text">Share board…</span>
         </button>
       ) : null}
-      {phone ? null : <span className="fd-home-bell" ref={setBellSlot} />}
+      {/* With no request the Needs you panel is absent: its notification switch moves here. */}
+      <span className="fd-home-bell" ref={setBellSlot} />
     </header>
   );
   const radar =
@@ -501,7 +521,7 @@ export function FleetHome({
       sessionActions={sessionActions}
       variant={variant}
       freshness={freshness}
-      bellSlot={variant === 'side' ? bellSlot : undefined}
+      bellSlot={bellSlot}
     />
   );
   const empty =
@@ -547,7 +567,7 @@ export function FleetHome({
       guest={guest}
       stations={stations}
       sessions={sessions}
-      visible={visible}
+      visible={scoped}
       feed={feed}
       fleet={fleet}
       assign={assign}
@@ -565,11 +585,11 @@ export function FleetHome({
   );
   // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
   // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
-  // is open.
+  // is open. The phone shows the radar under the Needs you strip instead, above the lanes.
   const ops = (
     <div className="fd-ops" data-tab={openTab ?? undefined}>
-      {phone || openTab === 'usage' ? null : <UsageGlance sessions={visible} stations={stations} />}
-      {radar}
+      {phone || openTab === 'usage' ? null : <UsageGlance sessions={scoped} stations={stations} />}
+      {phone ? null : radar}
       {panel}
     </div>
   );
@@ -581,6 +601,7 @@ export function FleetHome({
         {header}
         {activeRow}
         {rail('strip')}
+        {radar}
         {empty ?? (
           <FleetBoard
             sessions={visible}
@@ -590,6 +611,7 @@ export function FleetHome({
             contested={contested}
             sessionActions={sessionActions}
             extras={cardExtras}
+            foldEnded
           />
         )}
         {ops}

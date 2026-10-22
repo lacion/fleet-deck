@@ -3,6 +3,10 @@
 import type { Item } from '../session/timeline';
 import { isShellTool } from './ShellCard';
 
+/** The text of a call that waits for your answer: in full, and short for the narrow phone row. */
+export const WAITING_LABEL = 'Waiting for your answer';
+export const WAITING_SHORT = 'Waiting';
+
 type Approval = Extract<Item, { type: 'approval' }>;
 type Tool = Extract<Item, { type: 'tool' }>;
 

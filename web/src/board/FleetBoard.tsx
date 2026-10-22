@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
-import { basename, relativeAge } from '../app/sessions';
+import { basename, relativeAge, stationOrder } from '../app/sessions';
 import type {
   CardStatus,
   DeckSession,
@@ -61,15 +61,18 @@ type Props = {
   readonly group?: FleetGroup | undefined;
   /** DL-141: the contested sessions, by `sessionRef`. */
   readonly contested?: ReadonlyMap<string, Contested> | undefined;
-  /** DL-141: the actions of a session, for the Offline column's Resume all. */
+  /** DL-141: the actions of a session, for the Resume all of the offline tools. */
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
   /**
-   * DESIGN-SYSTEM §4.4: the ended and lost strips of each lane fold into a collapsed
-   * "Ended · N" group with their Resume all and Clear; the board-wide offline row then shows
-   * only for unreachable sessions that can resume. Off: the ended strips stay in their lane and
-   * one offline row closes the board (the phone).
+   * DESIGN-SYSTEM §4.2, §4.4: the ended and lost strips of each lane fold into a collapsed
+   * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Clear,
+   * and the lane count is the shown live strips. The board-wide offline row then shows only while
+   * two or more lanes have ended or lost sessions (one Resume all, Clear and Restore all for every
+   * lane).
+   * Off: the ended strips stay in their lane, the lane count is every strip, and one offline row
+   * for the ended, lost and unreachable sessions closes the board.
    */
   readonly foldEnded?: boolean | undefined;
 };
@@ -325,12 +328,12 @@ export function FleetCard({
   );
 }
 
-/** The swimlane order: the known stations first, then the other station ids. */
+/** The swimlane order: the known stations first, then the other station ids (the sidebar order). */
 function laneOrder(sessions: readonly DeckSession[], stations: readonly StationView[]): string[] {
-  const present = new Set(sessions.map((s) => s.station_id));
-  const known = stations.map((s) => s.station_id).filter((id) => present.has(id));
-  const rest = [...present].filter((id) => !known.includes(id)).sort();
-  return [...new Set([...known, ...rest])];
+  return stationOrder(
+    sessions.map((s) => s.station_id),
+    stations,
+  );
 }
 
 const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
@@ -341,8 +344,7 @@ const RESUMED_MS = 6000;
 
 /**
  * The offline tools: Resume all, Clear, and Restore all (DL-141). `row`: the labelled row at the
- * end of the board; `lane`: the buttons inside a lane's Ended group; `resumable`: the row only
- * while a session of `cards` can resume (unreachable stations on a folded board).
+ * end of the board; `lane`: the buttons inside a lane's Ended group.
  */
 export function OfflineTools({
   cards,
@@ -353,7 +355,7 @@ export function OfflineTools({
   readonly cards: readonly DeckSession[];
   readonly freshness: Freshness;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
-  readonly variant?: 'row' | 'lane' | 'resumable';
+  readonly variant?: 'row' | 'lane';
 }) {
   const refs = archived.use();
   const [running, setRunning] = useState(false);
@@ -386,7 +388,6 @@ export function OfflineTools({
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setReport(null), RESUMED_MS);
   };
-  if (variant === 'resumable' && resumable.length === 0 && report === null && !running) return null;
   return (
     <div className="fd-offline-tools" data-variant={variant}>
       {variant === 'lane' ? null : <span className="fd-label">Offline sessions</span>}
@@ -536,6 +537,21 @@ function LaneSlots({
   );
 }
 
+/**
+ * The cards of the board-wide offline row of a folded board: every ended or lost session, when
+ * two or more lanes have one. One press then resumes, clears or restores the ended sessions of
+ * every station (after a station restart, or to tidy the board), without opening each Ended
+ * fold. With one such lane, its Ended row has the same tools: no row. An unreachable session is
+ * not ended, so it makes no row.
+ */
+export function boardEnded(
+  lanes: readonly { readonly cards: readonly DeckSession[] }[],
+): DeckSession[] {
+  if (lanes.filter((lane) => lane.cards.some(isDone)).length < 2) return [];
+  const done = lanes.flatMap((lane) => lane.cards.filter(isDone));
+  return done.filter((c, i) => done.findIndex((d) => cardKey(d) === cardKey(c)) === i);
+}
+
 /** The board: one lane for each station, repo or project; one strip for each session. */
 export function FleetBoard({
   sessions,
@@ -554,9 +570,7 @@ export function FleetBoard({
   const batches = batchCounts(sessions);
   const all = lanesOf(sessions, stations, group, projects);
   const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
-  const offline = foldEnded
-    ? sessions.filter((c) => c.status === 'unreachable')
-    : sessions.filter(isOffline);
+  const offline = foldEnded ? boardEnded(lanes) : sessions.filter(isOffline);
   const strip = (card: DeckSession) => (
     <FleetStrip
       key={cardKey(card)}
@@ -585,6 +599,12 @@ export function FleetBoard({
         const ordered = stripCards(lane.cards, starred);
         const live = foldEnded ? ordered.filter((c) => !isDone(c)) : ordered;
         const done = foldEnded ? ordered.filter(isDone) : [];
+        // The count after the name is the shown strips (the sidebar's rule): a folded lane's
+        // Ended row carries its own count, and the lane total stays in the title.
+        const total =
+          live.length === lane.cards.length
+            ? undefined
+            : `${lane.cards.length} ${lane.cards.length === 1 ? 'session' : 'sessions'} ${group === 'station' ? 'on' : 'in'} ${lane.name}`;
         return (
           <section
             key={lane.id}
@@ -596,7 +616,9 @@ export function FleetBoard({
           >
             <div className="fd-lane-head">
               <h2 className="fd-lane-name fd-wide">{lane.name}</h2>
-              <span className="fd-count">{lane.cards.length}</span>
+              <span className="fd-count" title={total}>
+                {live.length}
+              </span>
               {view === undefined ? null : <StationFacts station={view} freshness={freshness} />}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
@@ -612,8 +634,7 @@ export function FleetBoard({
             {done.length === 0 ? null : (
               <details className="fd-lane-ended">
                 <summary>
-                  <span className="fd-dot" data-status="ended" aria-hidden="true" />
-                  {`Ended · ${done.length}`}
+                  Ended <span className="fd-count">{done.length}</span>
                 </summary>
                 <ul className="fd-strips">{done.map(strip)}</ul>
                 <OfflineTools
@@ -632,7 +653,7 @@ export function FleetBoard({
           cards={offline}
           freshness={freshness}
           sessionActions={sessionActions}
-          variant={foldEnded ? 'resumable' : 'row'}
+          variant="row"
         />
       )}
     </main>

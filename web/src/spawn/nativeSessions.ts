@@ -146,14 +146,6 @@ export function ageText(modifiedAt: number, now: number): string {
   return age === 'now' ? age : `${age} ago`;
 }
 
-/** A size in decimal units: `512 B`, `12.3 KB`, `4.5 MB`, `1.2 GB`. */
-export function sizeText(bytes: number): string {
-  if (bytes < 1000) return `${bytes} B`;
-  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`;
-  if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
-  return `${(bytes / 1e9).toFixed(1)} GB`;
-}
-
 /** The one line that names an entry: its title, else its first prompt, else its id. */
 export function entryTitle(s: NativeSession): string {
   const title = s.title?.trim() ?? '';

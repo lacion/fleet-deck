@@ -1,4 +1,5 @@
 // DL-175: the "Show" menu at the top right of the chat column: what the chat shows (design ui-pass X2).
+// Each item is a label row with a real checkbox (base.css draws the box, its focus and forced colors).
 import { type KeyboardEvent, useRef, useState } from 'react';
 import { useDismiss } from '../ui/dismiss';
 import { type ChatFilter, FILTER_KEYS, FILTER_LABEL, type FilterCounts } from './filter';
@@ -31,36 +32,35 @@ export function FilterBar(props: {
         onKeyDown={onKeyDown}
         onToggle={(event) => setOpen(event.currentTarget.open)}
       >
-        <summary className="fd-ghost fd-sm">
+        <summary className="fd-ghost fd-sm" data-variant="toggle">
           {hidden > 0 ? `Show (${hidden} hidden)` : 'Show'}
         </summary>
         <div className="fd-menu-body" role="group" aria-label="Chat filters">
           {FILTER_KEYS.map((key) => {
             const on = filter.show[key];
             return (
-              <button
-                key={key}
-                type="button"
-                className="fd-chip"
-                aria-pressed={on}
-                onClick={() => onChange({ ...filter, show: { ...filter.show, [key]: !on } })}
-              >
+              <label key={key} className="fd-chat-show-item">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onChange({ ...filter, show: { ...filter.show, [key]: !on } })}
+                />
                 {FILTER_LABEL[key]}
                 {!on && counts[key] > 0 ? (
                   <span className="fd-chat-filter-count">{counts[key]}</span>
                 ) : null}
-              </button>
+              </label>
             );
           })}
           <div className="fd-menu-sep" />
-          <button
-            type="button"
-            className="fd-chip"
-            aria-pressed={filter.compact}
-            onClick={() => onChange({ ...filter, compact: !filter.compact })}
-          >
+          <label className="fd-chat-show-item">
+            <input
+              type="checkbox"
+              checked={filter.compact}
+              onChange={() => onChange({ ...filter, compact: !filter.compact })}
+            />
             Compact tools
-          </button>
+          </label>
         </div>
       </details>
     </div>

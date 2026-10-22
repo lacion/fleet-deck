@@ -126,9 +126,9 @@ function suite() {
     const card = page.getByRole('region', { name: 'Tailnet' });
     const toggle = card.getByRole('switch', { name: 'Use Tailscale automatically' });
     await expect(toggle).not.toBeChecked();
-    await expect(card).toContainText(
-      'Keeps the tailnet addresses current at each start. Applies after a restart.',
-    );
+    const help = card.locator('.fd-tailnet-help');
+    await expect(help).toContainText('Keeps the tailnet addresses current at each start.');
+    await expect(help.locator('.fd-badge')).toHaveText('Applies after a restart');
     await expect(card).toContainText(
       'Not applied at start: Tailscale did not answer within 3 seconds.',
     );
@@ -349,7 +349,7 @@ function suite() {
     await expect(dialog).toContainText('lab-box was not added.');
     expect(state.posted.some((p) => p.path === '/api/pairing/requests/req-1/deny')).toBe(true);
     await dialog.getByRole('button', { name: 'Back to the list' }).click();
-    await dialog.getByRole('button', { name: '← Back' }).click();
+    await dialog.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(dialog).toContainText('Where is the new station?');
   });
 

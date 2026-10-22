@@ -87,6 +87,11 @@ if [ "$runner" = nextest ]; then
 else
     tests="cargo test"
 fi
+# Linux: the tests run under a child subreaper (tools/reap.py), so an orphan
+# that the machine's init does not reap cannot fail a process-group test.
+if [ "$(uname -s)" = Linux ] && command -v python3 >/dev/null 2>&1; then
+    tests="python3 tools/reap.py $tests"
+fi
 
 # Rust (all crates, including the Phase 0 spikes).
 # cargo-deny reads its advisory database from target/advisory-dbs (deny.toml,

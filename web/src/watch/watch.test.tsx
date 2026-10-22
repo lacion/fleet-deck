@@ -80,6 +80,9 @@ describe('tile lines', () => {
       'Bash: cargo test',
     ]);
     expect(lines.map((l) => l.kind)).toEqual(['message', 'tool', 'message', 'tool']);
+    // A tool call keeps its parts: the name (sans) and the target (mono).
+    expect(lines[3]).toMatchObject({ name: 'Bash', target: 'cargo test', note: '' });
+    expect(lines[0]?.name).toBeUndefined();
   });
 
   test('a long line is cut and a failed tool says so', () => {
@@ -93,6 +96,7 @@ describe('tile lines', () => {
     expect(lines[0]?.text).toHaveLength(LINE_CHARS);
     expect(lines[0]?.text.endsWith('…')).toBe(true);
     expect(lines[1]?.text).toBe('Bash: false (failed)');
+    expect(lines[1]).toMatchObject({ name: 'Bash', target: 'false', note: '(failed)' });
   });
 
   test('chat lines are plain text: no emphasis, code ticks or heading marks (DL-171)', () => {
@@ -204,9 +208,12 @@ describe('the watch page', () => {
     ]);
     expect(html).toContain('Fix login');
     expect(html).toContain('<span class="fd-wtile-line" data-kind="message">Fixed the test</span>');
-    expect(html).toContain('data-kind="tool">Bash: cargo test</span>');
+    // The tool name in sans weight 600, only the target in mono (DESIGN-SYSTEM §4.1, §4.5).
     expect(html).toContain(
-      '<span class="fd-wtile-tool" title="Running now">Bash: cargo test</span>',
+      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-wtile-tool" title="Running now"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
     );
     expect(html).toContain('class="fd-focus" title="repairing the login test"');
     expect(html).toContain('href="#/s/station-a/busy"');
@@ -301,7 +308,7 @@ describe('the read-only tile (R13 P1)', () => {
     expect(tile()).not.toContain('Unavailable');
   });
 
-  test('a tile without chat shows Loading… until the timeline is ready, then nothing', () => {
+  test('a tile without chat shows Loading… until the timeline is ready, then No chat yet.', () => {
     const ready = {
       incarnation: 'i',
       cursor: 0,
@@ -312,8 +319,56 @@ describe('the read-only tile (R13 P1)', () => {
     };
     expect(tile()).toContain('<span class="fd-wtile-empty">Loading…</span>');
     const html = tile({ timeline: ready });
-    expect(html).not.toContain('fd-wtile-empty');
-    expect(html).not.toContain('No chat yet.');
+    expect(html).toContain('<span class="fd-wtile-empty">No chat yet.</span>');
+    expect(html).not.toContain('Loading…');
+  });
+
+  test('a running tool or a focus line replaces No chat yet.', () => {
+    const ready = {
+      incarnation: 'i',
+      cursor: 0,
+      events: [],
+      freshness: 'live' as const,
+      error: null,
+      ready: true,
+    };
+    const running = tile({
+      timeline: ready,
+      card: waiting('w1', 10, {
+        running_tools: [
+          { node_id: 'n1', tool_kind: 'shell', title: 'Bash', input_summary: 'xcodebuild' },
+        ],
+      }),
+    });
+    expect(running).not.toContain('No chat yet.');
+    expect(running).toContain('<code>xcodebuild</code>');
+    const focused = tile({
+      timeline: ready,
+      card: waiting('w1', 10, { focus: 'Writing the brief' } as Partial<DeckSession['summary']>),
+    });
+    expect(focused).not.toContain('No chat yet.');
+    expect(focused).toContain('Writing the brief');
+    // Loading stays while the timeline loads, with or without a tool.
+    expect(
+      tile({
+        card: waiting('w1', 10, {
+          running_tools: [
+            { node_id: 'n1', tool_kind: 'shell', title: 'Bash', input_summary: 'xcodebuild' },
+          ],
+        }),
+      }),
+    ).toContain('Loading…');
+  });
+
+  test('a request has the needs-you icon of the fleet: a shield, or a bubble for a question', () => {
+    const permission = tile();
+    expect(permission).toContain('lucide-shield');
+    expect(permission).not.toContain('lucide-triangle-alert');
+    const question = tile({
+      card: waiting('w1', 10, { open_requests: [request(10, { request_kind: 'question' })] }),
+    });
+    expect(question).toContain('lucide-message-square');
+    expect(question).not.toContain('lucide-shield');
   });
 
   test('the answers have the ApprovalDock look: Allow decides, Deny is a danger button', () => {

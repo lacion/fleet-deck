@@ -20,7 +20,7 @@ test('the sidebar lists the needs-you group first, then the sessions under their
   page,
 }) => {
   const { sidebar } = await setUp(page);
-  await expect(sidebar.getByRole('link', { name: /^Fleet/ })).toContainText('1');
+  await expect(sidebar.getByRole('link', { name: 'Fleet, 1 needs you' })).toBeVisible();
   const needs = sidebar.getByRole('region', { name: 'Needs you' });
   await expect(needs.getByRole('link')).toHaveCount(1);
   await expect(needs.getByRole('link')).toHaveAttribute('href', `#/s/${ALPHA}/s1`);

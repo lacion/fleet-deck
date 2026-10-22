@@ -434,6 +434,32 @@ test('the Stations page asks for a config reference when the deck has none', asy
   await expect(page.getByText('Config reference…')).toBeVisible();
 });
 
+test('the Stations page shows the error when the deck refuses a config reference', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.stations = [gitStation('st-alpha', 'Alpha'), gitStation('st-bravo', 'Bravo')];
+  await deck.install(page);
+  await installFleetGitPlacement(page, deck, { reference: 'st-alpha' });
+  // Routed after the helper, so this answer comes first: the deck no longer knows the station.
+  await page.route(/\/api\/fleet-git\/drift-reference$/, (route) =>
+    route.request().method() === 'PUT'
+      ? route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'unknown_station', message: 'Unknown station.' }),
+        })
+      : route.fallback(),
+  );
+  await logIn(page);
+  await openMore(page, 'Stations');
+  const bravo = page.locator('[data-station="st-bravo"]');
+  await bravo.getByLabel('Station actions').click();
+  await bravo.getByRole('button', { name: 'Use as config reference' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Unknown station.' })).toBeVisible();
+  await expect(page.getByText('Config reference: Alpha')).toBeVisible();
+});
+
 test('the session Artifacts link opens the folder, or shows the address', async ({ page }) => {
   const deck = new FakeDeck();
   await twoStations(page, deck);

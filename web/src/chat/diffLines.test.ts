@@ -70,7 +70,48 @@ describe('diffLineKinds', () => {
   });
 
   test('the file header counts the -/+ lines of a hunk that look like header lines', () => {
-    expect(fileHeads(lines).get(0)).toEqual({ path: 'q.sql', add: 1, del: 1 });
-    expect(fileHeads(lines).get(7)).toEqual({ path: 'r.sql', add: 0, del: 0 });
+    expect(fileHeads(lines).get(0)).toEqual({ path: 'q.sql', add: 1, del: 1, status: null });
+    expect(fileHeads(lines).get(7)).toEqual({ path: 'r.sql', add: 0, del: 0, status: null });
+  });
+});
+
+describe('fileHeads status', () => {
+  const lines = [
+    'diff --git a/new.ts b/new.ts',
+    'new file mode 100644',
+    'index 0000000..e69de29',
+    'diff --git a/old.ts b/old.ts',
+    'deleted file mode 100644',
+    'index e69de29..0000000',
+    '--- a/old.ts',
+    '+++ /dev/null',
+    '@@ -1 +0,0 @@',
+    '-gone',
+    'diff --git a/run.sh b/run.sh',
+    'old mode 100644',
+    'new mode 100755',
+    'diff --git a/a.ts b/a.ts',
+    'index 1..2 100644',
+    '--- a/a.ts',
+    '+++ b/a.ts',
+    '@@ -1 +1 @@',
+    '-new file mode 1',
+    '+old mode 2',
+  ];
+  const heads = fileHeads(lines);
+
+  test('a new, a deleted and a mode-changed file have their status', () => {
+    expect(heads.get(0)).toEqual({ path: 'new.ts', add: 0, del: 0, status: { kind: 'added' } });
+    expect(heads.get(3)).toEqual({ path: 'old.ts', add: 0, del: 1, status: { kind: 'deleted' } });
+    expect(heads.get(10)).toEqual({
+      path: 'run.sh',
+      add: 0,
+      del: 0,
+      status: { kind: 'mode', old: '100644', new: '100755' },
+    });
+  });
+
+  test('a hunk line that looks like a mode line does not set a status', () => {
+    expect(heads.get(13)).toEqual({ path: 'a.ts', add: 1, del: 1, status: null });
   });
 });

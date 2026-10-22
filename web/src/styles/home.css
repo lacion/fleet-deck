@@ -97,13 +97,21 @@
 /* A narrow board (the main column under 1100px: every desktop with the ops column under about
    1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
    text, Share board shows its icon only, and from 841 to 960px the sentence drops "on N
-   stations". */
+   stations" and a calm "Nothing needs you." next to a conflict. */
 @container fleet (max-width: 1100px) {
   .fd-home:not([data-layout="phone"]) .fd-home-search {
     width: calc(var(--ctl-h) + 6px);
     transition: width var(--t-move);
   }
+  /* The folded input fills its 34px slot exactly, so the 8px header gap shows before Filters: a
+     flex item with min-width 0, and no right padding while folded (30px for the icon, 10px and
+     the 2px border were 42px). */
+  .fd-home:not([data-layout="phone"]) .fd-home-search > input {
+    width: 100%;
+    min-width: 0;
+  }
   .fd-home:not([data-layout="phone"]) .fd-home-search > input:not(:focus):placeholder-shown {
+    padding-right: 0;
     background: transparent;
     border-color: transparent;
     color: transparent;
@@ -137,7 +145,8 @@
   }
 }
 @container fleet (min-width: 841px) and (max-width: 960px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-on {
+  .fd-home:not([data-layout="phone"]) .fd-home-on,
+  .fd-home:not([data-layout="phone"]) .fd-home-state[data-calm="true"] {
     display: none;
   }
 }
@@ -331,7 +340,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: var(--text);
+  color: var(--dim); /* the where cell of a lane strip (.fd-strip-where) */
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
@@ -382,6 +391,8 @@
   max-height: 96px;
   padding: 5px var(--sp-3);
   line-height: 18px;
+  /* The ring of a chat code block (§4.5): light --code on the white strip is about 1.09:1. */
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .fd-q-answer {
   display: flex;
@@ -400,13 +411,22 @@
 .fd-q-open {
   margin-left: auto;
 }
-/* The other answers sit on the strip fill: one step up, and an edge on hover. */
-.fd-q-body button:not(.fd-decide) {
+/* The other plain answers sit on the strip fill: one step up, the plain button edge (transparent
+   in dark, --border in light: light --raised-hi on the white strip is 1.07:1), and a control edge
+   on hover. Deny (.fd-danger) keeps its ghost look of base.css (§3); only the phone fills it
+   (concept A). */
+.fd-q-body button:not(.fd-decide, .fd-danger) {
   background: var(--raised-hi);
+  box-shadow: inset 0 0 0 1px var(--btn-edge);
 }
-.fd-q-body button:not(.fd-decide):hover:not(:disabled) {
+.fd-q-body button:not(.fd-decide, .fd-danger):hover:not(:disabled) {
   background: var(--raised-hi);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: inset 0 0 0 1px var(--ctl-edge);
+}
+/* The key chip of a plain answer: the dark --badge-bg is the --raised-hi of the button, so the
+   chip gets the edge of a control on a raised surface. */
+.fd-q-body button:not(.fd-decide, .fd-danger) .fd-kbd {
+  box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
 }
 .fd-q-error {
   flex-basis: 100%;
@@ -465,6 +485,12 @@
 }
 .fd-lane-reach[data-up="false"]::before {
   background: var(--hazard);
+}
+/* Forced colors drop the fill of the reach dot: keep its own color (§6). */
+@media (forced-colors: active) {
+  .fd-lane-reach::before {
+    forced-color-adjust: none;
+  }
 }
 .fd-lane-warn,
 .fd-lane-conf {
@@ -665,8 +691,9 @@
   flex: none;
   margin-left: auto;
 }
+/* A data graphic (WCAG 1.4.11, 3:1): --faint, not the decoration token. */
 .fd-spark rect {
-  fill: var(--faint-decor);
+  fill: var(--faint);
 }
 .fd-spark rect[data-last="true"] {
   fill: var(--ok);
@@ -835,13 +862,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fd-strip-station,
 .fd-strip-place {
   color: var(--dim);
   font-weight: 500;
-}
-.fd-strip-station {
-  margin-right: var(--sp-1);
 }
 .fd-strip-title .fd-card-star {
   display: inline-flex;
@@ -886,12 +909,60 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
-.fd-strip-where > .fd-icon {
+.fd-strip-where > .fd-icon,
+.fd-strip-wline > .fd-icon {
+  flex: none;
   color: var(--faint);
+}
+/* A lane by repo or project: the station is the second line of the where cell, a sans --dim line
+   under the branch (as .fd-q-station). Its link chips follow it on that line. */
+.fd-strip > .fd-strip-where[data-station="true"] {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+}
+.fd-strip-wline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.fd-strip-station,
+.fd-strip-spacer {
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.fd-strip-station {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fd-strip-spacer {
+  flex: none;
+  visibility: hidden;
 }
 /* No known changes: the where cell takes the changes column too, so the age stays aligned. */
 .fd-strip[data-nochanges="true"] > .fd-strip-where {
   grid-column: span 2;
+}
+/* A lane where no strip has changes drops the changes column: the main cell gets its 88px, and
+   the ages of the lane (its ended fold too) stay in one column. The chip line of the where cell
+   then starts 232px from the right edge (where 168 + age 64). */
+@container fleet (min-width: 721px) {
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
+    grid-template-columns: 104px minmax(0, 1fr) auto 168px 64px;
+  }
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
+    grid-column: auto;
+  }
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
+    left: calc(100% - 232px + var(--sp-3));
+    max-width: calc(168px - 2 * var(--sp-3));
+  }
 }
 .fd-strip > .fd-strip-changes {
   flex-direction: column;
@@ -927,16 +998,20 @@
   flex-wrap: nowrap;
   gap: 6px;
 }
-.fd-strip-links:empty {
+.fd-strip-links:not(:has(> :not(.fd-strip-spacer))) {
   display: none;
 }
 .fd-stripwrap .fd-strip-links > * {
   flex: none;
   margin: 0;
 }
+.fd-stripwrap .fd-strip-links > :not(.fd-strip-spacer) {
+  pointer-events: auto;
+}
 .fd-stripwrap > .fd-strip-links {
   position: absolute;
   z-index: 1;
+  pointer-events: none;
   bottom: 3px;
   left: calc(100% - 320px + var(--sp-3));
   max-width: calc(168px - 2 * var(--sp-3));
@@ -945,12 +1020,14 @@
 .fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
   max-width: calc(168px + 88px - 2 * var(--sp-3));
 }
-.fd-stripwrap:has(> .fd-strip-links:not(:empty)) > .fd-strip > .fd-strip-where {
+.fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer)) > .fd-strip > .fd-strip-where {
   align-items: flex-start;
+  justify-content: flex-start;
   padding-top: 4px;
 }
 
-/* The ended and lost strips of a lane: a collapsed "Ended · N" row (as in the sidebar). */
+/* The ended and lost strips of a lane: a collapsed "Ended" row with its count pill (as in the
+   sidebar). */
 .fd-lane-ended {
   margin-top: 6px;
 }
@@ -987,7 +1064,13 @@
   margin-top: 6px;
   padding: 0;
 }
-/* States. Needs you in a lane: the holder and the request in yellow (the glow is the panel's). */
+/* States. Needs you in a lane: the holder, the 1px --act-line outline and the request in yellow;
+   the breathing glow is the Needs you panel's (§4.1). */
+.fd-stripwrap[data-status="needs_you"] {
+  box-shadow:
+    inset 0 0 0 1px var(--act-line),
+    var(--shadow-lift);
+}
 .fd-strip[data-status="ended"],
 .fd-strip[data-status="lost"] {
   color: var(--faint);
@@ -996,8 +1079,18 @@
 .fd-strip[data-status="lost"] :is(.fd-strip-model, .fd-strip-now, .fd-strip-where) {
   color: var(--faint);
 }
+/* A cleared (archived) strip steps back without opacity: no fill, a soft edge and a lighter
+   title. Its text keeps the --faint of an ended or lost strip (§4.1; a cleared strip is always
+   ended or lost), so every text stays on its own token (4.5:1). */
 .fd-stripwrap:has(> .fd-strip[data-archived="true"]) {
-  opacity: 0.6;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+.fd-stripwrap:has(> .fd-strip[data-archived="true"]):hover {
+  background: var(--raised);
+}
+.fd-strip[data-archived="true"] .fd-strip-title {
+  font-weight: 500;
 }
 
 /* On a narrow board (under 720 px: the phone, a tablet, a desktop window under 1024 px) the strip
@@ -1042,9 +1135,20 @@
   }
   .fd-strip-meta {
     grid-area: meta;
+    justify-self: end;
   }
   .fd-strip-changes {
     grid-area: changes;
+  }
+  /* No changes: no empty changes column, so the meta icons end under the age. */
+  .fd-strip[data-nochanges="true"] {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title title age"
+      "call now meta";
+  }
+  .fd-strip[data-nochanges="true"] > .fd-strip-changes {
+    display: none;
   }
   .fd-strip-age {
     grid-area: age;
@@ -1055,8 +1159,34 @@
     flex-wrap: wrap;
     padding: 0 var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
   }
+  /* A lane by repo or project: no where cell, so the station name starts the meta line. */
+  .fd-strip[data-showstation="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title title title age"
+      "station call now meta changes";
+  }
+  .fd-strip[data-showstation="true"][data-nochanges="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title title title age"
+      "station call now meta";
+  }
+  .fd-strip[data-showstation="true"] > .fd-strip-where {
+    display: contents;
+  }
+  .fd-strip-where > .fd-strip-wline,
+  .fd-strip-spacer {
+    display: none;
+  }
+  .fd-strip-where > .fd-strip-station {
+    grid-area: station;
+  }
+  /* The callsign and the age share the first line with the title (concept A phone). */
   .fd-q-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
+    align-content: center;
+    align-items: first baseline;
   }
   .fd-q-row > * + * {
     border-left: 0;
@@ -1095,9 +1225,6 @@
 }
 .fd-ops-h > .fd-icon {
   color: var(--dim);
-}
-.fd-ops-h > .fd-badge {
-  margin-left: auto;
 }
 .fd-glance .fd-ops-h > .fd-icon {
   color: var(--fuel);
@@ -1198,12 +1325,49 @@
 }
 .fd-confstrip-lines
   > .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(.fd-confstrip-repo) {
+  position: relative;
+  overflow: hidden;
   padding: var(--sp-2) var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
   background: var(--raised);
   border-radius: var(--r-card);
-  box-shadow:
-    inset 3px 0 0 var(--hazard),
-    var(--shadow-lift);
+  box-shadow: var(--shadow-lift);
+}
+/* The hazard holder: the straight 3px bar of .fd-holder (an inset shadow follows the corner
+   radius and draws a crescent). */
+.fd-confstrip-lines
+> .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(.fd-confstrip-repo)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--hazard);
+  border-radius: var(--r-card) 0 0 var(--r-card);
+}
+/* Forced colors drop the fills and the shadows (§6): the lane strips and the conflict cards keep
+   a CanvasText edge (2px for a strip that needs you, in place of its --act-line outline), and
+   the conflict card keeps its hazard holder. */
+@media (forced-colors: active) {
+  .fd-stripwrap {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-stripwrap[data-status="needs_you"] {
+    outline-width: 2px;
+    outline-offset: -2px;
+  }
+  .fd-confstrip-lines
+    > .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(.fd-confstrip-repo) {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-confstrip-lines
+    > .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(
+      .fd-confstrip-repo
+    )::before {
+    forced-color-adjust: none;
+  }
 }
 .fd-confstrip-line > .fd-icon {
   color: var(--hazard);
@@ -1246,8 +1410,11 @@
   margin-bottom: var(--sp-2);
   color: var(--faint);
 }
+/* A session name in a line of text: an inline control that keeps the line height (the inline
+   exception of WCAG 2.5.8), so the coarse 44px of base.css does not apply. */
 .fd-namebtn {
   height: auto;
+  min-height: 0;
   padding: 0;
   background: none;
   border: 0;
@@ -1285,6 +1452,10 @@
   flex: 1 1 auto;
   padding: 0 var(--sp-2);
   font-size: var(--fs-meta);
+}
+/* The tab strip scrolls sideways, so it clips an outward ring: the ring goes inside the tab. */
+.fd-homepanel-tabs > button:focus-visible {
+  outline-offset: -2px;
 }
 .fd-homepanel-head > .fd-iconbtn {
   margin-left: auto;
@@ -1351,10 +1522,14 @@
   padding-top: var(--sp-4);
   border-top: 1px solid var(--border-soft);
 }
+/* Each label stays on one line ("All usage"): the buttons share the row by their width. */
 .fd-ops-foot > button {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
+  padding: 0 var(--sp-2);
+  white-space: nowrap;
 }
 .fd-ops-foot > button[aria-expanded="true"] {
   background: var(--raised);
@@ -1762,6 +1937,13 @@
   padding: var(--sp-1) var(--sp-3) var(--sp-3);
   border-top: 0;
 }
+/* Concept A phone: Deny is a filled box beside Allow (the ghost look of §3 on a desktop). */
+.fd-home[data-layout="phone"] .fd-q-body .fd-danger {
+  background: var(--raised-hi);
+}
+.fd-home[data-layout="phone"] .fd-q-body .fd-danger:hover:not(:disabled) {
+  background: var(--hazard-bg);
+}
 .fd-home[data-layout="phone"] .fd-q-cmd,
 .fd-home[data-layout="phone"] .fd-q-title {
   flex-basis: 100%;
@@ -1852,11 +2034,32 @@
     right: calc(64px + var(--sp-3));
   }
   :root[data-density="compact"]
-    .fd-stripwrap:has(> .fd-strip-links:not(:empty))
+    .fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer))
     > .fd-strip
-    > .fd-strip-where {
+    > .fd-strip-where:not([data-station="true"]) {
     align-items: center;
     padding-top: 0;
+  }
+  :root[data-density="compact"]
+    .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"])))
+    .fd-stripwrap
+    > .fd-strip-links {
+    left: auto;
+  }
+  /* The chips sit at the right end, not after the station name. */
+  :root[data-density="compact"] .fd-strip-spacer {
+    display: none;
+  }
+  :root[data-density="compact"] .fd-strip > .fd-strip-where[data-station="true"] {
+    justify-content: center;
+    padding-top: 0;
+  }
+}
+/* A touch screen keeps the 44px tap target of a compact strip (§6, --tap-min); --row-h stays 30px
+   for the tables. */
+@media (pointer: coarse) {
+  :root[data-density="compact"] .fd-strip {
+    min-height: var(--row-h-touch);
   }
 }
 :root[data-density="compact"] .fd-card {

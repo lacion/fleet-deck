@@ -1,9 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionDiff } from '../gen';
-import { CHANGED_FILES_MAX, changedPaths, loadChanged } from './changedFiles';
+import {
+  allChangedPaths,
+  CHANGED_FILES_MAX,
+  changedFiles,
+  changedPaths,
+  loadChanged,
+  loadSessionChanges,
+  turnForPath,
+} from './changedFiles';
 import { ChangedFilesList } from './FilesPanel';
-import type { FileActions } from './workspace';
+import type { FileActions, FinalizedTurn } from './workspace';
 
 const header = (a: string, b = a) => `diff --git a/${a} b/${b}\n`;
 
@@ -71,10 +79,31 @@ describe('changed paths of a patch', () => {
   });
 });
 
+describe('the change of each file', () => {
+  test('the kind and the line counts; the --- and +++ header lines do not count', () => {
+    expect(changedFiles(patch).changes).toEqual({
+      'src/a.ts': { kind: 'M', insertions: 1, deletions: 1 },
+      'docs/new.md': { kind: 'A', insertions: 1, deletions: 0 },
+      'moved/name.rs': { kind: 'R', insertions: 0, deletions: 0 },
+    });
+  });
+
+  test('a removed line that starts with --- counts as a deletion inside a hunk', () => {
+    const text = `${header('a.md')}--- a/a.md\n+++ b/a.md\n@@ -1,2 +1 @@\n---- old rule\n+new\n same\n`;
+    expect(changedFiles(text).changes['a.md']).toEqual({ kind: 'M', insertions: 1, deletions: 1 });
+  });
+
+  test('a deleted file has no change entry', () => {
+    const text = `${header('gone.rs')}deleted file mode 100644\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n`;
+    expect(changedFiles(text)).toEqual({ paths: [], changes: {} });
+  });
+});
+
 describe('loadChanged', () => {
-  test('the paths and the cut flag of the session diff', async () => {
+  test('the paths, their changes and the cut flag of the session diff', async () => {
     expect(await loadChanged(actions(async () => diff({ truncated: true })))).toEqual({
       paths: ['src/a.ts', 'docs/new.md', 'moved/name.rs'],
+      changes: changedFiles(patch).changes,
       truncated: true,
     });
   });
@@ -95,7 +124,15 @@ describe('the changed files section', () => {
   const html = (truncated: boolean) =>
     renderToStaticMarkup(
       <ChangedFilesList
-        changed={{ paths: ['src/a.ts', 'README.md'], truncated }}
+        changed={{
+          paths: ['src/a.ts', 'README.md', 'src/b.ts'],
+          changes: {
+            'src/a.ts': { kind: 'M', insertions: 9, deletions: 3 },
+            'README.md': { kind: 'A', insertions: 4, deletions: 0 },
+            'src/b.ts': { kind: 'R', insertions: 0, deletions: 0 },
+          },
+          truncated,
+        }}
         onOpen={() => {}}
       />,
     );
@@ -105,17 +142,97 @@ describe('the changed files section', () => {
     expect(out).toContain('<section class="fd-files-changed" aria-label="Changed files">');
     expect(out).toContain('>Changed since the session started<');
     expect(out).toContain('<span class="fd-files-name">a.ts</span>');
-    expect(out).toContain('<span class="fd-files-dir">src</span>');
+    expect(out).toContain('<span class="fd-files-dir"><bdi>src</bdi></span>');
     expect(out).toContain('<span class="fd-files-name">README.md</span>');
-    expect(out.match(/<button/g)).toHaveLength(2);
+    expect(out.match(/<button/g)).toHaveLength(3);
+  });
+
+  test('each row shows its +/− counts and the badge of a diff file header at the right', () => {
+    const out = html(false);
+    // A modified file has no badge (as a diff file header); its kind is a hidden name.
+    expect(out).toContain(
+      '<span class="fd-files-stat"><span class="fd-add">+9</span><span class="fd-del">−3</span>' +
+        '<span class="fd-vh">modified</span></span>',
+    );
+    // A new file: the ok "new" badge. No deletions: no −0.
+    expect(out).toContain(
+      '<span class="fd-files-stat"><span class="fd-add">+4</span>' +
+        '<span class="fd-badge" data-tone="ok" title="New file"><span aria-hidden="true">new</span>' +
+        '<span class="fd-vh">added</span></span></span>',
+    );
+    // A renamed file: a neutral word.
+    expect(out).toContain(
+      '<span class="fd-badge" title="Renamed file"><span aria-hidden="true">renamed</span>' +
+        '<span class="fd-vh">renamed</span></span>',
+    );
+    expect(out).not.toContain('−0');
+    expect(out).not.toContain('data-tone="muted"');
   });
 
   test('a file at the root has no folder', () => {
-    expect(html(false).match(/fd-files-dir/g)).toHaveLength(1);
+    expect(html(false).match(/fd-files-dir/g)).toHaveLength(2);
   });
 
   test('the cut line shows only when truncated', () => {
     expect(html(true)).toContain('More changes than shown.');
     expect(html(false)).not.toContain('More changes than shown.');
+  });
+});
+
+describe('all changed paths for diff navigation', () => {
+  const deleteOnly = `${header('gone.rs')}deleted file mode 100644\nindex 1..0\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n`;
+
+  test('a delete-only patch lists its file; changedPaths still leaves it out', () => {
+    expect(allChangedPaths(deleteOnly)).toEqual(['gone.rs']);
+    expect(changedPaths(deleteOnly)).toEqual([]);
+  });
+
+  test('every header in patch order, once, with deleted files among them', () => {
+    expect(allChangedPaths(`${patch}${deleteOnly}${header('src/a.ts')}`)).toEqual([
+      'src/a.ts',
+      'docs/new.md',
+      'moved/name.rs',
+      'gone.rs',
+    ]);
+    expect(allChangedPaths('')).toEqual([]);
+  });
+
+  test('a clean session diff gives an empty list, an error gives none', async () => {
+    const clean = await loadSessionChanges(actions(async () => diff({ patch: '' })));
+    expect(clean).toEqual({ changed: null, all: [] });
+    const gone = await loadSessionChanges(actions(async () => diff({ patch: deleteOnly })));
+    expect(gone).toEqual({ changed: null, all: ['gone.rs'] });
+    const failed = actions(async () => {
+      throw new Error('refused');
+    });
+    expect(await loadSessionChanges(failed)).toBeNull();
+  });
+});
+
+describe('the turn that a changed file opens without a spawn base', () => {
+  const turn = (turnId: string, reverted = false): FinalizedTurn => ({
+    turnId,
+    start: null,
+    end: null,
+    diff: { files_changed: 1, insertions: 1, deletions: 0 },
+    reverted,
+  });
+  const turns = [turn('t1'), turn('t2'), turn('t3', true)];
+  const byTurn = new Map<string, readonly string[]>([
+    ['t1', ['a.ts', 'b.ts']],
+    ['t2', ['b.ts']],
+    ['t3', ['c.ts']],
+  ]);
+
+  test('the newest turn whose patch lists the path', () => {
+    expect(turnForPath(turns, byTurn, 'b.ts')?.turnId).toBe('t2');
+    expect(turnForPath(turns, byTurn, 'a.ts')?.turnId).toBe('t1');
+  });
+
+  test('an unknown path, a reverted turn or no loaded diff: no turn (not a link)', () => {
+    expect(turnForPath(turns, byTurn, 'unknown.ts')).toBeUndefined();
+    expect(turnForPath(turns, byTurn, 'c.ts')).toBeUndefined();
+    expect(turnForPath(turns, undefined, 'a.ts')).toBeUndefined();
+    expect(turnForPath([], byTurn, 'a.ts')).toBeUndefined();
   });
 });

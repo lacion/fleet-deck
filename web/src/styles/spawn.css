@@ -87,11 +87,12 @@
   min-width: 0;
   font-weight: 400;
 }
-/* A placeholder is words, never a path: it must not look like a filled value. */
+/* A placeholder is words, never a path: it must not look like a filled value. The directory
+   placeholder is words too ("Folder on the station"), so it is sans in the mono path field. */
 .fd-spawn input::placeholder,
 .fd-spawn .fd-folder-row > input::placeholder {
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
 }
 .fd-spawn textarea {
   resize: vertical;
@@ -109,11 +110,14 @@
   padding: 0;
   border: 0;
 }
-/* On the sheet fill, a plain button is an outlined secondary button (Browse…, Check access). */
+/* On the --raised sheet, a plain button (Browse…, Check access, Open the new session) has the
+   sheet's fill and the --btn-edge-raised edge (§3; --border is never the edge of a control, §2.1).
+   On a phone the sheet has no fill: the button sits on --bg with the --btn-edge of a panel button,
+   the same as Browse… in Settings (below). */
 .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
 .fd-spawn .fd-outcome > button {
-  background: transparent;
-  border-color: var(--border);
+  background: var(--raised);
+  border-color: var(--btn-edge-raised);
   color: var(--text);
 }
 .fd-spawn
@@ -122,7 +126,7 @@
   ),
 .fd-spawn .fd-outcome > button:hover:not(:disabled) {
   background: var(--raised-hi);
-  border-color: var(--border);
+  border-color: var(--btn-edge-raised);
 }
 
 /* ── title and task: no border at rest ──────────────────────────── */
@@ -136,34 +140,40 @@
 }
 .fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
   display: block;
-  width: calc(100% + 2 * var(--sp-2));
-  margin: 0 calc(-1 * var(--sp-2));
-  padding: var(--sp-1) var(--sp-2);
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-1) 0;
   background-color: transparent;
   border-color: transparent;
   border-radius: 0;
   color: var(--text);
 }
-/* The focus of a borderless field: the 2px blue marker at its left edge, not a box. */
+/* The focus of a borderless field: a 2px blue underline, not a box. The field text starts at the
+   content edge of the sheet, in line with the property rows. */
 .fd-spawn .fd-spawn-compose > label > :is(input, textarea):focus {
   border-color: transparent;
-  box-shadow: inset 2px 0 0 var(--focus);
+  box-shadow: inset 0 -2px 0 var(--focus);
+}
+/* The task field ends near the rule of the property rows: its focus is that rule in blue (below),
+   not a second line above it. */
+.fd-spawn .fd-spawn-compose > .fd-spawn-task > textarea:focus {
+  box-shadow: none;
 }
 .fd-spawn .fd-spawn-title > input {
   height: 36px;
-  font-size: var(--fs-18);
+  font-size: var(--fs-sheet-title);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 .fd-spawn .fd-spawn-title > input::placeholder {
-  font-size: var(--fs-18);
+  font-size: var(--fs-sheet-title);
 }
 .fd-spawn .fd-spawn-task > textarea {
   /* Six lines at least; the field grows with the task (where the browser can). */
   min-height: calc(6 * 1.5em + 2 * var(--sp-1));
   max-height: 50vh;
   field-sizing: content;
-  font-size: var(--fs-15);
+  font-size: max(var(--fs-sheet-task), var(--fs-field));
   line-height: 1.5;
   resize: none;
 }
@@ -201,7 +211,11 @@
   gap: var(--sp-3);
   min-width: 0;
   padding-top: var(--sp-4);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
+}
+.fd-spawn form:has(.fd-spawn-task > textarea:focus) .fd-spawn-props {
+  border-top: 2px solid var(--focus);
+  padding-top: calc(var(--sp-4) - 1px);
 }
 .fd-spawn-prop {
   display: grid;
@@ -283,6 +297,7 @@
   font-size: var(--fs-meta);
   font-weight: 400;
   text-align: right;
+  text-wrap: balance;
 }
 /* The model and the mode: one pill look (concept B), as wide as their value, a leading icon
    (sparkles, shield) inside the pill. */
@@ -314,10 +329,13 @@
 .fd-spawn select.fd-spawn-pill {
   field-sizing: content;
 }
-.fd-spawn .fd-spawn-pillwrap > select.fd-spawn-pill {
+.fd-spawn .fd-spawn-pillwrap > :is(select, input).fd-spawn-pill {
   padding-left: 26px;
 }
-.fd-spawn input.fd-spawn-model {
+/* The typed model: the "Other…" input, or the model pill itself when the provider has not
+   reported a list (the phone rule below, of the same specificity, makes it fill its column). */
+.fd-spawn input.fd-spawn-model,
+.fd-spawn .fd-spawn-pillwrap > input {
   width: 200px;
 }
 /* The directory: the value is mono (a path). */
@@ -329,8 +347,10 @@
   font-size: var(--fs-data);
 }
 
-/* The stations: radio pills with the name, the reach and the free slots. The chosen one is
-   --raised-hi with a 1px --focus ring (the selection marker). */
+/* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
+   --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
+   The chosen one has the look of a pressed .fd-seg segment (the provider and Where choices of the
+   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600. */
 .fd-spawn-stations {
   display: flex;
   flex-wrap: wrap;
@@ -344,8 +364,9 @@
   gap: 6px;
   height: var(--ctl-h);
   padding: 0 10px;
+  background: var(--surface);
   border-radius: var(--r-ctl);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   color: var(--dim);
   font-size: var(--fs-ui);
   font-weight: 500;
@@ -362,9 +383,12 @@
   color: var(--text);
 }
 .fd-spawn-station:has(> input:checked) {
-  background: var(--raised-hi);
-  box-shadow: inset 0 0 0 1px var(--focus);
+  background: var(--pressed-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
   color: var(--text);
+  font-weight: 600;
 }
 .fd-spawn-station > input[type="radio"] {
   position: absolute;
@@ -377,6 +401,24 @@
 .fd-spawn-station:has(> input:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+/* Forced colors drop the box-shadow ring of the selected station pill: give it an outline. */
+@media (forced-colors: active) {
+  .fd-spawn-station:has(> input:checked):not(:has(> input:focus-visible)) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  /* Forced colors drop the --surface fill: an unchosen pill gets an edge, so it reads as a
+     choice and not as plain text. */
+  .fd-spawn-station:not(:has(> input:checked)):not(:has(> input:focus-visible)) {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  /* Forced colors paint the transparent edge of the borderless title and task fields: keep
+     their text off that edge. */
+  .fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
+    padding-inline: var(--sp-2);
+  }
 }
 .fd-spawn-station > .fd-wide {
   font-size: var(--fs-ui);
@@ -500,6 +542,16 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+/* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
+@media (pointer: coarse) {
+  .fd-spawn .fd-folder-row > input,
+  .fd-spawn input[aria-label="Directory path"],
+  .fd-spawn .fd-spawn-branch input,
+  .fd-spawn .fd-spawn-url input,
+  .fd-spawn textarea.fd-spawn-setup {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 /* ADR-008: the fleet-control switches under the Coordinator checkbox. */
 .fd-spawn .fd-spawn-fleet {
   display: grid;
@@ -531,7 +583,7 @@
   gap: var(--sp-2) var(--sp-4);
   margin: 0 calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5));
   padding: var(--sp-3) var(--sp-5);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-spawn .fd-spawn-batch {
   display: inline-flex;
@@ -596,6 +648,29 @@
   .fd-spawn-prop > h3.fd-label {
     line-height: 16px;
   }
+  /* The provider segment fills the line, so that its right edge meets the pills under it. */
+  .fd-spawn-fields > .fd-spawn-seg {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .fd-spawn-seg:not(:has(.fd-spawn-seg-meta)) {
+    display: flex;
+  }
+  .fd-spawn-seg:not(:has(.fd-spawn-seg-meta)) > label {
+    flex: 1 1 0;
+  }
+  /* With the limits: the name over its limit, both at the left, so that a long limit does not wrap
+     ragged at the right edge. */
+  .fd-spawn-seg:has(.fd-spawn-seg-meta) > label {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding-block: var(--sp-1);
+  }
+  .fd-spawn-seg-meta {
+    text-align: left;
+  }
   /* The model and the mode share one line. */
   .fd-spawn-fields > .fd-spawn-pills {
     flex: 1 1 100%;
@@ -605,22 +680,70 @@
     flex: 1 1 0;
   }
   .fd-spawn .fd-spawn-pills > input,
-  .fd-spawn .fd-spawn-pillwrap > select {
+  .fd-spawn .fd-spawn-pillwrap > :is(select, input) {
     width: 100%;
     min-width: 0;
+  }
+  /* "Other…": the free-text model takes its own line under the two pills, not a third column. */
+  .fd-spawn-fields > .fd-spawn-pills:has(> .fd-spawn-model) {
+    flex-wrap: wrap;
+  }
+  .fd-spawn-pills > .fd-spawn-model {
+    flex: 1 1 100%;
+    order: 1;
+  }
+  /* The stations: two equal columns that fill the line, like the provider list and the Where
+     segment. Without the sheet fill a pill at rest sits on --bg: it takes the --raised fill and
+     --shadow-lift of a 44px tap target (hover and the pressed look stay). */
+  .fd-spawn-fields > .fd-spawn-stations {
+    flex: 1 1 100%;
+  }
+  .fd-spawn-stations {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fd-spawn-station {
+    justify-content: flex-start;
+    min-width: 0;
+    background: var(--raised);
+    box-shadow: var(--shadow-lift);
+  }
+  /* A plain button on --bg: the --btn-edge of a panel button (settings.css .fd-set-grid). */
+  .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
+  .fd-spawn .fd-outcome > button,
+  .fd-spawn
+    :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
+      :disabled
+    ),
+  .fd-spawn .fd-outcome > button:hover:not(:disabled) {
+    border-color: var(--btn-edge);
   }
   .fd-spawn-options > :not(summary) {
     margin-left: 0;
   }
+  /* The sticky footer joins the --surface bottom bar as one docked layer, with a visible top rule.
+     While the page scrolls on under it (`data-more`), the form fades out over the last 24px above
+     the rule, so a field cut at the edge reads as "more below", not as a glitch (the fade of the
+     help body, shell.css; the page scrolls here, so the fade is a --bg gradient, not a mask). */
   .fd-spawn-foot {
     position: sticky;
     bottom: calc(60px + env(safe-area-inset-bottom));
     z-index: 4;
     margin: 0 calc(-1 * var(--sp-4));
     padding: var(--sp-2) var(--sp-4);
-    background: var(--bg);
+    background: var(--surface);
     border-top: 0;
-    box-shadow: 0 -1px 0 var(--border-soft);
+    box-shadow: 0 -1px 0 var(--border);
+  }
+  .fd-spawn-foot[data-more="true"]::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 1px);
+    left: 0;
+    height: 24px;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+    pointer-events: none;
   }
   .fd-spawn-status {
     flex-basis: 100%;
@@ -636,6 +759,10 @@
   }
   .fd-spawn-actions > * {
     flex: 1 1 0;
+  }
+  /* A touch screen has no ⌘↵: the key hint goes. */
+  .fd-spawn-foot .fd-kbd {
+    display: none;
   }
 }
 

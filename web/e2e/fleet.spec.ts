@@ -371,6 +371,9 @@ test('Clear hides an ended session and the Archived chip shows it again', async 
   await logIn(page);
   await openFleet(page);
   const card = page.locator('a.fd-strip[data-session="e"]');
+  // The lane folds its ended strips into a collapsed Ended row (DESIGN-SYSTEM §4.2).
+  const ended = page.locator('.fd-lane-ended > summary');
+  await ended.click();
   await expect(card).toBeVisible();
   await page.getByRole('button', { name: 'Clear (1)' }).click();
   await expect(card).toHaveCount(0);
@@ -380,16 +383,19 @@ test('Clear hides an ended session and the Archived chip shows it again', async 
   });
   await chip.click();
   await expect(chip).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Escape');
+  await ended.click();
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-archived', 'true');
   await expect(card.locator('[data-ico="archived"]')).toHaveAttribute('title', 'Archived');
-  // Escape closes the menu; the active-filter chip clears the filter and hides the session again
-  await page.keyboard.press('Escape');
+  // The active-filter chip clears the filter and hides the session again
   await expect(chip).toBeHidden();
   await page.getByRole('button', { name: 'Archived shown' }).click();
   await expect(card).toHaveCount(0);
   await openFilters();
   await chip.click();
+  await page.keyboard.press('Escape');
+  await ended.click();
   await expect(card).toBeVisible();
   await page.getByRole('button', { name: 'Restore all' }).click();
   await expect(card).toBeVisible();

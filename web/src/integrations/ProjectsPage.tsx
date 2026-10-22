@@ -101,6 +101,8 @@ export function ProjectsPage({
   const { actions, projects, reload } = env;
   const first = stations[0];
   const list = projects;
+  // No project has a tracker: the column is absent, not a header over empty cells (§1 rule 7).
+  const anyTrackers = (list ?? []).some((p) => p.trackers.length > 0);
   const save = () => {
     if (form === null) return;
     setSaving(true);
@@ -144,7 +146,7 @@ export function ProjectsPage({
   return (
     <Page
       title="Projects"
-      description="A project is a repository on a station with its forge and its issue trackers. The deck stores the bindings only. The station holds the tokens."
+      description="Repositories with their forge and trackers."
       wide
       actions={
         <>
@@ -197,7 +199,7 @@ export function ProjectsPage({
         <EmptyState
           icon={FolderGit2}
           title="No projects yet"
-          body="Add a project to see its issues and pull requests, and to start sessions from them."
+          body="Add a project to see its issues and pull requests, and to start sessions from them. The deck stores the bindings only; the station holds the tokens."
         />
       ) : (
         <div className="fd-panel fd-tablepanel">
@@ -209,7 +211,7 @@ export function ProjectsPage({
                   <th scope="col">Station</th>
                   <th scope="col">Folder</th>
                   <th scope="col">Forge</th>
-                  <th scope="col">Trackers</th>
+                  {anyTrackers ? <th scope="col">Trackers</th> : null}
                   <th scope="col">
                     <span className="fd-vh">Actions</span>
                   </th>
@@ -240,22 +242,24 @@ export function ProjectsPage({
                             </span>
                           )}
                         </td>
-                        <td data-label="Trackers">
-                          {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
-                          {p.trackers.length === 0 ? null : (
-                            <span className="fd-cellbadges">
-                              {p.trackers.map((t) => (
-                                <span
-                                  key={`${t.tracker}/${t.key}`}
-                                  className="fd-badge"
-                                  data-chip="tracker"
-                                >
-                                  {trackerChip(t)}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
+                        {anyTrackers ? (
+                          <td data-label="Trackers">
+                            {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
+                            {p.trackers.length === 0 ? null : (
+                              <span className="fd-cellbadges">
+                                {p.trackers.map((t) => (
+                                  <span
+                                    key={`${t.tracker}/${t.key}`}
+                                    className="fd-badge"
+                                    data-chip="tracker"
+                                  >
+                                    {trackerChip(t)}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
+                          </td>
+                        ) : null}
                         <td className="fd-cell-actions">
                           {confirming === p.project_id ? (
                             <>
@@ -307,7 +311,7 @@ export function ProjectsPage({
                       </tr>
                       {result === undefined ? null : (
                         <tr>
-                          <td colSpan={6}>
+                          <td colSpan={anyTrackers ? 6 : 5}>
                             <PreflightView result={result} />
                           </td>
                         </tr>
@@ -320,6 +324,10 @@ export function ProjectsPage({
           </div>
         </div>
       )}
+      {list !== null && list.length > 0 ? (
+        // The token rule stays in view after the first project (the empty state says it too).
+        <p className="fd-note">The deck stores the bindings only; the station holds the tokens.</p>
+      ) : null}
     </Page>
   );
 }

@@ -2,12 +2,16 @@
    ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). The primitives come from base.css. */
 
 /* ════════════════════ the Tailnet card (Settings → Deck) ═════════════════════ */
+/* A bare settings section (§4.7: no boxed groups): its heading, labels and controls sit on the
+   same columns as the sections of a station tab. A rule divides it from the next section. */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
-  margin-bottom: var(--sp-4);
-  padding: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  padding: 0 0 var(--sp-5);
+  background: none;
+  border-bottom: 1px solid var(--border-soft);
 }
 .fd-tailnet h2 {
   margin: 0;
@@ -43,25 +47,29 @@
   grid-column: 2;
 }
 .fd-tailnet-auto > :not(label),
-.fd-tailnet-cert > :not(label, h3) {
+.fd-tailnet-cert > :not(label) {
   margin-left: calc(200px + var(--sp-5));
   font-size: var(--fs-meta);
   line-height: 1.45;
 }
-/* Narrow screens: the label goes above its switch, like the settings fields. */
+/* The help of the automatic mode ends with the "Applies after a restart" badge, as the help of a
+   settings field does (settings.css .fd-set-grid .fd-fieldhint:has(> .fd-set-badges)). */
+.fd-tailnet-auto > .fd-tailnet-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+}
+/* Narrow screens: the switch ends the label row (touch settings), like the settings fields; the
+   help and the state lines go under both. */
 @media (max-width: 720px) {
   .fd-tailnet label.fd-tailnet-switch {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
     color: var(--dim);
     font-size: var(--fs-meta);
   }
-  .fd-tailnet label.fd-tailnet-switch > .fd-switch {
-    grid-row: 2;
-    grid-column: 1;
-  }
   .fd-tailnet-auto > :not(label),
-  .fd-tailnet-cert > :not(label, h3) {
+  .fd-tailnet-cert > :not(label) {
     margin-left: 0;
   }
 }
@@ -73,16 +81,23 @@
 .fd-tailnet > button {
   justify-self: start;
 }
-/* The two settings of the card: sections under a faint rule. */
+/* A plain button on the page --bg keeps the light hairline, the same as Browse… in a settings
+   folder row (settings.css .fd-set-grid .fd-folder-row > button). */
+.fd-tailnet > button:not([class]),
+.fd-tailnet > button:not([class]):hover:not(:disabled) {
+  border-color: var(--btn-edge);
+}
+/* The two settings of the card: fields of one section, without a rule between them (like the
+   fields of a station tab section); the .fd-tailnet grid gap spaces them as .fd-set-grid rows. */
 .fd-tailnet-auto,
 .fd-tailnet-cert {
   display: grid;
   gap: var(--sp-1);
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-soft);
+  padding-top: 0;
 }
-/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The columns hug their
-   values, 32px apart; an address never breaks. */
+/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The row names take the
+   label column of the field grid, so that "Board address" starts on the switch column; the
+   address columns hug their values, 32px apart; an address never breaks. */
 .fd-tailnet-table {
   justify-self: start;
   width: auto;
@@ -102,7 +117,7 @@
   padding-right: 0;
 }
 .fd-tailnet-table th:first-child {
-  width: 120px;
+  width: calc(200px + var(--sp-5));
 }
 .fd-tailnet-table thead th {
   height: 28px;
@@ -244,6 +259,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-add-flow > textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 .fd-add-flow code {
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -301,14 +322,17 @@
   height: auto;
   min-height: 56px;
   padding: 10px var(--sp-3);
-  background: var(--raised-hi);
+  /* A neutral fill: the light --raised-hi is near the --focus-bg tint and read as selected. */
+  background: var(--badge-bg);
   border-radius: var(--r-card);
   color: var(--text);
   text-align: left;
   line-height: 1.35;
 }
+/* Hover: the --ctl-edge edge of the other filled answers on a --raised layer (§4.1). */
 .fd-add-choice:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--raised-hi) 92%, var(--text));
+  background: var(--badge-bg);
+  box-shadow: inset 0 0 0 1px var(--ctl-edge);
 }
 .fd-add-choice > .fd-icon {
   color: var(--faint);
@@ -344,7 +368,15 @@
   background: transparent;
 }
 .fd-add-choice[data-dim="true"]:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
+  box-shadow: inset 0 0 0 1px var(--ctl-edge);
+}
+/* Forced colors drop the box-shadow edge of the hover: give it an outline (the focus ring wins). */
+@media (forced-colors: active) {
+  .fd-add-choice:hover:not(:disabled):not(:focus-visible) {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
 }
 .fd-add-choice[data-dim="true"] .fd-add-choice-title {
   color: var(--dim);
@@ -585,6 +617,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
   word-break: break-all;
+}
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-add-command textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
 }
 .fd-add-command-actions {
   display: flex;

@@ -6,7 +6,7 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { recordedRequest } from '../testing/timeline';
-import { NeedsYouRail } from './NeedsYouRail';
+import { NeedsYouRail, railCursor, railKeyOption, railStep } from './NeedsYouRail';
 
 const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
   request_id: 'r1',
@@ -16,8 +16,8 @@ const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
   details: 'cargo test',
   input: null,
   options: [
-    { option_id: 'allow', label: 'Allow' },
-    { option_id: 'deny', label: 'Deny' },
+    { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+    { option_id: 'deny', label: 'Deny', kind: 'deny' },
   ],
   response: 'rpc_reply',
   requested_at: 1,
@@ -64,6 +64,22 @@ describe('needs-you rail', () => {
     expect(html.match(/aria-label="(Allow|Deny): /g)).toHaveLength(2);
   });
 
+  test('deny is marked by its kind, not by its place (the same rule as the approval dock)', () => {
+    const html = rail(
+      request({
+        options: [
+          { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+          { option_id: 'deny', label: 'Deny', kind: 'deny' },
+          { option_id: 'amend', label: 'Amend', kind: 'amend' },
+        ],
+      }),
+    );
+    expect(html).toMatch(/<button type="button" class="fd-danger" aria-label="Deny: /);
+    // The last option amends: it is a plain button, not a danger one.
+    expect(html).toMatch(/<button type="button" aria-label="Amend: /);
+    expect(html).not.toMatch(/class="fd-danger" aria-label="Amend: /);
+  });
+
   test('the first request is selected and the options carry their key hints', () => {
     const html = rail(
       request({
@@ -76,11 +92,35 @@ describe('needs-you rail', () => {
     );
     expect(html).toContain('data-request="r1" data-selected="true"');
     expect(html).toContain(
-      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move',
+      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move <span class="fd-kbd">a</span> First <span class="fd-kbd">d</span> Last</span>',
     );
     expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
     expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
     expect(html).toMatch(/Deny<span class="fd-kbd">d<\/span>/);
+    // The legend names the number key of the middle option.
+    expect(html).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span> Option</span>',
+    );
+  });
+
+  test('the number legend shows only with more than two options, and names the range', () => {
+    expect(rail(request())).not.toContain('data-keys="number"');
+    const four = rail(
+      request({
+        options: ['a', 'b', 'c', 'd'].map((id) => ({ option_id: id, label: id.toUpperCase() })),
+      }),
+    );
+    expect(four).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span>–<span class="fd-kbd">3</span> Option</span>',
+    );
+    // An unanswerable request has no key hint, so no legend.
+    const open = rail(
+      request({
+        options: ['a', 'b', 'c'].map((id) => ({ option_id: id, label: id })),
+      }),
+      null,
+    );
+    expect(open).not.toContain('fd-rail-keys');
   });
 
   test('a single option is hinted with a, and only the first of two requests is selected', () => {
@@ -108,6 +148,68 @@ describe('needs-you rail', () => {
     expect(two.match(/data-selected="true"/g)).toHaveLength(1);
     expect(two).toContain('data-request="r1" data-selected="true"');
     expect(two).not.toContain('data-request="r2" data-selected');
+  });
+
+  test('the cursor starts on the first answerable request, and a answers it', () => {
+    const permission = request({ request_id: 'r2', requested_at: 2 });
+    const sessions = [
+      card('s1', 'needs_you', 'station-a', {
+        title: 'Ask me',
+        capabilities: claudeCaps(),
+        open_requests: [{ ...recordedRequest('codex-question_rpc'), requested_at: 1 }],
+      }),
+      card('s2', 'needs_you', 'station-a', {
+        title: 'Fix login',
+        capabilities: claudeCaps(),
+        open_requests: [permission],
+      }),
+    ];
+    const html = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={sessions}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        sessionActions={(key) =>
+          sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
+        }
+      />,
+    );
+    // the question comes first (the oldest) and opens its session; the permission is selected
+    expect(html.indexOf('Open session')).toBeLessThan(html.indexOf('data-request="r2"'));
+    expect(html.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(html).toContain('data-request="r2" data-selected="true"');
+    // the keys work on the cursor: a answers the permission with its first option
+    const cursor = railCursor([false, true], 0);
+    expect(cursor).toBe(1);
+    expect(permission.options[railKeyOption('a', permission.options.length)]?.option_id).toBe(
+      'allow',
+    );
+    expect(permission.options[railKeyOption('d', permission.options.length)]?.option_id).toBe(
+      'deny',
+    );
+  });
+
+  test('[ and ] skip the requests that the keys cannot answer, and stop at the ends', () => {
+    const answerable = [true, false, false, true, false];
+    expect(railStep(answerable, 0, 1)).toBe(3);
+    expect(railStep(answerable, 3, 1)).toBe(3);
+    expect(railStep(answerable, 3, -1)).toBe(0);
+    expect(railStep(answerable, 0, -1)).toBe(0);
+    // a shrunk list or a request that became unanswerable moves the cursor to an answerable one
+    expect(railCursor(answerable, 9)).toBe(3);
+    expect(railCursor(answerable, 1)).toBe(3);
+    expect(railCursor([true, false], 1)).toBe(0);
+    expect(railCursor([false, false], 0)).toBe(-1);
+    expect(railCursor([], 0)).toBe(-1);
+    // a, d and the numbers
+    expect(railKeyOption('a', 1)).toBe(0);
+    expect(railKeyOption('d', 1)).toBe(-1);
+    expect(railKeyOption('d', 3)).toBe(2);
+    expect(railKeyOption('2', 3)).toBe(1);
+    expect(railKeyOption('4', 3)).toBe(-1);
+    expect(railKeyOption('x', 3)).toBe(-1);
   });
 
   test('without an answerable request there is no selection and no key hint', () => {
@@ -168,6 +270,18 @@ describe('needs-you rail', () => {
       />,
     );
     expect(strip).toBe('');
+    // With the header slot of the phone, the strip variant keeps the switch there too.
+    const phone = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="strip"
+        freshness="live"
+        onOpen={() => {}}
+        bellSlot={null}
+      />,
+    );
+    expect(phone).toBe('');
   });
 
   test('the where cell shows the branch over the station, and the bell goes to the header slot', () => {

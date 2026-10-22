@@ -61,7 +61,7 @@ export function AgentsMenu(props: AgentsMenuProps) {
         <>
           <button
             type="button"
-            className="fd-agent-row"
+            className="fd-agent-row fd-selbar"
             aria-current={agent === null ? 'true' : undefined}
             onClick={choose(close, { kind: 'main' })}
           >
@@ -74,7 +74,7 @@ export function AgentsMenu(props: AgentsMenuProps) {
             <button
               key={sub.node_id}
               type="button"
-              className="fd-agent-row"
+              className="fd-agent-row fd-selbar"
               data-agent={sub.node_id}
               aria-current={agent === sub.node_id ? 'true' : undefined}
               onClick={choose(close, { kind: 'agent', node_id: sub.node_id })}

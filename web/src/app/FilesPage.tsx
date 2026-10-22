@@ -9,6 +9,8 @@ import { Page } from '../ui/page';
 /** The most recent session folders that the chip row offers. */
 const MAX_FOLDERS = 8;
 const ROOT_KEY = 'fd-files-root';
+/** The summary sentence under the title (DESIGN-SYSTEM §4.3). */
+const FILES_DESC = 'Browse and open the files of a station.';
 
 type Opened = { readonly station: string; readonly folder: string };
 
@@ -74,7 +76,7 @@ export function FilesPage({
   const [folder, setFolder] = useState(opened?.folder ?? '');
   if (!filesFor) {
     return (
-      <Page title="Files" className="fd-files-page">
+      <Page title="Files" description={FILES_DESC} className="fd-files-page">
         <p className="fd-note">Files need a live board with the drive scope.</p>
       </Page>
     );
@@ -90,7 +92,7 @@ export function FilesPage({
   const pinned = readPins()[station] ?? [];
   const recent = sessionFolders(sessions, station, pinned);
   return (
-    <Page title="Files" className="fd-files-page" wide>
+    <Page title="Files" description={FILES_DESC} className="fd-files-page" wide>
       <div className="fd-panel fd-files-folder">
         <form
           aria-label="Open a folder"

@@ -151,8 +151,11 @@ describe('field rendering for each kind', () => {
 
   test('a text is an input; an enum is a select of its options', () => {
     expect(html).toContain('value="Alpha"');
-    expect(html).toContain('<option value="direct">direct</option>');
-    expect(html).toContain('<option value="shim" selected="">shim</option>');
+    // The host options show words; the values stay the same.
+    expect(html).toContain('<option value="direct">Directly</option>');
+    expect(html).toContain(
+      '<option value="shim" selected="">In a shim (survives restarts)</option>',
+    );
     expect(html).toContain('<option value="claude">claude</option>');
   });
 

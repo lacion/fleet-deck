@@ -23,6 +23,16 @@ describe('Markdown', () => {
     expect(html).not.toContain('<b>');
   });
 
+  test('read-only (the wall): a link and an image are plain text, not a focusable link', () => {
+    const html = renderToStaticMarkup(
+      <Markdown text="[site](https://x.example) ![pic](https://x.example/p.png)" readOnly />,
+    );
+    expect(html).not.toContain('<a ');
+    expect(html).toContain('site');
+    expect(html).toContain('pic');
+    expect(md('[site](https://x.example)')).toContain('<a href="https://x.example"');
+  });
+
   test('a javascript: link has no javascript href', () => {
     const html = md('[click](javascript:alert(1))');
     expect(html.toLowerCase()).not.toContain('javascript:');

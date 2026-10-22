@@ -28,7 +28,11 @@ export function SetupField({ value, remember, onValue, onRemember }: Props) {
         Runs with /bin/sh in the new workspace before the agent starts. It has 10 minutes, and its
         background processes end with it.
       </p>
-      {problem === null ? null : <p role="alert">{problem}</p>}
+      {problem === null ? null : (
+        <p id="fd-spawn-setup-error" role="alert">
+          {problem}
+        </p>
+      )}
       <label className="fd-spawn-opt">
         <input
           type="checkbox"

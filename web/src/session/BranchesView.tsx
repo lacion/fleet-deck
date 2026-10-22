@@ -218,7 +218,6 @@ export function BranchesView({ load, loadDiff, onOpenFile, fleet }: Props) {
     );
   };
   // Once on mount; "Refresh" and "Try again" load again.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` only reads refs
   useEffect(reload, []);
 
   const open = (row: RepoBranch) => {

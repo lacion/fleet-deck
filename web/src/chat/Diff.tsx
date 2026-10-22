@@ -18,6 +18,7 @@ import { FileText, Icon } from '../ui/icons';
 import {
   diffLineKinds,
   type FileHead,
+  type FileStatus,
   fileHeads,
   isPlumbing,
   type LineNo,
@@ -35,13 +36,48 @@ function PathText({ path }: { readonly path: string }) {
   const cut = path.lastIndexOf('/') + 1;
   return (
     <>
-      {cut > 0 ? <span className="fd-dl-dir">{path.slice(0, cut)}</span> : null}
+      {cut > 0 ? (
+        <span className="fd-dl-dir">
+          <bdi>{path.slice(0, cut)}</bdi>
+        </span>
+      ) : null}
       <span className="fd-dl-base">{path.slice(cut)}</span>
     </>
   );
 }
 
-/** The header row of a file: icon, path (a button with `onOpenFile`), and its +/− counts. */
+/** The text and the tone of the status badge of a file header. */
+export function fileStatusBadge(status: FileStatus): {
+  readonly text: string;
+  readonly title: string;
+  readonly tone: 'ok' | 'hazard' | undefined;
+} {
+  switch (status.kind) {
+    case 'added':
+      return { text: 'new', title: 'New file', tone: 'ok' };
+    case 'deleted':
+      return { text: 'deleted', title: 'Deleted file', tone: 'hazard' };
+    case 'mode':
+      return {
+        text: status.new === '' ? `mode ${status.old}` : `mode ${status.old} \u2192 ${status.new}`,
+        title: 'The file mode changed',
+        tone: undefined,
+      };
+  }
+}
+
+/** The status badge of a file header: a new or a deleted file, or a changed file mode. */
+export function FileStatusBadge({ status }: { readonly status: FileStatus | null }) {
+  if (status === null) return null;
+  const badge = fileStatusBadge(status);
+  return (
+    <span className="fd-badge fd-dl-status" data-tone={badge.tone} title={badge.title}>
+      {badge.text}
+    </span>
+  );
+}
+
+/** The header row of a file: icon, path (a button with `onOpenFile`), its status and its +/− counts. */
 function FileHeader({
   head,
   onOpenFile,
@@ -68,6 +104,7 @@ function FileHeader({
           <PathText path={head.path} />
         </span>
       )}
+      <FileStatusBadge status={head.status} />
       {head.add > 0 || head.del > 0 ? (
         <span className="fd-dl-stat">
           {head.add > 0 ? <span data-sign="add">{`+${head.add}`}</span> : null}

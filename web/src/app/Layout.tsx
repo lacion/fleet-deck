@@ -1,11 +1,13 @@
-import { type ReactNode, useRef } from 'react';
+import { type ReactNode, type RefObject, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   Ellipsis,
   Icon,
+  Info,
   Layers,
   LayoutGrid,
   type LucideIcon,
+  OctagonAlert,
   PanelLeft,
   Plus,
   X,
@@ -44,6 +46,38 @@ type Props = {
   readonly chrome?: Chrome | undefined;
   readonly children: ReactNode;
 };
+
+/**
+ * Keeps `--fd-dock-h` on the main column: the height of its terminal dock. Next to the ops panel
+ * of the fleet home the dock lies over the main column (shell.css), and the home leaves this room.
+ */
+function useDockHeight(main: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = main.current;
+    if (el === null || typeof ResizeObserver === 'undefined') return undefined;
+    if (typeof MutationObserver === 'undefined') return undefined;
+    let dock: Element | null = null;
+    const sizes = new ResizeObserver(() => {
+      if (dock === null) return;
+      el.style.setProperty('--fd-dock-h', `${dock.getBoundingClientRect().height}px`);
+    });
+    const find = () => {
+      const next = el.querySelector(':scope > .fd-tdock');
+      if (next === dock) return;
+      if (dock !== null) sizes.unobserve(dock);
+      dock = next;
+      if (dock === null) el.style.removeProperty('--fd-dock-h');
+      else sizes.observe(dock);
+    };
+    find();
+    const children = new MutationObserver(find);
+    children.observe(el, { childList: true });
+    return () => {
+      children.disconnect();
+      sizes.disconnect();
+    };
+  }, [main]);
+}
 
 /** The connection pill (§4.2): a dot and its word (Live, Stale, Offline); never color alone. */
 export function LivePill({ chrome }: { readonly chrome: Chrome | undefined }) {
@@ -92,6 +126,8 @@ export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
           data-tone={n.tone}
           role={n.tone === 'error' ? 'alert' : 'status'}
         >
+          {/* The tone is also a shape (WCAG 1.4.1): an octagon for an error, an "i" for info. */}
+          <Icon of={n.tone === 'error' ? OctagonAlert : Info} size={14} />
           {n.text}
         </p>
       ))}
@@ -114,6 +150,7 @@ function StartFailures({
     <div className="fd-notices">
       {failures.map((f) => (
         <div key={f.ref} className="fd-notice fd-notice-row" data-tone="error" role="alert">
+          <Icon of={OctagonAlert} size={14} />
           <span className="fd-notice-text">{failureText(f)}</span>
           <button type="button" className="fd-ghost fd-sm" onClick={() => onOpen?.(f)}>
             Open
@@ -195,22 +232,35 @@ const PHONE_TITLES: Partial<Record<Route['name'], string>> = {
   compare: 'Compare',
 };
 
+/** The parent of a detail page of the More tab: Back goes to its list (or the fleet), not More. */
+const PARENT: Partial<Record<Route['name'], { href: string; label: string }>> = {
+  artifact: { href: '#/artifacts', label: 'Back to Artifacts' },
+  project: { href: '#/projects', label: 'Back to Projects' },
+  compare: { href: '#/fleet', label: 'Back to Fleet' },
+};
+
+const BACK_TO_MORE = { href: '#/more', label: 'Back to More' };
+
 /**
- * The phone top bar (§4.8, 52px): the mark (or Back to More on a page of the More tab), the page
- * name, the connection and the avatar. The page keeps its own heading for screen readers.
+ * The phone top bar (§4.8, 52px): the mark (or Back on a page of the More tab: to its parent
+ * list, else to More), the page name, the connection and the avatar. The page keeps its own
+ * heading for screen readers.
  */
-function PhoneBar({
+export function PhoneBar({
   route,
   chrome,
 }: {
   readonly route: Route;
   readonly chrome: Chrome | undefined;
 }) {
-  const back = route.name !== 'more' && MORE_TAB.includes(route.name);
+  const back =
+    route.name !== 'more' && MORE_TAB.includes(route.name)
+      ? (PARENT[route.name] ?? BACK_TO_MORE)
+      : undefined;
   return (
     <header className="fd-phonebar">
-      {back ? (
-        <a href="#/more" className="fd-iconbtn fd-phonebar-back" aria-label="Back to More">
+      {back !== undefined ? (
+        <a href={back.href} className="fd-iconbtn fd-phonebar-back" aria-label={back.label}>
           <Icon of={ChevronLeft} />
         </a>
       ) : (
@@ -336,6 +386,8 @@ export function Layout({
   children,
 }: Props) {
   const showBar = layout === 'phone' && BAR_ROUTES.includes(route.name);
+  const main = useRef<HTMLDivElement>(null);
+  useDockHeight(main);
   // R11.4: a guest of the owner's deck sees the banner and a smaller board.
   const people = usePeople();
   return (
@@ -362,19 +414,22 @@ export function Layout({
           <span className="fd-wordmark">Fleet Deck</span>
         </header>
       ) : null}
-      <div className="fd-main">
+      <div className="fd-main" ref={main}>
         {showBar ? <PhoneBar route={route} chrome={chrome} /> : null}
         {layout === 'phone' && route.name === 'terminals' ? (
-          <header className="fd-topbar">
+          // The phone bar of §4.8 (the page has no other heading): Back closes the terminals.
+          <header className="fd-phonebar">
             <button
               type="button"
-              className="fd-iconbtn"
+              className="fd-iconbtn fd-phonebar-back"
               aria-label="Back"
               onClick={onTerminalsBack}
             >
               <Icon of={ChevronLeft} />
             </button>
-            <h1 className="fd-topbar-title">Terminals</h1>
+            <h1 className="fd-phonebar-title fd-wide">Terminals</h1>
+            <LivePill chrome={chrome} />
+            <Avatar />
           </header>
         ) : null}
         {people.member === null ? null : (

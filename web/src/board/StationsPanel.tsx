@@ -22,8 +22,14 @@ import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
-import { ConfigReferenceHeader, StationConfigDrift, useDriftReference } from './StationConfigDrift';
+import {
+  ConfigReferenceHeader,
+  type DriftReference,
+  StationConfigDrift,
+  useDriftReference,
+} from './StationConfigDrift';
 import { StationResources } from './StationResources';
+import { showLastSeen, stationsSummary } from './StationSummary';
 import { StationTaildrive } from './StationTaildrive';
 import { StationTraits } from './StationTraits';
 import type { Outcome } from '../session/commands';
@@ -40,6 +46,8 @@ type Props = {
   readonly sessions: readonly DeckSession[];
   readonly freshness: Freshness;
   readonly actions?: StationActions | undefined;
+  /** Test seam: the config reference state in place of the deck's (`useDriftReference`). */
+  readonly drift?: DriftReference | undefined;
 };
 
 const NONE = '—';
@@ -413,7 +421,7 @@ function Worktrees({
         if (event.currentTarget.open && state.kind === 'idle') run();
       }}
     >
-      <summary className="fd-label">
+      <summary className="fd-label" data-variant="toggle">
         Worktrees{state.kind === 'ready' ? ` (${state.worktrees.length})` : ''}
       </summary>
       <div className="fd-wt-body">
@@ -466,13 +474,14 @@ function Worktrees({
 }
 
 /** Link health and board freshness are different facts. Never invent metadata. */
-export function StationsPanel({ stations, sessions, freshness, actions }: Props) {
+export function StationsPanel({ stations, sessions, freshness, actions, drift: given }: Props) {
   const [adding, setAdding] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const now = useNow(undefined, 30000);
   const canPair = actions?.canAdmin === true && freshness === 'live';
-  const drift = useDriftReference();
+  const deckDrift = useDriftReference();
+  const drift = given ?? deckDrift;
   const reference = stations.find((s) => s.station_id === drift.station);
   const referenceMenu =
     drift.offered && stations.length > 0 ? (
@@ -486,7 +495,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
   return (
     <Page
       title="Stations"
-      count={stations.length}
+      description={stationsSummary(stations, freshness)}
       className="fd-stations"
       actions={
         actions?.canAdmin === true ? (
@@ -562,20 +571,24 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                       ))}
                     </span>
                   ) : (
-                    <span className="fd-load-bar" aria-hidden="true">
-                      <span
-                        style={{ width: loadWidth(active, info.max_sessions) }}
-                        data-high={
-                          info.max_sessions > 0 && active / info.max_sessions >= 0.9
-                            ? ''
-                            : undefined
-                        }
-                      />
+                    <span
+                      className="fd-meter"
+                      data-tone="neutral"
+                      data-level={
+                        info.max_sessions > 0 && active / info.max_sessions >= 0.9
+                          ? 'high'
+                          : undefined
+                      }
+                      aria-hidden="true"
+                    >
+                      <span style={{ width: loadWidth(active, info.max_sessions) }} />
                     </span>
                   )}
-                  {info?.max_sessions == null
-                    ? `${active} sessions`
-                    : `${active} of ${info.max_sessions} sessions`}
+                  <span className="fd-station-load-count">
+                    {info?.max_sessions == null
+                      ? `${active} sessions`
+                      : `${active} of ${info.max_sessions} sessions`}
+                  </span>
                 </span>
                 {actions?.canAdmin === true ? (
                   <div className="fd-station-menu">
@@ -614,17 +627,17 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   </div>
                 ) : null}
                 <div className="fd-station-live">
-                  <span
-                    title={
-                      station.last_seen === null ||
-                      Number.isNaN(new Date(station.last_seen).getTime())
-                        ? undefined
-                        : new Date(station.last_seen).toISOString()
-                    }
-                  >
-                    Last seen{' '}
-                    {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
-                  </span>
+                  {station.last_seen !== null && showLastSeen(station.last_seen, up, now) ? (
+                    <span
+                      title={
+                        Number.isNaN(new Date(station.last_seen).getTime())
+                          ? undefined
+                          : new Date(station.last_seen).toISOString()
+                      }
+                    >
+                      Last seen {relativeAge(station.last_seen, now)}
+                    </span>
+                  ) : null}
                   {drift.offered ? (
                     <StationConfigDrift station={station} reference={reference} />
                   ) : null}
@@ -679,7 +692,9 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
               </div>
               <div className="fd-station-folds">
                 <details className="fd-station-details">
-                  <summary className="fd-label">Details</summary>
+                  <summary className="fd-label" data-variant="toggle">
+                    Details
+                  </summary>
                   <dl className="fd-facts">
                     <dt>Station ID</dt>
                     <dd>{station.station_id}</dd>
@@ -709,7 +724,9 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                 </details>
                 {actions?.canAdmin === true && actions.shells !== undefined ? (
                   <details className="fd-station-sec">
-                    <summary className="fd-label">Shells</summary>
+                    <summary className="fd-label" data-variant="toggle">
+                      Shells
+                    </summary>
                     {info?.allow_shell === false ? (
                       <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
                         <p className="fd-note">
@@ -734,7 +751,8 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     now={now}
                   />
                 )}
-                {info?.desktop === undefined ? null : <DesktopPanel station={station} />}
+                {/* A station without a desktop has no Desktop fold (§1 principle 7). */}
+                {info?.desktop == null ? null : <DesktopPanel station={station} />}
               </div>
               {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">

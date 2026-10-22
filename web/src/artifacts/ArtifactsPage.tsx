@@ -11,6 +11,8 @@ import { KIND_LABEL, KINDS } from './kinds';
 import { type ListState, useArtifactList } from './useArtifactList';
 
 const SEARCH_MS = 250;
+/** The summary sentence under the title (DESIGN-SYSTEM §4.3). */
+const ARTIFACTS_DESC = 'Reports, diagrams and previews that sessions published.';
 
 type Filters = {
   readonly q: string;
@@ -96,7 +98,7 @@ export function ArtifactsPage({ actions, stations, sessions, now: givenNow, init
   const [retry, setRetry] = useState(0);
   if (actions === undefined) {
     return (
-      <Page title="Artifacts" className="fd-art-page">
+      <Page title="Artifacts" description={ARTIFACTS_DESC} className="fd-art-page">
         <p className="fd-note">Artifacts need a live board.</p>
       </Page>
     );
@@ -230,7 +232,13 @@ function Loaded({
     </form>
   );
   return (
-    <Page title="Artifacts" className="fd-art-page" actions={filterForm} wide>
+    <Page
+      title="Artifacts"
+      description={ARTIFACTS_DESC}
+      className="fd-art-page"
+      filters={filterForm}
+      wide
+    >
       <ArtifactsListBody
         state={state}
         filtered={filtered}

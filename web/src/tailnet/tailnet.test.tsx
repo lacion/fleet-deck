@@ -456,9 +456,9 @@ describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
     expect(off).toContain('Use Tailscale automatically');
     expect(off).toContain('type="checkbox"');
     expect(off).not.toContain('checked=""');
-    expect(off).toContain(
-      'Keeps the tailnet addresses current at each start. Applies after a restart.',
-    );
+    expect(off).toContain('Keeps the tailnet addresses current at each start.<span');
+    expect(off).toContain('<span class="fd-badge">Applies after a restart</span>');
+    expect(off).not.toContain('at each start. Applies after a restart.');
     const on = card(view({ auto: { enabled: true, skipped: [], changed: false } }));
     expect(on).toContain('checked=""');
     // The deck sends the effective value: the key absent is on.

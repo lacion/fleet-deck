@@ -4,7 +4,7 @@ import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-
+import { usedShare } from '../board/resources';
 import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
@@ -17,7 +17,7 @@ import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
-import { NEED_LABEL, type Need, oneLine, usageLine, wallSessions } from './model';
+import { NEED_LABEL, type Need, oneLine, toolParts, usageParts, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
 
@@ -146,21 +146,41 @@ export function TilesArea({
 /** One decimal place of gigabytes, without the unit: "20.4". */
 const gbNumber = (bytes: number): string => (bytes / 1e9).toFixed(1);
 
+type DiskLike = { readonly total_bytes: number; readonly free_bytes: number };
+
 function StationRow({ station }: { readonly station: StationView }) {
   // A wall display gets `display_resources` (no disk label, no path) in place of `info`. The wall
-  // shows the load and the memory only: one short line that a person reads across a room.
+  // shows the load, the memory and the fullest disk: one short line that a person reads across a
+  // room.
   const r = station.info?.resources ?? station.display_resources;
+  const disks: readonly DiskLike[] = r?.disks ?? [];
+  const fullest = disks.reduce<DiskLike | null>(
+    (best, d) =>
+      best === null ||
+      usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
+        usedShare(best.total_bytes - best.free_bytes, best.total_bytes)
+        ? d
+        : best,
+    null,
+  );
   const stats = [
     r?.cpu == null ? null : `CPU ${(r.cpu.load5_x100 / 100).toFixed(1)}/${r.cpu.cores}`,
     r?.memory == null
       ? null
       : `Mem ${gbNumber(r.memory.total_bytes - r.memory.available_bytes)}/${gbNumber(r.memory.total_bytes)} GB`,
+    // The free space only: "312.5 GB free" keeps its meaning when the line ends in an ellipsis.
+    fullest === null ? null : `Disk ${gbNumber(fullest.free_bytes)} GB free`,
   ].filter((t): t is string => t !== null);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
-      <span className="fd-wall-reach" aria-hidden="true" />
+      {/* The reach glyph and the words of the board (fleet lanes, Stations page). */}
+      <span
+        className="fd-dot"
+        data-status={station.reachable ? 'online' : 'unreachable'}
+        aria-hidden="true"
+      />
       <span className="fd-wall-station-name">{station.name}</span>
-      <span className="fd-wall-note">{station.reachable ? 'Link up' : 'Unreachable'}</span>
+      <span className="fd-wall-note">{station.reachable ? 'Online' : 'Offline'}</span>
       {stats.length === 0 ? null : (
         <span className="fd-wall-station-stats">{stats.join(' · ')}</span>
       )}
@@ -180,6 +200,7 @@ export function SideArea({
   const prs = usePrs();
   const projects = useProjects();
   const meter = tightest(rateMeters(sessions, stations));
+  const usage = meter === null ? null : usageParts(meter);
   const live = sessions.filter(
     (c) => c.status !== 'ended' && c.status !== 'lost' && c.status !== 'unreachable',
   );
@@ -192,7 +213,9 @@ export function SideArea({
       {meter === null || meter.usedPercent === null ? null : (
         <div className="fd-wall-block" data-part="usage">
           <h2 className="fd-wall-h">Usage</h2>
-          <p>{usageLine(meter)}</p>
+          <p>
+            {usage?.label} · <span className="fd-wall-fuel">{usage?.percent}</span>
+          </p>
           <span
             className="fd-meter"
             data-level={meter.usedPercent >= WARN_PERCENT ? 'high' : undefined}
@@ -223,8 +246,10 @@ export function SideArea({
             {pulls.map(({ card, match }) =>
               match === undefined ? null : (
                 <li key={refOf(card)} title={prChipTitle(match.pr)}>
-                  {card.summary.callsign ?? card.summary.session_id} · #{match.pr.number}{' '}
-                  {prStateText(match.pr)}
+                  <span className="fd-callsign">
+                    {card.summary.callsign ?? card.summary.session_id}
+                  </span>{' '}
+                  · #{match.pr.number} {prStateText(match.pr)}
                   {match.pr.checks === 'none' ? '' : ` · checks ${match.pr.checks}`}
                 </li>
               ),
@@ -289,12 +314,11 @@ export function StreamArea({
     // `filterStations` stands for `filter.stations`.
     [sessions, filterStations, filter.repo],
   );
-  // The deck sends the newest first. The list runs oldest first, and `.fd-wall-stream` draws it
-  // from the bottom up: the newest row sits under the heading, the oldest are cut at the bottom.
+  // The deck sends the newest first, and the list keeps that order: the newest row sits under the
+  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first.
   const rows = (items ?? [])
     .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
-    .slice(0, STREAM_ITEMS)
-    .reverse();
+    .slice(0, STREAM_ITEMS);
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
       <h2 className="fd-wall-h">Activity</h2>
@@ -307,15 +331,27 @@ export function StreamArea({
         <p className="fd-wall-note">No activity yet.</p>
       ) : (
         <ol className="fd-wall-stream">
-          {rows.map((item, n) => (
-            <li
-              key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
-              data-kind={item.kind}
-            >
-              <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>{' '}
-              <strong>{item.session_title ?? item.session_id}</strong> {oneLine(item.text, 160)}
-            </li>
-          ))}
+          {rows.map((item, n) => {
+            const text = oneLine(item.text, 160);
+            // A command or a path is code (§4.5): the tool name in sans, the target in mono.
+            const tool = toolParts(item.kind, text);
+            return (
+              <li
+                key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
+                data-kind={item.kind}
+              >
+                <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>{' '}
+                <strong>{item.session_title ?? item.session_id}</strong>{' '}
+                {tool === null ? (
+                  text
+                ) : (
+                  <>
+                    {tool.lead} <code>{tool.target}</code>
+                  </>
+                )}
+              </li>
+            );
+          })}
         </ol>
       )}
     </section>

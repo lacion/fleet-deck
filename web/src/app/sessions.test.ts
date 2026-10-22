@@ -8,6 +8,7 @@ import {
   sessionTitle,
   sidebarModel,
   sidebarOrder,
+  stationOrder,
 } from './sessions';
 
 const ids = (cards: readonly { summary: { session_id: string } }[]) =>
@@ -80,9 +81,18 @@ describe('sidebar model', () => {
     expect(alpha?.count).toBe(3);
   });
 
-  test('station groups are sorted by name', () => {
+  test('station groups follow the station list, the lane order of the fleet board', () => {
     const model = sidebarModel(sessions, stations, '');
-    expect(model.groups.map((g) => g.name)).toEqual(['Alpha', 'Beta']);
+    expect(model.groups.map((g) => g.name)).toEqual(['Beta', 'Alpha']);
+  });
+
+  test('the station order: the station list first, then the other ids by id', () => {
+    expect(stationOrder(['zeta', 'station-a', 'beta', 'station-b', 'zeta'], stations)).toEqual([
+      'station-b',
+      'station-a',
+      'beta',
+      'zeta',
+    ]);
   });
 
   test('stations without sessions show only when there is no query', () => {
@@ -91,8 +101,15 @@ describe('sidebar model', () => {
     expect(sidebarModel(only, stations, 'w1').groups).toHaveLength(1);
   });
 
+  test('a search whose only match on a station needs you shows no empty station group', () => {
+    const only = [card('n1', 'needs_you', 'station-a', { title: 'Fix the login' })];
+    const model = sidebarModel(only, stations, 'login');
+    expect(model.groups).toEqual([]);
+    expect(ids(model.needs)).toEqual(['n1']);
+  });
+
   test('the j/k order is the live sessions of the groups, each once', () => {
-    expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'w1', 'i1']);
+    expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'i1', 'w1']);
   });
 
   test('the j/k order follows the rows: the needs-you group first, then the stations', () => {
@@ -186,5 +203,35 @@ describe('palette matches', () => {
     expect(ids(paletteMatches(list, ''))).toEqual(['c', 'b', 'a']);
     expect(ids(paletteMatches(list, '', 2))).toEqual(['c', 'b']);
     expect(ids(paletteMatches(list, 'a'))).toEqual(['a']);
+  });
+
+  test('the needs-you sessions list the longest wait first, as the Needs you panel', () => {
+    const asks = (at: number) => [
+      {
+        request_id: `r${at}`,
+        node_id: null,
+        request_kind: 'tool' as const,
+        title: 'Run it?',
+        details: '',
+        input: null,
+        options: [],
+        response: 'rpc_reply' as const,
+        requested_at: at,
+      },
+    ];
+    // "new" asked 2 min ago and updated last; "old" asked 6 min ago.
+    const list = [
+      card('new', 'needs_you', 'station-a', { updated_at: 9, open_requests: asks(8) }),
+      card('old', 'needs_you', 'station-a', { updated_at: 5, open_requests: asks(4) }),
+      card('w', 'working', 'station-a', { updated_at: 10 }),
+    ];
+    expect(ids(paletteMatches(list, ''))).toEqual(['old', 'new', 'w']);
+    expect(ids(sidebarModel(list, [station()], '').needs)).toEqual(['old', 'new']);
+    // Starred stays the first key.
+    const starred = sidebarModel(list, [station()], '', {
+      starred: new Set(['station-a/new']),
+      archived: new Set(),
+    });
+    expect(ids(starred.needs)).toEqual(['new', 'old']);
   });
 });

@@ -23,6 +23,12 @@
   min-height: 0;
   overflow-y: auto;
 }
+/* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 16px under the
+   tab row, so that a row does not end in a hard cut at the rule (ChatView sets `data-scrolled`).
+   The mask reads only the alpha. */
+.fd-chat-scroll[data-scrolled] {
+  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--sp-4));
+}
 .fd-chat-scroll:focus-visible,
 .fd-chat summary:focus-visible,
 .fd-md a:focus-visible {
@@ -252,17 +258,36 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A file target stays on one line; a long one loses its start (the end names the file), the
+   same as the Properties Folder row (`.fd-props-mono[data-path]`). `<bdi>` keeps the text LTR. */
+.fd-chat-tool-arg[data-path] {
+  direction: rtl;
+  text-align: left;
+}
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
 }
-/* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. */
+/* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. It takes
+   at most 30% of the row, so that the mono target keeps the most of it. */
 .fd-chat-tool-result {
   flex: none;
+  max-width: 30%;
   margin-left: auto;
+  overflow: hidden;
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A call that waits for you: "Waiting for your answer", on the phone only "Waiting" (the
+   approval sheet under the log says what is needed). The full text is the accessible name. */
+.fd-chat-wait-short,
+[data-layout="phone"] .fd-chat-wait-long {
+  display: none;
+}
+[data-layout="phone"] .fd-chat-wait-short {
+  display: inline;
 }
 .fd-chat-tool-result[data-tone="hazard"] {
   color: var(--hazard);
@@ -417,6 +442,8 @@
   align-items: center;
   gap: var(--sp-2);
   min-height: var(--chat-row);
+  /* The icon column of the tool rows above: their summary starts at --sp-2. */
+  padding: 0 var(--sp-2);
   color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
@@ -533,9 +560,11 @@
 .fd-md-code {
   margin: var(--sp-3) 0;
   overflow: hidden;
-  background: var(--code);
+  /* --code-chat: --code in the dark theme, --raised in the light one, where --code is about
+     1.02:1 on --bg and the block looked like an empty outline (§2.1). */
+  background: var(--code-chat);
   border-radius: var(--r-panel);
-  box-shadow: inset 0 0 0 1px var(--border-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .fd-md-code-head {
   display: flex;
@@ -672,19 +701,16 @@
   color: var(--text);
   font: inherit;
 }
-.fd-dl-path {
-  display: inline-flex;
-  min-width: 0;
-  overflow: hidden;
-}
-.fd-dl-dir {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.fd-dl-base {
-  flex: none;
+/* On a touch screen the file header row and its file-name button are a 44px target (the base.css
+   coarse rule has zero specificity, and the rule above resets it). */
+@media (pointer: coarse) {
+  .fd-diff > .fd-dl[data-kind="file"] {
+    min-height: var(--tap-min);
+  }
+  .fd-dl-file {
+    align-self: stretch;
+    min-height: var(--tap-min);
+  }
 }
 .fd-dl-file:hover:not(:disabled) {
   background: none;
@@ -705,6 +731,14 @@
 }
 .fd-dl-stat > [data-sign="del"] {
   color: var(--hazard);
+}
+/* The status badge of a new, deleted or mode-changed file sits at the right, before the +/−. */
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-status {
+  flex: none;
+  margin-left: auto;
+}
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-status + .fd-dl-stat {
+  margin-left: 0;
 }
 /* DL-179: two number gutters, old then new; a deleted line leaves the new one blank and an
    added line the old one. The comment target (.fd-dl-n) sits in the gutter of its side. */
@@ -766,44 +800,27 @@
   width: auto;
   max-width: none;
   height: calc(var(--chat-tabs-h) - 1px);
-  padding: 0 var(--sp-4) 0 var(--sp-2);
+  /* The tab labels center above their 2px underline, and this 12px text is one step smaller
+     than their 13px: 1px at the bottom puts the summary text on their baseline (measured). */
+  padding: 0 var(--sp-4) 1px var(--sp-2);
   background: var(--bg); /* a tab that scrolls under it (phone) does not show through */
 }
 @media (pointer: coarse) {
   .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
     --chat-tabs-h: var(--tap-min);
+    padding-bottom: 0; /* the 44px summary is already on the baseline of the 44px tabs */
   }
 }
+/* The phone tab row keeps the measured width of the menu clear (session.css, tabReserve.ts). */
 [data-layout="phone"] .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
   padding-right: var(--sp-2);
-}
-/* A menu: the ghost summary gets a small chevron after its text. */
-.fd-chat-filters > .fd-chat-show > summary::after {
-  content: "";
-  flex: none;
-  width: 12px;
-  height: 12px;
-  margin-right: -2px;
-  background: currentColor;
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  transition: transform var(--t-fast);
-}
-.fd-chat-filters > .fd-chat-show[open] > summary::after {
-  transform: rotate(180deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .fd-chat-filters > .fd-chat-show > summary::after {
-    transition: none;
-  }
+  padding-left: var(--sp-1);
 }
 .fd-chat-show .fd-menu-body {
   min-width: 200px;
 }
-/* A filter in the menu reads as a checkbox row (the base checkbox look). */
-.fd-chat-show .fd-chip {
-  position: relative;
+/* A filter in the menu: a label row around a real checkbox (base.css draws the box). */
+.fd-chat-show-item {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -812,57 +829,29 @@
   border-radius: var(--r-ctl);
   color: var(--text);
   font-size: var(--fs-ui);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
 }
-.fd-chat-show .fd-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
+.fd-chat-show-item:hover {
+  background: var(--badge-bg);
 }
-.fd-chat-show .fd-chip::before {
-  content: "";
-  flex: none;
-  width: 14px;
-  height: 14px;
-  background: var(--raised);
-  border: 1px solid var(--ctl-edge);
-  border-radius: 4px;
-}
-.fd-chat-show .fd-chip[aria-pressed="true"] {
-  border-color: transparent;
-  background: transparent;
-  font-weight: 500; /* a checked row is not bold (base.css makes a pressed chip 600) */
-}
-.fd-chat-show .fd-chip[aria-pressed="true"]:hover {
-  background: var(--raised-hi);
-}
-/* A shown kind: the ink box with its check (yellow stays "needs you"). */
-.fd-chat-show .fd-chip[aria-pressed="true"]::before {
-  background: var(--ink-fill);
-  border-color: var(--ink-fill);
-}
-.fd-chat-show .fd-chip[aria-pressed="true"]::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(var(--sp-2) + 2px);
-  width: 10px;
-  height: 10px;
-  margin-top: -5px;
-  background: var(--ink-on);
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-}
-.fd-chat-show .fd-chip:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+@media (pointer: coarse) {
+  .fd-chat-show-item {
+    height: auto;
+    min-height: var(--tap-min);
+  }
 }
 [data-layout="phone"] .fd-chat > .fd-chat-filters {
   padding-inline: var(--sp-3);
 }
+/* The count of a hidden kind, right-aligned in its column (no tabular figures: §2.3). */
 .fd-chat-filter-count {
+  min-width: 2ch;
   margin-left: auto;
   color: var(--faint);
   font-size: var(--fs-meta);
-  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* DL-189: the earlier history of an imported session, above the timeline. */
@@ -873,7 +862,6 @@
   padding-bottom: var(--sp-4);
   margin-bottom: var(--sp-4);
   border-bottom: 1px solid var(--border-soft);
-  opacity: 0.85;
 }
 .fd-history > * {
   margin: 0;
@@ -986,12 +974,11 @@
   text-align: left;
 }
 .fd-agent-row:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
-/* The chosen agent: the selection fill and the blue marker at the left. */
+/* The chosen agent: the selection fill and the blue marker at the left (.fd-selbar). */
 .fd-agent-row[aria-current="true"] {
   background: var(--raised-hi);
-  box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-agent-line {
   display: flex;
@@ -1230,6 +1217,36 @@
 .fd-chat-nested > .fd-chat-ask::after,
 .fd-chat-nested .fd-chat-mark:not([data-status="ok"], [data-status="failed"]) {
   background: var(--surface);
+}
+
+/* Forced colors (DESIGN-SYSTEM §6): the code block frame gets a system color (the Show chevron
+   is the toggle summary of base.css, which has its own forced-colors rule); the flight path keeps
+   its colors, so that a filled ok node and a waiting ring still differ by fill, and the line
+   stays. */
+@media (forced-colors: active) {
+  /* The code block frame is an inset box-shadow, which forced colors drop. */
+  .fd-md-code {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-chat-mark,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
+    > :is(.fd-chat-reasoning, .fd-chat-toolgroup)
+    > summary::after,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body) > .fd-chat-ask::after,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
+    > :is(
+      .fd-chat-message,
+      .fd-chat-reasoning,
+      .fd-chat-tool,
+      .fd-chat-toolgroup,
+      .fd-chat-card,
+      .fd-chat-line,
+      .fd-chat-turn,
+      .fd-chat-working
+    )::before {
+    forced-color-adjust: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

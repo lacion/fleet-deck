@@ -23,6 +23,7 @@ import { TrackerBlock, type TrackerKind } from './TrackerSection';
 import { Field } from '../ui/page';
 import type { SettingsRoute } from '../settings/SettingsPage';
 import { describe } from '../settings/http';
+import { NoticeIcon } from '../settings/NoticeIcon';
 
 type Banner = { readonly tone: 'info' | 'warn' | 'error'; readonly text: string };
 
@@ -188,6 +189,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
           data-tone={banner.tone}
           role={banner.tone === 'error' ? 'alert' : 'status'}
         >
+          <NoticeIcon tone={banner.tone} />
           <span>{banner.text}</span>
           <button type="button" className="fd-ghost fd-sm" onClick={() => setBanner(null)}>
             Dismiss
@@ -197,6 +199,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
       {state.kind === 'loading' ? <p role="status">Loading accounts…</p> : null}
       {state.kind === 'error' ? (
         <div className="fd-set-notice" data-tone="error" role="alert">
+          <NoticeIcon tone="error" />
           <span>{state.text}</span>
           <button type="button" className="fd-sm" onClick={reload}>
             Try again
@@ -207,6 +210,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
         <>
           {list.env_tokens.length === 0 ? null : (
             <div className="fd-set-notice" data-tone="warn" role="status">
+              <NoticeIcon tone="warn" />
               <span>{envTokenText(list.env_tokens)}</span>
             </div>
           )}

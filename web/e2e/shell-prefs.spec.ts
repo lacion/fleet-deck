@@ -44,15 +44,17 @@ test('the compact switch sets the density and survives a reload', async ({ page 
   await deck.install(page);
   await logIn(page);
   await openMorePage(page);
-  const compact = page.getByRole('button', { name: 'Compact cards' });
-  await expect(compact).toHaveAttribute('aria-pressed', 'false');
+  // The More page has a labelled switch (the sidebar footer has the icon toggle).
+  const compact = page.getByRole('switch', { name: 'Compact cards' });
+  await expect(compact).not.toBeChecked();
   await compact.click();
-  await expect(compact).toHaveAttribute('aria-pressed', 'true');
+  await expect(compact).toBeChecked();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await openMorePage(page);
-  await page.getByRole('button', { name: 'Compact cards' }).click();
+  await expect(page.getByRole('switch', { name: 'Compact cards' })).toBeChecked();
+  await page.getByRole('switch', { name: 'Compact cards' }).click();
   await expect(page.locator('html')).not.toHaveAttribute('data-density', 'compact');
 });
 
@@ -85,4 +87,34 @@ test('a first visit shows the help notice once; the help dialog does not open by
   await expect(page.getByRole('navigation', { name: 'Board' })).toBeVisible();
   await expect(notice).toHaveCount(0);
   await expect(help).toHaveCount(0);
+});
+
+test('on a phone, the selected station tab of Settings scrolls into view, clear of the fade', async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== 'phone', 'the phone tab row scrolls');
+  const deck = new FakeDeck();
+  deck.stations = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'].map((name) =>
+    stationView(`st-${name.toLowerCase()}`, name),
+  );
+  await deck.install(page);
+  await logIn(page);
+  await expect(page.getByRole('navigation', { name: 'Board' })).toBeVisible();
+  await page.evaluate(() => {
+    window.location.hash = '#/settings/station/st-echo';
+  });
+  const tabs = page.getByRole('tablist', { name: 'Settings' });
+  const echo = tabs.getByRole('tab', { name: 'Echo' });
+  await expect(echo).toHaveAttribute('aria-selected', 'true');
+  // The row is wider than the phone: it scrolls.
+  expect(await tabs.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  // The selected tab is inside the row, and clear of the 32px fade at its right edge.
+  await expect
+    .poll(async () => {
+      const row = await tabs.boundingBox();
+      const tab = await echo.boundingBox();
+      if (row === null || tab === null) return false;
+      return tab.x >= row.x && tab.x + tab.width <= row.x + row.width - 32;
+    })
+    .toBe(true);
 });

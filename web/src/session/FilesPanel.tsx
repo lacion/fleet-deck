@@ -2,12 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { useArtifacts } from '../artifacts/context';
 import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
+import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
-import { type ChangedFiles, loadChanged } from './changedFiles';
+import { sizeText } from '../ui/format';
+import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
+import {
+  type ChangedFiles,
+  type ChangeKind,
+  type FileChange,
+  loadSessionChanges,
+} from './changedFiles';
 import { CopyButton } from './SessionHeader';
-import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
+import {
+  type FileActions,
+  joinPath,
+  replaceDiffPaths,
+  parentPath,
+  type SearchModeName,
+} from './workspace';
 
 type View =
   | { readonly kind: 'idle' }
@@ -16,14 +29,6 @@ type View =
   | { readonly kind: 'listing'; readonly listing: FileListing }
   | { readonly kind: 'file'; readonly file: FileContent }
   | { readonly kind: 'search'; readonly search: FileSearch };
-
-/** `812` → `812 B`, `3200` → `3.1 KB`, `1250000` → `1.2 MB` (one decimal from a kilobyte on). */
-export function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 /** A Markdown file shows rendered or raw; a path copy is always there. */
 export function FileView({
@@ -91,6 +96,38 @@ export function FileView({
   );
 }
 
+const KIND_NAME: Record<ChangeKind, string> = { A: 'added', M: 'modified', R: 'renamed' };
+
+/**
+ * The badge of a change kind, the same as the status badge of a diff file header (§3 `.fd-diff`):
+ * none for a modified file, an ok "new" for an added file, a neutral word for a renamed one. (A
+ * deleted file is not in the list: it cannot be opened.)
+ */
+const KIND_BADGE: Record<ChangeKind, ReturnType<typeof fileStatusBadge> | null> = {
+  A: fileStatusBadge({ kind: 'added' }),
+  M: null,
+  R: { text: 'renamed', title: 'Renamed file', tone: undefined },
+};
+
+/** The change of one file at the right of its row: `+9 −3` and the badge of its kind. */
+function ChangeStat({ change }: { readonly change: FileChange }) {
+  const badge = KIND_BADGE[change.kind];
+  return (
+    <span className="fd-files-stat">
+      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
+      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
+      {badge === null ? (
+        <span className="fd-vh">{KIND_NAME[change.kind]}</span>
+      ) : (
+        <span className="fd-badge" data-tone={badge.tone} title={badge.title}>
+          <span aria-hidden="true">{badge.text}</span>
+          <span className="fd-vh">{KIND_NAME[change.kind]}</span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** The files changed since the session started; a click opens the file. */
 export function ChangedFilesList({
   changed,
@@ -105,12 +142,18 @@ export function ChangedFilesList({
       <ul>
         {changed.paths.map((path) => {
           const dir = parentPath(path);
+          const change = changed.changes[path];
           return (
             <li key={path}>
               <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
                 <Icon of={FileText} size={14} />
                 <span className="fd-files-name">{path.split('/').pop()}</span>
-                {dir === '' ? null : <span className="fd-files-dir">{dir}</span>}
+                {dir === '' ? null : (
+                  <span className="fd-files-dir">
+                    <bdi>{dir}</bdi>
+                  </span>
+                )}
+                {change === undefined ? null : <ChangeStat change={change} />}
               </button>
             </li>
           );
@@ -139,6 +182,7 @@ export function FilesPanel({
   variant = 'tab',
   request,
   root = null,
+  diffRef,
 }: {
   readonly files: FileActions | null;
   readonly variant?: 'tab' | 'side';
@@ -146,6 +190,8 @@ export function FilesPanel({
   readonly request?: { readonly path: string; readonly seq: number } | undefined;
   /** The session directory; "Copy the path" puts it before the path. */
   readonly root?: string | null;
+  /** The session (`<station>/<session>`) whose Properties panel also lists the changed files. */
+  readonly diffRef?: string | undefined;
 }) {
   const [view, setView] = useState<View>(files ? { kind: 'loading' } : { kind: 'idle' });
   /** The last requested folder; the crumbs show it. */
@@ -176,12 +222,18 @@ export function FilesPanel({
     );
   }, [has]);
   const [changed, setChanged] = useState<ChangedFiles | null>(null);
+  const changedRef = useRef(diffRef);
+  changedRef.current = diffRef;
   useEffect(() => {
     const current = latest.current;
     if (!has || !current) return;
     let live = true;
-    void loadChanged(current).then((found) => {
-      if (live) setChanged(found);
+    void loadSessionChanges(current).then((found) => {
+      if (!live) return;
+      setChanged(found?.changed ?? null);
+      if (found !== null && changedRef.current !== undefined) {
+        replaceDiffPaths(changedRef.current, found.all);
+      }
     });
     return () => {
       live = false;
@@ -260,35 +312,38 @@ export function FilesPanel({
       </div>
       {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
-        <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
-          <Icon of={Folder} size={14} />
-          {root ? (
-            <>
-              {folderName(root)}
-              <span className="fd-vh">, root folder</span>
-            </>
-          ) : (
-            'Root folder'
-          )}
-        </button>
+        {/* A path, not an entry: the open folder icon, and a "/" after each folder. */}
+        <span className="fd-files-crumb-item">
+          <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
+            <Icon of={FolderOpen} size={14} />
+            {root ? (
+              <>
+                {folderName(root)}
+                <span className="fd-vh">, root folder</span>
+              </>
+            ) : (
+              'Root folder'
+            )}
+          </button>
+          <span className="fd-files-sep" aria-hidden="true">
+            /
+          </span>
+        </span>
         {segments.map((segment, n) => {
           const path = segments.slice(0, n + 1).join('/');
           return (
             <span key={path} className="fd-files-crumb-item">
-              <span className="fd-files-sep" aria-hidden="true">
-                /
-              </span>
               <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
                 {segment}
               </button>
+              <span className="fd-files-sep" aria-hidden="true">
+                /
+              </span>
             </span>
           );
         })}
         {fileName !== null ? (
           <span className="fd-files-crumb-item">
-            <span className="fd-files-sep" aria-hidden="true">
-              /
-            </span>
             <span className="fd-files-file">{fileName}</span>
           </span>
         ) : null}

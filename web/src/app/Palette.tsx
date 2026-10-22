@@ -102,6 +102,7 @@ export function Palette({
               id={optionId(i)}
               role="option"
               tabIndex={-1}
+              className="fd-selbar"
               aria-selected={i === at}
               data-status={card.status}
               onMouseMove={() => setActive(i)}
@@ -122,6 +123,7 @@ export function Palette({
               id={optionId(0)}
               role="option"
               tabIndex={-1}
+              className="fd-selbar"
               aria-selected="true"
               data-action="start"
               onClick={start}

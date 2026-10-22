@@ -9,13 +9,15 @@ import { stationName } from '../board/fleet';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
 import type { ViewsActions } from '../runtime/views';
+import { toolParts } from '../ui/format';
 import {
   Icon,
+  type LucideIcon,
   Mail,
   MessageSquare,
   MessagesSquare,
   Play,
-  TriangleAlert,
+  Shield,
   Wrench,
 } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
@@ -52,14 +54,45 @@ type Props = {
 const KIND_ICON = {
   message: MessageSquare,
   tool: Wrench,
-  approval: TriangleAlert,
+  // The same icon as the needs-you strips of the fleet (TriangleAlert means a conflict there).
+  approval: Shield,
   mail: Mail,
   lifecycle: Play,
 } as const;
 
+/**
+ * A question request has no kind of its own in the stream (`ActivityItem.kind` is `approval`), so
+ * its text tells: "Question: …", the board's "Needs you: AskUserQuestion" (Claude) and the display
+ * stream's "Needs you: Answer a question".
+ */
+const QUESTION_TEXT = /^(?:Question:|Needs you: (?:AskUserQuestion|Answer a question)\b)/;
+
+/** The icon of a row: a question has the message-square of the fleet strips, the Watch tiles and
+ * the wall; a permission keeps the shield. */
+export function rowIcon(item: Pick<ActivityItem, 'kind' | 'text'>): LucideIcon {
+  return item.kind === 'approval' && QUESTION_TEXT.test(item.text)
+    ? MessageSquare
+    : KIND_ICON[item.kind];
+}
+
 /** The repository without its forge host: "github.com/lacion/fleet-deck" → "lacion/fleet-deck". A
  * first part without a dot is not a host and stays. */
 const repoLabel = (repo: string) => repo.replace(/^[^/]*\.[^/]*\//, '');
+
+/**
+ * The text of a row. A tool or approval row of a command or path tool ("Edit src/a.ts",
+ * "Permission: Bash cargo test") shows its target in mono (the rule of the wall stream,
+ * `toolParts`); every other text stays one plain string.
+ */
+export function RowText({ item }: { readonly item: ActivityItem }) {
+  const parts = toolParts(item.kind, item.text);
+  if (parts === null) return <span className="fd-arow-text">{item.text}</span>;
+  return (
+    <span className="fd-arow-text">
+      {parts.lead} <code className="fd-arow-target">{parts.target}</code>
+    </span>
+  );
+}
 
 function Row({
   item,
@@ -79,17 +112,18 @@ function Row({
   return (
     <li className="fd-arow" data-kind={item.kind}>
       <span className="fd-arow-kind">
-        <Icon of={KIND_ICON[item.kind]} size={14} />
+        <Icon of={rowIcon(item)} size={14} />
         <span className="fd-vh">{item.kind}</span>
       </span>
       <span className="fd-arow-main">
         <a className="fd-arow-session" href={href}>
           {item.session_title ?? item.session_id}
         </a>
-        <span className="fd-arow-text">{item.text}</span>
+        <RowText item={item} />
       </span>
       <span className="fd-arow-meta">
         <span
+          className="fd-arow-repo"
           title={
             item.repo === null
               ? stationName(item.station_id, stations)
@@ -189,7 +223,7 @@ function ChannelButton({
   readonly children?: ReactNode;
 }) {
   return (
-    <button type="button" className="fd-achan" aria-pressed={on} onClick={onPick}>
+    <button type="button" className="fd-achan fd-selbar" aria-pressed={on} onClick={onPick}>
       <span className="fd-achan-label">{label}</span>
       {count === undefined ? null : <span className="fd-count">{count}</span>}
       {children}
@@ -239,7 +273,12 @@ export function ActivityPage({
   }, [views, live, id, load]);
 
   return (
-    <Page title="Activity" className="fd-activity" wide>
+    <Page
+      title="Activity"
+      description="What the sessions did, newest first."
+      className="fd-activity"
+      wide
+    >
       <div className="fd-awrap">
         <nav className="fd-achans" aria-label="Channels">
           <ChannelButton

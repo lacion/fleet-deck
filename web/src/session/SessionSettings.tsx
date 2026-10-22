@@ -13,29 +13,48 @@ export function ModeLadder(props: {
   return (
     <fieldset className="fd-modes">
       <legend>Mode (most restrictive first)</legend>
-      {props.modes.map((m) => (
-        <button
-          key={m}
-          type="button"
-          className="fd-sm"
-          aria-pressed={m === props.current}
-          disabled={!props.enabled || m === props.current}
-          onClick={() => props.onSet(m)}
-        >
-          {m}
-        </button>
-      ))}
+      {/* The modes are the segments of a .fd-seg: the pressed one is the current mode. */}
+      <div className="fd-seg">
+        {props.modes.map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={m === props.current}
+            disabled={!props.enabled || m === props.current}
+            onClick={() => props.onSet(m)}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
     </fieldset>
   );
 }
 
 const OTHER = '__other__';
 
+/**
+ * The composer's model chip: opens the menu (`<details>`) that holds the model picker's control
+ * and focuses the control on the next frame. `false` (nothing happens) without a control or menu.
+ */
+export function openPicker(
+  control: Pick<HTMLElement, 'closest' | 'focus'> | null,
+  frame: (run: () => void) => void = requestAnimationFrame,
+): boolean {
+  const menu = control?.closest('details');
+  if (!control || !menu) return false;
+  menu.open = true;
+  frame(() => control.focus());
+  return true;
+}
+
 export function ModelPicker(props: {
   current: string | null;
   models: readonly ModelChoice[] | null;
   enabled: boolean;
   onSet: (model: string) => void;
+  /** Gets the picker's main control: the select, or the text box without a model list. */
+  controlRef?: ((control: HTMLElement | null) => void) | undefined;
 }) {
   // Providers accept model ids and aliases that the board cannot list, so the
   // picker keeps a free-text form: the only control without a model list, and
@@ -50,6 +69,7 @@ export function ModelPicker(props: {
     <>
       <input
         id={list ? undefined : id}
+        ref={list ? undefined : props.controlRef}
         className="fd-sm"
         value={model}
         disabled={!props.enabled}
@@ -83,6 +103,7 @@ export function ModelPicker(props: {
       {label}
       <select
         id={id}
+        ref={props.controlRef}
         className="fd-sm fd-model-select"
         aria-label="Model"
         value={selected}

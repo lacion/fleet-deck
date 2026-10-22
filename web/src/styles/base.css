@@ -39,7 +39,8 @@ body {
 /* ── links ──────────────────────────────────────────────────────── */
 /* A link is the focus blue, with no underline; the underline shows on hover and on focus.
    A link inside prose (a note, chat markdown, a paragraph) is always underlined: color alone
-   does not mark it (WCAG 1.4.1). Navigation links, rows and cards have a class and no underline.
+   does not mark it (WCAG 1.4.1). A prose link with only `.fd-tap` (the touch size) is still a
+   prose link. Navigation links, rows and cards have a class and no underline.
    `:where()` keeps the rules at zero specificity: a class of a card, a row or a nav item
    still sets its own look. */
 :where(a, a:visited, .fd-note a, .fd-note a:visited) {
@@ -49,7 +50,7 @@ body {
 :where(a:hover, a:focus-visible) {
   text-decoration: underline;
 }
-:where(.fd-note, .fd-md, p) :where(a:not([class])) {
+:where(.fd-note, .fd-md, p) :where(a:not([class]), a.fd-tap) {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -124,8 +125,15 @@ body {
   width: 8px;
   height: 8px;
 }
+/* The thumb is an operable control: --ctl-edge keeps 3:1 on --bg and --surface (WCAG 1.4.11).
+   Firefox only: Chromium ignores every ::-webkit-scrollbar rule where scrollbar-color is set. */
+@supports (-moz-appearance: none) {
+  :root {
+    scrollbar-color: var(--ctl-edge) transparent;
+  }
+}
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--ctl-edge);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-track {
@@ -136,9 +144,22 @@ body {
   *,
   *::before,
   *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must beat every animation of every area rule */
     animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must beat every transition of every area rule */
     transition: none !important;
   }
+}
+/* The board preference "Reduce motion" (`ui/theme.ts`, `<html data-motion="reduce">`): the same
+   stop as the OS setting, so that a user can pause the needs-you glow and the working arc
+   without the OS setting (WCAG 2.2.2; a wall display shows them all day). */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: the motion preference must beat every animation of every area rule */
+  animation: none !important;
+  /* biome-ignore lint/complexity/noImportantStyles: the motion preference must beat every transition of every area rule */
+  transition: none !important;
 }
 
 /* ── type helpers ───────────────────────────────────────────────── */
@@ -232,8 +253,8 @@ a.fd-btn {
 }
 /* A plain button keeps an edge where its fill would match the layer under it: in a panel the edge
    is --btn-edge (transparent on the dark deck, a hairline in the light theme); in a --raised
-   dialog it is --border in both themes. Variants (.fd-primary, .fd-ghost, …), tabs and area
-   classes keep no edge. */
+   dialog it is --btn-edge-raised (the button has the dialog's fill) in both themes. Variants
+   (.fd-primary, .fd-ghost, …), tabs and area classes keep no edge. */
 :where(.fd-panel)
 :where(
   button:not([class]):not([role]),
@@ -246,7 +267,7 @@ a.fd-btn {
     button:not([class]):not([role]),
     :is(button, a.fd-btn).fd-sm:not(.fd-primary, .fd-decide, .fd-ghost, .fd-danger, .fd-iconbtn)
   ) {
-  border-color: var(--border);
+  border-color: var(--btn-edge-raised);
 }
 :where(button, a.fd-btn):where(:hover:not(:disabled)) {
   background: var(--raised-hi);
@@ -282,15 +303,16 @@ a.fd-btn {
   background: color-mix(in srgb, var(--act-fill) 88%, var(--text));
   border-color: transparent;
 }
+/* background-color, not the shorthand: a ghost select keeps its chevron (a background image). */
 .fd-ghost,
 .fd-iconbtn {
-  background: transparent;
+  background-color: transparent;
   border-color: transparent;
   color: var(--dim);
 }
 .fd-ghost:hover:not(:disabled),
 .fd-iconbtn:hover:not(:disabled) {
-  background: var(--raised);
+  background-color: var(--raised);
   border-color: transparent;
   color: var(--text);
 }
@@ -303,6 +325,20 @@ a.fd-btn {
   border-color: transparent;
   color: var(--hazard);
 }
+/* On a --raised layer (the session header strip, the composer, a chat code block, the approval
+   dock, a turn strip, a dialog) the --raised hover is the fill of the layer (1:1): the hover is
+   --badge-bg there (--raised-hi dark, --border-soft light). The layer list is :where() and the
+   specificity equals the hover above (0,3,0), so an area rule for one button still wins; a
+   pressed toggle and the primary, decide and danger variants keep their own hover. */
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+:where(.fd-ghost, .fd-iconbtn):not(
+  [aria-pressed="true"],
+  .fd-primary,
+  .fd-decide,
+  .fd-danger
+):hover:not(:disabled) {
+  background-color: var(--badge-bg);
+}
 .fd-sm {
   height: var(--ctl-h-sm);
   padding: 0 8px;
@@ -312,12 +348,41 @@ a.fd-btn {
 :where(select:not([multiple]):not([size])).fd-sm {
   padding-right: 28px;
 }
+/* A ghost select (the fleet Group by): a quiet view option in a page header. No fill and no edge
+   at rest; on hover the --raised fill, the --ctl-edge edge (3:1) and --text; on focus the
+   --focus edge of every field. Only the background color changes: the chevron is the background
+   image. Forced colors give it an edge (below). */
+select.fd-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+select.fd-ghost:hover:not(:disabled) {
+  background-color: var(--raised);
+  border-color: var(--ctl-edge);
+  color: var(--text);
+}
+select.fd-ghost:focus,
+select.fd-ghost:focus:hover:not(:disabled) {
+  border-color: var(--focus);
+  color: var(--text);
+}
 .fd-iconbtn {
   width: var(--ctl-h);
   padding: 0;
 }
 .fd-iconbtn.fd-sm {
   width: var(--ctl-h-sm);
+}
+/* A pressed icon toggle (a panel toggle, compact cards) looks like a pressed segment of .fd-seg:
+   a fill step alone (--raised-hi on --raised) was 1.1:1 and did not show the state. */
+.fd-iconbtn[aria-pressed="true"],
+.fd-iconbtn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pressed-bg);
+  color: var(--text);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
 }
 /* A key hint inside a button sits on the button fill. */
 :where(button, a.fd-btn) > .fd-kbd {
@@ -341,7 +406,7 @@ a.fd-btn {
   border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
   transition:
     border-color var(--t-fast),
     box-shadow var(--t-fast);
@@ -354,7 +419,7 @@ a.fd-btn {
   border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
   line-height: 1.4;
   transition:
     border-color var(--t-fast),
@@ -550,6 +615,36 @@ a.fd-btn {
 :where(details[open]:not(.fd-menu) > summary:not(:has(svg)))::before {
   transform: rotate(90deg);
 }
+/* A toggle summary (data-variant="toggle"): a fold that opens in place under a row of toggles,
+   not a path. No leading chevron-right; a trailing 12px chevron-down that turns 180° when the
+   details open. The area sets the size and the fill of the summary. */
+:where(summary[data-variant="toggle"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+summary[data-variant="toggle"]::before {
+  content: none;
+}
+summary[data-variant="toggle"]::after {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background-color: var(--faint);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  transition: transform var(--t-move);
+}
+details[open] > summary[data-variant="toggle"]::after {
+  transform: rotate(180deg);
+}
+/* A toggle summary that is a ghost menu button (the chat Show menu): the chevron takes the text
+   color of the button (--dim; hover and open --text), not --faint. */
+.fd-menu > summary.fd-ghost[data-variant="toggle"]::after {
+  background-color: currentColor;
+}
 
 /* ── key hints and fields ───────────────────────────────────────── */
 .fd-kbd {
@@ -560,7 +655,7 @@ a.fd-btn {
   height: 18px;
   padding: 0 5px;
   background: var(--badge-bg);
-  color: var(--faint);
+  color: var(--dim); /* --faint was 4.44:1 on the light --badge-bg */
   border-radius: var(--r-chip);
   font-family: var(--font-ui);
   font-size: var(--fs-micro);
@@ -680,6 +775,31 @@ a.fd-btn {
   border-color: var(--ctl-edge);
   color: var(--text);
   font-weight: 600;
+}
+
+/* ── selection bar (§3) ─────────────────────────────────────────── */
+/* The straight 2px --focus marker at the left edge of a selected row (palette and slash-menu
+   option, activity channel, subagent row, open integration row, sidebar nav and session row).
+   Never an inset box-shadow: on a row with --r-ctl corners that draws a curved bracket. Forced
+   colors: the Highlight outline rules below already mark these selected states. */
+.fd-selbar {
+  position: relative;
+}
+.fd-selbar:is(
+  [aria-selected="true"],
+  [aria-current="page"],
+  [aria-current="true"],
+  [aria-pressed="true"],
+  [data-open="true"]
+)::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--focus);
 }
 
 /* ── badges and counts ──────────────────────────────────────────── */
@@ -819,6 +939,14 @@ a.fd-btn {
 .fd-dot[data-status="verifying"]::before {
   background: conic-gradient(var(--focus) 0 180deg, transparent 0);
 }
+/* A center dot: the working glyph has none, so verifying differs by shape, not by hue alone
+   (--ok and --focus are near the same luminance), also when reduced motion stops the arc. */
+.fd-dot[data-status="verifying"]::after {
+  content: "";
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--focus);
+}
 /* needs you: a filled yellow circle with a dark "!". The edge is --act, so that the circle keeps
    its shape on a light fill. */
 .fd-dot[data-status="needs_you"] {
@@ -945,6 +1073,17 @@ a.fd-btn {
 .fd-meter[data-level="high"] > * {
   background: var(--act);
 }
+/* `data-tone="neutral"`: a load that is not usage (station resources, a long slot row). The high
+   rule comes after the tone rule (same specificity), so the high fill wins. */
+.fd-meter[data-tone="neutral"] {
+  background: var(--badge-bg);
+}
+.fd-meter[data-tone="neutral"] > * {
+  background: var(--dim);
+}
+.fd-meter[data-tone="neutral"][data-level="high"] > * {
+  background: var(--act);
+}
 /* `.fd-slots` with one `<span>` per slot: `data-slot="used"`, `"needs_you"`, or free (none). */
 .fd-slots {
   display: inline-flex;
@@ -962,8 +1101,10 @@ a.fd-btn {
 .fd-slots > [data-slot="used"] {
   background: var(--ok);
 }
+/* needs you: a bar, a gap and a dot (an "!", the sign of the needs-you .fd-dot), so that it
+   differs from a used slot by shape, not by color alone (1.4.1). */
 .fd-slots > [data-slot="needs_you"] {
-  background: var(--act);
+  background: linear-gradient(var(--act) 0 7px, transparent 7px 9px, var(--act) 9px);
 }
 /* A free slot is a hollow outline, so used and free differ by shape, not by color alone (1.4.1). */
 .fd-slots > :not([data-slot]) {
@@ -1059,6 +1200,15 @@ a.fd-btn {
   border-color: transparent;
   color: var(--text);
 }
+/* A ghost or icon summary on a --raised layer: hover and open --badge-bg (see .fd-ghost). */
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+  .fd-menu
+  > summary:is(.fd-ghost, .fd-iconbtn):hover,
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+  .fd-menu[open]
+  > summary:is(.fd-ghost, .fd-iconbtn) {
+  background: var(--badge-bg);
+}
 .fd-menu > summary.fd-iconbtn.fd-sm {
   width: var(--ctl-h-sm);
   height: var(--ctl-h-sm);
@@ -1094,8 +1244,9 @@ a.fd-btn {
   height: 14px;
   color: var(--dim);
 }
+/* --badge-bg, not --raised-hi: the light --raised-hi is 1.07:1 on the --raised menu body. */
 .fd-menu-body > button:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   border-color: transparent;
 }
 /* The variants keep their look inside a menu. */
@@ -1197,6 +1348,30 @@ a.fd-btn {
   min-height: 28px;
   border-bottom: 1px solid var(--border-soft);
 }
+/* The path text of a file header (chat Diff, wall DiffPane): the folders (`.fd-dl-dir`) give way
+   at their start and keep the trailing slash (`…station/src/shim/reaper.rs`, the same as the
+   Properties file list); the file name (`.fd-dl-base`) never shrinks. The folders sit in a
+   `<bdi>`: the right-to-left box puts the ellipsis at the left, the `<bdi>` keeps the text LTR.
+   Without the `<bdi>` the box stays LTR (an RTL box would move the trailing slash to the left). */
+.fd-dl-path {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.fd-dl-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-dl-dir:has(> bdi) {
+  direction: rtl;
+}
+.fd-dl-base {
+  flex: none;
+}
 /* The path gives up its folders first (an ellipsis); the +/- counts stay at the right edge. */
 .fd-diff > .fd-dl[data-kind="file"] > .fd-dl-path {
   flex: 1 1 auto;
@@ -1238,6 +1413,10 @@ a.fd-btn {
   }
   .fd-iconbtn {
     min-width: var(--tap-min);
+  }
+  /* .fd-sm sets 12px: a field keeps 16px on a touch screen (no iOS zoom on focus). */
+  :is(input, select, textarea).fd-sm {
+    font-size: var(--fs-field);
   }
   /* After the rule above, so that it wins at the same specificity. */
   .fd-chip {
@@ -1291,9 +1470,93 @@ a.fd-btn {
   .fd-meter > * {
     forced-color-adjust: none;
   }
-  .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)) {
+  /* The group edge of a segmented control: forced colors drop the --surface fill of the track,
+     and the unpressed segments looked like plain text. */
+  .fd-seg {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  /* A selection drawn by a fill or a box-shadow (a pressed segment or chip, the selected tab, the
+     current nav row or session row) gets a Highlight ring; the focus ring stays outside it. */
+  .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
+  .fd-chip:is([aria-pressed="true"], [aria-selected="true"]),
+  .fd-iconbtn[aria-pressed="true"]:not(:focus-visible),
+  [role="tab"][aria-selected="true"]:not(:focus-visible),
+  :is(a, button)[aria-current="page"]:not(:focus-visible) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
+  }
+  /* A pressed toggle (.fd-iconbtn, the terminal Ctrl key, the session Mode buttons), the selected
+     option of a list box (palette, composer slash menu), the current subagent row, the open
+     integration row (.fd-selbar) and the needs-you keyboard cursor: their state is a fill or a
+     bar only. */
+  :is(button, [role="button"])[aria-pressed="true"]:not(:focus-visible),
+  [role="option"][aria-selected="true"],
+  [aria-current="true"]:not(:focus-visible),
+  .fd-selbar[data-open="true"],
+  .fd-q[data-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  /* A key hint, a badge, a count and the avatar lose their fill: a thin edge keeps their shape. */
+  .fd-kbd,
+  .fd-badge:not([data-tone="muted"]),
+  .fd-count,
+  .fd-avatar {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  /* The general and the decision primary keep a solid fill (one primary per decision): forced
+     colors drop the fill, and Allow looked like Deny. Ink on button face; not Highlight, which
+     marks the selection and the focus. */
+  :is(.fd-primary, .fd-decide):not(:disabled),
+  :is(.fd-primary, .fd-decide):hover:not(:disabled),
+  .fd-menu-body > button.fd-primary:not(:disabled),
+  .fd-menu-body > button.fd-primary:hover:not(:disabled) {
+    forced-color-adjust: none;
+    background: ButtonText;
+    color: ButtonFace;
+    border-color: ButtonText;
+  }
+  :is(.fd-primary, .fd-decide):focus-visible {
+    outline-color: Highlight;
+  }
+  :is(.fd-primary, .fd-decide) > .fd-kbd {
+    forced-color-adjust: none;
+    color: ButtonFace;
+    outline-color: ButtonFace;
+  }
+  /* A ghost select has no edge at rest: forced colors give it the edge of a control. */
+  select.fd-ghost {
+    border-color: ButtonText;
+  }
+  /* A checked checkbox or radio: forced colors drop the ink fill, and the mark (a mask on a
+     background color) would take the Canvas color. Draw both in Highlight / HighlightText. */
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]):is(
+    :checked,
+    :indeterminate
+  ) {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+  }
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"])::before {
+    forced-color-adjust: none;
+    background-color: HighlightText;
+  }
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]):is(
+    :checked,
+    :indeterminate
+  ):disabled {
+    background: GrayText;
+    border-color: GrayText;
+  }
+  /* The summary chevron is a mask on a background color: draw it in the text color. */
+  :where(details:not(.fd-menu) > summary:not(:has(svg)))::before,
+  summary[data-variant="toggle"]::after,
+  .fd-menu > summary.fd-ghost[data-variant="toggle"]::after {
+    forced-color-adjust: none;
+    background-color: CanvasText;
   }
   .fd-switch {
     forced-color-adjust: none;
@@ -1311,5 +1574,19 @@ a.fd-btn {
   }
   .fd-tdock-handle:focus-visible {
     outline: 2px solid Highlight;
+  }
+}
+/* The select chevron is two gradients, and forced colors drop gradients (an url() image stays):
+   draw Lucide's chevron-down as an image in the ink of the high-contrast scheme. */
+@media (forced-colors: active) {
+  :where(select:not([multiple]):not([size])) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); /* ds-exception: forced colors keep only an url() image; black is the ink of a light high-contrast scheme */
+    background-position: right 8px center;
+    background-size: 14px 14px;
+  }
+}
+@media (forced-colors: active) and (prefers-color-scheme: dark) {
+  :where(select:not([multiple]):not([size])) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); /* ds-exception: forced colors keep only an url() image; white is the ink of a dark high-contrast scheme */
   }
 }

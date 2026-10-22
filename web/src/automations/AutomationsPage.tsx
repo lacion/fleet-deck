@@ -10,7 +10,7 @@ import { useNow } from '../ui/useNow';
 import {
   type AutomationActions,
   type Draft,
-  describeCron,
+  describeCronParts,
   draftOf,
   emptyDraft,
   inputOf,
@@ -66,6 +66,18 @@ function Ago({ at, now }: { readonly at: number; readonly now: number }) {
     <time dateTime={new Date(at).toISOString()} title={when(at)}>
       {ago(at, now)}
     </time>
+  );
+}
+
+/** When an automation runs: a preset in words, a raw cron expression as code. */
+function CronText({ cron }: { readonly cron: string }) {
+  const parts = describeCronParts(cron);
+  return 'label' in parts ? (
+    parts.label
+  ) : (
+    <>
+      cron <code>{parts.cron}</code>
+    </>
   );
 }
 
@@ -224,7 +236,7 @@ export function AutomationsPage({
   return (
     <Page
       title="Automations"
-      description="The deck starts a session at each due time. A check on the station can run first; a non-zero exit skips the run."
+      description="Sessions that start on a schedule."
       actions={
         <>
           {form === null ? (
@@ -274,6 +286,12 @@ export function AutomationsPage({
           sessions={sessions}
         />
       )}
+      {list !== null && list.length > 0 ? (
+        // The skip rule stays in view after the first automation (the empty state says it too).
+        <p className="fd-note">
+          A check on the station can run first; a non-zero exit skips the run.
+        </p>
+      ) : null}
       {list === null ? (
         actions === undefined ? null : (
           <p role="status">Loading automations…</p>
@@ -282,7 +300,7 @@ export function AutomationsPage({
         <EmptyState
           icon={Workflow}
           title="No automations yet"
-          body="Add one to run a triage, a nightly test fix or a review sweep."
+          body="Add one to run a triage, a nightly test fix or a review sweep. A check on the station can run first; a non-zero exit skips the run."
         />
       ) : (
         <ol className="fd-panel fd-auto-list">
@@ -299,9 +317,18 @@ export function AutomationsPage({
                       </span>
                     )}
                   </h3>
+                  {/* The parts of the meta line, with the drawn dots of .fd-plan-meta between them. */}
                   <p className="fd-plan-meta">
-                    {describeCron(s.cron)} · {s.timezone} · {stationName(s.station_id, stations)} ·{' '}
-                    <code>{s.path}</code>
+                    <span>
+                      <CronText cron={s.cron} />
+                    </span>
+                    <span>{s.timezone}</span>
+                    <span>{stationName(s.station_id, stations)}</span>
+                    {/* A span: the drawn dot before it stays in the sans of the line. A phone
+                        puts it on its own line (views.css .fd-auto-path). */}
+                    <span className="fd-auto-path">
+                      <code>{s.path}</code>
+                    </span>
                   </p>
                   <p className="fd-plan-meta">
                     <span className="fd-auto-when">

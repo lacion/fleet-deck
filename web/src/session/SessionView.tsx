@@ -52,11 +52,13 @@ import { useMove } from './MoveDialog';
 import { CONFIRM_LINE, composerHidden, confirmLineShown } from './moveModel';
 import { PropertiesPanel, usePropsOpen } from './PropertiesPanel';
 import { SessionHeader } from './SessionHeader';
+import { useTabReserve } from './tabReserve';
 import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
-import { RevertStatus, TurnsPanel } from './TurnsPanel';
+import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 import { shortModel } from '../ui/format';
+import { sessionRef } from '../ui/localSet';
 
 export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
@@ -88,15 +90,6 @@ export type SessionViewProps = {
 
 const noop = () => {};
 
-/** The model chip of the composer opens the session menu and focuses its model picker. */
-function openModelPicker(pane: HTMLElement | null): void {
-  const menu = pane?.querySelector('summary[aria-label="Session menu"]')?.parentElement;
-  if (!(menu instanceof HTMLDetailsElement)) return;
-  menu.open = true;
-  requestAnimationFrame(() =>
-    menu.querySelector<HTMLElement>('.fd-model :is(select, input)')?.focus(),
-  );
-}
 const HIGHLIGHT_HOLD_MS = 2500;
 
 const WIDE = '(min-width: 1280px)';
@@ -295,7 +288,10 @@ export function SessionView(props: SessionViewProps) {
   const move = useMove(session, moveOwner);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const paneEl = useRef<HTMLElement>(null);
+  // The composer model chip opens the header menu on its model picker (the header sets it).
+  const openModel = useRef<(() => void) | null>(null);
+  const tabRow = useRef<HTMLDivElement>(null);
+  useTabReserve(tabRow);
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
   const order: PaneTab[] = [
     'chat',
@@ -349,6 +345,7 @@ export function SessionView(props: SessionViewProps) {
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
   // A viewer has no drive scope but sees the files of the shared session.
   const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
+  const changesRef = sessionRef(session.station_id, s.session_id);
   const files = actions?.files ?? null;
   // DL-174: the `@` menu of the composer searches the file names of the session root.
   const searchFiles =
@@ -367,7 +364,7 @@ export function SessionView(props: SessionViewProps) {
     timeline?.ready === true &&
     events.length > 0 &&
     events[0]?.event.kind !== 'session.started';
-  const [fileRequest, setFileRequest] = useState<{ readonly path: string; readonly seq: number }>();
+  const [fileRequest, setFileRequest] = useState<FileRequest>();
   const requests = useRef(0);
   const onOpenFile = (path: string) => {
     requests.current += 1;
@@ -378,6 +375,17 @@ export function SessionView(props: SessionViewProps) {
   useEffect(() => {
     if (fileRequest && (tab === 'files' || sideOpen)) setFileRequest(undefined);
   }, [fileRequest, tab, sideOpen]);
+  // §4.5: a changed file in the Properties panel opens the Changes tab on that file; the tab
+  // reads the request when it shows, then it is spent (as a file request).
+  const [changeRequest, setChangeRequest] = useState<FileRequest>();
+  const onOpenChange = (path: string) => {
+    requests.current += 1;
+    setChangeRequest({ path, seq: requests.current });
+    onTab('changes');
+  };
+  useEffect(() => {
+    if (changeRequest && tab === 'changes') setChangeRequest(undefined);
+  }, [changeRequest, tab]);
 
   const artifactsValue = useMemo(
     () =>
@@ -397,7 +405,7 @@ export function SessionView(props: SessionViewProps) {
   );
 
   const pane = (
-    <section className="fd-pane" aria-label="Session" data-layout={layout} ref={paneEl}>
+    <section className="fd-pane" aria-label="Session" data-layout={layout}>
       <SessionHeader
         session={session}
         stations={stations}
@@ -415,6 +423,7 @@ export function SessionView(props: SessionViewProps) {
         }
         onMoveStarted={move.reload}
         fleet={props.fleet}
+        openModel={openModel}
       />
       <MoveBanner
         session={session}
@@ -443,6 +452,7 @@ export function SessionView(props: SessionViewProps) {
         />
       ) : null}
       <div
+        ref={tabRow}
         className="fd-pane-tabs"
         role="tablist"
         aria-label="Session views"
@@ -647,8 +657,12 @@ export function SessionView(props: SessionViewProps) {
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
                       model={shortModel(s.model)}
-                      {...(guest === null && caps?.set_model === true
-                        ? { onModel: () => openModelPicker(paneEl.current) }
+                      callsign={s.callsign}
+                      {...(guest === null &&
+                      caps?.set_model === true &&
+                      flags.drive &&
+                      busy === null
+                        ? { onModel: () => openModel.current?.() }
                         : {})}
                     />
                   </>
@@ -681,6 +695,7 @@ export function SessionView(props: SessionViewProps) {
                   busy={busy !== null}
                   act={panelAct}
                   onOpenFile={onOpenFile}
+                  fileRequest={changeRequest}
                   branchesOffered={branchesOffered}
                   projectId={session.project_id}
                   station={session.station_id}
@@ -706,7 +721,12 @@ export function SessionView(props: SessionViewProps) {
           ) : null}
           {tab === 'files' ? (
             filesReady ? (
-              <FilesPanel files={actions?.files ?? null} request={fileRequest} root={s.cwd} />
+              <FilesPanel
+                files={actions?.files ?? null}
+                request={fileRequest}
+                root={s.cwd}
+                diffRef={changesRef}
+              />
             ) : (
               <p className="fd-note">
                 Files are available when the board is live and you have the drive scope.
@@ -742,6 +762,7 @@ export function SessionView(props: SessionViewProps) {
                 variant="side"
                 request={fileRequest}
                 root={s.cwd}
+                diffRef={changesRef}
               />
             ) : (
               <p className="fd-note">
@@ -756,6 +777,9 @@ export function SessionView(props: SessionViewProps) {
             stations={stations}
             turns={turns}
             subagents={tree.subagents.length}
+            onOpenChange={onOpenChange}
+            files={filesReady ? files : null}
+            freshness={freshness}
           />
         ) : null}
       </div>

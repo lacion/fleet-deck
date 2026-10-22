@@ -5,6 +5,7 @@ import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
 import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
@@ -40,9 +41,10 @@ type Props = {
   readonly freshness: Freshness;
   readonly now?: number | undefined;
   /**
-   * The header slot of the fleet home: with no request, the side variant puts its notification
-   * switch there (the last item of the page header). `null`: the slot is not mounted yet.
-   * Absent: the switch renders in place.
+   * The header slot of the fleet home: with no request, the rail puts its notification switch
+   * there (the last item of the page header, on the desktop and the phone). `null`: the slot is
+   * not mounted yet. Absent: the side variant renders the switch in place, the strip variant
+   * renders nothing.
    */
   readonly bellSlot?: HTMLElement | null | undefined;
 };
@@ -82,8 +84,6 @@ export function NeedsYouRail({
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [picked, setPicked] = useState(0);
   useNotifications(sessions, notify, onOpen);
-  // The selection stays inside the list when the list shrinks.
-  const selected = Math.min(picked, Math.max(waiting.length - 1, 0));
   const answerableOf = (w: (typeof waiting)[number]) => {
     const actions = sessionActions?.(w.key);
     const r = w.request;
@@ -94,6 +94,11 @@ export function NeedsYouRail({
       r.options.length > 0;
     return ok && actions !== undefined ? actions : null;
   };
+  const answerable = waiting.map((w) => answerableOf(w) !== null);
+  // The keyboard cursor is always on a request that the keys can answer: it starts on the first
+  // one, stays inside the list when the list shrinks, and leaves a request that became
+  // unanswerable.
+  const selected = railCursor(answerable, picked);
   const settle = (requestId: string) =>
     setPending((p) => {
       const next = new Set(p);
@@ -114,7 +119,16 @@ export function NeedsYouRail({
       },
     );
   };
-  const anyAnswerable = waiting.some((w) => answerableOf(w) !== null);
+  const anyAnswerable = selected >= 0;
+  // The number keys of the middle options (`hint`): the legend names them while an answerable
+  // request has more than two options.
+  const numberTop = Math.min(
+    9,
+    Math.max(
+      0,
+      ...waiting.filter((_, i) => answerable[i]).map((w) => w.request.options.length - 1),
+    ),
+  );
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     // Help, the palette and the drawer are modal: the rail keys do nothing behind them.
@@ -123,8 +137,7 @@ export function NeedsYouRail({
     if (!anyAnswerable || shouldIgnore(e) || e.shiftKey) return;
     if (e.key === '[' || e.key === ']') {
       e.preventDefault();
-      const step = e.key === ']' ? 1 : -1;
-      setPicked(Math.min(Math.max(selected + step, 0), waiting.length - 1));
+      setPicked(railStep(answerable, selected, e.key === ']' ? 1 : -1));
       return;
     }
     const item = waiting[selected];
@@ -132,17 +145,7 @@ export function NeedsYouRail({
     const actions = answerableOf(item);
     const options = item.request.options;
     if (actions === null || pending.has(item.request.request_id)) return;
-    const index =
-      e.key === 'a'
-        ? 0
-        : e.key === 'd'
-          ? options.length >= 2
-            ? options.length - 1
-            : -1
-          : /^[1-9]$/.test(e.key)
-            ? Number(e.key) - 1
-            : -1;
-    const option = options[index];
+    const option = options[railKeyOption(e.key, options.length)];
     if (option === undefined) return;
     e.preventDefault();
     answer(actions, item.request, option.option_id);
@@ -153,9 +156,9 @@ export function NeedsYouRail({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
   // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
-  // the side variant keeps only the notification switch, as the last item of the page header.
+  // the rail keeps only the notification switch, as the last item of the page header.
   if (waiting.length === 0) {
-    if (variant !== 'side') return null;
+    if (variant !== 'side' && bellSlot === undefined) return null;
     const mini = (
       <div className="fd-rail-mini">
         <NotifyToggle on={notify} onChange={setNotify} />
@@ -176,8 +179,19 @@ export function NeedsYouRail({
         {anyAnswerable ? (
           <span className="fd-rail-keys">
             <span className="fd-kbd">[</span>
-            <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> Allow{' '}
-            <span className="fd-kbd">d</span> Deny
+            <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> First{' '}
+            <span className="fd-kbd">d</span> Last
+          </span>
+        ) : null}
+        {anyAnswerable && numberTop >= 2 ? (
+          <span className="fd-rail-keys" data-keys="number">
+            <span className="fd-kbd">2</span>
+            {numberTop > 2 ? (
+              <>
+                –<span className="fd-kbd">{numberTop}</span>
+              </>
+            ) : null}{' '}
+            Option
           </span>
         ) : null}
         <NotifyToggle on={notify} onChange={setNotify} />
@@ -246,7 +260,7 @@ export function NeedsYouRail({
                       <button
                         key={o.option_id}
                         type="button"
-                        className={optionClass(question, i, r.options.length)}
+                        className={question ? undefined : approvalClass(o, i)}
                         aria-label={`${o.label}: ${r.title} in ${w.title}`}
                         disabled={busy}
                         onClick={() => answer(actions, r, o.option_id)}
@@ -282,12 +296,31 @@ export function NeedsYouRail({
   );
 }
 
-/** A permission's first option is the decision primary and its last one denies; a question's
- * options are plain (DESIGN-SYSTEM §4.1). */
-function optionClass(question: boolean, i: number, n: number): string | undefined {
-  if (question) return undefined;
-  if (i === 0) return 'fd-decide';
-  return n >= 2 && i === n - 1 ? 'fd-danger' : undefined;
+/**
+ * The keyboard cursor: the request at `picked` when the keys can answer it, else the next
+ * answerable one after it, else the last answerable one before it. `-1`: none is answerable.
+ */
+export function railCursor(answerable: readonly boolean[], picked: number): number {
+  const from = Math.min(Math.max(picked, 0), answerable.length - 1);
+  for (let i = from; i < answerable.length; i += 1) if (answerable[i]) return i;
+  for (let i = from - 1; i >= 0; i -= 1) if (answerable[i]) return i;
+  return -1;
+}
+
+/** `[` and `]`: the next answerable request in the direction `step`; at the end the cursor stays. */
+export function railStep(answerable: readonly boolean[], selected: number, step: 1 | -1): number {
+  for (let i = selected + step; i >= 0 && i < answerable.length; i += step)
+    if (answerable[i]) return i;
+  return selected;
+}
+
+/** The option index that a key answers among `n` options: `a` the first, `d` the last (with two
+ * or more), `1`–`9` by number. `-1`: the key answers nothing. */
+export function railKeyOption(key: string, n: number): number {
+  if (key === 'a') return n >= 1 ? 0 : -1;
+  if (key === 'd') return n >= 2 ? n - 1 : -1;
+  if (/^[1-9]$/.test(key)) return Number(key) <= n ? Number(key) - 1 : -1;
+  return -1;
 }
 
 /** The key hint of option `i` of `n`: first `a`, last `d` (with two or more), the others their number. */

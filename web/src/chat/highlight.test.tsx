@@ -29,6 +29,26 @@ describe('code token colors', () => {
     expect(parts).toEqual([['keyword', 'fn']]);
   });
 
+  test('a path or method segment is not a keyword', () => {
+    expect(colored(tokens('Reaper::new(x)', 'rust'))).toEqual([]);
+    expect(colored(tokens('let r = Reaper::new(mask)?;', 'rust'))).toEqual([['keyword', 'let']]);
+    expect(colored(tokens('opts.default; f(...this)', 'ts'))).toEqual([['keyword', 'this']]);
+  });
+
+  test('each language family has its own keywords', () => {
+    // `new`, `nil`, `null` and `pass` are names in Rust.
+    expect(colored(tokens('new(nil, null, pass)', 'rust'))).toEqual([]);
+    expect(colored(tokens('x := nil', 'go'))).toEqual([['keyword', 'nil']]);
+    expect(colored(tokens('const m = new Map()', 'ts'))).toEqual([
+      ['keyword', 'const'],
+      ['keyword', 'new'],
+    ]);
+    expect(colored(tokens('pass', 'python'))).toEqual([['keyword', 'pass']]);
+    // A language without a family keeps the shared words; an Object key is not a family.
+    expect(colored(tokens('new T()', 'java'))).toEqual([['keyword', 'new']]);
+    expect(colored(tokens('new T()', 'constructor'))).toEqual([['keyword', 'new']]);
+  });
+
   test('a shell block takes # comments, not // ones', () => {
     const parts = colored(tokens('ls //tmp # list\necho $#', 'sh'));
     expect(parts).toEqual([['comment', '# list']]);

@@ -25,6 +25,29 @@ describe('Page (DL-171)', () => {
     expect(html).toContain('<p>body</p>');
   });
 
+  test('the filters sit in the header row before the actions (§4.3)', () => {
+    const html = renderToStaticMarkup(
+      <Page
+        title="Watch"
+        filters={<button type="button">Needs you only</button>}
+        actions={<button type="button">Share</button>}
+      >
+        <p />
+      </Page>,
+    );
+    const head = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    expect(head).toContain(
+      '<div class="fd-page-filters"><button type="button">Needs you only</button></div>',
+    );
+    expect(head.indexOf('fd-page-filters')).toBeLessThan(head.indexOf('fd-page-actions'));
+    const none = renderToStaticMarkup(
+      <Page title="Plans">
+        <p />
+      </Page>,
+    );
+    expect(none).not.toContain('fd-page-filters');
+  });
+
   test('a wide page, a label and an extra class', () => {
     const html = renderToStaticMarkup(
       <Page title="Plans" wide label="Plan library" className="fd-x">

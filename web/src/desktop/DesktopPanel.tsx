@@ -90,7 +90,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
   };
   return (
     <details className="fd-desk" data-station={station.station_id}>
-      <summary>Desktop</summary>
+      <summary data-variant="toggle">Desktop</summary>
       <dl className="fd-desk-facts">
         <div>
           <dt>Desktop</dt>

@@ -17,11 +17,12 @@
   align-items: center;
 }
 
-/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. */
+/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. The rules
+   stop 16 px short of the panel edges, the same as the Automations and Projects lists. */
 .fd-plan-list {
   display: grid;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--sp-4);
   list-style: none;
 }
 
@@ -36,7 +37,7 @@
   align-items: center;
   gap: 2px var(--sp-4);
   min-width: 0;
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-3) 0;
 }
 
 :where(.fd-plan-list article > *) {
@@ -51,6 +52,7 @@
 .fd-plan-list article > .fd-plan-actions {
   grid-column: 2;
   grid-row: 1 / span 2;
+  align-self: start;
   justify-content: flex-end;
 }
 
@@ -176,30 +178,34 @@
 }
 
 @media (max-width: 760px) {
-  /* A wrapped meta line has no leading dot: the parts sit 12 px apart. */
-  .fd-plan-meta {
-    column-gap: var(--sp-3);
+  /* The phone keeps the drawn dots of the desktop. The session link goes on its own line without
+     a dot, so that no wrapped line starts with a dot. */
+  .fd-plan-meta > .fd-link:last-child {
+    flex-basis: 100%;
+    text-align: left;
   }
 
-  .fd-plan-meta
-    > :not(.fd-plan-status):not(.fd-badge)
-    + :not(.fd-plan-status):not(.fd-badge)::before {
+  /* The :not() parts repeat those of the dot rule above, so that this rule wins. */
+  .fd-plan-meta > :not(.fd-plan-status):not(.fd-badge) + .fd-link:last-child::before {
     content: none;
-  }
-
-  .fd-plan-meta > .fd-plan-status {
-    margin-right: 0;
   }
 
   .fd-plan-list article {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The actions: the general action across the row, then the other actions in a left-aligned
+     wrapped row, the same as on Automations. */
   .fd-plan-list article > .fd-plan-actions {
+    justify-content: flex-start;
     grid-column: 1;
     grid-row: auto;
-    justify-content: flex-start;
     margin-top: var(--sp-2);
+  }
+
+  .fd-plan-list article > .fd-plan-actions > button:first-child {
+    flex-basis: 100%;
+    justify-content: center;
   }
 
   .fd-plan-list article > h3 {
@@ -291,7 +297,8 @@
 }
 
 /* The session slots: "3 of 12 sessions" with the .fd-slots meter (base.css); a station with
-   more than 24 slots shows a plain bar. */
+   more than 24 slots shows a neutral .fd-meter (base.css). The count has a fixed width, so the
+   meters of the cards line up. */
 .fd-station-load {
   display: inline-flex;
   align-items: center;
@@ -303,16 +310,14 @@
   white-space: nowrap;
 }
 
-.fd-station-load .fd-load-bar {
+.fd-station-load > .fd-meter {
+  flex: none;
   width: 72px;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
 }
 
-.fd-station-load .fd-load-bar > span,
-.fd-station-load .fd-load-bar > span[data-high] {
-  background: var(--ok);
+.fd-station-load-count {
+  min-width: 7.5em;
+  text-align: right;
 }
 
 .fd-station-menu {
@@ -332,10 +337,20 @@
   font-size: var(--fs-meta);
 }
 
+/* An online station seen just now has no meta: the header stays one line. */
+.fd-station-live:empty {
+  display: none;
+}
+
 .fd-station-live > * + *::before {
   content: "·";
   padding: 0 6px;
   color: var(--faint);
+}
+
+/* The offline count of the page summary sentence (§4.3): offline is a hazard. */
+.fd-stations-off {
+  color: var(--hazard);
 }
 
 /* ── the property rows: a label column and the values (concept B) ─── */
@@ -403,10 +418,6 @@
   font-weight: 500;
 }
 
-.fd-station-providers > li + li {
-  border-top: 1px solid var(--border-soft);
-}
-
 .fd-station-auth {
   display: inline-flex;
   align-items: center;
@@ -460,22 +471,6 @@
   min-height: 28px;
   color: var(--dim);
   font-size: var(--fs-meta);
-}
-
-.fd-station-res .fd-load-bar {
-  width: 56px;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-}
-
-.fd-station-res .fd-load-bar > span {
-  background: var(--dim);
-  border-radius: inherit;
-}
-
-.fd-station-res .fd-load-bar > span[data-high] {
-  background: var(--act);
 }
 
 .fd-station-res li[data-low] > span:last-child {
@@ -563,28 +558,6 @@
   color: var(--dim);
   font-size: var(--fs-meta);
   font-weight: 500;
-}
-
-/* A toggle, not a path: no leading chevron-right (base.css), a trailing chevron-down that
-   turns over when the fold opens. */
-.fd-station-folds > details > summary::before {
-  content: none;
-}
-
-.fd-station-folds > details > summary::after {
-  content: "";
-  flex: none;
-  width: 12px;
-  height: 12px;
-  background-color: var(--faint);
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  transition: transform var(--t-move);
-}
-
-.fd-station-folds > details[open] > summary::after {
-  transform: rotate(180deg);
 }
 
 .fd-station-folds > details > summary:hover,
@@ -767,6 +740,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-shells form input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 
 /* The human shell: a terminal that fits a phone width. */
 .fd-shells .fd-terminal {
@@ -943,9 +922,36 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-wt-confirm .fd-wt-actions input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
+  /* The rules stop 12px short of the panel edges, the same as the Automations and Projects
+     lists on a phone. */
+  .fd-plan-list {
+    padding: 0 var(--sp-3);
+  }
+
+  /* A plan row: the note that explains Start comes before the actions (the grid of the actions
+     is in the 760 px rule above). */
+  .fd-plan-list article > .fd-note {
+    order: 2;
+  }
+
+  .fd-plan-list article > .fd-plan-actions {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .fd-plan-list article > :is([role="status"], [role="alert"], .fd-plan-assign) {
+    order: 4;
+  }
+
   /* The page actions take their own line: Add station first, at the left edge. */
   .fd-stations .fd-page-actions > .fd-menu {
     order: 1;
@@ -954,6 +960,10 @@
   .fd-station-load {
     order: 3;
     margin-left: 0;
+  }
+
+  .fd-station-load-count {
+    min-width: 0;
   }
 
   /* The menu stays on the name line; the slots and the meta take the second line. */
@@ -977,5 +987,13 @@
 
   .fd-wt-session {
     margin-left: 0;
+  }
+}
+
+/* ── touch screens: the fold toggles are 44 px targets (§6). The area rule above sets the 36 px
+   row height and beats the zero-specificity touch rule of base.css. ── */
+@media (pointer: coarse) {
+  .fd-station-folds > details > summary {
+    min-height: var(--tap-min);
   }
 }

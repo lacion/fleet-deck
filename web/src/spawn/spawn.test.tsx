@@ -3,17 +3,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
+import { submitKeyHint } from './keyHint';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import {
-  baseProblem,
   batchPrompts,
-  branchProblem,
   importIdProblem,
   knownModels,
-  lastParts,
   listingView,
   moreOptionsOpen,
   providerLabel,
@@ -21,9 +19,7 @@ import {
   spawnActions,
   spawnModes,
   spawnTargets,
-  togglePin,
   versionWarning,
-  workspaceRequest,
 } from './spawn';
 
 const checkedRadio = (id: string, name: string) =>
@@ -134,15 +130,15 @@ describe('spawn form (P4-4)', () => {
 
   test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
     const [claude, codex] = info().providers;
-    const older = { ...claude!, version: '2.0.1', version_status: 'older_than_tested' as const };
-    const html = form([reported('station-a', { info: info({ providers: [older, codex!] }) })]);
+    if (!claude || !codex) throw new Error('the info fixture has two providers');
+    const older = { ...claude, version: '2.0.1', version_status: 'older_than_tested' as const };
+    const html = form([reported('station-a', { info: info({ providers: [older, codex] }) })]);
     expect(html).toContain('data-version-warning');
     expect(html).toContain('This claude CLI (2.0.1) is older than the version');
     expect(form([reported()])).not.toContain('data-version-warning');
-    const ok = { ...claude!, version_status: 'ok' as const };
-    expect(versionWarning(ok)).toBeNull();
+    expect(versionWarning({ ...claude, version_status: 'ok' })).toBeNull();
     expect(versionWarning(undefined)).toBeNull();
-    const broken = { ...claude!, version_status: 'broken' as const };
+    const broken = { ...claude, version_status: 'broken' as const };
     expect(versionWarning(broken)).toContain('known to break the protocol');
   });
 
@@ -157,10 +153,11 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
     expect(html).toContain('aria-label="Directory path"');
-    expect(html).toContain('placeholder="Choose a folder"');
+    // The placeholder is words (sans), not an example path and not a second "choose a folder".
+    expect(html).toContain('placeholder="Folder on the station"');
     // No directory yet: the start button is off and the note under the directory says why.
-    expect(html).toMatch(
-      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\+Enter Control\+Enter">Start session<span class="fd-kbd" aria-hidden="true">⌘↵<\/span><\/button>/,
+    expect(html).toContain(
+      `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta+Enter Control+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
     );
     expect(html).toContain(
       '<p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p>',
@@ -180,6 +177,36 @@ describe('spawn form (P4-4)', () => {
     // The footer does not repeat what the sheet already says.
     expect(html).not.toContain('data-missing');
     expect(html).toContain('aria-describedby="fd-spawn-scope fd-spawn-live fd-spawn-need"');
+    // A bad branch and a bad repository: the start button points to the note at each field.
+    const render = (props: { initialPlace: 'worktree' | 'clone'; initialBranch?: string }) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          stations={[reported()]}
+          freshness="live"
+          onOpen={() => {}}
+          initialCwd="/home/me/app"
+          actions={spawnActions(
+            async () => listing,
+            async () => ({}),
+            ['read', 'drive'],
+          )}
+          {...props}
+        />,
+      );
+    const branch = render({ initialPlace: 'worktree', initialBranch: 'bad..name' });
+    expect(branch).toContain('id="fd-spawn-branch-error"');
+    expect(branch).toMatch(
+      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-branch-error"/,
+    );
+    const repo = render({ initialPlace: 'clone' });
+    expect(repo).toContain('<p class="fd-note" id="fd-spawn-repo">Enter a repository.</p>');
+    expect(repo).toMatch(
+      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-repo"/,
+    );
+    // A good branch adds nothing.
+    expect(render({ initialPlace: 'worktree', initialBranch: 'fd/fix' })).toMatch(
+      /<button type="submit" class="fd-primary" aria-keyshortcuts/,
+    );
   });
 
   test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
@@ -484,18 +511,20 @@ describe('spawn form (P4-4)', () => {
     expect(html).not.toContain('Clone URL');
     expect(html).toContain('Repository');
     expect(html).toContain('placeholder="owner/name, host/owner/name or a URL"');
-    expect(html).toContain('<p class="fd-note">Clones https://github.com/acme/app.git</p>');
+    expect(html).toContain(
+      '<p class="fd-note" id="fd-spawn-repo">Clones https://github.com/acme/app.git</p>',
+    );
     // The directory name follows the repository.
     expect(html).toContain('New directory name<input value="app"/>');
     // A bare name without a default organization shows the error (no alert before the field was left).
     const bare = render('app');
     expect(bare).toContain(
-      '<p class="fd-note">Set a default organization in Settings, or enter owner/name.</p>',
+      '<p class="fd-note" id="fd-spawn-repo">Set a default organization in Settings, or enter owner/name.</p>',
     );
     // The repository says its problem at the field; the footer does not repeat it.
     expect(bare).not.toMatch(/data-missing="true">[^<]*owner\/name/);
     expect(render('git@gitlab.com:g/sub/tool.git')).toContain(
-      '<p class="fd-note">Clones git@gitlab.com:g/sub/tool.git</p>',
+      '<p class="fd-note" id="fd-spawn-repo">Clones git@gitlab.com:g/sub/tool.git</p>',
     );
   });
 
@@ -623,79 +652,30 @@ describe('spawn form (P4-4)', () => {
 
     test('a known list makes the field a select with the default, the models and Other…', () => {
       const html = render([withModels('a', list('opus', 'haiku'), 10)]);
-      expect(html).toContain('<select aria-label="Model (optional)" class="fd-sm fd-spawn-pill"');
+      expect(html).toContain('<select aria-label="Model (optional)" class="fd-spawn-pill"');
       expect(html).toContain('<option value="" selected="">Default model</option>');
       expect(html).toContain('<option value="opus" title="The opus.">OPUS</option>');
       expect(html).toContain('<option value="haiku" title="The haiku.">HAIKU</option>');
       expect(html).toContain('<option value="__other__">Other…</option>');
-      expect(html).toContain('From the last session of this provider on this station.');
+      // The source of the list is the accessible description of the select, not only a tooltip.
+      const note =
+        /<span id="([^"]+)" class="fd-vh">From the last session of this provider on this station\.<\/span>/.exec(
+          html,
+        );
+      expect(note).not.toBeNull();
+      expect(html).toContain(`aria-describedby="${note?.[1]}"`);
       expect(html).not.toContain('Model id or alias');
     });
 
-    test('without a known list the field is the same select pill with the default and Other…', () => {
+    test('without a known list the field is a text pill: the owner types a model at once', () => {
       const html = render([withModels('a', list('opus'), 10, 'codex')]);
-      expect(html).toContain('<select aria-label="Model (optional)" class="fd-sm fd-spawn-pill"');
-      const other = '<option value="__other__">Other…</option></select>';
-      expect(html).toContain(`<option value="" selected="">Default model</option>${other}`);
+      expect(html).toContain(
+        '<input class="fd-spawn-pill" aria-label="Model (optional)" placeholder="Default model"',
+      );
+      expect(html).not.toContain('<select aria-label="Model (optional)"');
+      expect(html).not.toContain('Other…');
       expect(html).not.toContain('From the last session');
-      expect(html).not.toContain('Model id or alias'); // the input shows only after "Other…"
-    });
-  });
-
-  test('a path shows its last two parts', () => {
-    expect(lastParts('/home/me/projects/app')).toBe('projects/app');
-    expect(lastParts('/home')).toBe('home');
-    expect(lastParts('/')).toBe('/');
-    expect(lastParts('/a/b/')).toBe('a/b');
-  });
-
-  test('a pin goes to the front, a second toggle removes it, 20 at most, by station', () => {
-    let pins = togglePin({}, 'a', '/x');
-    pins = togglePin(pins, 'a', '/y');
-    expect(pins['a']).toEqual(['/y', '/x']);
-    expect(togglePin(pins, 'a', '/x')['a']).toEqual(['/y']);
-    expect(togglePin(pins, 'b', '/z')['b']).toEqual(['/z']);
-    let full = {};
-    for (let i = 0; i < 25; i += 1) full = togglePin(full, 'a', `/p/${i}`);
-    const list = (full as Record<string, string[]>)['a'] ?? [];
-    expect(list).toHaveLength(20);
-    expect(list[0]).toBe('/p/24');
-  });
-
-  test('branchProblem and baseProblem mirror the station rules (DL-144)', () => {
-    expect(branchProblem('feature/PROJ-1')).toBeNull();
-    expect(branchProblem('a'.repeat(200))).toBeNull();
-    for (const bad of ['-x', 'a b', 'a..b', 'a~1', 'x.lock', 'a/', 'a\tb', 'a:b', 'a[b', '']) {
-      expect(branchProblem(bad)).toBe('the branch name is not valid');
-    }
-    expect(branchProblem('a'.repeat(201))).toBe('the branch name is not valid');
-    expect(baseProblem('HEAD~1')).toBeNull();
-    expect(baseProblem('origin/main')).toBeNull();
-    expect(baseProblem('-x')).toBe('the base is not valid');
-    expect(baseProblem('a b')).toBe('the base is not valid');
-    expect(baseProblem('')).toBe('the base is not valid');
-  });
-
-  test('workspaceRequest builds the workspace of a start (DL-144)', () => {
-    expect(workspaceRequest('here', false, '', '', '')).toBeNull();
-    expect(workspaceRequest('here', true, '', 'x', 'y')).toEqual({ kind: 'worktree' });
-    expect(workspaceRequest('worktree', false, '', '', '')).toEqual({ kind: 'worktree' });
-    expect(workspaceRequest('worktree', false, '', ' feat/x ', ' main ')).toEqual({
-      kind: 'worktree',
-      branch: 'feat/x',
-      base: 'main',
-    });
-    expect(workspaceRequest('worktree', false, '', 'feat/x', '  ')).toEqual({
-      kind: 'worktree',
-      branch: 'feat/x',
-    });
-    // A base needs a branch.
-    expect(workspaceRequest('worktree', false, '', '  ', 'main')).toEqual({ kind: 'worktree' });
-    // A batch never carries a branch.
-    expect(workspaceRequest('worktree', true, '', 'feat/x', 'main')).toEqual({ kind: 'worktree' });
-    expect(workspaceRequest('clone', false, ' https://h/o/r.git ', 'x', 'y')).toEqual({
-      kind: 'clone',
-      url: 'https://h/o/r.git',
+      expect(html).not.toContain('Model id or alias');
     });
   });
 

@@ -18,6 +18,7 @@ import {
   type FleetControl,
   fleetBlocked,
   fleetElevation,
+  fleetProblem,
   grantFields,
   NO_FLEET,
   showFleetFields,
@@ -54,7 +55,7 @@ import {
   versionWarning,
   workspaceRequest,
 } from './spawn';
-import { coarsePointer, type SpawnFormProps } from './spawnFormProps';
+import { coarsePointer, type SpawnFormProps, useNarrow } from './spawnFormProps';
 import { useFleetElevation } from './useFleetElevation';
 
 /** The id of the note under the directory that says what is missing. */
@@ -84,6 +85,7 @@ export function SpawnForm({
   initialCwd,
   initialPlace = 'here',
   initialRepo = '',
+  initialBranch = '',
   sessions = [],
   now: givenNow,
 }: SpawnFormProps) {
@@ -142,7 +144,7 @@ export function SpawnForm({
   // The default host, organization and transport come from the deck settings (owner only).
   const settingsEnv = useSettings();
   const [cloneDefaults, setCloneDefaults] = useState<CloneDefaults>(DEFAULT_CLONE);
-  const [branch, setBranch] = useState('');
+  const [branch, setBranch] = useState(initialBranch);
   const [base, setBase] = useState('');
   const [access, setAccess] = useState<{
     readonly stationId: string;
@@ -293,7 +295,16 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
+  // A phone shows the directory, board and scope notes in the sticky footer, where the disabled
+  // button is in view (the form scrolls under the footer).
+  const needInFoot = useNarrow();
   const scopeNote = actions !== undefined && !canDrive;
+  const topNotes = [
+    scopeNote ? { id: 'fd-spawn-scope', text: 'Starting sessions needs the drive scope.' } : null,
+    live ? null : { id: 'fd-spawn-live', text: 'The form is off until the board is live.' },
+  ].filter((note) => note !== null);
+  // Without providers there is no form and no footer: the notes stay at the top.
+  const notesInFoot = needInFoot && targets.length > 0;
   const missing = (
     busy
       ? []
@@ -311,6 +322,13 @@ export function SpawnForm({
       live ? null : 'fd-spawn-live',
       dirNote === null ? null : NEED_ID,
       missing.length === 0 ? null : 'fd-spawn-missing',
+      refProblem && branchProblem(branchName) !== null ? 'fd-spawn-branch-error' : null,
+      refProblem && base.trim() !== '' && baseProblem(base.trim()) !== null
+        ? 'fd-spawn-base-error'
+        : null,
+      setupBad ? 'fd-spawn-setup-error' : null,
+      fleetBad ? 'fd-spawn-grant-error' : null,
+      !cloneReady && repoError !== null ? 'fd-spawn-repo' : null,
     ]
       .filter((id) => id !== null)
       .join(' ') || undefined;
@@ -321,16 +339,13 @@ export function SpawnForm({
   return (
     <section className="fd-spawn" aria-label="New session">
       <SheetHead station={auto ? undefined : station} />
-      {scopeNote ? (
-        <p className="fd-note" id="fd-spawn-scope">
-          Starting sessions needs the drive scope.
-        </p>
-      ) : null}
-      {live ? null : (
-        <p className="fd-note" id="fd-spawn-live">
-          The form is off until the board is live.
-        </p>
-      )}
+      {notesInFoot
+        ? null
+        : topNotes.map((note) => (
+            <p key={note.id} className="fd-note" id={note.id}>
+              {note.text}
+            </p>
+          ))}
       {targets.length === 0 ? (
         <p className="fd-empty">No linked station has reported its providers yet.</p>
       ) : (
@@ -610,7 +625,7 @@ export function SpawnForm({
                     list={actions?.list}
                     sessions={sessions}
                     label="Directory path"
-                    placeholder="Choose a folder"
+                    placeholder="Folder on the station"
                     invalid={cwd !== null && !cwdOk}
                     describedBy={dirNote === null ? undefined : NEED_ID}
                     browseDisabled={!live || !canDrive}
@@ -619,7 +634,7 @@ export function SpawnForm({
                   />
                 </div>
               )}
-              {dirNote === null ? null : (
+              {dirNote === null || needInFoot ? null : (
                 <p className="fd-note fd-spawn-need" id={NEED_ID}>
                   {dirNote}
                 </p>
@@ -729,6 +744,9 @@ export function SpawnForm({
             batch={batch}
             onBatch={setBatch}
             missing={missing}
+            notes={notesInFoot ? topNotes : []}
+            need={needInFoot ? dirNote : null}
+            grantProblem={fleetBad ? fleetProblem(fleet) : null}
             describedBy={describedBy}
             outcome={outcome}
             onOpenNew={

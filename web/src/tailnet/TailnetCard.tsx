@@ -50,8 +50,11 @@ function AutoSection({
         />
         Use Tailscale automatically
       </label>
-      <p className="fd-note">
-        Keeps the tailnet addresses current at each start. Applies after a restart.
+      <p className="fd-note fd-tailnet-help">
+        Keeps the tailnet addresses current at each start.
+        <span className="fd-set-badges">
+          <span className="fd-badge">Applies after a restart</span>
+        </span>
       </p>
       {notes.map((text) => (
         <p className="fd-note" key={text}>
@@ -108,7 +111,6 @@ function CertificateSection({
   const line = certificateLine(cert);
   return (
     <div className="fd-tailnet-cert">
-      <h3>Trusted certificate</h3>
       {cert?.owner_files === true ? (
         <p className="fd-note" data-note="owner-files">
           Your own certificate files (board.crt) are used for every name. Remove them to use the
@@ -313,7 +315,7 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
   };
 
   return (
-    <section className="fd-panel fd-tailnet" aria-label="Tailnet">
+    <section className="fd-tailnet" aria-label="Tailnet">
       <h2>Tailnet</h2>
       {view === null && error === null ? <p className="fd-note">Checking Tailscale…</p> : null}
       {view === null ? null : (

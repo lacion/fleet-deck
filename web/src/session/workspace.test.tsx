@@ -9,16 +9,20 @@ import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
 import { type PaneTab, SessionView } from './SessionView';
-import { SinceNotes } from './TurnsPanel';
+import { DiffFlight, diffOpen, SinceNotes } from './TurnsPanel';
 import {
   artifactFiles,
   fileActions,
   finalizedTurns,
   joinPath,
+  mergeDiffPaths,
+  mergeTurnPaths,
+  replaceDiffPaths,
   parentPath,
   revertBlock,
   revertText,
   setDiffTotal,
+  useDiffPaths,
   useDiffTotal,
   workspaceFiles,
 } from './workspace';
@@ -155,7 +159,7 @@ describe('turns and reverts (DL-097)', () => {
     const html = view(codex(), [finalized('t1'), finalized('t2', ok('s'), gone('queued_input'))]);
     expect(html).toContain('aria-label="Turns"');
     expect(html).toMatch(
-      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat">1 file <span class="fd-add">\+2<\/span> <span class="fd-del">−1<\/span><\/span>/,
+      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat"><span class="fd-add">\+2<\/span><span class="fd-del">−1<\/span><span class="fd-turn-files">1 file<\/span><\/span>/,
     );
     expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
     expect(html).toContain(
@@ -167,6 +171,43 @@ describe('turns and reverts (DL-097)', () => {
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('the diff button: a loaded diff hides; nothing or a failed load shows (and retries)', () => {
+    const loaded = {
+      diff: { turn_id: 't1', patch: '', truncated: false } as never,
+      snapshot: null,
+      fellBack: false,
+    };
+    expect(diffOpen(undefined)).toBe(false);
+    expect(diffOpen('The diff request failed.')).toBe(false);
+    expect(diffOpen(loaded)).toBe(true);
+  });
+
+  test('the diff toggle: Show, then Hide before the answer keeps the diff closed', () => {
+    const flight = new DiffFlight();
+    // Show: one request starts; the button says "Loading…" (aria-busy).
+    expect(flight.start('t1')).toBe(true);
+    expect(flight.loading('t1')).toBe(true);
+    // A second Show press during the load starts no second request.
+    expect(flight.start('t1')).toBe(false);
+    // Hide during the load: the button says "Show the diff" again, the late answer is dropped.
+    flight.hide('t1');
+    expect(flight.loading('t1')).toBe(false);
+    expect(flight.finish('t1')).toBe(false);
+    // The next Show loads again, and its answer shows.
+    expect(flight.start('t1')).toBe(true);
+    expect(flight.finish('t1')).toBe(true);
+    // Show, Hide, Show during one load: the running load shows its answer.
+    expect(flight.start('t2')).toBe(true);
+    flight.hide('t2');
+    expect(flight.start('t2')).toBe(false);
+    expect(flight.loading('t2')).toBe(true);
+    expect(flight.finish('t2')).toBe(true);
+    // A Hide of a loaded diff (no load runs) leaves no mark on the next load.
+    flight.hide('t3');
+    expect(flight.start('t3')).toBe(true);
+    expect(flight.finish('t3')).toBe(true);
   });
 
   test('a turn without file changes says so and has no Show the diff', () => {
@@ -183,7 +224,9 @@ describe('turns and reverts (DL-097)', () => {
     const html = view(codex(), [
       finalized('t1', ok('s'), ok('e'), { files_changed: 2, insertions: 0, deletions: 0 }),
     ]);
-    expect(html).toContain('<span class="fd-turn-stat">2 files</span>');
+    expect(html).toContain(
+      '<span class="fd-turn-stat"><span class="fd-turn-files">2 files</span></span>',
+    );
     expect(html).toContain('Show the diff');
   });
 
@@ -200,8 +243,10 @@ describe('turns and reverts (DL-097)', () => {
       summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
     };
     const html = view(s, [finalized('t1')]);
-    expect(html).toContain('This provider cannot roll back its conversation');
-    expect(html).toContain('A file-only restore is not a revert.');
+    expect(html).toContain(
+      'This provider cannot roll back its conversation, so the board offers no revert.',
+    );
+    expect(html).not.toContain('file-only restore');
     expect(html).not.toContain('Revert to here');
   });
 
@@ -323,6 +368,65 @@ describe('the diff since the session started (R1.2)', () => {
     setDiffTotal('station-a/s1', { files_changed: 2, insertions: 5, deletions: 1 });
     expect(totalOf('station-a/s1')).toBe('<b>2/5/1</b>');
     expect(totalOf('station-a/other')).toBe('<b>none</b>');
+  });
+
+  test('a turn diff or the Files list adds its paths; the session diff replaces them', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        return <b>{useDiffPaths(ref)?.join(',') ?? 'none'}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    mergeDiffPaths('station-a/m1', ['b.ts', 'a.ts', 'b.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts</b>');
+    mergeDiffPaths('station-a/m1', ['a.ts', 'c.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts,c.ts</b>');
+    setDiffTotal('station-a/m1', { files_changed: 1, insertions: 1, deletions: 0 }, ['c.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>c.ts</b>');
+  });
+
+  test('a full session diff replaces the paths; an empty one empties them; turns then add nothing', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        const paths = useDiffPaths(ref);
+        return <b>{paths === undefined ? 'none' : `[${paths.join(',')}]`}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    // A turn listed `restored.ts`; a later turn restored it, so the full diff no longer has it.
+    mergeDiffPaths('station-a/f1', ['restored.ts', 'kept.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[restored.ts,kept.ts]</b>');
+    replaceDiffPaths('station-a/f1', ['kept.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[kept.ts]</b>');
+    mergeDiffPaths('station-a/f1', ['restored.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[kept.ts]</b>');
+    // A clean diff is an empty list, not "unknown".
+    replaceDiffPaths('station-a/f1', []);
+    expect(pathsOf('station-a/f1')).toBe('<b>[]</b>');
+    mergeTurnPaths('station-a/f1', undefined, ['again.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[]</b>');
+  });
+
+  test('the diff of a reverted turn adds no paths; a kept turn adds its paths', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        return <b>{useDiffPaths(ref)?.join(',') ?? 'none'}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    const turn = (reverted: boolean) => ({
+      turnId: reverted ? 't1' : 't2',
+      start: ok('a1'),
+      end: ok('b1'),
+      diff: { files_changed: 1, insertions: 1, deletions: 0 },
+      reverted,
+    });
+    mergeTurnPaths('station-a/r1', turn(true), ['gone.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>none</b>');
+    mergeTurnPaths('station-a/r1', turn(false), ['kept.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>kept.ts</b>');
+    mergeTurnPaths('station-a/r1', undefined, ['other.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>kept.ts,other.ts</b>');
   });
 });
 

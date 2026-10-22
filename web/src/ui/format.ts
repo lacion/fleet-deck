@@ -1,5 +1,7 @@
 // DL-141: short display forms of session data.
 
+import type { ActivityKind } from '../gen';
+
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'quill', 'comet'] as const;
 export type ModelFamily = (typeof FAMILIES)[number];
 
@@ -89,3 +91,51 @@ const MODE_LABELS: Readonly<Record<string, string>> = {
 
 /** `acceptEdits` → `Accept edits`; a mode outside the list stays as it is. */
 export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;
+
+/** The tools whose input is a command or a path: the wall stream and the Activity page draw that
+ * input in mono. A tool with prose input (a task, a search query) is not here. */
+const CODE_TOOLS: ReadonlySet<string> = new Set([
+  'Bash',
+  'Shell',
+  'shell',
+  'exec_command',
+  'Read',
+  'Edit',
+  'MultiEdit',
+  'Write',
+  'NotebookEdit',
+  'Grep',
+  'Glob',
+  'LS',
+  'WebFetch',
+  'apply_patch',
+]);
+
+/** "Bash cargo test", "Edit: src/a.ts", "Permission: Bash cargo test": an optional request
+ * label, the tool name, a space or ": ", then the target. */
+const TOOL_LINE = /^((?:Permission|Needs you): )?([A-Za-z_]+)(:? )(\S.*)$/;
+
+/** A tool or approval row of an activity list split into the words (the label and the tool name, in
+ * sans) and the target (the command or the path, in mono). `null`: the row is words only. The
+ * two parts joined by a space give the text again. */
+export function toolParts(
+  kind: ActivityKind,
+  text: string,
+): { readonly lead: string; readonly target: string } | null {
+  if (kind !== 'tool' && kind !== 'approval') return null;
+  const m = TOOL_LINE.exec(text);
+  const name = m?.[2];
+  const target = m?.[4];
+  if (m === null || name === undefined || target === undefined || !CODE_TOOLS.has(name)) {
+    return null;
+  }
+  return { lead: `${m[1] ?? ''}${name}${(m[3] ?? ' ').trimEnd()}`, target };
+}
+
+/** A size in decimal units: `512 B`, `12.3 KB`, `4.5 MB`, `1.2 GB`. */
+export function sizeText(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`;
+  if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
+  return `${(bytes / 1e9).toFixed(1)} GB`;
+}

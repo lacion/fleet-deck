@@ -38,6 +38,11 @@ describe('file view', () => {
     expect(view(file('docs/a.md', 'x'), '/home/me/app')).toContain('aria-label="Copy the path"');
   });
 
+  test('the size is in decimal units, the same as the other sizes of the board', () => {
+    expect(view(file('src/a.ts', 'x', { size: 3200 }))).toContain('3.2 KB');
+    expect(view(file('src/b.ts', 'x', { size: 812 }))).toContain('812 B');
+  });
+
   test('a binary file is not shown', () => {
     const html = view(file('logo.png', '', { binary: true, text: null }));
     expect(html).toContain('A binary file is not shown.');

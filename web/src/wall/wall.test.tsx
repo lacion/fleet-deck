@@ -9,6 +9,7 @@ import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
 import { StreamArea } from './Areas';
+import { ChatPane } from './ChatPane';
 import { WallPage } from './WallPage';
 import {
   ambientCounts,
@@ -16,6 +17,7 @@ import {
   needsList,
   sentOnly,
   stepMode,
+  toolParts,
   wallSessions,
   withMode,
 } from './model';
@@ -323,5 +325,100 @@ describe('the stream follows the wall filter', () => {
     const html = stream([]);
     expect(html).toContain('Alpha said hi');
     expect(html).toContain('Beta said hi');
+  });
+
+  test('the list keeps the deck order: the newest row is the first in the DOM', () => {
+    const html = stream([]);
+    expect(html.indexOf('Alpha said hi')).toBeLessThan(html.indexOf('Beta said hi'));
+  });
+});
+
+describe('a tool row of the stream draws its target as code', () => {
+  test('the tool name and a request label stay words; the command or the path is the target', () => {
+    expect(toolParts('tool', 'Edit src/checkout/cart.ts')).toEqual({
+      lead: 'Edit',
+      target: 'src/checkout/cart.ts',
+    });
+    expect(toolParts('tool', 'Bash: cargo test')).toEqual({ lead: 'Bash:', target: 'cargo test' });
+    expect(toolParts('approval', 'Permission: Bash cargo nextest run')).toEqual({
+      lead: 'Permission: Bash',
+      target: 'cargo nextest run',
+    });
+  });
+
+  test('prose, an unknown tool and the other kinds stay words', () => {
+    expect(toolParts('approval', 'Question: Use the test key?')).toBeNull();
+    expect(toolParts('tool', 'Tool call (ok)')).toBeNull();
+    expect(toolParts('tool', 'Task: write the docs')).toBeNull();
+    expect(toolParts('tool', 'Bash')).toBeNull();
+    expect(toolParts('message', 'Read the file first')).toBeNull();
+  });
+
+  test('the stream renders the target in a code element and keeps the text', () => {
+    const html = renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={sessions}
+        filter={{ stations: [], repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={[
+          {
+            station_id: 'station-a',
+            session_id: 'busy',
+            session_title: 'busy',
+            repo: null,
+            kind: 'tool',
+            text: 'Edit src/a.ts',
+            at: 1,
+            station_seq: 1,
+          },
+        ]}
+      />,
+    );
+    expect(html).toContain('Edit <code>src/a.ts</code>');
+  });
+});
+
+describe('the focus chat pane', () => {
+  test('a ready chat without lines says so', () => {
+    const html = renderToStaticMarkup(<ChatPane events={[]} ready unavailable={false} />);
+    expect(html).toContain('No chat yet.');
+  });
+
+  test('a chat that loads says so', () => {
+    const html = renderToStaticMarkup(<ChatPane events={[]} ready={false} unavailable={false} />);
+    expect(html).toContain('Loading…');
+    expect(html).not.toContain('No chat yet.');
+  });
+
+  test('a call that is not done says its state to a screen reader', () => {
+    const started: Event = {
+      kind: 'tool.started',
+      node_id: 'n1',
+      parent_node_id: null,
+      tool_kind: 'shell',
+      title: 'Bash',
+      input_summary: 'cargo test',
+      files: [],
+      provider_refs: {},
+    };
+    const running = renderToStaticMarkup(
+      <ChatPane events={envelopes('s', [started])} ready unavailable={false} />,
+    );
+    expect(running).toContain('data-state="running"');
+    expect(running).toContain('<span class="fd-vh"> · Running</span>');
+    const ended = renderToStaticMarkup(
+      <ChatPane
+        events={envelopes('s', [
+          started,
+          { kind: 'session.ended', reason: 'process_exit', exit_code: 0 },
+        ])}
+        ready
+        unavailable={false}
+      />,
+    );
+    expect(ended).toContain('data-state="ended"');
+    expect(ended).toContain('<span class="fd-vh"> · Ended</span>');
   });
 });

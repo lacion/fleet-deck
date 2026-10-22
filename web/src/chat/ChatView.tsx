@@ -30,10 +30,11 @@ import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
 import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
+import { PathTail } from './PathTail';
 import { SubagentWork } from './SubagentWork';
 import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
-import { hasOpenRequest, pairWaiting, type Waiting } from './waiting';
+import { hasOpenRequest, pairWaiting, WAITING_LABEL, WAITING_SHORT, type Waiting } from './waiting';
 import { ReviewCard } from '../review/ReviewCard';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
@@ -192,6 +193,12 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
     tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
   const shown = named ? [] : tool.files.slice(0, MAX_FILE_CHIPS);
   const more = named ? 0 : tool.files.length - shown.length;
+  // A file target loses its leading folders, not its end: the end names the file (PathTail, with
+  // the start ellipsis of chat.css `[data-path]` as the fallback).
+  const isPath =
+    (tool.files.length === 1 && target === tool.files[0]) ||
+    tool.tool_kind === 'read' ||
+    tool.tool_kind === 'edit';
   const failedExit = tool.exit_code !== null && tool.exit_code !== 0;
   const result = failedExit ? undefined : RESULT[tool.status];
   return (
@@ -213,7 +220,11 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
         </span>
         <span className="fd-chat-tool-title">{tool.title}</span>
-        {tool.input ? <span className="fd-chat-tool-arg">{target}</span> : null}
+        {tool.input ? (
+          <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
+            {isPath ? <PathTail path={target} /> : <bdi>{target}</bdi>}
+          </span>
+        ) : null}
         {shown.map((path) => (
           <span key={path} className="fd-badge" title={path}>
             {basename(path)}
@@ -224,9 +235,15 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <span className="fd-badge" data-tone="hazard">{`exit ${tool.exit_code}`}</span>
         ) : null}
         {waitingFor !== undefined ? (
+          // The phone row shows the short label (chat.css); the approval sheet says the rest.
           <span className="fd-chat-tool-result" data-tone="act">
-            <span className="fd-vh">{`Waiting for your answer · ${waitingFor}`}</span>
-            <span aria-hidden="true">Waiting for your answer</span>
+            <span className="fd-vh">{`${WAITING_LABEL} · ${waitingFor}`}</span>
+            <span className="fd-chat-wait-long" aria-hidden="true">
+              {WAITING_LABEL}
+            </span>
+            <span className="fd-chat-wait-short" aria-hidden="true">
+              {WAITING_SHORT}
+            </span>
           </span>
         ) : result ? (
           <span className="fd-chat-tool-result" data-tone={result.tone}>
@@ -370,7 +387,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
           <Icon of={TriangleAlert} size={14} />
-          Waiting for your answer · {item.title}
+          {`${WAITING_LABEL} · ${item.title}`}
         </p>
       ) : (
         <p className="fd-chat-line" data-state={item.state}>
@@ -513,6 +530,8 @@ export function ChatView(props: ChatViewProps) {
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
+    // Away from its top, the log fades under the tab row (chat.css `[data-scrolled]`).
+    el.toggleAttribute('data-scrolled', el.scrollTop > 0);
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     stick.current = near;
     if (near) setBehind(false);

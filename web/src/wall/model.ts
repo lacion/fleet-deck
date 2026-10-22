@@ -8,6 +8,9 @@ import type { ReviewState } from '../review/useReview';
 import { emptyWatchFilter, refOf, watchSessions } from '../watch/tiles';
 import type { Ask } from './autofocus';
 
+/** The tool line split of the stream; the Activity page uses the same rule (ui/format.ts). */
+export { toolParts } from '../ui/format';
+
 /** The sessions that pass the station and repository filter of the route. */
 export function wallSessions(
   sessions: readonly DeckSession[],
@@ -51,9 +54,19 @@ export const NEED_LABEL: Readonly<Record<RequestKind, string>> = {
   tool: 'Permission',
 };
 
-/** The usage line of the wall: "Claude 5-hour window · 62%" (no raw scope key). */
+/** The two parts of the usage line: the window ("Claude 5-hour window", no raw scope key) and
+ * the percent ("62%"), which the wall draws in `--fuel`. */
+export function usageParts(meter: RateMeter): { readonly label: string; readonly percent: string } {
+  return {
+    label: `${meter.provider} ${scopeText(meter.scope)}`,
+    percent: `${Math.round(meter.usedPercent ?? 0)}%`,
+  };
+}
+
+/** The usage line of the wall as one text: "Claude 5-hour window · 62%". */
 export function usageLine(meter: RateMeter): string {
-  return `${meter.provider} ${scopeText(meter.scope)} · ${Math.round(meter.usedPercent ?? 0)}%`;
+  const { label, percent } = usageParts(meter);
+  return `${label} · ${percent}`;
 }
 
 /** The requests as the auto-focus function reads them. */

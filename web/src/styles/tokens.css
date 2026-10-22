@@ -14,6 +14,7 @@
   --raised: #1c2532; /* strips, rows, inputs, buttons, cards ("strip") */
   --raised-hi: #232e3d; /* hover, selected row, pressed segment */
   --code: #0e141c; /* code blocks, diffs, terminal frame */
+  --code-chat: var(--code); /* a code block in the chat prose (on --bg) */
   --border: #2a3545; /* strip field rules, section rules, input edge */
   --border-soft: #212b39; /* the faintest divider (list separators) */
   --text: #e9eef4; /* primary text */
@@ -24,6 +25,9 @@
   --ink-on: #111821; /* text on --ink-fill */
   --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
   --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
+  /* edge of a plain button on a --raised surface (a dialog, a strip): the button has the same
+     fill there (#3a4556, 1.6:1; it follows an Omarchy palette through --ctl-edge and --border) */
+  --btn-edge-raised: color-mix(in srgb, var(--ctl-edge) 25%, var(--border));
   --ctl-edge: #6b778a; /* edge of a form control (input, select, checkbox, radio, off switch): 3:1 */
   --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
   --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
@@ -46,11 +50,24 @@
   --fuel-bg: #2a2348; /* track of a fuel meter (visible on --surface and --raised) */
   --focus: #66b8ff; /* blue: focus ring, selection marker, links, queued, verifying */
   --focus-bg: #13253a; /* selected tab or row tint */
-  --add-bg: rgba(61, 220, 151, 0.1); /* diff line fill: addition */
-  --del-bg: rgba(255, 98, 87, 0.1); /* diff line fill: deletion */
+  /* diff line fill: addition; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1) */
+  --add-bg: rgba(61, 220, 151, 0.1);
+  /* diff line fill: deletion; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1, --hazard 4.27:1) */
+  --del-bg: rgba(255, 98, 87, 0.1);
   --free-bg: #10291f; /* free slot / allowed tint */
   --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
   --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
+  /* the rest of the terminal ANSI palette (Terminal.tsx termTheme; blue = --focus, magenta = --fuel) */
+  --term-black: var(--bg); /* #111821; the aliases follow an Omarchy palette */
+  --term-white: var(--text); /* #e9eef4 */
+  --term-bright-black: var(--faint); /* #8896a7 */
+  --term-bright-red: #ff8a76;
+  --term-bright-green: #7bd3a6;
+  --term-bright-yellow: #f6be6a;
+  --term-bright-blue: #aecffa;
+  --term-bright-magenta: #d8cbff;
+  --term-bright-cyan: #9ae4dd;
+  --term-bright-white: #ffffff;
   --scrim: rgba(6, 10, 15, 0.6); /* dims the page behind a dialog, the drawer and a sheet */
 
   /* elevation (§2.5) */
@@ -71,6 +88,7 @@
   --raised: #ffffff;
   --raised-hi: #eef4fb;
   --code: #f1f5f9;
+  --code-chat: var(--raised); /* --code is about 1.02:1 on the light --bg */
   --border: #d8e0e9;
   --border-soft: #e4e9f0;
   --text: #111821;
@@ -81,6 +99,7 @@
   --ink-on: #ffffff;
   --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
   --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
+  --btn-edge-raised: var(--border); /* a white button on a white --raised surface */
   --ctl-edge: #788496;
   --pressed-bg: var(--raised); /* a white segment, lifted, on the --surface track */
   --switch-knob: var(--raised); /* a white knob (#ffffff) */
@@ -88,7 +107,7 @@
   --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
   --selected-lift: var(--shadow-lift);
 
-  --act: #8a6400;
+  --act: #7f5c00; /* 4.5:1 also on --badge-bg and the add/del diff fills */
   --act-fill: #ffd43b;
   --act-ink: #1b1600;
   --act-bg: #fff6d6;
@@ -98,8 +117,8 @@
   --ok-bg: #e3f5ec;
   --hazard: #b52a22; /* 4.5:1 also on the --del-bg diff line */
   --hazard-bg: #fde8e6;
-  --fuel: #6e4fe0;
-  --fuel-bg: #efeafe;
+  --fuel: #6447d6; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --fuel-bg: #e6dffc; /* a visible meter track on --surface and --raised; --fuel (4.78:1) and --faint (4.61:1) text on it */
   --focus: #1a5fbf;
   --focus-bg: #e5effc;
   --add-bg: rgba(10, 112, 72, 0.1);
@@ -107,6 +126,17 @@
   --free-bg: #e3f5ec;
   --term-selection: rgba(26, 95, 191, 0.22);
   --term-cyan: #0e7490;
+  /* every ANSI color is 4.5:1 on the light --code: white and the bright colors are dark here */
+  --term-black: var(--text); /* #111821 */
+  --term-white: var(--dim); /* #4a5666 */
+  --term-bright-black: var(--faint); /* #596575 */
+  --term-bright-red: #8f1d17;
+  --term-bright-green: #075c3b;
+  --term-bright-yellow: #6e5000;
+  --term-bright-blue: #154c99;
+  --term-bright-magenta: #5a3cc4;
+  --term-bright-cyan: #0b5f75;
+  --term-bright-white: var(--text); /* #111821 */
   --scrim: rgba(17, 24, 33, 0.28);
 
   --shadow-pop: 0 12px 32px rgba(17, 24, 33, 0.12);
@@ -147,7 +177,8 @@
   --fs-micro: 11px; /* kbd hints, tiny captions */
   --fs-meta: 12px; /* metadata, timestamps, counts, chips */
   --fs-data: 12px; /* mono values in rows (paths, branches) */
-  --fs-ui: 13px; /* interface text, rows, buttons, inputs (the default) */
+  --fs-ui: 13px; /* interface text, rows, buttons (the default) */
+  --fs-field: 13px; /* the text of a field (input, select, textarea); 16px on a touch screen */
   --fs-body: 13px;
   --fs-chat: 14px; /* chat prose, line-height 1.6 */
   --fs-title: 14px; /* card and strip titles (weight 600) */
@@ -157,6 +188,8 @@
   --fs-page: 20px; /* page title (wide, weight 640) */
   --fs-hero: 26px; /* phone large title */
   --fs-display: 56px; /* display numbers read across a room: wall ambient counts, the pairing code */
+  --fs-sheet-title: 18px; /* the title field of the New session sheet (§4.6) */
+  --fs-sheet-task: 15px; /* the task field of the New session sheet (§4.6): max(it, --fs-field) */
   --fs-12: 12px; /* kept for old CSS */
   --fs-13: 13px;
   --fs-15: 15px;
@@ -182,6 +215,7 @@
   --ctl-h: 28px; /* control height, fine pointer */
   --ctl-h-sm: 24px;
   --row-h: 36px; /* one-line list row, sidebar session row */
+  --row-h-touch: 44px; /* a list row on a touch screen (pointer: coarse): the row is the tap target */
   --strip-h: 44px; /* a fleet strip */
   --header-h: 48px; /* page header bar */
   --sidebar-w: 248px;
@@ -197,6 +231,8 @@
   :root {
     --ctl-h: 44px;
     --ctl-h-sm: 44px;
+    /* iOS Safari zooms the page into a field under 16px, and the page stays zoomed */
+    --fs-field: 16px;
   }
 }
 

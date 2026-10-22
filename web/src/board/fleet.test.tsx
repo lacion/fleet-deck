@@ -169,10 +169,11 @@ describe('station projections', () => {
       '1970-01-01T00:00:00.000Z',
       'offline',
       'Not stored, the station dials this deck',
-      'Last seen —',
       '0 sessions',
     ])
       expect(html).toContain(text);
+    // A station that was never seen shows no "Last seen" (principle 7).
+    expect(html.match(/Last seen/g)?.length).toBe(1);
     expect(html).not.toContain('Dial-only');
     expect(html).not.toContain('Not reported');
   });
@@ -198,7 +199,7 @@ describe('station projections', () => {
       <StationsPanel stations={[station()]} sessions={[]} freshness="live" />,
     );
     const details = /<details class="fd-station-details">([\s\S]*?)<\/details>/.exec(html)?.[1];
-    expect(details).toContain('<summary class="fd-label">Details</summary>');
+    expect(details).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
     for (const text of ['Station ID', 'Key fingerprint', 'Direction', 'Link address'])
       expect(details).toContain(`<dt>${text}</dt>`);
     // The ids are not in the head or in the live facts.
@@ -231,14 +232,16 @@ describe('station projections', () => {
           freshness="live"
         />,
       );
-    // Up to 24 slots the load is the .fd-slots ticks; above that, the plain bar.
+    // Up to 24 slots the load is the .fd-slots ticks; above that, the neutral .fd-meter.
     const low = render(10, 5);
     expect(low).toContain('<span class="fd-slots" aria-hidden="true">');
     expect(low.match(/data-slot="used"/g)?.length).toBe(5);
     expect(low).toContain('5 of 10 sessions');
-    expect(low).not.toContain('fd-load-bar');
+    expect(low).not.toContain('fd-meter');
     const big = render(30, 27);
-    expect(big).toContain('<span style="width:90%" data-high=""></span>');
+    expect(big).toContain(
+      '<span class="fd-meter" data-tone="neutral" data-level="high" aria-hidden="true"><span style="width:90%"></span></span>',
+    );
     expect(big).not.toContain('fd-slots');
   });
   test('stale station metadata never labels a cached link as currently up', () => {

@@ -35,17 +35,26 @@ export const emptyWatchFilter: WatchFilter = { station: ALL, repo: ALL, needsOnl
 export type TileLine = {
   readonly key: string;
   readonly kind: 'message' | 'tool';
+  /** The whole line as one text: the chat text, or the tool call ("Bash: cargo test"). */
   readonly text: string;
+  /**
+   * A tool call in its parts (DESIGN-SYSTEM §4.1, §4.5): the tool name (sans, weight 600), the
+   * target (mono) and a plain note after them (the failed mark, the subagent title). A wall
+   * display line has none of them: its `text` is the tool name.
+   */
+  readonly name?: string;
+  readonly target?: string;
+  readonly note?: string;
 };
 
-/** The first non-empty line, cut to `LINE_CHARS`. Chat text loses its Markdown marks; a tool call keeps its text. */
-const cut = (text: string, markdown = false): string => {
+/** The first non-empty line, cut to `max` characters. Chat text loses its Markdown marks; a tool call keeps its text. */
+const cut = (text: string, markdown = false, max = LINE_CHARS): string => {
   const line =
     text
       .split('\n')
       .map((l) => (markdown ? plainLine(l) : l.trim()))
       .find((l) => l !== '') ?? '';
-  return line.length <= LINE_CHARS ? line : `${line.slice(0, LINE_CHARS - 1)}…`;
+  return line.length <= max ? line : `${line.slice(0, Math.max(max - 1, 0))}…`;
 };
 
 function lineOf(item: Item): TileLine | null {
@@ -54,12 +63,23 @@ function lineOf(item: Item): TileLine | null {
     return text === '' ? null : { key: item.key, kind: 'message', text };
   }
   if (item.type === 'tool') {
-    const call = item.input === '' ? item.title : `${item.title}: ${item.input}`;
-    const mark = item.status === 'failed' || item.status === 'denied' ? ` (${item.status})` : '';
-    return { key: item.key, kind: 'tool', text: cut(call) + mark };
+    const name = cut(item.title);
+    const target = cut(item.input, false, LINE_CHARS - name.length - 1);
+    const call = target === '' ? name : `${name}: ${target}`;
+    const note = item.status === 'failed' || item.status === 'denied' ? `(${item.status})` : '';
+    return {
+      key: item.key,
+      kind: 'tool',
+      text: note === '' ? call : `${call} ${note}`,
+      name,
+      target,
+      note,
+    };
   }
   if (item.type === 'subagent') {
-    return { key: item.key, kind: 'tool', text: cut(`Subagent: ${item.title}`) };
+    const name = 'Subagent';
+    const note = cut(item.title, false, LINE_CHARS - name.length - 1);
+    return { key: item.key, kind: 'tool', text: `${name}: ${note}`, name, target: '', note };
   }
   return null;
 }

@@ -210,7 +210,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
             "Where sessions run",
             K::Enum,
             Restart,
-            "direct: sessions end when the station stops. shim: sessions keep running while the station restarts.",
+            "Directly: sessions end when the station stops. In a shim: sessions keep running while the station restarts.",
         )
         .options(&["direct", "shim"])
         .danger(),
@@ -254,7 +254,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
         ),
         field(
             "model_help.enabled",
-            "Model help",
+            "Write titles and digests",
             K::Bool,
             Live,
             "Let this station ask your own provider login for short generated text, such as a title.",

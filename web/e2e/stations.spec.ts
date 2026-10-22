@@ -336,6 +336,45 @@ test('More shows no version for an older deck', async ({ page }) => {
   await expect(page.getByText(/^deck \d/)).toHaveCount(0);
 });
 
+test('Add station: a tailnet with no free computer moves after the invitation, and the focus stays in the dialog', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  deck.stations = [reported];
+  // A tailnet with no computer: the count of addable computers is 0.
+  deck.tailnet();
+  const release = deck.hold('/api/tailnet/devices');
+  await deck.install(page);
+  await logIn(page);
+  await openMore(page, 'Stations');
+  await page.getByRole('button', { name: 'Add station' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add station' });
+  const choices = dialog.locator('.fd-add-choice');
+  const tailnet = dialog.getByRole('button', { name: /A computer on my tailnet/ });
+  // While the count loads, the tailnet choice comes first; the owner puts the focus on it.
+  await expect(tailnet).toContainText('Checking Tailscale…');
+  await expect(choices.first()).toContainText('A computer on my tailnet');
+  await tailnet.focus();
+  await expect(tailnet).toBeFocused();
+  release();
+  // The answer (0) moves the tailnet choice after the invitation, quiet and without a chevron.
+  await expect(tailnet).toHaveAttribute('data-dim', 'true');
+  await expect(tailnet).toContainText(
+    'No computer on your tailnet is free to add. Choose it to see why.',
+  );
+  await expect(choices.first()).toContainText('Any computer, with a one-time invitation');
+  await expect(choices.last()).toContainText('A computer on my tailnet');
+  // The move remounted the focused choice: the focus went to a button in the dialog.
+  const inDialog = () =>
+    dialog.evaluate(
+      (el) =>
+        document.activeElement instanceof HTMLButtonElement && el.contains(document.activeElement),
+    );
+  await expect.poll(inDialog).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+});
+
 test.describe('on a wide screen', () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 

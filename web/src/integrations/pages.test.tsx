@@ -42,12 +42,19 @@ describe('projects page', () => {
     expect(html).toContain('Atlas');
     expect(html).toContain('Alpha');
     expect(html).toContain('/work/atlas');
-    expect(html).toContain('github acme/atlas');
-    expect(html).toContain('jira jira-main PROJ');
+    expect(html).toContain('GitHub acme/atlas');
+    expect(html).toContain('Jira jira-main PROJ');
     expect(html).toContain('href="#/project/p1"');
     for (const button of ['New project', 'Edit', 'Check', 'Delete…']) {
       expect(html).toContain(button);
     }
+  });
+
+  test('the Trackers column is absent when no project has a tracker (§1 rule 7)', () => {
+    expect(provide(<ProjectsPage stations={[station()]} />)).toContain('>Trackers</th>');
+    const html = provide(<ProjectsPage stations={[station()]} />, [project({ trackers: [] })]);
+    expect(html).toContain('Atlas');
+    expect(html).not.toContain('Trackers');
   });
 
   test('without the owner login the page says so and lists nothing', () => {
@@ -64,6 +71,15 @@ describe('projects page', () => {
     const html = provide(<ProjectsPage stations={[station()]} />, []);
     expect(html).toContain('No projects yet');
     expect(html).toContain('fd-emptystate');
+  });
+
+  test('the token rule stays under the table once a project exists', () => {
+    const rule = 'The deck stores the bindings only; the station holds the tokens.';
+    const html = provide(<ProjectsPage stations={[station()]} />);
+    expect(html).toContain(`<p class="fd-note">${rule}</p>`);
+    expect(html.indexOf('</table>')).toBeLessThan(html.indexOf(rule));
+    // The empty state says it in its own body; the note does not repeat it.
+    expect(provide(<ProjectsPage stations={[station()]} />, [])).not.toContain('fd-note">The deck');
   });
 
   test('the form: station select, forge select, tracker rows, prompts', () => {
@@ -741,7 +757,7 @@ describe('shell', () => {
     expect(html).toContain('role="tablist"');
     expect(html).toContain('>Issues<');
     expect(html).toContain('>Pull requests<');
-    expect(html).toContain('github acme/atlas');
+    expect(html).toContain('GitHub acme/atlas');
     const prs = provide(
       <ProjectPage
         id="p1"

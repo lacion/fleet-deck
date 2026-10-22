@@ -48,7 +48,7 @@ export function PrRow({
   readonly onFix: (pr: PrSummary) => void;
 }) {
   return (
-    <li data-pr={pr.number} data-open={open ? 'true' : undefined}>
+    <li className="fd-selbar" data-pr={pr.number} data-open={open ? 'true' : undefined}>
       <button type="button" className="fd-int-row" onClick={() => onOpen(pr.number)}>
         <span className="fd-int-key">#{pr.number}</span>
         <span className="fd-int-title">{pr.title}</span>

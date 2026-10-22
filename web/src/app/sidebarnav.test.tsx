@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { SettingsProvider, type SettingsEnv } from '../settings/context';
 import { card, station } from '../testing/fleet';
 import type { Route } from './routes';
 import { Sidebar } from './Sidebar';
@@ -132,5 +133,84 @@ describe('the sidebar navigation (S1)', () => {
     }
     expect(metas[0]).toContain('feat/x');
     expect(metas[1]).toContain('app');
+  });
+  test('a phone row starts line 2 with the callsign, then the focus or the model and branch', () => {
+    const list = (sessions: ReturnType<typeof card>[]) =>
+      renderToStaticMarkup(
+        <Sidebar
+          sessions={sessions}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+          variant="list"
+        />,
+      );
+    const html = list([
+      card('c1', 'working', 'station-a', { callsign: 'otter-n1rr', branch: 'feat/x' }),
+      card('c2', 'working', 'station-a', {
+        callsign: 'heron-k2',
+        ...({ focus: 'Fixing the shim' } as object),
+      }),
+      card('c3', 'working', 'station-a', { callsign: null }),
+    ]);
+    const lines = [...html.matchAll(/<span class="fd-srow-line">(.*?)<\/a>/g)].map((m) => m[1]);
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toStartWith('<span class="fd-srow-call fd-callsign">otter-n1rr</span>');
+    expect(lines[0]).toContain('feat/x');
+    expect(lines[1]).toStartWith('<span class="fd-srow-call fd-callsign">heron-k2</span>');
+    expect(lines[1]).toContain('<span class="fd-focus" title="Fixing the shim">');
+    // A session without a callsign shows no empty callsign.
+    expect(lines[2]).not.toContain('fd-srow-call');
+    // The desktop sidebar keeps its one-line rows: no callsign line.
+    expect(
+      render({ name: 'fleet' }, {}, [
+        card('c1', 'working', 'station-a', { callsign: 'otter-n1rr' }),
+      ]),
+    ).not.toContain('fd-srow-line');
+  });
+  test('the Fleet link names its needs-you count', () => {
+    const one = render({ name: 'fleet' }, {}, [card('n1', 'needs_you')]);
+    expect(one).toContain(
+      '<a href="#/fleet" aria-label="Fleet, 1 needs you" aria-current="page" class="fd-selbar">',
+    );
+    expect(one).toContain(
+      'Fleet<span class="fd-count" data-tone="act" aria-hidden="true">1</span>',
+    );
+    const two = render({ name: 'fleet' }, {}, [card('n1', 'needs_you'), card('n2', 'needs_you')]);
+    expect(two).toContain('aria-label="Fleet, 2 need you"');
+    // No count: the text "Fleet" is the name.
+    expect(render()).toContain('<a href="#/fleet" aria-current="page" class="fd-selbar">');
+  });
+
+  test('a station group shows its count right after the name, then the reach dot', () => {
+    const html = render();
+    const title = html.slice(html.indexOf('<section class="fd-sgroup" data-station="station-a"'));
+    expect(title).toMatch(
+      /<span class="fd-sgroup-name fd-wide">Alpha<\/span><span class="fd-count"[^>]*>1<\/span><span class="fd-rdot"/,
+    );
+  });
+
+  test('the footer order is Settings, the preferences, then the account (§4.2 item 5)', () => {
+    const html = renderToStaticMarkup(
+      <SettingsProvider env={{} as SettingsEnv}>
+        <Sidebar
+          sessions={[card('s1')]}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+        />
+      </SettingsProvider>,
+    );
+    const foot = html.slice(html.indexOf('class="fd-sidebar-foot"'));
+    const settings = foot.indexOf('aria-label="Settings"');
+    expect(settings).toBeGreaterThan(-1);
+    expect(settings).toBeLessThan(foot.indexOf('fd-sidebar-prefs'));
+    expect(foot.indexOf('fd-sidebar-prefs')).toBeLessThan(foot.indexOf('fd-sidebar-account'));
   });
 });
