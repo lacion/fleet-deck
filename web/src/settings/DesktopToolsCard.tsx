@@ -3,9 +3,9 @@
 // opens the installation terminal (with the elevation) and lists the earlier installations.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DesktopToolsPlan, MaintenanceInfo, StationTools } from '../gen';
+import { Icon, Wrench } from '../ui/icons';
 import {
   type DesktopToolsActions,
-  keyboardLine,
   LOADING_TEXT,
   makeRequestIds,
   openInstall,
@@ -14,17 +14,19 @@ import {
   type PlanView,
   planErrorText,
   planView,
-  pluginLine,
   READ_ERROR_TEXT,
   shortState,
   SUDO_TEXT,
-  toolLine,
   toolName,
+  toolRows,
+  toolsSummary,
   CONFIRM_TEXT,
 } from './desktopTools';
 import type { ElevationAsk } from './elevation';
 import { DeckError } from './http';
+import { Loading } from './Loading';
 import { MaintenancePanel } from './MaintenancePanel';
+import { sectionId } from './model';
 import { NoticeIcon } from './NoticeIcon';
 import { guarded } from './OmarchyCard';
 
@@ -84,22 +86,40 @@ export function gateDesktopTools(
 
 const unsupported = (e: unknown): boolean => e instanceof DeckError && e.status === 501;
 
-/** The facts of the station: one line for each tool, the keyboard, the plugin, the sudo note. */
+/**
+ * The facts of the station: a summary line, then one row for each tool, the keyboard and the plugin
+ * (a status glyph, the name, the state), then the notes. A station without a desktop folds the
+ * list: there it only says what is missing.
+ */
 export function FactsView({ tools }: { readonly tools: StationTools }) {
+  const rows = (
+    <ul className="fd-dt-tools">
+      {toolRows(tools).map((row) => (
+        <li key={row.key}>
+          <span className="fd-dot" data-status={row.status} aria-hidden="true" />
+          {row.code ? <code>{row.name}</code> : <span>{row.name}</span>}
+          <span className="fd-note">{row.state}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  const mismatch = tools.tools.filter((f) => f.package_matches_executable === false);
   return (
     <>
-      <ul className="fd-dt-tools">
-        {tools.tools.map((fact) => (
-          <li key={fact.id}>
-            <span>{toolLine(fact)}</span>
-            {fact.package_matches_executable === false ? (
-              <span className="fd-note">{PACKAGE_MISMATCH_TEXT}</span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      <p className="fd-note">{keyboardLine(tools.keyboard)}</p>
-      <p className="fd-note">{pluginLine(tools.plugin.status)}</p>
+      <p className="fd-dt-summary">{toolsSummary(tools)}</p>
+      {tools.desktop === 'none' ? (
+        <details className="fd-dt-fold">
+          <summary>Show the tools</summary>
+          {rows}
+        </details>
+      ) : (
+        rows
+      )}
+      {mismatch.map((f) => (
+        <p className="fd-note" key={f.id}>
+          <code>{toolName(f.id)}</code>: {PACKAGE_MISMATCH_TEXT}
+        </p>
+      ))}
       {tools.passwordless_sudo === 'on' ? (
         <p className="fd-note" role="note">
           {SUDO_TEXT}
@@ -175,8 +195,18 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
   );
 }
 
+/** The words of a run date: the month as a word, so that 1/3 cannot read as 3/1 (`3 Jan 2027, 14:05`). */
+export const RUN_DATE: Intl.DateTimeFormatOptions = {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+};
+
 /** The date of a run, in the language of the browser. */
-const dateOf = (run: MaintenanceInfo): string => new Date(run.created_at).toLocaleString();
+const dateOf = (run: MaintenanceInfo): string =>
+  new Date(run.created_at).toLocaleString(undefined, RUN_DATE);
 
 /** The Installations list; nothing for the state `hidden`. */
 export function InstallationsView({
@@ -188,11 +218,17 @@ export function InstallationsView({
 }) {
   if (state.kind === 'hidden') return null;
   let body: React.ReactNode;
-  if (state.kind === 'loading') body = <p role="status">Loading…</p>;
+  if (state.kind === 'loading') body = <Loading text="Loading the installations…" />;
   else if (state.kind === 'error') {
     body = <p role="alert">The installations could not be read.</p>;
-  } else if (state.runs.length === 0) body = <p className="fd-note">No installations yet.</p>;
-  else {
+  } else if (state.runs.length === 0) {
+    body = (
+      <p className="fd-set-empty">
+        <Icon of={Wrench} size={20} />
+        Installations of desktop tools show here.
+      </p>
+    );
+  } else {
     body = (
       <ul className="fd-dt-runs">
         {state.runs.map((run) => (
@@ -237,7 +273,7 @@ export function DesktopToolsView(props: ViewProps) {
   if (tools.kind === 'hidden') return null;
   let body: React.ReactNode;
   if (tools.kind === 'loading') {
-    body = <p role="status">{LOADING_TEXT}</p>;
+    body = <Loading text={LOADING_TEXT} />;
   } else if (tools.kind === 'error') {
     body = (
       <div className="fd-set-notice" data-tone="error" role="alert">
@@ -273,7 +309,11 @@ export function DesktopToolsView(props: ViewProps) {
     );
   }
   return (
-    <section className="fd-set-sec fd-desktop-tools" aria-label="Desktop tools">
+    <section
+      id={sectionId('Desktop tools')}
+      className="fd-set-sec fd-desktop-tools"
+      aria-label="Desktop tools"
+    >
       <h2>Desktop tools</h2>
       {body}
     </section>

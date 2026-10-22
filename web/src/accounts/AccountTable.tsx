@@ -1,13 +1,27 @@
-// DL-173: the connected accounts of one section: kind, site, user, status, and the actions.
+// DL-173: the connected accounts of one section: kind and method, site, user, status, and the
+// actions. The columns have fixed widths, so that the tables of the tab line up (settings.css).
 import type { AccountView } from '../gen';
 import { KIND_LABEL } from './flow';
 
-const STATUS: Readonly<Record<AccountView['status'], { text: string; tone: string }>> = {
-  ok: { text: 'connected', tone: 'ok' },
-  needs_login: { text: 'needs login', tone: 'act' },
-  needs_reconnect: { text: 'reconnect', tone: 'act' },
-  error: { text: 'error', tone: 'hazard' },
+/** The status of an account: its glyph (`.fd-dot`) and its words (§3: a status is glyph + text). */
+const STATUS: Readonly<Record<AccountView['status'], { text: string; dot: string }>> = {
+  ok: { text: 'Connected', dot: 'online' },
+  needs_login: { text: 'Needs login', dot: 'needs_you' },
+  needs_reconnect: { text: 'Reconnect needed', dot: 'needs_you' },
+  error: { text: 'Error', dot: 'lost' },
 };
+
+/** How the account signed in, in words. */
+export const METHOD_LABEL: Readonly<Record<AccountView['method'], string>> = {
+  cli: 'CLI login',
+  oauth: 'OAuth',
+  token: 'API token',
+  config: 'Config file',
+};
+
+/** The site without its scheme: `https://linear.app/acme` → `linear.app/acme`. */
+export const siteText = (site: string | null | undefined): string =>
+  (site ?? '').replace(/^https?:\/\//i, '');
 
 export function AccountTable({
   label,
@@ -15,6 +29,7 @@ export function AccountTable({
   busy,
   onReconnect,
   onLogout,
+  emptyText = 'No account connected.',
 }: {
   readonly label: string;
   readonly accounts: readonly AccountView[];
@@ -23,11 +38,22 @@ export function AccountTable({
   /** Absent: the section has no "Reconnect" (a forge login starts again from "Connect"). */
   readonly onReconnect?: ((account: AccountView) => void) | undefined;
   readonly onLogout: (account: AccountView) => void;
+  /** The line of an empty list; `null`: the section says it in its own words. */
+  readonly emptyText?: string | null;
 }) {
-  if (accounts.length === 0) return <p className="fd-note">No account connected.</p>;
+  if (accounts.length === 0) {
+    return emptyText === null ? null : <p className="fd-note">{emptyText}</p>;
+  }
   return (
     <div className="fd-tablewrap">
-      <table className="fd-table" aria-label={label}>
+      <table className="fd-table fd-acc-table" aria-label={label}>
+        <colgroup>
+          <col className="fd-acc-col-account" />
+          <col />
+          <col className="fd-acc-col-user" />
+          <col className="fd-acc-col-status" />
+          <col className="fd-acc-col-actions" />
+        </colgroup>
         <thead>
           <tr>
             <th scope="col">Account</th>
@@ -46,14 +72,23 @@ export function AccountTable({
             return (
               <tr key={a.account_id} aria-label={`Account ${a.account_id}`}>
                 <td className="fd-cell-name" data-label="Account">
-                  {KIND_LABEL[a.kind]} <span className="fd-badge">{a.method}</span>
+                  <span className="fd-acc-name">
+                    {KIND_LABEL[a.kind]} <span className="fd-badge">{METHOD_LABEL[a.method]}</span>
+                  </span>
                 </td>
-                <td className="fd-cell-path" data-label="Site">
-                  {a.site ?? ''}
+                <td
+                  className="fd-cell-path"
+                  data-label="Site"
+                  title={siteText(a.site) || undefined}
+                >
+                  {siteText(a.site)}
                 </td>
-                <td data-label="User">{a.user ?? ''}</td>
+                <td data-label="User" title={a.user ?? undefined}>
+                  {a.user ?? ''}
+                </td>
                 <td data-label="Status">
-                  <span className="fd-badge" data-tone={status.tone} title={a.message || undefined}>
+                  <span className="fd-acc-status" title={a.message || undefined}>
+                    <span className="fd-dot" data-status={status.dot} aria-hidden="true" />
                     {status.text}
                   </span>
                 </td>

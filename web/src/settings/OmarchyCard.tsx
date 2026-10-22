@@ -6,6 +6,8 @@ import { Icon, RefreshCw } from '../ui/icons';
 import type { ElevationAsk } from './elevation';
 import { NoticeIcon } from './NoticeIcon';
 import { DeckError } from './http';
+import { Loading } from './Loading';
+import { sectionId } from './model';
 import {
   buttons,
   type CardState,
@@ -233,7 +235,7 @@ export function OmarchyView({
   if (state.kind === 'hidden') return null;
   let body: React.ReactNode;
   if (state.kind === 'loading') {
-    body = <p role="status">{LOADING_TEXT}</p>;
+    body = <Loading text={LOADING_TEXT} />;
   } else if (state.kind === 'unsupported') {
     body = <p className="fd-note">{UNSUPPORTED_TEXT}</p>;
   } else if (state.kind === 'error') {
@@ -294,19 +296,23 @@ export function OmarchyView({
             ) : null}
           </div>
         )}
-        <RepairsSection
-          state={repairs}
-          open={repairsOpen}
-          working={working}
-          onToggle={onToggleRepairs}
-          onResume={onResume}
-          onRestore={onRestore}
-        />
+        {/* Without Omarchy there is nothing to repair, unless a repair of before is listed. */}
+        {state.status.omarchy.present ||
+        (repairs.kind === 'ready' && repairs.journals.length > 0) ? (
+          <RepairsSection
+            state={repairs}
+            open={repairsOpen}
+            working={working}
+            onToggle={onToggleRepairs}
+            onResume={onResume}
+            onRestore={onRestore}
+          />
+        ) : null}
       </>
     );
   }
   return (
-    <section className="fd-set-sec fd-omarchy" aria-label="Omarchy">
+    <section id={sectionId('Omarchy')} className="fd-set-sec fd-omarchy" aria-label="Omarchy">
       <h2>Omarchy</h2>
       {body}
     </section>

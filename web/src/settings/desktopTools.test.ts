@@ -4,7 +4,7 @@ import type { DesktopToolsPlan, MaintenanceInfo, StationTools, ToolFact } from '
 import {
   type DesktopToolsActions,
   desktopToolsActions,
-  keyboardLine,
+  keyboardState,
   maintenanceTerminalActions,
   makeRequestIds,
   newRequestId,
@@ -13,15 +13,17 @@ import {
   planErrorText,
   planOf,
   planView,
-  pluginLine,
+  pluginState,
   postExitLines,
   runOf,
   runsOf,
   shortState,
   stateLines,
-  toolLine,
   toolName,
+  toolRows,
+  toolState,
   toolsOf,
+  toolsSummary,
 } from './desktopTools';
 import { DeckError, type DeckHttp } from './http';
 import { ELEVATION_HEADER } from './omarchy';
@@ -233,36 +235,63 @@ describe('the tool texts', () => {
     expect(toolName('constructor')).toBe('constructor');
   });
 
-  test('every probe text', () => {
-    expect(toolLine(fact({ version: null, version_source: 'none' }))).toBe('wtype: Present');
-    expect(toolLine(fact({ present: false, version: null }))).toBe('wtype: Missing');
-    expect(toolLine(fact({ probe: 'missing', present: false, version: null }))).toBe(
-      'wtype: Missing',
+  test('every probe state: installed, not installed, or the check; never "unknown"', () => {
+    expect(toolState(fact({ version: null, version_source: 'none' }))).toBe('Installed');
+    expect(toolState(fact({ present: false, version: null }))).toBe('Not installed');
+    expect(toolState(fact({ probe: 'missing', present: false, version: null }))).toBe(
+      'Not installed',
     );
-    expect(toolLine(fact({ probe: 'unknown', version: null }))).toBe(
-      'wtype: Present (version unknown)',
-    );
-    expect(toolLine(fact({ probe: 'timeout', version: null }))).toBe('wtype: The check timed out.');
-    expect(toolLine(fact({ probe: 'failed', version: null }))).toBe('wtype: The check failed.');
+    expect(toolState(fact({ probe: 'unknown', version: null }))).toBe('Installed');
+    expect(toolState(fact({ probe: 'timeout', version: null }))).toBe('Check timed out');
+    expect(toolState(fact({ probe: 'failed', version: null }))).toBe('Check failed');
   });
 
-  test('the version and its source', () => {
-    expect(toolLine(fact())).toBe('wtype: Present · version 0.4 (package)');
-    expect(toolLine(fact({ version_source: 'executable' }))).toBe('wtype: Present · version 0.4');
+  test('the version follows an installed tool', () => {
+    expect(toolState(fact())).toBe('Installed · 0.4');
+    expect(toolState(fact({ version_source: 'executable' }))).toBe('Installed · 0.4');
   });
 
-  test('the keyboard and plugin lines', () => {
-    expect(keyboardLine({ status: 'ok', layouts: ['us', 'de'] })).toBe('Keyboard layouts: us, de');
-    expect(keyboardLine({ status: 'unavailable', layouts: [] })).toBe(
-      'Keyboard layouts are not available.',
+  test('the keyboard and plugin states', () => {
+    expect(keyboardState({ status: 'ok', layouts: ['us', 'de'] })).toBe('us, de');
+    expect(keyboardState({ status: 'unavailable', layouts: [] })).toBe('Not available');
+    expect(keyboardState({ status: 'failed', layouts: [] })).toBe('Check failed');
+    expect(pluginState('valid')).toBe('Installed');
+    expect(pluginState('invalid')).toBe('Not valid');
+    expect(pluginState('unavailable')).toBe('Not installed');
+    expect(pluginState('unknown')).toBe('Check failed');
+  });
+
+  test('the rows: the tools in order, then the keyboard and the plugin, each with its glyph', () => {
+    const rows = toolRows(
+      tools({
+        tools: [
+          fact(),
+          fact({ id: 'wf_recorder', present: false, version: null, probe: 'missing' }),
+        ],
+        plugin: { status: 'invalid' },
+      }),
     );
-    expect(keyboardLine({ status: 'failed', layouts: [] })).toBe(
-      'Keyboard layouts could not be read.',
-    );
-    expect(pluginLine('valid')).toBe('Fleet plugin: valid');
-    expect(pluginLine('invalid')).toBe('Fleet plugin: invalid');
-    expect(pluginLine('unavailable')).toBe('Fleet plugin: not installed');
-    expect(pluginLine('unknown')).toBe('Fleet plugin: unknown');
+    expect(rows.map((r) => [r.name, r.state, r.status, r.code])).toEqual([
+      ['wtype', 'Installed · 0.4', 'online', true],
+      ['wf-recorder', 'Not installed', 'idle', true],
+      ['Keyboard layouts', 'us, de', 'online', false],
+      ['Fleet plugin', 'Not valid', 'lost', false],
+    ]);
+  });
+
+  test('the summary counts the installed tools', () => {
+    expect(
+      toolsSummary(
+        tools({
+          tools: [
+            fact(),
+            fact({ id: 'jq', probe: 'unknown', version: null }),
+            fact({ id: 'grim', present: false, version: null, probe: 'missing' }),
+          ],
+        }),
+      ),
+    ).toBe('2 of 3 tools installed.');
+    expect(toolsSummary(tools({ tools: [fact()] }))).toBe('1 of 1 tool installed.');
   });
 });
 

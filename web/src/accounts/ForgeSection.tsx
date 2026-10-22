@@ -74,10 +74,16 @@ export function ForgeConnect({
   onConnected,
   onToken,
   initialRun,
+  connected = false,
 }: {
   readonly kind: 'github' | 'gitlab';
   readonly station: string;
   readonly actions: AccountActions;
+  /**
+   * The station has an account of this kind: the block folds under "Connect another <kind>
+   * account…", so that a Connect button does not stand next to a connected account.
+   */
+  readonly connected?: boolean;
   /** The login ended: read the list again. */
   readonly onConnected: () => void;
   readonly onToken: (kind: AccountKind, host: string) => void;
@@ -87,6 +93,7 @@ export function ForgeConnect({
   const label = KIND_LABEL[kind];
   const [host, setHost] = useState(DEFAULT_HOST[kind] ?? '');
   const [run, setRun] = useState<Run>(initialRun ?? { phase: 'idle' });
+  const [open, setOpen] = useState(false);
   const polling = useRef<AbortController | null>(null);
   useEffect(() => () => polling.current?.abort(), []);
   const login = run.phase === 'running' ? run.login : null;
@@ -115,21 +122,71 @@ export function ForgeConnect({
         : { phase: 'error', text: out.text, token: out.token },
     );
   };
+  // A login that runs (or just ended) keeps the block open.
+  const shown = !connected || open || run.phase !== 'idle';
   return (
     <div className="fd-set-connect" role="group" aria-label={`Connect ${label}`}>
-      <Field label={`${label} host`}>
+      {connected ? (
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          aria-expanded={shown}
+          onClick={() => setOpen(!shown)}
+        >
+          Connect another {label} account…
+        </button>
+      ) : null}
+      {shown ? (
+        <ForgeForm
+          label={label}
+          host={host}
+          placeholder={DEFAULT_HOST[kind]}
+          run={run}
+          onHost={setHost}
+          onStart={() => void start()}
+          onToken={() => onToken(kind, host.trim())}
+          kind={kind}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** The server field, the Connect button, and the state of a login. */
+function ForgeForm({
+  kind,
+  label,
+  host,
+  placeholder,
+  run,
+  onHost,
+  onStart,
+  onToken,
+}: {
+  readonly kind: 'github' | 'gitlab';
+  readonly label: string;
+  readonly host: string;
+  readonly placeholder: string | undefined;
+  readonly run: Run;
+  readonly onHost: (host: string) => void;
+  readonly onStart: () => void;
+  readonly onToken: () => void;
+}) {
+  return (
+    <>
+      <Field label="Server">
         <input
           value={host}
           autoComplete="off"
           spellCheck={false}
-          placeholder={DEFAULT_HOST[kind]}
-          onChange={(e) => setHost(e.target.value)}
+          placeholder={placeholder}
+          onChange={(e) => onHost(e.target.value)}
         />
       </Field>
       <button
         type="button"
         disabled={run.phase === 'starting' || host.trim() === ''}
-        onClick={() => void start()}
+        onClick={onStart}
       >
         {run.phase === 'starting' ? 'Starting…' : `Connect ${label}`}
       </button>
@@ -139,7 +196,7 @@ export function ForgeConnect({
             {run.text}
           </p>
           {run.token ? (
-            <button type="button" className="fd-sm" onClick={() => onToken(kind, host.trim())}>
+            <button type="button" className="fd-sm" onClick={onToken}>
               Use a token instead
             </button>
           ) : null}
@@ -149,13 +206,13 @@ export function ForgeConnect({
         <>
           <DeviceLoginPanel kind={kind} login={run.login} state={run.state} />
           {run.state.state === 'failed' || run.state.state === 'expired' ? (
-            <button type="button" className="fd-sm" onClick={() => onToken(kind, host.trim())}>
+            <button type="button" className="fd-sm" onClick={onToken}>
               Use a token instead
             </button>
           ) : null}
         </>
       ) : null}
-    </div>
+    </>
   );
 }
 

@@ -20,9 +20,9 @@ import {
 } from './flow';
 import { ForgeConnect, forgeAccounts } from './ForgeSection';
 import { TrackerBlock, type TrackerKind } from './TrackerSection';
-import { Field } from '../ui/page';
 import type { SettingsRoute } from '../settings/SettingsPage';
 import { describe } from '../settings/http';
+import { Loading } from '../settings/Loading';
 import { NoticeIcon } from '../settings/NoticeIcon';
 
 type Banner = { readonly tone: 'info' | 'warn' | 'error'; readonly text: string };
@@ -159,30 +159,36 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
 
   return (
     <div className="fd-set-tab fd-acc">
-      {stations.length > 1 ? (
-        <div className="fd-set-stationpick">
-          <Field label="Station">
-            <select
-              value={station}
-              onChange={(e) =>
-                navigate({
-                  name: 'settings',
-                  tab: 'accounts',
-                  station: e.target.value,
-                  finish: null,
-                  oauthError: null,
-                })
-              }
-            >
-              {stations.map((s) => (
-                <option key={s.station_id} value={s.station_id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      ) : null}
+      {/* The scope of the whole tab: the accounts below belong to one station. */}
+      <p className="fd-set-scope">
+        Accounts on{' '}
+        {stations.length > 1 ? (
+          <select
+            className="fd-ghost fd-sm"
+            aria-label="Station"
+            value={station}
+            onChange={(e) =>
+              navigate({
+                name: 'settings',
+                tab: 'accounts',
+                station: e.target.value,
+                finish: null,
+                oauthError: null,
+              })
+            }
+          >
+            {stations.map((s) => (
+              <option key={s.station_id} value={s.station_id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="fd-wide">
+            {stations.find((s) => s.station_id === station)?.name ?? station}
+          </span>
+        )}
+      </p>
       {banner === null ? null : (
         <div
           className="fd-set-notice"
@@ -196,7 +202,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
           </button>
         </div>
       )}
-      {state.kind === 'loading' ? <p role="status">Loading accounts…</p> : null}
+      {state.kind === 'loading' ? <Loading text="Loading accounts…" /> : null}
       {state.kind === 'error' ? (
         <div className="fd-set-notice" data-tone="error" role="alert">
           <NoticeIcon tone="error" />
@@ -229,6 +235,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
                     kind={kind}
                     station={station}
                     actions={actions}
+                    connected={list.accounts.some((a) => a.kind === kind)}
                     onConnected={reload}
                     onToken={(account, host) => setDialog({ kind: 'token', account, site: host })}
                   />
