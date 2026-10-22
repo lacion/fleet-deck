@@ -11,6 +11,7 @@ import type {
   StationView,
 } from '../gen';
 import { ApiError } from '../runtime/api';
+import { Icon, TriangleAlert } from '../ui/icons';
 import { useIntegrations } from './context';
 import { SecretBrowser } from './SecretBrowser';
 import { message } from './useLoad';
@@ -49,6 +50,48 @@ export function cellText(r: SecretStationReport): string {
       return `Failed: ${r.message ?? r.code ?? 'unknown'}`;
     default:
       return 'Unknown';
+  }
+}
+
+/**
+ * One cell with its state glyph (state never by a word alone): the same or a copied file has the
+ * online dot and the ok ink; a missing file is faint; a refused or failed file is hazard with the
+ * warning sign; an offline station has the unreachable glyph.
+ */
+export function SecretCell({ report }: { readonly report: SecretStationReport }) {
+  const text = cellText(report);
+  switch (report.state) {
+    case 'same':
+    case 'written':
+      return (
+        <span className="fd-int-cell" data-tone="ok">
+          <span className="fd-dot" data-status="online" aria-hidden="true" />
+          {text}
+        </span>
+      );
+    case 'missing':
+      return (
+        <span className="fd-int-cell" data-tone="faint">
+          {text}
+        </span>
+      );
+    case 'refused':
+    case 'failed':
+      return (
+        <span className="fd-int-cell" data-tone="hazard">
+          <Icon of={TriangleAlert} size={12} />
+          {text}
+        </span>
+      );
+    case 'offline':
+      return (
+        <span className="fd-int-cell">
+          <span className="fd-dot" data-status="unreachable" aria-hidden="true" />
+          {text}
+        </span>
+      );
+    default:
+      return <span className="fd-int-cell">{text}</span>;
   }
 }
 
@@ -113,25 +156,34 @@ export function SecretFilesBody({
   const homes = [...(project.homes ?? [])].sort((a, b) => a.position - b.position);
   const ready = homes.filter((h) => h.state === 'ready').length;
   const cannotSync = view.paths.length === 0 || ready < 2 || busy !== null;
+  // Save commits the list: a plain button (it has weight), on only while the list changed.
+  const changed = parsePaths(draft).join('\n') !== view.paths.join('\n');
   return (
     <>
-      <textarea
-        className="fd-int-secret-paths"
-        aria-label="Secret file paths"
-        rows={4}
-        value={draft}
-        spellCheck={false}
-        autoComplete="off"
-        onChange={(e) => onDraft(e.target.value)}
-      />
+      <div className="fd-int-secret-field">
+        <textarea
+          className="fd-int-secret-paths"
+          aria-label="Secret file paths"
+          aria-describedby="fd-int-secret-hint"
+          placeholder={'.env\nconfig/local.toml'}
+          rows={4}
+          value={draft}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => onDraft(e.target.value)}
+        />
+        <span id="fd-int-secret-hint" className="fd-fieldhint">
+          One path per line, relative to the project folder.
+        </span>
+      </div>
       {fieldError === null ? null : (
         <p role="alert" className="fd-formerror">
           {fieldError}
         </p>
       )}
       <div className="fd-pane-row">
-        <button type="button" className="fd-ghost" disabled={busy !== null} onClick={onSave}>
-          Save
+        <button type="button" disabled={busy !== null || !changed} onClick={onSave}>
+          {busy === 'save' ? 'Saving…' : 'Save'}
         </button>
         {onBrowse === undefined || ready === 0 ? null : (
           <button type="button" className="fd-ghost" onClick={onBrowse}>
@@ -173,8 +225,8 @@ export function SecretFilesBody({
                       {homes.map((h) => {
                         const report = f.stations.find((s) => s.station_id === h.station_id);
                         return (
-                          <td key={h.station_id}>
-                            {report === undefined ? '—' : cellText(report)}
+                          <td key={h.station_id} data-state={report?.state}>
+                            {report === undefined ? '—' : <SecretCell report={report} />}
                           </td>
                         );
                       })}

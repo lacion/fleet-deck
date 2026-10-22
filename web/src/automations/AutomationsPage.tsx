@@ -233,32 +233,39 @@ export function AutomationsPage({
   const first = targets[0];
   const newDraft = () =>
     emptyDraft(first?.station_id ?? '', first?.info?.providers[0]?.instance ?? '');
+  // The one general primary of the screen (§2.2): in the header, or in the empty state while the
+  // list is empty (one rule for every list page).
+  const empty = list !== null && list.length === 0;
+  const newAutomation = (
+    <button
+      type="button"
+      className="fd-primary"
+      disabled={!can || targets.length === 0}
+      onClick={() => {
+        setSaveError(null);
+        setForm({ id: null, draft: newDraft() });
+      }}
+    >
+      <Icon of={Plus} /> New automation
+    </button>
+  );
   return (
     <Page
       title="Automations"
       description="Sessions that start on a schedule."
       actions={
         <>
-          {form === null ? (
-            <button
-              type="button"
-              className="fd-primary"
-              disabled={!can || targets.length === 0}
-              onClick={() => {
-                setSaveError(null);
-                setForm({ id: null, draft: newDraft() });
-              }}
-            >
-              <Icon of={Plus} /> New automation
-            </button>
-          ) : null}
+          {form === null && !empty ? newAutomation : null}
+          {/* The board is live: Refresh is a quiet icon button after the primary. */}
           <button
             type="button"
-            className="fd-ghost"
+            className="fd-iconbtn"
+            aria-label="Refresh"
+            title="Refresh"
             onClick={load}
             disabled={actions === undefined}
           >
-            <Icon of={RefreshCw} /> Refresh
+            <Icon of={RefreshCw} />
           </button>
         </>
       }
@@ -286,24 +293,22 @@ export function AutomationsPage({
           sessions={sessions}
         />
       )}
-      {list !== null && list.length > 0 ? (
-        // The skip rule stays in view after the first automation (the empty state says it too).
-        <p className="fd-note">
-          A check on the station can run first; a non-zero exit skips the run.
-        </p>
-      ) : null}
       {list === null ? (
         actions === undefined ? null : (
           <p role="status">Loading automations…</p>
         )
       ) : list.length === 0 ? (
-        <EmptyState
-          icon={Workflow}
-          title="No automations yet"
-          body="Add one to run a triage, a nightly test fix or a review sweep. A check on the station can run first; a non-zero exit skips the run."
-        />
+        form === null ? (
+          <EmptyState
+            icon={Workflow}
+            title="No automations yet"
+            body="Run a triage, a nightly test fix or a review sweep on a schedule."
+            action={newAutomation}
+          />
+        ) : null
       ) : (
-        <ol className="fd-panel fd-auto-list">
+        // The list sits on the canvas, the same as the Artifacts and Activity lists (no box).
+        <ol className="fd-auto-list">
           {list.map(({ schedule: s, next_run_at: next, last_run: last }) => {
             const linked = stations.find((st) => st.station_id === s.station_id)?.reachable;
             return (

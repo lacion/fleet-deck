@@ -1,11 +1,12 @@
 // R6.2 (DL-169): the watch page, the first explored form of "watch many sessions" (DL-157).
 // A wall of compact live tiles: the model of one tile and of the page. Nothing here is
 // shared with the rest of the board, so the owner can pick another form later.
-import { repoName } from '../board/fleet';
+import { repoName, repoNames } from '../board/fleet';
 import { plainLine } from '../ui/format';
 import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { questionForm } from '../session/question';
+import { type TargetForm, toolText } from './tooltext';
 
 /** The most tiles; one timeline subscription each, and a socket holds 32 (the rest is spare). */
 export const MAX_TILES = 24;
@@ -38,13 +39,17 @@ export type TileLine = {
   /** The whole line as one text: the chat text, or the tool call ("Bash: cargo test"). */
   readonly text: string;
   /**
-   * A tool call in its parts (DESIGN-SYSTEM §4.1, §4.5): the tool name (sans, weight 600), the
-   * target (mono) and a plain note after them (the failed mark, the subagent title). A wall
+   * A tool call in its parts (DESIGN-SYSTEM §4.1, §4.5): the tool name for the owner (sans,
+   * weight 600; `toolText`), the target and a plain note after them (the subagent title). A wall
    * display line has none of them: its `text` is the tool name.
    */
   readonly name?: string;
   readonly target?: string;
+  /** How the target reads: a path (`PathTail`), a command (mono) or words; mono without it. */
+  readonly form?: TargetForm;
   readonly note?: string;
+  /** A call that failed or that the owner denied. */
+  readonly outcome?: 'failed' | 'denied';
 };
 
 /** The first non-empty line, cut to `max` characters. Chat text loses its Markdown marks; a tool call keeps its text. */
@@ -63,17 +68,23 @@ function lineOf(item: Item): TileLine | null {
     return text === '' ? null : { key: item.key, kind: 'message', text };
   }
   if (item.type === 'tool') {
-    const name = cut(item.title);
-    const target = cut(item.input, false, LINE_CHARS - name.length - 1);
-    const call = target === '' ? name : `${name}: ${target}`;
-    const note = item.status === 'failed' || item.status === 'denied' ? `(${item.status})` : '';
+    // The owner's words: no MCP id, no JSON payload (`toolText`); a path keeps its file name.
+    const call = toolText(item.title, item.input, { kind: item.tool_kind, files: item.files });
+    const name = cut(call.name);
+    // A path is never cut at its end: the end names the file (the tile drops leading folders).
+    const target =
+      call.form === 'path' ? call.target : cut(call.target, false, LINE_CHARS - name.length - 1);
+    const text = target === '' ? name : `${name}: ${target}`;
+    const outcome = item.status === 'failed' || item.status === 'denied' ? item.status : null;
     return {
       key: item.key,
       kind: 'tool',
-      text: note === '' ? call : `${call} ${note}`,
+      text: outcome === null ? text : `${text} (${outcome})`,
       name,
       target,
-      note,
+      form: call.form,
+      note: '',
+      ...(outcome === null ? {} : { outcome }),
     };
   }
   if (item.type === 'subagent') {
@@ -152,7 +163,8 @@ export function tileRequest(card: DeckSession): { request: OpenRequest; plain: b
   return { request, plain: questionForm(request) === null };
 }
 
-/** The station ids and repository names of the live sessions, for the filter menus. */
+/** The station ids and repository names of the live sessions, for the filter menus (the sessions
+ * outside a repository last, as everywhere). */
 export function filterChoices(sessions: readonly DeckSession[]): {
   readonly stations: readonly string[];
   readonly repos: readonly string[];
@@ -160,6 +172,6 @@ export function filterChoices(sessions: readonly DeckSession[]): {
   const live = sessions.filter(isLive);
   return {
     stations: [...new Set(live.map((c) => c.station_id))].sort(),
-    repos: [...new Set(live.map(repoName))].sort(),
+    repos: repoNames(live),
   };
 }

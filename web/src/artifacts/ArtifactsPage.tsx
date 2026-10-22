@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { sessionTitle } from '../app/sessions';
 import type { ArtifactKind, DeckArtifact, DeckSession, StationView } from '../gen';
-import { Icon, Paperclip, Search } from '../ui/icons';
+import { useLayout } from '../app/viewport';
+import { Icon, ListFilter, Paperclip, Search, X } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
@@ -139,6 +141,7 @@ function Loaded({
   readonly retry: number;
   readonly onRetry: () => void;
 }) {
+  const layout = useLayout();
   const fetched = useArtifactList(
     actions,
     { station: filters.station, session: filters.session, q },
@@ -169,10 +172,76 @@ function Loaded({
     const station = a.station_name || stationName(a.station_id, stations);
     return card === undefined ? station : `${station} · ${sessionTitle(card)}`;
   };
+  // A phone shows the search and one Filters menu with the three selects; the chosen filters show
+  // as removable pressed chips under the search (the fleet's FiltersMenu pattern).
+  const phone = layout === 'phone';
+  const session = stationSessions.find((s) => s.summary.session_id === filters.session);
+  const chosen: readonly { key: 'kind' | 'station' | 'session'; text: string }[] = [
+    ...(filters.kind === 'all' ? [] : [{ key: 'kind' as const, text: KIND_LABEL[filters.kind] }]),
+    ...(filters.station === ''
+      ? []
+      : [{ key: 'station' as const, text: stationName(filters.station, stations) }]),
+    ...(filters.session === ''
+      ? []
+      : [
+          {
+            key: 'session' as const,
+            text: session === undefined ? filters.session : sessionTitle(session),
+          },
+        ]),
+  ];
+  // A select of the header (§4.3): a quiet ghost select, marked while it filters.
+  const select = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    options: readonly { value: string; label: string }[],
+  ) => (
+    <label key={label} className="fd-art-filter">
+      <span className={phone ? 'fd-label' : 'fd-vh'}>{label}</span>
+      <select
+        className={phone ? undefined : 'fd-ghost fd-sm'}
+        data-active={!phone && value !== options[0]?.value ? 'true' : undefined}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  const selects = [
+    select(
+      'Kind',
+      filters.kind,
+      (kind) => setFilters({ ...filters, kind: kind as Filters['kind'] }),
+      [
+        { value: 'all', label: 'All kinds' },
+        ...KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] })),
+      ],
+    ),
+    select(
+      'Station',
+      filters.station,
+      (station) => setFilters({ ...filters, station, session: '' }),
+      [
+        { value: '', label: 'All stations' },
+        ...stations.map((s) => ({ value: s.station_id, label: s.name })),
+      ],
+    ),
+    select('Session', filters.session, (s) => setFilters({ ...filters, session: s }), [
+      { value: '', label: 'All sessions' },
+      ...stationSessions.map((s) => ({ value: s.summary.session_id, label: sessionTitle(s) })),
+    ]),
+  ];
   const filterForm = (
     <form
       className="fd-art-filters"
       aria-label="Filter the artifacts"
+      data-layout={phone ? 'phone' : undefined}
       onSubmit={(e) => e.preventDefault()}
     >
       <label className="fd-field fd-art-search">
@@ -180,6 +249,7 @@ function Loaded({
         <Icon of={Search} size={14} />
         <input
           type="search"
+          className={phone ? undefined : 'fd-sm'}
           aria-label="Search by title"
           placeholder="Search by title"
           autoComplete="off"
@@ -187,48 +257,51 @@ function Loaded({
           onChange={(e) => setFilters({ ...filters, q: e.target.value })}
         />
       </label>
-      <label>
-        <span className="fd-vh">Kind</span>
-        <select
-          value={filters.kind}
-          onChange={(e) => setFilters({ ...filters, kind: e.target.value as Filters['kind'] })}
-        >
-          <option value="all">All kinds</option>
-          {KINDS.map((k) => (
-            <option key={k} value={k}>
-              {KIND_LABEL[k]}
-            </option>
+      {phone ? (
+        <span className="fd-art-filtermenu">
+          <Menu
+            summary={
+              <>
+                <Icon of={ListFilter} size={14} />
+                {chosen.length > 0 ? `Filters (${chosen.length})` : 'Filters'}
+              </>
+            }
+            summaryClass="fd-ghost"
+          >
+            {() => (
+              <div className="fd-art-filtergrid" role="group" aria-label="Artifact filters">
+                {selects}
+              </div>
+            )}
+          </Menu>
+        </span>
+      ) : (
+        selects
+      )}
+      {phone && chosen.length > 0 ? (
+        <div className="fd-art-chosen">
+          {chosen.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className="fd-chip"
+              aria-pressed="true"
+              aria-label={`Remove the filter ${c.text}`}
+              onClick={() =>
+                setFilters(
+                  c.key === 'kind'
+                    ? { ...filters, kind: 'all' }
+                    : c.key === 'station'
+                      ? { ...filters, station: '', session: '' }
+                      : { ...filters, session: '' },
+                )
+              }
+            >
+              {c.text} <Icon of={X} size={12} />
+            </button>
           ))}
-        </select>
-      </label>
-      <label>
-        <span className="fd-vh">Station</span>
-        <select
-          value={filters.station}
-          onChange={(e) => setFilters({ ...filters, station: e.target.value, session: '' })}
-        >
-          <option value="">All stations</option>
-          {stations.map((s) => (
-            <option key={s.station_id} value={s.station_id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <span className="fd-vh">Session</span>
-        <select
-          value={filters.session}
-          onChange={(e) => setFilters({ ...filters, session: e.target.value })}
-        >
-          <option value="">All sessions</option>
-          {stationSessions.map((s) => (
-            <option key={`${s.station_id}/${s.summary.session_id}`} value={s.summary.session_id}>
-              {sessionTitle(s)}
-            </option>
-          ))}
-        </select>
-      </label>
+        </div>
+      ) : null}
     </form>
   );
   return (

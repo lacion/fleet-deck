@@ -4,12 +4,22 @@
 import { type FocusEvent, useEffect, useMemo, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename } from '../app/sessions';
-import { repoName, stationName } from '../board/fleet';
+import { NO_REPO, repoName, stationName } from '../board/fleet';
+import { PathTail } from '../chat/PathTail';
 import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
-import { Eye, Icon, MessageSquare, Shield } from '../ui/icons';
+import {
+  CircleDot,
+  Eye,
+  Folder,
+  GitBranch,
+  Icon,
+  ListFilter,
+  MessageSquare,
+  Shield,
+} from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { FocusLine, focusOf, UnreadMark, unreadOf } from '../views/marks';
 import { displayTileLines } from '../wall/displayLines';
@@ -27,6 +37,7 @@ import {
   type WatchFilter,
   watchSessions,
 } from './tiles';
+import { homePath, type TargetForm, toolText } from './tooltext';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -53,28 +64,71 @@ const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | 
 
 /**
  * A tool call on one line (DESIGN-SYSTEM §4.1, §4.5): the tool name in sans weight 600, the
- * target in mono, then a plain note ("(failed)", a subagent title).
+ * target (a path keeps its file name: `PathTail` drops the leading folders; a command in mono; a
+ * description in words), then a plain note (a subagent title) and a failed or denied mark.
  */
 function ToolCall({
   name,
   target,
-  note,
+  form = 'code',
+  note = '',
+  outcome,
 }: {
   readonly name: string;
   readonly target: string;
-  readonly note: string;
+  readonly form?: TargetForm | undefined;
+  readonly note?: string | undefined;
+  readonly outcome?: 'failed' | 'denied' | undefined;
 }) {
   return (
     <>
       <b className="fd-wtile-toolname">{name}</b>
-      {target === '' ? null : (
-        <>
-          {' '}
-          <code>{target}</code>
-        </>
+      {target === '' ? null : form === 'path' ? (
+        <code className="fd-wtile-path">
+          <PathTail path={homePath(target)} />
+        </code>
+      ) : form === 'words' ? (
+        <span className="fd-wtile-words">{target}</span>
+      ) : (
+        <code>{target}</code>
       )}
-      {note === '' ? null : ` ${note}`}
+      {note === '' ? null : <span className="fd-wtile-words">{note}</span>}
+      {outcome === undefined ? null : <span className="fd-wtile-fail">{outcome}</span>}
     </>
+  );
+}
+
+/** Where a tile works: the station and the repository (none outside a repository: principle 7),
+ * then the branch or the folder with its icon (the strip's rule). */
+function Where({
+  card,
+  stations,
+}: {
+  readonly card: DeckSession;
+  readonly stations: readonly StationView[];
+}) {
+  const s = card.summary;
+  const repo = repoName(card);
+  const where = [stationName(card.station_id, stations), ...(repo === NO_REPO ? [] : [repo])].join(
+    ' · ',
+  );
+  const place =
+    s.branch !== null && s.branch !== ''
+      ? { text: s.branch, icon: GitBranch, label: 'Branch' }
+      : s.cwd !== null && s.cwd !== ''
+        ? { text: basename(s.cwd), icon: Folder, label: 'Folder' }
+        : null;
+  return (
+    <span className="fd-wtile-where">
+      <span className="fd-wtile-place">{where}</span>
+      {place === null ? null : (
+        <span className="fd-wtile-branch" title={`${place.label}: ${place.text}`}>
+          <Icon of={place.icon} size={12} />
+          <span className="fd-vh">{place.label}</span>
+          <code>{place.text}</code>
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -134,7 +188,8 @@ export function Tile({
     session: key.session_id,
     tab: 'chat',
   });
-  const where = [stationName(card.station_id, stations), repoName(card)].join(' · ');
+  const running =
+    tool === undefined ? null : toolText(tool.title, tool.input_summary, { kind: tool.tool_kind });
   const answer = (requestId: string, optionId: string) => {
     if (actions === undefined) return;
     setBusy(true);
@@ -157,20 +212,7 @@ export function Tile({
         <span className="fd-wtile-title">{s.title ?? s.callsign ?? s.session_id}</span>
         <UnreadMark count={unreadOf(card)} />
       </span>
-      <span className="fd-wtile-where">
-        {where}
-        {s.branch !== null && s.branch !== '' ? (
-          <>
-            {' · '}
-            <code>{s.branch}</code>
-          </>
-        ) : s.cwd != null ? (
-          <>
-            {' · '}
-            <code>{basename(s.cwd)}</code>
-          </>
-        ) : null}
-      </span>
+      <Where card={card} stations={stations} />
       <FocusLine summary={s} />
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
@@ -189,15 +231,21 @@ export function Tile({
               {l.name === undefined ? (
                 l.text
               ) : (
-                <ToolCall name={l.name} target={l.target ?? ''} note={l.note ?? ''} />
+                <ToolCall
+                  name={l.name}
+                  target={l.target ?? ''}
+                  form={l.form}
+                  note={l.note}
+                  outcome={l.outcome}
+                />
               )}
             </span>
           ))}
         </span>
       )}
-      {tool === undefined ? null : (
+      {running === null ? null : (
         <span className="fd-wtile-tool" title="Running now">
-          <ToolCall name={tool.title} target={tool.input_summary} note="" />
+          <ToolCall name={running.name} target={running.target} form={running.form} />
         </span>
       )}
     </>
@@ -348,7 +396,14 @@ export function WatchPage({
   ) => (
     <label className="fd-wfilter">
       <span className="fd-vh">{label}</span>
-      <select value={value} aria-label={label} onChange={(e) => set(e.target.value)}>
+      {/* A view option of the header (§4.3): a ghost select; a chosen filter shows it is on. */}
+      <select
+        className="fd-ghost fd-sm"
+        data-active={value !== ALL ? 'true' : undefined}
+        value={value}
+        aria-label={label}
+        onChange={(e) => set(e.target.value)}
+      >
         <option value={ALL}>{all}</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -364,7 +419,8 @@ export function WatchPage({
     <span aria-live="polite">
       {matching.length === 1 ? '1 live session' : `${matching.length} live sessions`}.{' '}
       {needs === 0 ? (
-        'All clear.'
+        // The calm state of the fleet header (§4.4): green, the same words.
+        <span className="fd-watch-clear">All clear.</span>
       ) : (
         <>
           <span className="fd-watch-needs">
@@ -391,22 +447,24 @@ export function WatchPage({
         choices.repos.map((r) => ({ value: r, label: r })),
         (repo) => setFilter({ ...filter, repo }),
       )}
+      {/* Ghost toggles with an icon (the header's one control language, §4.3): pressed, they take
+          the pressed-segment look of base.css. */}
       <button
         type="button"
-        className="fd-chip"
+        className="fd-ghost fd-sm"
         aria-pressed={filter.needsOnly}
         onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
       >
-        Needs you only
+        <Icon of={ListFilter} size={14} /> Needs you only
       </button>
       <button
         type="button"
-        className="fd-chip"
+        className="fd-ghost fd-sm"
         aria-pressed={focusOn}
         title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
         onClick={() => setFocusOn(!focusOn)}
       >
-        Focus
+        <Icon of={CircleDot} size={14} /> Focus
       </button>
       {paused ? (
         <span className="fd-watch-paused" role="status">

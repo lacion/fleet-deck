@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import { card, station } from '../testing/fleet';
-import { ArtifactList, visible } from './ArtifactList';
+import { ArtifactList, exactTime, groupCopies, visible } from './ArtifactList';
 import { ArtifactsListBody, ArtifactsPage } from './ArtifactsPage';
 import { deckArtifact, fakeActions, NOW } from './fixtures';
 import { publishable, kindOfPath } from './kinds';
@@ -30,10 +30,41 @@ describe('artifact list', () => {
     );
     expect(html).toContain('Plan');
     expect(html).toContain('>HTML<');
-    expect(html).toContain('v2');
+    expect(html).toContain('data-kind="html"');
+    expect(html).toContain('<span class="fd-art-ver">v2</span>');
     expect(html).toContain('5 min');
     expect(html).toContain('Alpha · Review');
     expect(html).toContain('href="#/artifact/station-a/a1"');
+  });
+
+  test('v1 says nothing: the version shows only after the first', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactList items={[deckArtifact('a1', { latest_version: 1 })]} now={NOW} />,
+    );
+    expect(html).not.toContain('fd-art-ver');
+  });
+
+  test('the copies of one title of one session are one row, the older ones fold under it', () => {
+    const items = [
+      deckArtifact('new', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 60_000 }),
+      deckArtifact('old', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 3_600_000 }),
+      deckArtifact('older', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 7_200_000 }),
+      deckArtifact('other', { title: 'fleet.html', session_id: 's2', updated_at: NOW - 120_000 }),
+      deckArtifact('solo', { title: 'new.html', session_id: 's1', updated_at: NOW - 90_000 }),
+    ];
+    expect(groupCopies(items).map((g) => [g.newest.artifact_id, g.older.length])).toEqual([
+      ['new', 2],
+      ['solo', 0],
+      ['other', 0],
+    ]);
+    const html = renderToStaticMarkup(<ArtifactList items={items} now={NOW} />);
+    expect(html).toContain(
+      '<span class="fd-count" title="3 copies">3<span class="fd-vh"> copies</span></span>',
+    );
+    expect(html).toContain('<summary>2 older copies</summary>');
+    expect(html).toContain('href="#/artifact/station-a/old"');
+    expect(html).toContain(`>${exactTime(NOW - 3_600_000)}</time>`);
+    expect(html.match(/class="fd-art-row"/g)).toHaveLength(3);
   });
 
   test('a session row is a button that opens in place', () => {

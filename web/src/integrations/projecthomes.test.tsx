@@ -112,7 +112,18 @@ describe('the Homes section', () => {
     expect(html).toContain('Set the remote URL of the project first.');
   });
 
-  test('it lists the Git names', () => {
+  test('a row is the station, the folder in mono and the status glyph with its word', () => {
+    const html = section(two);
+    expect(html).toContain('<span class="fd-int-home-station">Alpha</span>');
+    expect(html).toContain('<code class="fd-int-path"><bdi>/work/atlas</bdi></code>');
+    expect(html).toContain(
+      '<span class="fd-int-home-state" data-state="ready"><span class="fd-dot" data-status="online" aria-hidden="true"></span>Ready</span>',
+    );
+    expect(html).toContain('data-status="unreachable"');
+    expect(html).toContain('<span class="fd-int-home-reason">The clone failed: no space.</span>');
+  });
+
+  test('it lists only the branch names that differ from the station name', () => {
     const html = section({
       ...two,
       slugs: [
@@ -120,7 +131,11 @@ describe('the Homes section', () => {
         { slug: 'bravo', station_id: 'station-b' },
       ],
     });
-    expect(html).toContain('Git names: alpha → Alpha, bravo → Beta');
+    expect(html).toContain('Branch names: bravo → Beta');
+    expect(html).not.toContain('alpha → Alpha');
+    expect(html).not.toContain('Git names');
+    const same = section({ ...two, slugs: [{ slug: 'ALPHA', station_id: 'station-a' }] });
+    expect(same).not.toContain('Branch names');
   });
 
   test('a login without the admin scope sees the rows and no button', () => {

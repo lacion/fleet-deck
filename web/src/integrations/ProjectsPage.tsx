@@ -5,7 +5,18 @@ import { stationName } from '../board/fleet';
 import type { AccountsList, DeckSession, Project, StationView } from '../gen';
 import { useSettings } from '../settings/context';
 import type { ListWorkspaces } from '../ui/FolderPicker';
-import { FolderGit2, Icon, Plus, RefreshCw } from '../ui/icons';
+import { PathTail } from '../chat/PathTail';
+import {
+  Ellipsis,
+  FolderGit2,
+  Icon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
 import { useIntegrations } from './context';
 import { draftOf, emptyDraft, forgeChip, inputOf, type ProjectDraft, trackerChip } from './model';
@@ -143,25 +154,36 @@ export function ProjectsPage({
     setSaveError(null);
     setForm({ id, draft });
   };
+  // The one general primary of the screen (§2.2): in the header, or in the empty state while the
+  // list is empty (one rule for every list page).
+  const empty = list !== null && list.length === 0;
+  const newProject = (
+    <button
+      type="button"
+      className="fd-primary"
+      disabled={first === undefined}
+      onClick={() => openForm(null, emptyDraft(first?.station_id ?? ''))}
+    >
+      <Icon of={Plus} /> New project
+    </button>
+  );
   return (
     <Page
       title="Projects"
-      description="Repositories with their forge and trackers."
+      description="Repositories with their forge and trackers. Forge tokens stay on the station."
       wide
       actions={
         <>
-          {form === null ? (
-            <button
-              type="button"
-              className="fd-primary"
-              disabled={first === undefined}
-              onClick={() => openForm(null, emptyDraft(first?.station_id ?? ''))}
-            >
-              <Icon of={Plus} /> New project
-            </button>
-          ) : null}
-          <button type="button" className="fd-ghost" onClick={reload}>
-            <Icon of={RefreshCw} /> Refresh
+          {form === null && !empty ? newProject : null}
+          {/* The board is live: Refresh is a quiet icon button after the primary. */}
+          <button
+            type="button"
+            className="fd-iconbtn"
+            aria-label="Refresh"
+            title="Refresh"
+            onClick={reload}
+          >
+            <Icon of={RefreshCw} />
           </button>
         </>
       }
@@ -196,138 +218,160 @@ export function ProjectsPage({
           <p role="status">Loading projects…</p>
         ) : null
       ) : list.length === 0 ? (
-        <EmptyState
-          icon={FolderGit2}
-          title="No projects yet"
-          body="Add a project to see its issues and pull requests, and to start sessions from them. The deck stores the bindings only; the station holds the tokens."
-        />
+        form === null ? (
+          <EmptyState
+            icon={FolderGit2}
+            title="No projects yet"
+            body="Add a project to see its issues and pull requests, and to start sessions from them."
+            action={newProject}
+          />
+        ) : null
       ) : (
-        <div className="fd-panel fd-tablepanel">
-          <div className="fd-tablewrap">
-            <table className="fd-table fd-int-projects" aria-label="Projects">
-              <thead>
-                <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col">Station</th>
-                  <th scope="col">Folder</th>
-                  <th scope="col">Forge</th>
-                  {anyTrackers ? <th scope="col">Trackers</th> : null}
-                  <th scope="col">
-                    <span className="fd-vh">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((p) => {
-                  const result = checks[p.project_id];
-                  return (
-                    <Fragment key={p.project_id}>
-                      <tr aria-label={`Project ${p.name}`}>
-                        <td className="fd-cell-name">
-                          <a
-                            className="fd-tap"
-                            href={`#/project/${encodeURIComponent(p.project_id)}`}
-                          >
-                            {p.name}
-                          </a>
-                        </td>
-                        <td data-label="Station">{stationName(p.station_id, stations)}</td>
-                        <td className="fd-cell-path" data-label="Folder">
-                          <code className="fd-int-path">{p.path}</code>
-                        </td>
-                        <td data-label="Forge">
-                          {p.forge === null ? null : (
-                            <span className="fd-badge" data-chip="forge">
-                              {forgeChip(p.forge)}
+        // The table sits on the canvas, the same as the Artifacts and Activity lists (no box).
+        <div className="fd-tablewrap">
+          <table className="fd-table fd-int-projects" aria-label="Projects">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Station</th>
+                <th scope="col">Folder</th>
+                <th scope="col">Forge</th>
+                {anyTrackers ? <th scope="col">Trackers</th> : null}
+                <th scope="col">
+                  <span className="fd-vh">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((p) => {
+                const result = checks[p.project_id];
+                return (
+                  <Fragment key={p.project_id}>
+                    <tr aria-label={`Project ${p.name}`}>
+                      <td className="fd-cell-name">
+                        {/* The name link covers the row (integrations.css): the row opens it. */}
+                        <a
+                          className="fd-tap"
+                          href={`#/project/${encodeURIComponent(p.project_id)}`}
+                        >
+                          {p.name}
+                        </a>
+                      </td>
+                      <td data-label="Station">{stationName(p.station_id, stations)}</td>
+                      <td className="fd-cell-path" data-label="Folder">
+                        <code className="fd-int-path">
+                          <PathTail path={p.path} />
+                        </code>
+                      </td>
+                      <td data-label="Forge">
+                        {p.forge === null ? null : (
+                          <span className="fd-badge" data-chip="forge">
+                            {forgeChip(p.forge)}
+                          </span>
+                        )}
+                      </td>
+                      {anyTrackers ? (
+                        <td data-label="Trackers">
+                          {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
+                          {p.trackers.length === 0 ? null : (
+                            <span className="fd-cellbadges">
+                              {p.trackers.map((t) => (
+                                <span
+                                  key={`${t.tracker}/${t.key}`}
+                                  className="fd-badge"
+                                  data-chip="tracker"
+                                >
+                                  {trackerChip(t)}
+                                </span>
+                              ))}
                             </span>
                           )}
                         </td>
-                        {anyTrackers ? (
-                          <td data-label="Trackers">
-                            {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
-                            {p.trackers.length === 0 ? null : (
-                              <span className="fd-cellbadges">
-                                {p.trackers.map((t) => (
-                                  <span
-                                    key={`${t.tracker}/${t.key}`}
-                                    className="fd-badge"
-                                    data-chip="tracker"
+                      ) : null}
+                      <td className="fd-cell-actions">
+                        {confirming === p.project_id ? (
+                          <>
+                            <span>Delete this project?</span>
+                            <button
+                              type="button"
+                              className="fd-danger fd-sm"
+                              disabled={busy === p.project_id}
+                              onClick={() => remove(p)}
+                            >
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              className="fd-ghost fd-sm"
+                              onClick={() => setConfirming(null)}
+                            >
+                              Keep
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {busy === p.project_id ? <span role="status">Checking…</span> : null}
+                            {/* One row menu (the Stations cards' form): the row stays data. */}
+                            <Menu
+                              summary={<Icon of={Ellipsis} />}
+                              summaryClass="fd-iconbtn fd-sm"
+                              label={`Actions for ${p.name}`}
+                              title="Actions"
+                            >
+                              {(close) => (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={form !== null}
+                                    onClick={() => {
+                                      close();
+                                      openForm(p.project_id, draftOf(p));
+                                    }}
                                   >
-                                    {trackerChip(t)}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                          </td>
-                        ) : null}
-                        <td className="fd-cell-actions">
-                          {confirming === p.project_id ? (
-                            <>
-                              <span>Delete this project?</span>
-                              <button
-                                type="button"
-                                className="fd-danger fd-sm"
-                                disabled={busy === p.project_id}
-                                onClick={() => remove(p)}
-                              >
-                                Delete
-                              </button>
-                              <button
-                                type="button"
-                                className="fd-ghost fd-sm"
-                                onClick={() => setConfirming(null)}
-                              >
-                                Keep
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="fd-sm"
-                                disabled={form !== null}
-                                onClick={() => openForm(p.project_id, draftOf(p))}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="fd-sm"
-                                disabled={busy === p.project_id}
-                                onClick={() => check(p)}
-                              >
-                                {busy === p.project_id ? 'Checking…' : 'Check'}
-                              </button>
-                              <button
-                                type="button"
-                                className="fd-danger fd-sm"
-                                onClick={() => setConfirming(p.project_id)}
-                              >
-                                Delete…
-                              </button>
-                            </>
-                          )}
+                                    <Icon of={Pencil} /> Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy === p.project_id}
+                                    onClick={() => {
+                                      close();
+                                      check(p);
+                                    }}
+                                  >
+                                    <Icon of={ShieldCheck} /> Check access
+                                  </button>
+                                  <div className="fd-menu-sep" />
+                                  <button
+                                    type="button"
+                                    className="fd-danger"
+                                    onClick={() => {
+                                      close();
+                                      setConfirming(p.project_id);
+                                    }}
+                                  >
+                                    <Icon of={Trash2} /> Delete…
+                                  </button>
+                                </>
+                              )}
+                            </Menu>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                    {result === undefined ? null : (
+                      <tr>
+                        <td colSpan={anyTrackers ? 6 : 5}>
+                          <PreflightView result={result} />
                         </td>
                       </tr>
-                      {result === undefined ? null : (
-                        <tr>
-                          <td colSpan={anyTrackers ? 6 : 5}>
-                            <PreflightView result={result} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-      {list !== null && list.length > 0 ? (
-        // The token rule stays in view after the first project (the empty state says it too).
-        <p className="fd-note">The deck stores the bindings only; the station holds the tokens.</p>
-      ) : null}
     </Page>
   );
 }

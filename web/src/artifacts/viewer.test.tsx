@@ -100,9 +100,28 @@ describe('artifact viewer', () => {
     expect(render(ready(), { canShare: false })).not.toContain('Share…');
   });
 
+  test('Share… has its icon in the bar; a narrow viewer has Download and Share… in the menu', () => {
+    const html = render(ready({}, detail('a1', {}, [], ['index.html'])));
+    expect(html).toMatch(
+      /class="fd-ghost fd-sm fd-art-action fd-art-wide"><svg[^>]*lucide-share-2/,
+    );
+    expect(html).toContain('aria-label="More actions"');
+    expect(html).toMatch(
+      /<button type="button" class="fd-art-narrow"><svg[\s\S]*?<\/svg> Download/,
+    );
+    expect(html).toMatch(/<button type="button" class="fd-art-narrow"><svg[\s\S]*?<\/svg> Share…/);
+    // No owner rows for the wide bar (no wall, no delete): the menu is for a narrow viewer only.
+    expect(html).toContain('<span class="fd-art-more" data-wide="none">');
+  });
+
   test('the page variant links back to the list, the panel has a back button', () => {
     expect(render(ready(), { variant: 'page' })).toContain('href="#/artifacts"');
     expect(render(ready())).toContain('Back to the list');
+  });
+
+  test('the page title is the h1 of the page, wide; the panel keeps an h2', () => {
+    expect(render(ready(), { variant: 'page' })).toContain('<h1 class="fd-art-name fd-wide">');
+    expect(render(ready())).toContain('<h2 class="fd-art-name">');
   });
 
   test('the page without a deck says so', () => {

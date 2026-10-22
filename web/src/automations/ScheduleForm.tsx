@@ -262,11 +262,11 @@ export function ScheduleForm({
               </select>
             </Field>
             <Field
-              label="Run first (optional shell check on the station; a non-zero exit skips the run)"
+              label="Check first (optional)"
               span={2}
               hint={
                 canPrecheck || station === undefined
-                  ? 'Runs with /bin/sh on the station in the folder, with 60 seconds. A non-zero exit records a skipped run and starts nothing.'
+                  ? 'A shell command that runs on the station in the folder, for up to 60 seconds. The run is skipped when this check fails.'
                   : 'This station does not run shell commands (allow_setup_cmd = false in station.toml).'
               }
               error={shown('precheck')}

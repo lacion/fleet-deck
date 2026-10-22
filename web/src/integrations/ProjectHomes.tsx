@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import type { Project, ProjectHome, StationView } from '../gen';
+import { PathTail } from '../chat/PathTail';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus } from '../ui/icons';
 import type { IntegrationActions } from './actions';
@@ -41,6 +42,53 @@ export function homeText(home: ProjectHome, station: string): string {
     default:
       return `${station} · State unknown`;
   }
+}
+
+/** The parts of one home row: the folder, the status glyph and its word, and the reason. */
+export function homeParts(home: ProjectHome): {
+  readonly path: string | null;
+  readonly status: 'online' | 'working' | 'idle' | 'unreachable';
+  readonly word: string;
+  readonly reason: string | null;
+} {
+  switch (home.state) {
+    case 'ready':
+      return { path: home.path ?? null, status: 'online', word: 'Ready', reason: null };
+    case 'cloning':
+      return {
+        path: home.reserved_path ?? home.path ?? null,
+        status: 'working',
+        word: 'Cloning…',
+        reason: null,
+      };
+    case 'unverified':
+      return {
+        path: home.path ?? null,
+        status: 'idle',
+        word: 'Not verified',
+        reason: reasonOf(home),
+      };
+    case 'failed':
+      return {
+        path: home.path ?? null,
+        status: 'unreachable',
+        word: 'Failed',
+        reason: reasonOf(home),
+      };
+    default:
+      return { path: home.path ?? null, status: 'idle', word: 'State unknown', reason: null };
+  }
+}
+
+/** The Git names that say something: a slug that is not the station name in other letters. */
+export function branchNames(
+  slugs: readonly { readonly slug: string; readonly station_id: string }[],
+  stations: readonly StationView[],
+): string[] {
+  return slugs
+    .map((s) => ({ slug: s.slug, name: stationName(s.station_id, stations) }))
+    .filter((s) => s.slug.toLowerCase() !== s.name.toLowerCase())
+    .map((s) => `${s.slug} → ${s.name}`);
 }
 
 /** The stations that can get a new home: they report Fleet Git and have no home of the project. */
@@ -174,6 +222,27 @@ export function AddHomeDialog({
   );
 }
 
+/** The parts of one home: the station (600), the folder (mono, it keeps its end) and the status
+ * glyph with its word; a reason after a state that is not ready. */
+function HomeRow({ home, station }: { readonly home: ProjectHome; readonly station: string }) {
+  const { path, status, word, reason } = homeParts(home);
+  return (
+    <span className="fd-int-home" title={homeText(home, station)}>
+      <span className="fd-int-home-station">{station}</span>
+      {path === null || path === '' ? null : (
+        <code className="fd-int-path">
+          <PathTail path={path} />
+        </code>
+      )}
+      <span className="fd-int-home-state" data-state={home.state}>
+        <span className="fd-dot" data-status={status} aria-hidden="true" />
+        {word}
+      </span>
+      {reason === null ? null : <span className="fd-int-home-reason">{reason}</span>}
+    </span>
+  );
+}
+
 /** The Homes section; it shows nothing when the deck sent no `homes` (an older deck). */
 export function ProjectHomes({
   project,
@@ -210,14 +279,14 @@ export function ProjectHomes({
       .finally(() => setBusy(null));
   };
   const hasRemote = project.remote_url !== null && project.remote_url !== undefined;
-  const slugs = Array.isArray(project.slugs) ? project.slugs : [];
+  const names = branchNames(Array.isArray(project.slugs) ? project.slugs : [], stations);
   return (
     <section className="fd-panel fd-int-homes" aria-label="Homes">
       <h3 className="fd-label">Homes</h3>
       <ul className="fd-int-list">
         {rows.map((home) => (
           <li key={home.station_id} data-state={home.state}>
-            <span>{homeText(home, stationName(home.station_id, stations))}</span>
+            <HomeRow home={home} station={stationName(home.station_id, stations)} />
             {admin && home.state === 'failed' ? (
               <button
                 type="button"
@@ -258,12 +327,7 @@ export function ProjectHomes({
           {error}
         </p>
       )}
-      {slugs.length === 0 ? null : (
-        <p className="fd-plan-meta">
-          Git names:{' '}
-          {slugs.map((s) => `${s.slug} → ${stationName(s.station_id, stations)}`).join(', ')}
-        </p>
-      )}
+      {names.length === 0 ? null : <p className="fd-note">Branch names: {names.join(', ')}</p>}
       {admin ? (
         <div className="fd-pane-row">
           <button

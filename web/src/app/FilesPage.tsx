@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
 import { lastParts, readPins } from '../spawn/spawn';
-import { Icon, Pin } from '../ui/icons';
-import { Page } from '../ui/page';
+import { FolderOpen, Icon, Pin } from '../ui/icons';
+import { EmptyState, Page } from '../ui/page';
 
 /** The most recent session folders that the chip row offers. */
 const MAX_FOLDERS = 8;
@@ -74,6 +74,7 @@ export function FilesPage({
   const [opened, setOpened] = useState<Opened | null>(() => readOpened(stations));
   const [station, setStation] = useState(opened?.station ?? ordered[0]?.station_id ?? '');
   const [folder, setFolder] = useState(opened?.folder ?? '');
+  const ids = useId();
   if (!filesFor) {
     return (
       <Page title="Files" description={FILES_DESC} className="fd-files-page">
@@ -91,34 +92,48 @@ export function FilesPage({
   };
   const pinned = readPins()[station] ?? [];
   const recent = sessionFolders(sessions, station, pinned);
+  const here = stations.find((s) => s.station_id === station)?.name ?? 'the station';
+  // "Pinned and recent" only when a folder is pinned (the folder picker's words).
+  const chipsLabel = pinned.length > 0 ? 'Pinned and recent' : 'Recent';
   return (
     <Page title="Files" description={FILES_DESC} className="fd-files-page" wide>
-      <div className="fd-panel fd-files-folder">
-        <form
-          aria-label="Open a folder"
-          onSubmit={(event) => {
-            event.preventDefault();
-            open(station, folder);
-          }}
-        >
-          <label>
-            Station
-            <select value={station} onChange={(event) => setStation(event.target.value)}>
-              {ordered.map((s) => (
-                <option key={s.station_id} value={s.station_id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="fd-files-folder-path">
-            Folder
-            <input
-              placeholder="/absolute/path/inside/an/allowed/root"
-              value={folder}
-              onChange={(event) => setFolder(event.target.value)}
-            />
-          </label>
+      {/* The form of a settings page (§4.7): a 200px label column, the controls after it, on the
+          canvas (no boxed toolbar). The chips sit in the control column, so a wrapped row starts
+          under the first chip. */}
+      <form
+        className="fd-files-folder"
+        aria-label="Open a folder"
+        onSubmit={(event) => {
+          event.preventDefault();
+          open(station, folder);
+        }}
+      >
+        <label className="fd-files-label" htmlFor={`${ids}-station`}>
+          Station
+        </label>
+        <div className="fd-files-control">
+          <select
+            id={`${ids}-station`}
+            value={station}
+            onChange={(event) => setStation(event.target.value)}
+          >
+            {ordered.map((s) => (
+              <option key={s.station_id} value={s.station_id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <label className="fd-files-label" htmlFor={`${ids}-folder`}>
+          Folder
+        </label>
+        <div className="fd-files-control fd-files-folder-path">
+          <input
+            id={`${ids}-folder`}
+            placeholder={`Folder path on ${here}`}
+            value={folder}
+            onChange={(event) => setFolder(event.target.value)}
+          />
           <button
             type="submit"
             className="fd-primary"
@@ -126,37 +141,41 @@ export function FilesPage({
           >
             Open
           </button>
-        </form>
+        </div>
         {pinned.length === 0 && recent.length === 0 ? null : (
-          <div className="fd-recent" role="group" aria-label="Pinned and recent">
-            <span className="fd-label">Pinned and recent</span>
-            {pinned.map((path) => (
-              <button
-                key={`pin:${path}`}
-                type="button"
-                className="fd-chip"
-                data-pinned
-                title={path}
-                onClick={() => open(station, path)}
-              >
-                <Icon of={Pin} size={12} />
-                {lastParts(path)}
-              </button>
-            ))}
-            {recent.map((path) => (
-              <button
-                key={path}
-                type="button"
-                className="fd-chip"
-                title={path}
-                onClick={() => open(station, path)}
-              >
-                {lastParts(path)}
-              </button>
-            ))}
-          </div>
+          <>
+            <span className="fd-files-label" id={`${ids}-recent`}>
+              {chipsLabel}
+            </span>
+            <div className="fd-recent" role="group" aria-labelledby={`${ids}-recent`}>
+              {pinned.map((path) => (
+                <button
+                  key={`pin:${path}`}
+                  type="button"
+                  className="fd-chip"
+                  data-pinned
+                  title={path}
+                  onClick={() => open(station, path)}
+                >
+                  <Icon of={Pin} size={12} />
+                  {lastParts(path)}
+                </button>
+              ))}
+              {recent.map((path) => (
+                <button
+                  key={path}
+                  type="button"
+                  className="fd-chip"
+                  title={path}
+                  onClick={() => open(station, path)}
+                >
+                  {lastParts(path)}
+                </button>
+              ))}
+            </div>
+          </>
         )}
-      </div>
+      </form>
       {opened ? (
         <div className="fd-panel fd-files-view">
           <FilesPanel
@@ -165,7 +184,18 @@ export function FilesPage({
             root={opened.folder}
           />
         </div>
-      ) : null}
+      ) : (
+        // What comes next (§4.7): Open is the action, so the empty state has no button.
+        <EmptyState
+          icon={FolderOpen}
+          title="Open a folder"
+          body={
+            pinned.length === 0 && recent.length === 0
+              ? 'Type the path of a folder on this station, then press Open.'
+              : 'Pick a recent folder above, or type the path of a folder on this station.'
+          }
+        />
+      )}
     </Page>
   );
 }
