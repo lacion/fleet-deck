@@ -1,6 +1,7 @@
-// R13 P1: the read-only chat of the focus mode. It shows the newest items of the timeline as
-// text: no composer, no filters and no control. (`ChatView` has a filter menu and `Markdown` has a
-// copy button on a code block, so the wall draws its own lines.)
+// R13 P1: the read-only chat of the focus mode. It shows the newest items of the timeline: no
+// composer, no filters and no control. The agent text goes through the chat Markdown in its
+// read-only form (no copy button); the tool calls run on a flight path (DESIGN-SYSTEM §4.5).
+import { Markdown } from '../chat/Markdown';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { displayChatLines } from './displayLines';
@@ -8,7 +9,16 @@ import { displayChatLines } from './displayLines';
 /** The most items that the pane draws. */
 export const CHAT_ITEMS = 120;
 
-type Line = { readonly key: string; readonly kind: string; readonly text: string };
+type Line = {
+  readonly key: string;
+  readonly kind: string;
+  /** The text; for a tool line, the tool name. */
+  readonly text: string;
+  /** The target of a tool line (a command, a path), drawn in mono. */
+  readonly target?: string | undefined;
+  /** How a tool line ended when it did not go well: "failed", "denied". */
+  readonly mark?: string | undefined;
+};
 
 function lineOf(item: Item): Line | null {
   switch (item.type) {
@@ -17,12 +27,18 @@ function lineOf(item: Item): Line | null {
     case 'message':
       return item.text.trim() === '' ? null : { key: item.key, kind: 'message', text: item.text };
     case 'tool': {
-      const call = item.input === '' ? item.title : `${item.title}: ${item.input}`;
-      const mark = item.status === 'failed' || item.status === 'denied' ? ` (${item.status})` : '';
-      return { key: item.key, kind: 'tool', text: `${call.split('\n')[0] ?? ''}${mark}` };
+      const target = item.input.split('\n')[0] ?? '';
+      const mark = item.status === 'failed' || item.status === 'denied' ? item.status : undefined;
+      return {
+        key: item.key,
+        kind: 'tool',
+        text: item.title,
+        target: target === '' ? undefined : target,
+        mark,
+      };
     }
     case 'subagent':
-      return { key: item.key, kind: 'tool', text: `Subagent: ${item.title}` };
+      return { key: item.key, kind: 'tool', text: 'Subagent', target: item.title };
     case 'plan':
       return { key: item.key, kind: 'message', text: item.markdown };
     case 'approval':
@@ -37,7 +53,7 @@ function lineOf(item: Item): Line | null {
     case 'notice':
       return { key: item.key, kind: item.tone === 'error' ? 'error' : 'tool', text: item.text };
     case 'artifact':
-      return { key: item.key, kind: 'tool', text: `Artifact: ${item.title}` };
+      return { key: item.key, kind: 'tool', text: 'Artifact', target: item.title };
     default:
       return null;
   }
@@ -49,6 +65,40 @@ export function chatLines(events: readonly EventEnvelope[], max: number = CHAT_I
     .items.map(lineOf)
     .filter((l): l is Line => l !== null)
     .slice(-max);
+}
+
+function ChatLine({ line }: { readonly line: Line }) {
+  if (line.kind === 'message') {
+    return (
+      <div className="fd-wall-chatline" data-kind="message">
+        <Markdown text={line.text} readOnly />
+      </div>
+    );
+  }
+  if (line.kind === 'tool') {
+    return (
+      <p className="fd-wall-chatline" data-kind="tool" data-mark={line.mark}>
+        <span className="fd-wall-tool-name">{line.text}</span>
+        {line.target === undefined ? null : (
+          <>
+            {' '}
+            <span className="fd-wall-tool-target">{line.target}</span>
+          </>
+        )}
+        {line.mark === undefined ? null : (
+          <>
+            {' '}
+            <span className="fd-wall-tool-mark">{line.mark}</span>
+          </>
+        )}
+      </p>
+    );
+  }
+  return (
+    <p className="fd-wall-chatline" data-kind={line.kind}>
+      {line.text}
+    </p>
+  );
 }
 
 export function ChatPane({
@@ -63,7 +113,7 @@ export function ChatPane({
   readonly ready: boolean;
   readonly unavailable: boolean;
 }) {
-  const lines =
+  const lines: readonly Line[] =
     display !== undefined && display.length > 0 ? displayChatLines(display) : chatLines(events);
   return (
     <section className="fd-wall-chat" aria-label="Chat">
@@ -74,9 +124,7 @@ export function ChatPane({
       ) : (
         <div className="fd-wall-chatlines">
           {lines.map((l) => (
-            <p key={l.key} className="fd-wall-chatline" data-kind={l.kind}>
-              {l.text}
-            </p>
+            <ChatLine key={l.key} line={l} />
           ))}
         </div>
       )}

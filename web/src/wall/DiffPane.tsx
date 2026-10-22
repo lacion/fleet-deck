@@ -1,6 +1,7 @@
 // R13 P1: the read-only diff of the focus and review modes: the working tree of a session against
 // its base commit. The review mode adds the sent review comments; no comment control shows.
-import { Diff } from '../chat/Diff';
+import { Diff, splitDiffFileLine } from '../chat/Diff';
+import { diffLineKind } from '../chat/diffLines';
 import type { DeckSession } from '../gen';
 import type { ReviewActions } from '../review/api';
 import { diffReview } from '../review/diffReview';
@@ -12,6 +13,32 @@ import { SinceNotes } from '../session/TurnsPanel';
 import { refOf } from '../watch/tiles';
 import { keyOf, useSessionDiff } from './hooks';
 import { sentOnly } from './model';
+
+/**
+ * The read-only diff of the focus mode: the lines of `Diff` with the same classes, and a file line
+ * that shows only the path (`crates/x.rs`, not `diff --git a/crates/x.rs b/crates/x.rs`), so the
+ * wall keeps its width for the code.
+ */
+function WallDiff({ patch, truncated }: { readonly patch: string; readonly truncated: boolean }) {
+  return (
+    <pre className="fd-diff" data-diff="wall-focus">
+      {patch.split('\n').map((line, n) => {
+        const kind = diffLineKind(line);
+        const text = kind === 'file' ? (splitDiffFileLine(line)?.path ?? line) : line;
+        return (
+          <span key={n} className="fd-dl" data-kind={kind}>
+            {text === '' ? ' ' : text}
+          </span>
+        );
+      })}
+      {truncated ? (
+        <span className="fd-dl" data-kind="meta">
+          … (the diff is cut at the size limit)
+        </span>
+      ) : null}
+    </pre>
+  );
+}
 
 export function DiffPane({
   card,
@@ -76,12 +103,11 @@ export function DiffPane({
             ) : null}
           </p>
           <div className="fd-wall-scroll">
-            <Diff
-              patch={diff.patch}
-              truncated={diff.truncated}
-              id={review === undefined ? 'wall-focus' : 'wall-review'}
-              review={props}
-            />
+            {review === undefined ? (
+              <WallDiff patch={diff.patch} truncated={diff.truncated} />
+            ) : (
+              <Diff patch={diff.patch} truncated={diff.truncated} id="wall-review" review={props} />
+            )}
           </div>
         </>
       ) : null}

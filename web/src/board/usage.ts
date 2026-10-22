@@ -109,6 +109,15 @@ export function rateMeters(
   return [...latest.values()].map((v) => v.meter).sort(tighter);
 }
 
+/** The words of a rate-limit scope: "five_hour" → "5-hour window". */
+export const SCOPE_TEXT: Readonly<Record<string, string>> = {
+  five_hour: '5-hour window',
+  weekly: 'weekly',
+};
+
+/** The words of a scope, or the scope as it is when it has no words. */
+export const scopeText = (scope: string): string => SCOPE_TEXT[scope] ?? scope;
+
 /** Orders meters: highest use first, unknown use last, then by key. */
 function tighter(a: RateMeter, b: RateMeter): number {
   if (a.usedPercent !== b.usedPercent) {

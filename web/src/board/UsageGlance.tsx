@@ -4,15 +4,10 @@
 import type { DeckSession, StationView } from '../gen';
 import { Fuel, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
-import { dollars, fleetUsage, rateMeters, resetsText, WARN_PERCENT } from './usage';
+import { dollars, fleetUsage, rateMeters, resetsText, scopeText, WARN_PERCENT } from './usage';
 
 /** How many windows the glance shows (the tightest first). */
 const SHOWN = 3;
-
-const SCOPE_TEXT: Readonly<Record<string, string>> = {
-  five_hour: '5-hour window',
-  weekly: 'weekly',
-};
 
 /** "4.2 M", "610 k", "940". */
 export function compactCount(n: number): string {
@@ -70,8 +65,7 @@ export function UsageGlance({
             return (
               <li key={m.key} className="fd-glance-meter">
                 <span className="fd-glance-name">
-                  {m.label}{' '}
-                  <span className="fd-glance-scope">{SCOPE_TEXT[m.scope] ?? m.scope}</span>
+                  {m.label} <span className="fd-glance-scope">{scopeText(m.scope)}</span>
                 </span>
                 <span className="fd-glance-pct">{Math.round(used)}%</span>
                 <span

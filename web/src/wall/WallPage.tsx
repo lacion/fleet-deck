@@ -26,7 +26,7 @@ import { keyOf, timelineOf, useSize, useTimelines } from './hooks';
 import { asksOf, fleetSignature, needsList, stepMode, tileSessions, wallSessions } from './model';
 import { RacePane } from './RacePane';
 import { ReviewPane } from './ReviewPane';
-import { baseRemPx, shapeOf, tileLimit } from './shape';
+import { baseRemPx, shapeOf, tileGrid, tileLimit } from './shape';
 
 type Props = {
   readonly route: WallRoute;
@@ -113,9 +113,12 @@ function Wall({
 
   // The tile count follows the size of the tiles area (decision 6).
   const area = useSize(tilesArea, mode === 'mission', '.fd-wall-tiles');
-  const limit =
-    area === null ? MAX_TILES : tileLimit(area.w, area.h, baseRemPx(size.h), route.scale, area.gap);
+  const remPx = baseRemPx(size.h, shape);
+  const limit = area === null ? MAX_TILES : tileLimit(area.w, area.h, remPx, route.scale, area.gap);
   const tiles = useMemo(() => tileSessions(filtered).slice(0, limit), [filtered, limit]);
+  // The tiles fill their area: the columns and the growth of the type follow the tile count.
+  const grid =
+    area === null ? null : tileGrid(tiles.length, area.w, area.h, remPx, route.scale, area.gap);
   const focusRef = sessionRefOf(route);
   const focusCard = focusRef === null ? undefined : sessions.find((c) => refOf(c) === focusRef);
   // The timelines that the mode needs: the tiles in mission, the one session in focus.
@@ -221,7 +224,7 @@ function Wall({
   // factor as a number, for the primitives with a fixed size (wall.css, "the wall scope").
   const style = {
     '--fd-wall-scale': route.scale,
-    '--fd-wall-k': (baseRemPx(size.h) / 14) * route.scale,
+    '--fd-wall-k': (remPx / 14) * route.scale,
   } as CSSProperties;
   const pageOrigin = origin ?? (typeof window === 'undefined' ? '' : window.location.origin);
 
@@ -238,6 +241,7 @@ function Wall({
               freshness={freshness}
               failed={failed}
               areaRef={tilesArea}
+              grid={grid}
             />
             {shape === 'portrait' ? null : (
               <SideArea sessions={filtered} stations={shownStations} now={clock} />
