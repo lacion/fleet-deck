@@ -7,12 +7,17 @@ import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
 import { sizeText } from '../ui/format';
 import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
-import { type ChangedFiles, type ChangeKind, type FileChange, loadChanged } from './changedFiles';
+import {
+  type ChangedFiles,
+  type ChangeKind,
+  type FileChange,
+  loadSessionChanges,
+} from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import {
   type FileActions,
   joinPath,
-  mergeDiffPaths,
+  replaceDiffPaths,
   parentPath,
   type SearchModeName,
 } from './workspace';
@@ -223,11 +228,11 @@ export function FilesPanel({
     const current = latest.current;
     if (!has || !current) return;
     let live = true;
-    void loadChanged(current).then((found) => {
+    void loadSessionChanges(current).then((found) => {
       if (!live) return;
-      setChanged(found);
+      setChanged(found?.changed ?? null);
       if (found !== null && changedRef.current !== undefined) {
-        mergeDiffPaths(changedRef.current, found.paths);
+        replaceDiffPaths(changedRef.current, found.all);
       }
     });
     return () => {

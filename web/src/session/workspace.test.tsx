@@ -17,6 +17,7 @@ import {
   joinPath,
   mergeDiffPaths,
   mergeTurnPaths,
+  replaceDiffPaths,
   parentPath,
   revertBlock,
   revertText,
@@ -382,6 +383,28 @@ describe('the diff since the session started (R1.2)', () => {
     expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts,c.ts</b>');
     setDiffTotal('station-a/m1', { files_changed: 1, insertions: 1, deletions: 0 }, ['c.ts']);
     expect(pathsOf('station-a/m1')).toBe('<b>c.ts</b>');
+  });
+
+  test('a full session diff replaces the paths; an empty one empties them; turns then add nothing', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        const paths = useDiffPaths(ref);
+        return <b>{paths === undefined ? 'none' : `[${paths.join(',')}]`}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    // A turn listed `restored.ts`; a later turn restored it, so the full diff no longer has it.
+    mergeDiffPaths('station-a/f1', ['restored.ts', 'kept.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[restored.ts,kept.ts]</b>');
+    replaceDiffPaths('station-a/f1', ['kept.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[kept.ts]</b>');
+    mergeDiffPaths('station-a/f1', ['restored.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[kept.ts]</b>');
+    // A clean diff is an empty list, not "unknown".
+    replaceDiffPaths('station-a/f1', []);
+    expect(pathsOf('station-a/f1')).toBe('<b>[]</b>');
+    mergeTurnPaths('station-a/f1', undefined, ['again.ts']);
+    expect(pathsOf('station-a/f1')).toBe('<b>[]</b>');
   });
 
   test('the diff of a reverted turn adds no paths; a kept turn adds its paths', () => {
