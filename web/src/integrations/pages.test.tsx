@@ -50,6 +50,13 @@ describe('projects page', () => {
     }
   });
 
+  test('the Trackers column is absent when no project has a tracker (§1 rule 7)', () => {
+    expect(provide(<ProjectsPage stations={[station()]} />)).toContain('>Trackers</th>');
+    const html = provide(<ProjectsPage stations={[station()]} />, [project({ trackers: [] })]);
+    expect(html).toContain('Atlas');
+    expect(html).not.toContain('Trackers');
+  });
+
   test('without the owner login the page says so and lists nothing', () => {
     const html = provide(
       <ProjectsPage stations={[station()]} />,

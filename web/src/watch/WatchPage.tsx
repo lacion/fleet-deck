@@ -52,6 +52,33 @@ const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | 
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
 
 /**
+ * A tool call on one line (DESIGN-SYSTEM §4.1, §4.5): the tool name in sans weight 600, the
+ * target in mono, then a plain note ("(failed)", a subagent title).
+ */
+function ToolCall({
+  name,
+  target,
+  note,
+}: {
+  readonly name: string;
+  readonly target: string;
+  readonly note: string;
+}) {
+  return (
+    <>
+      <b className="fd-wtile-toolname">{name}</b>
+      {target === '' ? null : (
+        <>
+          {' '}
+          <code>{target}</code>
+        </>
+      )}
+      {note === '' ? null : ` ${note}`}
+    </>
+  );
+}
+
+/**
  * One tile. With `readOnly` (the wall, R13 P1) it has no answer button and no other control: the
  * tile shows the request as text, and it is a focus target for the keyboard instead of a link.
  */
@@ -137,22 +164,26 @@ export function Tile({
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
       ) : lines.length === 0 ? (
-        // A tile without chat shows no filler (DESIGN-SYSTEM §1 rule 7): "Loading…" only.
-        timeline?.ready === true ? null : (
-          <span className="fd-wtile-empty">Loading…</span>
-        )
+        // The empty state of a tile: a loaded tile without chat says so, unlike a broken one.
+        <span className="fd-wtile-empty">
+          {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
+        </span>
       ) : (
         <span className="fd-wtile-lines">
           {lines.map((l) => (
             <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
-              {l.text}
+              {l.name === undefined ? (
+                l.text
+              ) : (
+                <ToolCall name={l.name} target={l.target ?? ''} note={l.note ?? ''} />
+              )}
             </span>
           ))}
         </span>
       )}
       {tool === undefined ? null : (
         <span className="fd-wtile-tool" title="Running now">
-          {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
+          <ToolCall name={tool.title} target={tool.input_summary} note="" />
         </span>
       )}
     </>

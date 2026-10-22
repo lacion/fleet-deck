@@ -90,6 +90,7 @@ function Row({
       </span>
       <span className="fd-arow-meta">
         <span
+          className="fd-arow-repo"
           title={
             item.repo === null
               ? stationName(item.station_id, stations)

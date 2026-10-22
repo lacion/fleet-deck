@@ -80,6 +80,9 @@ describe('tile lines', () => {
       'Bash: cargo test',
     ]);
     expect(lines.map((l) => l.kind)).toEqual(['message', 'tool', 'message', 'tool']);
+    // A tool call keeps its parts: the name (sans) and the target (mono).
+    expect(lines[3]).toMatchObject({ name: 'Bash', target: 'cargo test', note: '' });
+    expect(lines[0]?.name).toBeUndefined();
   });
 
   test('a long line is cut and a failed tool says so', () => {
@@ -93,6 +96,7 @@ describe('tile lines', () => {
     expect(lines[0]?.text).toHaveLength(LINE_CHARS);
     expect(lines[0]?.text.endsWith('…')).toBe(true);
     expect(lines[1]?.text).toBe('Bash: false (failed)');
+    expect(lines[1]).toMatchObject({ name: 'Bash', target: 'false', note: '(failed)' });
   });
 
   test('chat lines are plain text: no emphasis, code ticks or heading marks (DL-171)', () => {
@@ -204,9 +208,12 @@ describe('the watch page', () => {
     ]);
     expect(html).toContain('Fix login');
     expect(html).toContain('<span class="fd-wtile-line" data-kind="message">Fixed the test</span>');
-    expect(html).toContain('data-kind="tool">Bash: cargo test</span>');
+    // The tool name in sans weight 600, only the target in mono (DESIGN-SYSTEM §4.1, §4.5).
     expect(html).toContain(
-      '<span class="fd-wtile-tool" title="Running now">Bash: cargo test</span>',
+      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-wtile-tool" title="Running now"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
     );
     expect(html).toContain('class="fd-focus" title="repairing the login test"');
     expect(html).toContain('href="#/s/station-a/busy"');
@@ -301,7 +308,7 @@ describe('the read-only tile (R13 P1)', () => {
     expect(tile()).not.toContain('Unavailable');
   });
 
-  test('a tile without chat shows Loading… until the timeline is ready, then nothing', () => {
+  test('a tile without chat shows Loading… until the timeline is ready, then No chat yet.', () => {
     const ready = {
       incarnation: 'i',
       cursor: 0,
@@ -312,8 +319,8 @@ describe('the read-only tile (R13 P1)', () => {
     };
     expect(tile()).toContain('<span class="fd-wtile-empty">Loading…</span>');
     const html = tile({ timeline: ready });
-    expect(html).not.toContain('fd-wtile-empty');
-    expect(html).not.toContain('No chat yet.');
+    expect(html).toContain('<span class="fd-wtile-empty">No chat yet.</span>');
+    expect(html).not.toContain('Loading…');
   });
 
   test('the answers have the ApprovalDock look: Allow decides, Deny is a danger button', () => {

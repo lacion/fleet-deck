@@ -111,6 +111,16 @@
   }
 }
 
+/* A phone card on touch: the name keeps its 44px target (.fd-tap), but the target reaches into
+   the card padding and the meta line instead of adding space above the name. */
+@media (max-width: 640px) and (pointer: coarse) {
+  .fd-int-projects .fd-cell-name > .fd-tap {
+    position: relative;
+    z-index: 1;
+    margin-block: calc((var(--tap-min) - 1lh) / -2);
+  }
+}
+
 .fd-int-form {
   display: grid;
   gap: var(--sp-3);
