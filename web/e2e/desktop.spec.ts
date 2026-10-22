@@ -16,19 +16,23 @@ async function setUp(page: Page) {
   return { deck, sidebar };
 }
 
-test('the sidebar lists the sessions under their stations and a needs-you chip', async ({
+test('the sidebar lists the needs-you group first, then the sessions under their stations', async ({
   page,
 }) => {
   const { sidebar } = await setUp(page);
-  // no group of its own: a chip links to the first session that needs you
-  await expect(sidebar.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
-  const chip = sidebar.getByRole('link', { name: '1 needs you' });
-  await expect(chip).toHaveAttribute('href', `#/s/${ALPHA}/s1`);
+  await expect(sidebar.getByRole('link', { name: /^Fleet/ })).toContainText('1');
+  const needs = sidebar.getByRole('region', { name: 'Needs you' });
+  await expect(needs.getByRole('link')).toHaveCount(1);
+  await expect(needs.getByRole('link')).toHaveAttribute('href', `#/s/${ALPHA}/s1`);
 
   const alpha = sidebar.getByRole('region', { name: 'Station Alpha' });
   await expect(alpha.getByRole('heading', { level: 3 })).toContainText('Alpha');
-  await expect(alpha.getByRole('link')).toHaveCount(2);
-  await expect(alpha).toContainText('Review the repo');
+  // a session that needs you lists once, in "Needs you"; the station count is the rows shown
+  // under it, and its title still counts every session of the station
+  const alphaCount = alpha.getByRole('heading', { level: 3 }).locator('.fd-count');
+  await expect(alphaCount).toHaveText('1');
+  await expect(alphaCount).toHaveAttribute('title', '2 sessions on Alpha');
+  await expect(alpha.getByRole('link')).toHaveCount(1);
   await expect(alpha).toContainText('Write the docs');
   const beta = sidebar.getByRole('region', { name: 'Station Beta' });
   await expect(beta.getByRole('heading', { level: 3 })).toContainText('Beta');
@@ -53,7 +57,7 @@ test('a click on a session opens its pane on the Chat tab', async ({ page }) => 
 test('j and k step through the sessions in the sidebar order', async ({ page }) => {
   const { sidebar } = await setUp(page);
   const title = page.getByRole('region', { name: 'Session' }).getByRole('heading', { level: 2 });
-  await sidebar.getByRole('region', { name: 'Station Alpha' }).getByRole('link').first().click();
+  await sidebar.getByRole('region', { name: 'Needs you' }).getByRole('link').click();
   await expect(page).toHaveURL(new RegExp(`#/s/${ALPHA}/s1$`));
   await expect(title).toHaveText('Review the repo');
   // Focus is on a link, outside an input: the keys move between sessions.
@@ -70,7 +74,7 @@ test('j and k step through the sessions in the sidebar order', async ({ page }) 
 
 test('j and k are plain text in an input', async ({ page }) => {
   const { sidebar } = await setUp(page);
-  await sidebar.getByRole('region', { name: 'Station Alpha' }).getByRole('link').first().click();
+  await sidebar.getByRole('region', { name: 'Needs you' }).getByRole('link').click();
   await expect(page).toHaveURL(new RegExp(`#/s/${ALPHA}/s1$`));
   const search = sidebar.getByRole('searchbox', { name: 'Search sessions' });
   await search.click();

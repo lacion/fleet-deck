@@ -3,9 +3,9 @@ import {
   ChevronLeft,
   Ellipsis,
   Icon,
+  Layers,
   LayoutGrid,
   type LucideIcon,
-  MessagesSquare,
   PanelLeft,
   Plus,
   X,
@@ -13,7 +13,7 @@ import {
 import { Mark } from '../ui/Mark';
 import { usePeople } from '../sharing/context';
 import { MemberBanner } from '../sharing/MemberBanner';
-import type { Notice } from './chrome';
+import type { Chrome, Notice } from './chrome';
 import { failureText, type StartFailure } from './failures';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
@@ -40,8 +40,46 @@ type Props = {
   readonly onTerminalsBack: () => void;
   /** Dialogs that sit above the layout (help, palette). */
   readonly overlays: ReactNode;
+  /** The connection of the board: the Live pill of the phone top bar. */
+  readonly chrome?: Chrome | undefined;
   readonly children: ReactNode;
 };
+
+/** The connection pill (§4.2): a dot and its word (Live, Stale, Offline); never color alone. */
+export function LivePill({ chrome }: { readonly chrome: Chrome | undefined }) {
+  return (
+    <span
+      className="fd-wspill"
+      data-freshness={chrome?.freshness ?? 'none'}
+      title={chrome?.label ?? 'Not connected'}
+    >
+      <span className="fd-wspill-dot" aria-hidden="true" />
+      {chrome === undefined ? 'Offline' : chrome.freshness === 'live' ? 'Live' : 'Stale'}
+      <span className="fd-vh">: {chrome?.label ?? 'Not connected'}</span>
+    </span>
+  );
+}
+
+/** One or two initials of a login actor (`owner`, `member:<name>`, `token:<name>`). */
+export function initials(actor: string): string {
+  const name = actor.slice(actor.indexOf(':') + 1);
+  const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== '');
+  const letters = parts
+    .slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join('');
+  return letters === '' ? '?' : letters.toUpperCase();
+}
+
+/** The account avatar (§4.2, §4.8): a 24px circle with the initials of this login. */
+export function Avatar() {
+  const self = usePeople().self;
+  return (
+    <span className="fd-avatar" aria-hidden="true">
+      {initials(self)}
+    </span>
+  );
+}
 
 export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
   if (notices.length === 0) return null;
@@ -116,6 +154,77 @@ const BAR_ROUTES: readonly Route['name'][] = [
   'compare',
 ];
 
+/** The routes that the More tab of the phone owns (they open from the More page). */
+const MORE_TAB: readonly Route['name'][] = [
+  'more',
+  'plans',
+  'stations',
+  'files',
+  'watch',
+  'activity',
+  'shares',
+  'spaces',
+  'artifacts',
+  'artifact',
+  'settings',
+  'automations',
+  'projects',
+  'project',
+  'compare',
+];
+
+/** The page name of each route in the phone top bar (§4.8). */
+const PHONE_TITLES: Partial<Record<Route['name'], string>> = {
+  home: 'Sessions',
+  fleet: 'Fleet',
+  new: 'New session',
+  more: 'More',
+  plans: 'Plans',
+  stations: 'Stations',
+  files: 'Files',
+  watch: 'Watch',
+  activity: 'Activity',
+  shares: 'Shares',
+  spaces: 'Spaces',
+  artifacts: 'Artifacts',
+  artifact: 'Artifact',
+  settings: 'Settings',
+  automations: 'Automations',
+  projects: 'Projects',
+  project: 'Project',
+  compare: 'Compare',
+};
+
+/**
+ * The phone top bar (§4.8, 52px): the mark (or Back to More on a page of the More tab), the page
+ * name, the connection and the avatar. The page keeps its own heading for screen readers.
+ */
+function PhoneBar({
+  route,
+  chrome,
+}: {
+  readonly route: Route;
+  readonly chrome: Chrome | undefined;
+}) {
+  const back = route.name !== 'more' && MORE_TAB.includes(route.name);
+  return (
+    <header className="fd-phonebar">
+      {back ? (
+        <a href="#/more" className="fd-iconbtn fd-phonebar-back" aria-label="Back to More">
+          <Icon of={ChevronLeft} />
+        </a>
+      ) : (
+        <Mark />
+      )}
+      <span className="fd-phonebar-title fd-wide" aria-hidden="true">
+        {PHONE_TITLES[route.name]}
+      </span>
+      <LivePill chrome={chrome} />
+      <Avatar />
+    </header>
+  );
+}
+
 function BottomBar({ route, guest }: { readonly route: Route; readonly guest: boolean }) {
   const all: readonly {
     href: string;
@@ -124,44 +233,44 @@ function BottomBar({ route, guest }: { readonly route: Route; readonly guest: bo
     on: readonly Route['name'][];
     guest?: false;
   }[] = [
-    { href: '#/', label: 'Sessions', icon: MessagesSquare, on: ['home'] },
+    { href: '#/', label: 'Sessions', icon: Layers, on: ['home'] },
     { href: '#/fleet', label: 'Fleet', icon: LayoutGrid, on: ['fleet'] },
     { href: '#/new', label: 'New', icon: Plus, on: ['new'], guest: false },
     {
       href: '#/more',
       label: 'More',
       icon: Ellipsis,
-      on: [
-        'more',
-        'plans',
-        'stations',
-        'watch',
-        'activity',
-        'shares',
-        'spaces',
-        'artifacts',
-        'artifact',
-        'settings',
-        'automations',
-        'projects',
-        'project',
-        'compare',
-      ],
+      on: MORE_TAB,
     },
   ];
   const items = guest ? all.filter((item) => item.guest !== false) : all;
   return (
     <nav className="fd-bottombar" aria-label="Board">
-      {items.map((item) => (
-        <a
-          key={item.href}
-          href={item.href}
-          aria-current={item.on.includes(route.name) ? 'page' : undefined}
-        >
-          <Icon of={item.icon} size={20} />
-          <span>{item.label}</span>
-        </a>
-      ))}
+      {items.map((item) =>
+        // §4.8: New is a 44px ink circle in the middle of the bar; its name stays "New".
+        item.href === '#/new' ? (
+          <a
+            key={item.href}
+            href={item.href}
+            className="fd-bottombar-new"
+            aria-current={item.on.includes(route.name) ? 'page' : undefined}
+          >
+            <span className="fd-bottombar-circle">
+              <Icon of={item.icon} size={22} />
+            </span>
+            <span className="fd-vh">{item.label}</span>
+          </a>
+        ) : (
+          <a
+            key={item.href}
+            href={item.href}
+            aria-current={item.on.includes(route.name) ? 'page' : undefined}
+          >
+            <Icon of={item.icon} size={20} />
+            <span>{item.label}</span>
+          </a>
+        ),
+      )}
     </nav>
   );
 }
@@ -223,13 +332,19 @@ export function Layout({
   dock,
   onTerminalsBack,
   overlays,
+  chrome,
   children,
 }: Props) {
   const showBar = layout === 'phone' && BAR_ROUTES.includes(route.name);
   // R11.4: a guest of the owner's deck sees the banner and a smaller board.
   const people = usePeople();
   return (
-    <div className="fd-app" data-layout={layout} data-route={route.name}>
+    <div
+      className="fd-app"
+      data-layout={layout}
+      data-route={route.name}
+      data-phonebar={showBar ? 'true' : undefined}
+    >
       {layout === 'desktop' ? sidebar : null}
       {layout === 'tablet' ? (
         <header className="fd-topbar">
@@ -248,6 +363,7 @@ export function Layout({
         </header>
       ) : null}
       <div className="fd-main">
+        {showBar ? <PhoneBar route={route} chrome={chrome} /> : null}
         {layout === 'phone' && route.name === 'terminals' ? (
           <header className="fd-topbar">
             <button

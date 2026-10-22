@@ -22,7 +22,7 @@ import type {
   WorkspaceListing,
   WorkspaceRequest,
 } from '../gen';
-import { limitSuffix, type RateMeter } from '../board/usage';
+import { limitSuffix, type RateMeter, resetsText, scopeText, WARN_PERCENT } from '../board/usage';
 import type { PlacementBody } from '../integrations/actions';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 import { nativeActions, type NativeActions } from './nativeSessions';
@@ -488,17 +488,36 @@ export function providerLabel(p: StationProvider): string {
 }
 
 /**
- * The option text of the provider select (R4.3): the label, the tightest
- * limit of the instance ("42% of five_hour, resets in 1 h") and "(most room)".
+ * One provider choice of the Agent row (R4.3): the label, and the limit of the instance as a
+ * visible suffix ("42% of 5-hour window, resets in 1 h"), plus "(most room)" for the instance with
+ * the lowest use, so the instances compare before a choice. The title is the limit text alone.
  */
-export function providerChoiceLabel(
+export function providerChoice(
   p: StationProvider,
   limit: RateMeter | null,
   now: number,
   mostRoom: boolean,
-): string {
-  const suffix = limitSuffix(limit, now);
-  return `${providerLabel(p)}${suffix === '' ? '' : `, ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
+): { readonly label: string; readonly suffix: string; readonly title: string | undefined } {
+  const limitText = limitSuffix(limit, now);
+  const room = mostRoom ? '(most room)' : '';
+  const suffix = [limitText, room].filter((t) => t !== '').join(' ');
+  return { label: providerLabel(p), suffix, title: limitText === '' ? undefined : limitText };
+}
+
+/**
+ * The fuel badge next to the provider choice (R4.3): the tightest limit of the chosen instance,
+ * "84% of 5-hour window", from WARN_PERCENT on; below it, nothing. The title adds the reset time.
+ */
+export function limitBadge(
+  limit: RateMeter | null,
+  now: number,
+): { readonly text: string; readonly title: string } | null {
+  if (limit === null || limit.usedPercent === null || limit.usedPercent < WARN_PERCENT) return null;
+  // The window words of the usage glance (scopeText): never the raw protocol scope such as `five_hour`.
+  const scope = scopeText(limit.scope);
+  const text = `${Math.round(limit.usedPercent)}% of ${scope}`;
+  const title = limit.resetsAt === null ? text : `${text}, ${resetsText(limit.resetsAt, now)}`;
+  return { text, title };
 }
 
 /** The warning under the provider select for a CLI version that the station

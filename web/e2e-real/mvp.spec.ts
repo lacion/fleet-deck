@@ -128,8 +128,9 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   await (await bar()).getByRole('link', { name: 'New' }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form
-    .getByRole('combobox', { name: 'Station', exact: true })
-    .selectOption({ label: station.name });
+    .getByRole('radiogroup', { name: 'Station', exact: true })
+    .locator('label', { hasText: station.name })
+    .click();
   await expect(form.getByLabel('Provider')).toContainText(`Claude 2.1.999 (${PROVIDER})`);
   await form.getByRole('button', { name: 'Browse…' }).click();
   // The root list shows the station's absolute allowed roots.
@@ -210,7 +211,7 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   ).toHaveCount(2);
   for (const name of ['alpha', 'bravo']) {
     const st = stationCard(name);
-    await expect(st).toContainText('Link up');
+    await expect(st).toContainText('online');
     await expect(st).toContainText('0 of 4 sessions');
     await expect(st.locator(`.fd-station-providers [data-instance="${PROVIDER}"]`)).toContainText(
       'Claude 2.1.999',
@@ -223,8 +224,8 @@ test('the board logs in and pairs a dialing and a listening station', async () =
 
 test('a session spawned on alpha asks for an approval that the needs-you rail answers', async () => {
   const id = await spawn(alpha, 'Alpha approval', 'ask echo hi');
-  // The place is in the callsign tooltip of the strip (ui-pass wave 1).
-  await expect(card(id).locator('.fd-strip-call')).toHaveAttribute('title', `Branch: ${BRANCH}`);
+  // The place is in the tooltip of the strip's where field (DESIGN-SYSTEM §4.1).
+  await expect(card(id).locator('.fd-strip-where')).toHaveAttribute('title', `Branch: ${BRANCH}`);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
   await expect(rail).toContainText('Alpha approval');
   await expect(rail).toContainText('alpha');
@@ -351,10 +352,10 @@ test('a station link drop shows the station unreachable until it returns', async
   await fleet();
   await bravo.stop();
   await stations(2);
-  await expect(stationCard('bravo')).toContainText('Unreachable');
-  await expect(stationCard('alpha')).toContainText('Link up');
+  await expect(stationCard('bravo')).toContainText('offline');
+  await expect(stationCard('alpha')).toContainText('online');
   await bravo.start();
-  await expect(stationCard('bravo')).toContainText('Link up');
+  await expect(stationCard('bravo')).toContainText('online');
   await fleet();
   await expect(page.locator('.fd-strip')).toHaveCount(4);
   // The station restart resent nothing: no new command and no new input.

@@ -7,8 +7,6 @@ import { shownStatus, type TaskState } from '../session/tasks';
 import type { Item, Subagent } from '../session/timeline';
 import {
   ArrowDown,
-  Ban,
-  Check,
   ChevronRight,
   FileText,
   GitCompare,
@@ -22,7 +20,6 @@ import {
   TriangleAlert,
   Workflow,
   Wrench,
-  X,
 } from '../ui/icons';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
@@ -36,6 +33,7 @@ import { Markdown } from './Markdown';
 import { SubagentWork } from './SubagentWork';
 import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
+import { hasOpenRequest, pairWaiting, type Waiting } from './waiting';
 import { ReviewCard } from '../review/ReviewCard';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
@@ -97,22 +95,20 @@ const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
 
 const firstLine = (text: string): string => text.split('\n')[0] ?? '';
 
-/** The mark of a finished tool call; a running call shows a dot instead. */
-function StatusMark({ status }: { status: Exclude<Tool['status'], 'running'> }) {
-  return (
-    <span className="fd-chat-mark" role="img" aria-label={status} data-status={status}>
-      {status === 'ok' ? (
-        <Icon of={Check} size={14} />
-      ) : status === 'failed' ? (
-        <Icon of={X} size={14} />
-      ) : status === 'denied' ? (
-        <Icon of={Ban} size={14} />
-      ) : (
-        '–'
-      )}
-    </span>
-  );
+/**
+ * The node of a finished tool call on the flight path (DESIGN-SYSTEM §4.5): its shape and color
+ * come from `data-status` (chat.css); a running call shows the working glyph instead.
+ */
+function StatusMark({ status }: { status: Exclude<Tool['status'], 'running'> | 'waiting' }) {
+  return <span className="fd-chat-mark" role="img" aria-label={status} data-status={status} />;
 }
+
+/** The result at the right of a finished call: `ok`, or how it failed. */
+const RESULT: Partial<Record<Tool['status'], { text: string; tone?: 'hazard' }>> = {
+  ok: { text: 'ok' },
+  failed: { text: 'failed', tone: 'hazard' },
+  denied: { text: 'denied', tone: 'hazard' },
+};
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
 
@@ -133,6 +129,8 @@ function Items(props: ItemsProps): ReactNode {
   const { compact, provider, onOpenChanges, review, loadSubagent, tasks, shell } = props;
   // B8: a shell card is never folded.
   const rows = unfoldShells(compactRuns(props.items, compact, provider), compact, provider);
+  // §4.5: a call that waits for an answer shows it in its own row.
+  const waiting = pairWaiting(props.items);
   return rows.map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -140,12 +138,14 @@ function Items(props: ItemsProps): ReactNode {
         items={row.items}
         failed={row.failed}
         summary={row.summary}
+        waiting={waiting}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ) : (
       <ItemView
         key={row.item.key}
         item={row.item}
+        waiting={waiting}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ),
@@ -154,7 +154,12 @@ function Items(props: ItemsProps): ReactNode {
 
 /** DL-175: a run of finished tool rows (and notes) folded into one row. A run with a failure starts open. */
 function ToolFold(
-  props: Omit<ItemsProps, 'items'> & { items: Item[]; failed: number; summary: string },
+  props: Omit<ItemsProps, 'items'> & {
+    items: Item[];
+    failed: number;
+    summary: string;
+    waiting: Waiting;
+  },
 ) {
   const { items, failed, summary, ...rest } = props;
   return (
@@ -179,13 +184,27 @@ function ToolFold(
   );
 }
 
-function ToolView({ tool }: { tool: Tool }) {
-  const shown = tool.files.slice(0, MAX_FILE_CHIPS);
-  const more = tool.files.length - shown.length;
+/** A tool call. `waitingFor`: the title of the open request of the call (it waits for you). */
+function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | undefined }) {
+  const target = tool.input ? firstLine(tool.input) : '';
+  // One file that the target already names is not repeated as a badge.
+  const named =
+    tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
+  const shown = named ? [] : tool.files.slice(0, MAX_FILE_CHIPS);
+  const more = named ? 0 : tool.files.length - shown.length;
+  const failedExit = tool.exit_code !== null && tool.exit_code !== 0;
+  const result = failedExit ? undefined : RESULT[tool.status];
   return (
-    <details className="fd-chat-tool" data-status={tool.status} data-node={tool.node_id}>
+    <details
+      className="fd-chat-tool"
+      data-status={tool.status}
+      data-node={tool.node_id}
+      data-waiting={waitingFor === undefined ? undefined : ''}
+    >
       <summary>
-        {tool.status === 'running' ? (
+        {waitingFor !== undefined ? (
+          <StatusMark status="waiting" />
+        ) : tool.status === 'running' ? (
           <span className="fd-dot" data-status="working" role="img" aria-label="running" />
         ) : (
           <StatusMark status={tool.status} />
@@ -194,15 +213,25 @@ function ToolView({ tool }: { tool: Tool }) {
           <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
         </span>
         <span className="fd-chat-tool-title">{tool.title}</span>
-        {tool.input ? <span className="fd-chat-tool-arg">{firstLine(tool.input)}</span> : null}
+        {tool.input ? <span className="fd-chat-tool-arg">{target}</span> : null}
         {shown.map((path) => (
           <span key={path} className="fd-badge" title={path}>
             {basename(path)}
           </span>
         ))}
         {more > 0 ? <span className="fd-badge">{`+${more}`}</span> : null}
-        {tool.exit_code !== null && tool.exit_code !== 0 ? (
+        {failedExit ? (
           <span className="fd-badge" data-tone="hazard">{`exit ${tool.exit_code}`}</span>
+        ) : null}
+        {waitingFor !== undefined ? (
+          <span className="fd-chat-tool-result" data-tone="act">
+            <span className="fd-vh">{`Waiting for your answer · ${waitingFor}`}</span>
+            <span aria-hidden="true">Waiting for your answer</span>
+          </span>
+        ) : result ? (
+          <span className="fd-chat-tool-result" data-tone={result.tone}>
+            {result.text}
+          </span>
         ) : null}
         <span className="fd-chat-chev">
           <Icon of={ChevronRight} size={14} />
@@ -216,8 +245,9 @@ function ToolView({ tool }: { tool: Tool }) {
   );
 }
 
-function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
-  const { item, ...rest } = props;
+function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent; waiting?: Waiting }) {
+  // The pairs of the outer list stay out: the entries of the subagent pair their own.
+  const { item, waiting: _outer, ...rest } = props;
   const { loadSubagent } = rest;
   const toolUseId = item.tool_use_id;
   const shown = shownStatus(item, rest.tasks ?? NO_TASKS);
@@ -252,7 +282,7 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
   );
 }
 
-function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
+function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Waiting }) {
   const { item } = props;
   switch (item.type) {
     case 'run': {
@@ -330,11 +360,13 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
       return isShellTool(item) ? (
         <ShellCard tool={item} env={props.shell} />
       ) : (
-        <ToolView tool={item} />
+        <ToolView tool={item} waitingFor={props.waiting?.tools.get(item.key)} />
       );
     case 'subagent':
       return <SubagentView {...props} item={item} />;
     case 'approval':
+      // The row of its call says that it waits (ToolView).
+      if (props.waiting?.merged.has(item.key)) return null;
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
           <Icon of={TriangleAlert} size={14} />
@@ -359,7 +391,9 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
       if (item.status === 'done' && !hasChanges(item.diff)) return null;
       return (
         <div className="fd-chat-turn">
-          {item.status !== 'done' ? <p className="fd-chat-line">{`Turn ${item.status}`}</p> : null}
+          {item.status !== 'done' ? (
+            <p className="fd-chat-line" data-status={item.status}>{`Turn ${item.status}`}</p>
+          ) : null}
           {item.diff && hasChanges(item.diff) ? (
             <div className="fd-chat-diff">
               <Icon of={GitCompare} size={14} />
@@ -488,7 +522,9 @@ export function ChatView(props: ChatViewProps) {
   };
 
   const last = shown.at(-1);
-  const showWorking = working && !(last?.type === 'message' && !last.done);
+  // A session that waits for your answer is not working (§4.5: one state per row).
+  const showWorking =
+    working && !(last?.type === 'message' && !last.done) && !hasOpenRequest(items);
 
   let body: ReactNode;
   if (!ready) body = <p className="fd-chat-state">Loading the conversation…</p>;
@@ -524,6 +560,7 @@ export function ChatView(props: ChatViewProps) {
       );
   }
 
+  const toolbar = props.toolbar !== undefined && props.toolbar !== null;
   const filterBar =
     ready && !error && items.length > 0 ? (
       <FilterBar filter={filter} counts={filtered.counts} onChange={setFilter} />
@@ -531,13 +568,15 @@ export function ChatView(props: ChatViewProps) {
 
   return (
     <section className="fd-chat" aria-label="Conversation">
-      {props.toolbar === undefined || props.toolbar === null ? (
-        filterBar
-      ) : (
+      {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
+          end of the session tab row (chat.css), out of the transcript. */}
+      {toolbar ? (
         <div className="fd-chat-bar">
           <div className="fd-chat-toolbar">{props.toolbar}</div>
           {filterBar}
         </div>
+      ) : (
+        filterBar
       )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>

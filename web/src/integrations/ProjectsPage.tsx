@@ -202,7 +202,7 @@ export function ProjectsPage({
       ) : (
         <div className="fd-panel fd-tablepanel">
           <div className="fd-tablewrap">
-            <table className="fd-table" aria-label="Projects">
+            <table className="fd-table fd-int-projects" aria-label="Projects">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -231,7 +231,7 @@ export function ProjectsPage({
                         </td>
                         <td data-label="Station">{stationName(p.station_id, stations)}</td>
                         <td className="fd-cell-path" data-label="Folder">
-                          <code>{p.path}</code>
+                          <code className="fd-int-path">{p.path}</code>
                         </td>
                         <td data-label="Forge">
                           {p.forge === null ? null : (
@@ -241,17 +241,20 @@ export function ProjectsPage({
                           )}
                         </td>
                         <td data-label="Trackers">
-                          <span className="fd-cellbadges">
-                            {p.trackers.map((t) => (
-                              <span
-                                key={`${t.tracker}/${t.key}`}
-                                className="fd-badge"
-                                data-chip="tracker"
-                              >
-                                {trackerChip(t)}
-                              </span>
-                            ))}
-                          </span>
+                          {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
+                          {p.trackers.length === 0 ? null : (
+                            <span className="fd-cellbadges">
+                              {p.trackers.map((t) => (
+                                <span
+                                  key={`${t.tracker}/${t.key}`}
+                                  className="fd-badge"
+                                  data-chip="tracker"
+                                >
+                                  {trackerChip(t)}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                         </td>
                         <td className="fd-cell-actions">
                           {confirming === p.project_id ? (
@@ -293,7 +296,7 @@ export function ProjectsPage({
                               </button>
                               <button
                                 type="button"
-                                className="fd-ghost fd-sm"
+                                className="fd-danger fd-sm"
                                 onClick={() => setConfirming(p.project_id)}
                               >
                                 Delete…

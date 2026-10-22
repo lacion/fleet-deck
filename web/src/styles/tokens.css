@@ -1,82 +1,163 @@
-/* Fleet Deck v2 design tokens, ported from board/src/tokens.css (v0). */
-:root {
-  /* color · dark (default) */
-  --bg: #0b0e14; /* app canvas */
-  --surface: #121722; /* cards, header, feed */
-  --raised: #18202f; /* buttons, option rows */
-  --code: #0a0d13; /* command blocks, inputs */
-  --border: #242e42;
-  --border-soft: #1b2333;
-  --text: #e7ecf5;
-  --dim: #94a0b8;
-  --faint: #7d89a1; /* text: at least 4.5:1 on --bg and --surface (ui-pass G5) */
-  --faint-decor: #5c6880; /* decoration only: hollow dots, rules, never text */
-  --term-selection: rgba(240, 166, 60, 0.3); /* terminal selection */
-  --act: #f0a63c; /* yours-to-act (amber) */
-  --act-bg: #2a1f0c;
-  --act-ink: #1a1206; /* text on amber */
-  --hazard: #ff6b54; /* conflicts, timeouts */
-  --hazard-bg: #2a120d;
-  --ok: #57b98a; /* liveness, ship, delivered */
-  /* model families — one hue each, and NONE of them amber: on this board amber
-     is the "yours to act" language and a model badge is never a call to act. */
-  --m-fable: #c4b0ff;
-  --m-fable-bg: #241c3e;
-  --m-quill: #6fd6cd;
-  --m-quill-bg: #0e2a28;
-  --m-comet: #8fbcf7;
-  --m-comet-bg: #12233b;
-  --m-opus: #f0a8c6;
-  --m-opus-bg: #33172a; /* rose */
-  --m-sonnet: #b7d97a;
-  --m-sonnet-bg: #212b12; /* lime */
-  --m-haiku: #a8b4d8;
-  --m-haiku-bg: #1d2436; /* periwinkle */
-}
-[data-theme="light"] {
-  --bg: #eef1f5;
-  --surface: #ffffff;
-  --raised: #f7f9fc;
-  --code: #f1f3f7;
-  --border: #d4dae4;
-  --border-soft: #e2e7ef;
-  --text: #1a2230;
-  --dim: #57637a;
-  --faint: #646e86; /* text: at least 4.5:1 on --bg and --surface (ui-pass G5) */
-  --faint-decor: #8a94a8; /* decoration only: hollow dots, rules, never text */
-  --term-selection: rgba(138, 83, 0, 0.22);
-  --act: #8a5300;
-  --act-bg: #fff3dc;
-  --act-ink: #ffffff;
-  --hazard: #b3301c;
-  --hazard-bg: #fde8e4;
-  --ok: #1e7a4e;
-  --m-fable: #4c2fa8;
-  --m-fable-bg: #ede8fc;
-  --m-quill: #0e6b63;
-  --m-quill-bg: #ddf4f2;
-  --m-comet: #1d4fa8;
-  --m-comet-bg: #e3edfc;
-  --m-opus: #a31c63;
-  --m-opus-bg: #fbe7f1;
-  --m-sonnet: #486b12;
-  --m-sonnet-bg: #edf5db;
-  --m-haiku: #3a4780;
-  --m-haiku-bg: #e7eaf7;
+/* Fleet Deck design tokens: "Flight Deck" v3 (docs/v2/DESIGN-SYSTEM.md §2).
+   The token names of DL-141 stay the public API of every area style sheet and of
+   ui/palette.ts (Omarchy palettes). This is the only file with raw values. */
+
+/* ── color · dark (default): the night deck ───────────────────────── */
+/* .fd-scope-dark: a part that stays dark in every theme (the wall ambient mode). */
+:root,
+.fd-scope-dark {
+  color-scheme: dark;
+
+  /* surfaces and ink (§2.1) */
+  --bg: #111821; /* page canvas ("deck") */
+  --surface: #161e29; /* sidebar, side panels, panels, dock ("bay") */
+  --raised: #1c2532; /* strips, rows, inputs, buttons, cards ("strip") */
+  --raised-hi: #232e3d; /* hover, selected row, pressed segment */
+  --code: #0e141c; /* code blocks, diffs, terminal frame */
+  --border: #2a3545; /* strip field rules, section rules, input edge */
+  --border-soft: #212b39; /* the faintest divider (list separators) */
+  --text: #e9eef4; /* primary text */
+  --dim: #a5b0bf; /* secondary text */
+  --faint: #8896a7; /* tertiary text: at least 4.5:1 on --bg, --surface, --raised, --raised-hi, --badge-bg and the add/del diff fills */
+  --faint-decor: #5b6779; /* decoration only (hollow rings, ticks), never text */
+  --ink-fill: #e9eef4; /* fill of the general primary button */
+  --ink-on: #111821; /* text on --ink-fill */
+  --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
+  --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
+  --ctl-edge: #6b778a; /* edge of a form control (input, select, checkbox, radio, off switch): 3:1 */
+  --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
+  --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
+  --knob-shadow: 0 0 0 0 transparent; /* shadow of the switch knob (the light theme only) */
+  --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
+  --selected-lift: 0 0 0 0 transparent; /* lift of the selected row (the light theme only) */
+
+  /* semantic colors: the jersey colors (§2.2) */
+  --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
+  --act-fill: #ffd43b; /* fill of the decision primary (Allow), the needs-you badge */
+  --act-ink: #1b1600; /* text on --act-fill */
+  --act-bg: #2a2410; /* tint behind a needs-you row */
+  --act-line: #ffd43b; /* outline of a needs-you strip or card */
+  --act-glow: rgba(255, 212, 59, 0.18); /* the needs-you glow (only there) */
+  --ok: #3ddc97; /* green: working, ok, online, additions */
+  --ok-bg: #10291f; /* tint behind ok */
+  --hazard: #ff6257; /* red: errors, deny, deletions, offline, conflicts, bypass */
+  --hazard-bg: #2c1517; /* tint behind hazard */
+  --fuel: #b79cff; /* purple: usage, tokens, cost, rate limits, model help */
+  --fuel-bg: #2a2348; /* track of a fuel meter (visible on --surface and --raised) */
+  --focus: #66b8ff; /* blue: focus ring, selection marker, links, queued, verifying */
+  --focus-bg: #13253a; /* selected tab or row tint */
+  --add-bg: rgba(61, 220, 151, 0.1); /* diff line fill: addition */
+  --del-bg: rgba(255, 98, 87, 0.1); /* diff line fill: deletion */
+  --free-bg: #10291f; /* free slot / allowed tint */
+  --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
+  --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
+  --scrim: rgba(6, 10, 15, 0.6); /* dims the page behind a dialog, the drawer and a sheet */
+
+  /* elevation (§2.5) */
+  --shadow-pop:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 40px rgba(0, 0, 0, 0.45); /* floating layers only */
+  /* A shadow token is never `none`: area rules put it in a box-shadow list
+     (`inset 3px 0 0 var(--ok), var(--shadow-lift)`), and `…, none` is invalid, so the
+     browser drops the whole declaration. "No shadow" is the zero shadow `0 0 0 0 transparent`. */
+  --shadow-lift: 0 0 0 0 transparent; /* strips and cards (the light theme only) */
 }
 
-/* type */
+/* ── color · light: the day deck ──────────────────────────────────── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #eef2f6;
+  --surface: #f6f8fb;
+  --raised: #ffffff;
+  --raised-hi: #eef4fb;
+  --code: #f1f5f9;
+  --border: #d8e0e9;
+  --border-soft: #e4e9f0;
+  --text: #111821;
+  --dim: #4a5666;
+  --faint: #596575; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --faint-decor: #9aa5b4;
+  --ink-fill: #111821;
+  --ink-on: #ffffff;
+  --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
+  --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
+  --ctl-edge: #788496;
+  --pressed-bg: var(--raised); /* a white segment, lifted, on the --surface track */
+  --switch-knob: var(--raised); /* a white knob (#ffffff) */
+  --knob-shadow: 0 1px 2px rgba(17, 24, 33, 0.25);
+  --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
+  --selected-lift: var(--shadow-lift);
+
+  --act: #8a6400;
+  --act-fill: #ffd43b;
+  --act-ink: #1b1600;
+  --act-bg: #fff6d6;
+  --act-line: #a67c00; /* 3:1 on --bg, --raised and --act-bg */
+  --act-glow: rgba(232, 185, 0, 0.22);
+  --ok: #0a7048; /* 4.5:1 also on the --add-bg diff line */
+  --ok-bg: #e3f5ec;
+  --hazard: #b52a22; /* 4.5:1 also on the --del-bg diff line */
+  --hazard-bg: #fde8e6;
+  --fuel: #6e4fe0;
+  --fuel-bg: #efeafe;
+  --focus: #1a5fbf;
+  --focus-bg: #e5effc;
+  --add-bg: rgba(10, 112, 72, 0.1);
+  --del-bg: rgba(181, 42, 34, 0.08);
+  --free-bg: #e3f5ec;
+  --term-selection: rgba(26, 95, 191, 0.22);
+  --term-cyan: #0e7490;
+  --scrim: rgba(17, 24, 33, 0.28);
+
+  --shadow-pop: 0 12px 32px rgba(17, 24, 33, 0.12);
+  --shadow-lift: 0 1px 2px rgba(17, 24, 33, 0.07);
+}
+
+/* ── retired color tokens: aliases only (§2.2) ────────────────────── */
+/* Models and providers are never colored. The family (--m-*) and provider (--p-*)
+   tokens stay as neutral aliases so that old CSS keeps working; new CSS never
+   uses them (tools/design-check.sh fails on them). */
 :root {
-  --font-ui: "IBM Plex Sans", system-ui, sans-serif; /* prose, titles, buttons */
-  --font-data: "IBM Plex Mono", monospace; /* callsigns, paths, cmds, timestamps */
-  --font-callsign:
-    "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif; /* callsigns, strip titles, the wordmark (ui-pass §3) */
-  --fs-micro: 10.5px; /* column labels, kbd hints, tags */
-  --fs-data: 11.5px; /* mono metadata rows */
-  --fs-body: 12.5px; /* card note, buttons */
-  --fs-title: 13.5px; /* question titles */
-  --fs-heading: 14px; /* header wordmark, drawer task */
-  --fs-12: 12px;
+  --m-fable: var(--dim);
+  --m-fable-bg: var(--raised);
+  --m-quill: var(--dim);
+  --m-quill-bg: var(--raised);
+  --m-comet: var(--dim);
+  --m-comet-bg: var(--raised);
+  --m-opus: var(--dim);
+  --m-opus-bg: var(--raised);
+  --m-sonnet: var(--dim);
+  --m-sonnet-bg: var(--raised);
+  --m-haiku: var(--dim);
+  --m-haiku-bg: var(--raised);
+  --p-claude: var(--dim);
+  --p-claude-bg: var(--raised);
+  --p-codex: var(--dim);
+  --p-codex-bg: var(--raised);
+  --p-unknown: var(--dim);
+  --p-unknown-bg: var(--raised);
+}
+
+/* ── type (§2.3) ──────────────────────────────────────────────────── */
+:root {
+  --font-ui:
+    "Mona Sans Variable", system-ui, sans-serif; /* words: prose, titles, buttons, labels */
+  --font-data: "JetBrains Mono Variable", ui-monospace, monospace; /* code-like values only */
+  --font-callsign: var(--font-ui); /* retired: use it with .fd-callsign */
+  --fs-micro: 11px; /* kbd hints, tiny captions */
+  --fs-meta: 12px; /* metadata, timestamps, counts, chips */
+  --fs-data: 12px; /* mono values in rows (paths, branches) */
+  --fs-ui: 13px; /* interface text, rows, buttons, inputs (the default) */
+  --fs-body: 13px;
+  --fs-chat: 14px; /* chat prose, line-height 1.6 */
+  --fs-title: 14px; /* card and strip titles (weight 600) */
+  --fs-heading: 15px; /* section and station headings (wide) */
+  --fs-strip-title: 17px; /* the session header title (weight 640, §4.5) */
+  --fs-code: 12.5px; /* code blocks and inline code in chat prose (§4.5) */
+  --fs-page: 20px; /* page title (wide, weight 640) */
+  --fs-hero: 26px; /* phone large title */
+  --fs-display: 56px; /* display numbers read across a room: wall ambient counts, the pairing code */
+  --fs-12: 12px; /* kept for old CSS */
   --fs-13: 13px;
   --fs-15: 15px;
   --fs-18: 18px;
@@ -84,73 +165,48 @@
   --ls-label: 0; /* labels are in sentence case: no tracking */
 }
 
-/* space & shape */
+/* ── space, shape, size (§2.4) ────────────────────────────────────── */
 :root {
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 24px;
-  --r-chip: 4px;
-  --r-ctl: 7px;
-  --r-card: 9px;
-  --r-panel: 10px;
+  --sp-6: 32px;
+  --r-chip: 5px; /* chips, badges, kbd */
+  --r-ctl: 6px; /* buttons, inputs, segments */
+  --r-card: 8px; /* strips, rows, cards */
+  --r-panel: 12px; /* panels, the approval card, menus, dialogs */
+  --r-sheet: 16px; /* the composer, bottom sheets, the New session sheet */
   --r-pill: 999px;
-}
-
-/* motion */
-:root {
-  --t-fast: 200ms ease-out; /* selection ring, hover */
-  --t-move: 240ms ease; /* card column glide, fades */
-  --t-drawer: 220ms ease-out; /* drawer slide */
-  --pulse-working: 2400ms; /* liveness breathe */
-  --pulse-needs: 1600ms; /* needs-you breathe (faster) */
-  --ripple-conflict: 900ms; /* one iteration, never loops */
-  --ring-tick: 1s linear; /* countdown ring stroke */
-}
-
-/* v2: provider badges (PLAN §11). Not amber, same as the model hues. */
-:root {
-  --p-claude: #f0a8c6;
-  --p-claude-bg: #33172a;
-  --p-codex: #8fbcf7;
-  --p-codex-bg: #12233b;
-  --p-unknown: #94a0b8;
-  --p-unknown-bg: #18202f;
-}
-[data-theme="light"] {
-  --p-claude: #a31c63;
-  --p-claude-bg: #fbe7f1;
-  --p-codex: #1d4fa8;
-  --p-codex-bg: #e3edfc;
-  --p-unknown: #57637a;
-  --p-unknown-bg: #f7f9fc;
-}
-
-/* v2: phone layout (PLAN §11: approvals and interrupts are first-class on a phone). */
-:root {
+  --ctl-h: 28px; /* control height, fine pointer */
+  --ctl-h-sm: 24px;
+  --row-h: 36px; /* one-line list row, sidebar session row */
+  --strip-h: 44px; /* a fleet strip */
+  --header-h: 48px; /* page header bar */
+  --sidebar-w: 248px;
+  --rail-w: 300px; /* right panels (ops panel, properties panel) */
+  --chat-w: 720px;
   --tap-min: 44px; /* minimum touch target */
   --bp-phone: 640px; /* reference only; media queries use the literal value */
 }
-
-/* DL-141: board visual foundation (UI-DESIGN.md §2.4). */
-:root {
-  --ctl-h: 30px; /* control height, fine pointer */
-  --ctl-h-sm: 24px;
-  --header-h: 52px;
-  --sidebar-w: 264px;
-  --rail-w: 320px;
-  --chat-w: 760px;
-  --fs-ui: 13px;
-  --fs-chat: 14px;
-  --free-bg: #0e2a1e;
-  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --add-bg: rgba(87, 185, 138, 0.1);
-  --del-bg: rgba(255, 107, 84, 0.1);
+:root[data-density="compact"] {
+  --row-h: 30px;
 }
-[data-theme="light"] {
-  --free-bg: #dff2e7;
-  --shadow-pop: 0 12px 32px rgba(20, 30, 50, 0.16);
-  --add-bg: rgba(30, 122, 78, 0.1);
-  --del-bg: rgba(179, 48, 28, 0.08);
+@media (pointer: coarse) {
+  :root {
+    --ctl-h: 44px;
+    --ctl-h-sm: 44px;
+  }
+}
+
+/* ── motion (§2.5) ────────────────────────────────────────────────── */
+:root {
+  --t-fast: 120ms ease-out; /* hover, press */
+  --t-move: 200ms ease; /* expand, slide */
+  --t-drawer: 220ms ease-out; /* drawer slide */
+  --pulse-needs: 2400ms; /* the needs-you glow breathes */
+  --pulse-working: 2400ms; /* the working glyph arc turns */
+  --ripple-conflict: 900ms; /* one iteration, never loops */
+  --ring-tick: 1s linear; /* countdown ring stroke */
 }

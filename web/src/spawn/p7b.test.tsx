@@ -275,7 +275,7 @@ describe('the station tab shows the two core fields of P7b', () => {
         onSecret={() => {}}
       />,
     );
-    const badges = (s: string) => s.split('needs re-auth').length - 1;
+    const badges = (s: string) => s.split('Needs re-auth').length - 1;
     expect(badges(out)).toBe(badges(base) + 2);
   });
 });

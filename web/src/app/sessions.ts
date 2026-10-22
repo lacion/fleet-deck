@@ -25,15 +25,15 @@ export function matchesQuery(card: DeckSession, query: string): boolean {
   );
 }
 
-/** "now", "5m", "3h", "2d" from a unix-ms time. */
+/** "now", "5 min", "3 h", "2 d" from a unix-ms time (DESIGN-SYSTEM §5). */
 export function relativeAge(updatedAt: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
   if (seconds < 60) return 'now';
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(hours / 24)} d`;
 }
 
 /** The last path segment of a directory (the title of a shell tab). */
@@ -137,7 +137,12 @@ export function sidebarModel(
 
 /** The live sessions in the order of the station groups, each once (the j/k order). */
 export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
-  return model.groups.flatMap((g) => g.live);
+  // The order of the rows: the "Needs you" group lists those sessions first, once.
+  if (model.needs.length === 0) return model.groups.flatMap((g) => g.live);
+  return [
+    ...model.needs,
+    ...model.groups.flatMap((g) => g.live.filter((c) => c.status !== 'needs_you')),
+  ];
 }
 
 /** Sessions for the palette: needs you first, then the newest; at most `max`. */

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fleet · Fleet Deck</title>
+<script>
+  const q = new URLSearchParams(location.search).get('theme');
+  if (q === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wdth,wght@0,75..125,200..900&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="ph">
+  <header class="ph-top">
+    <div class="logo" style="margin:0" aria-label="Fleet Deck">FD</div>
+    <h1 class="title wide">Fleet</h1>
+    <span class="live push"><i class="dot g"></i>Live</span>
+    <div class="ph-avatar"><div class="avatar">LM</div></div>
+  </header>
+
+  <div class="ph-body">
+    <div class="pill"><i data-lucide="search"></i><span>Search sessions</span></div>
+
+    <div class="ph-h"><b class="nm wide">Needs you</b><span class="count">2</span></div>
+
+    <article class="preq">
+      <i class="hold h-y"></i>
+      <div class="pb">
+        <div class="l1"><span class="cs" style="font-size:15px">otter-n1rr</span><span class="ttl2">Fix flaky shim test</span><span class="when">2 min</span></div>
+        <code class="pcmd">cargo nextest run -p fleetdeck-station -E 'test(shim)'</code>
+        <div class="pbtns">
+          <button class="btn yellow">Allow</button>
+          <button class="btn neutral danger">Deny</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="preq">
+      <i class="hold h-y"></i>
+      <div class="pb">
+        <div class="l1"><span class="cs" style="font-size:15px">kite-x81d</span><span class="ttl2">Stripe webhooks</span><span class="when">6 min</span></div>
+        <p class="pask">Use the test key or the live key for the webhook secret?</p>
+        <div class="pbtns">
+          <button class="btn neutral">Test key</button>
+          <button class="btn neutral">Live key</button>
+        </div>
+      </div>
+    </article>
+
+    <div class="ph-h"><b class="nm wide">Lighting</b><span class="n">2</span><span class="slots"><span class="ticks" aria-hidden="true"><i class="y"></i><i class="g"></i><i class="n"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></span></div>
+    <article class="pstrip work">
+      <i class="hold h-g"></i>
+      <div class="pb">
+        <div class="l1"><span class="t">Fleet Deck UI</span><span class="when">14 min</span></div>
+        <div class="l2"><div class="left"><span class="cs">falcon-vf9n</span><span class="nw"><i data-lucide="crosshair"></i><span>Designing the new board: concept briefs</span></span></div></div>
+      </div>
+    </article>
+    <article class="pstrip">
+      <i class="hold h-i"></i>
+      <div class="pb">
+        <div class="l1"><span class="t">Omarchy integration docs</span><span class="when">2 h</span></div>
+        <div class="l2"><div class="left"><span class="cs">heron-mc2q</span><span class="nw"><i data-lucide="message-square-text"></i><span>The docs build passes. Next?</span></span></div></div>
+      </div>
+    </article>
+
+    <div class="ph-h"><b class="nm wide">dev1</b><span class="n">1</span><span class="slots"><span class="ticks" aria-hidden="true"><i class="y"></i><i class="g"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></span></div>
+    <article class="pstrip work">
+      <i class="hold h-g"></i>
+      <div class="pb">
+        <div class="l1"><span class="t">Rannoch checkout flow</span><span class="when">38 min</span></div>
+        <div class="l2"><div class="left"><span class="cs">lynx-4kq2</span><span class="nw"><i data-lucide="pencil-line"></i><code>src/checkout/cart.ts</code></span></div><span class="chgs"><span class="a">+142</span> <span class="d">−37</span></span></div>
+      </div>
+    </article>
+
+    <div class="ph-h"><b class="nm wide">mac-m4</b><span class="n">1</span><span class="slots"><span class="ticks" aria-hidden="true"><i class="g"></i><i class="e"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></span></div>
+    <article class="pstrip work">
+      <i class="hold h-g"></i>
+      <div class="pb">
+        <div class="l1"><span class="t">Journzy iOS build</span><span class="when">9 min</span></div>
+        <div class="l2"><div class="left"><span class="cs">wren-77ta</span><span class="nw"><i data-lucide="terminal"></i><code>xcodebuild -scheme Journzy test</code></span></div></div>
+      </div>
+    </article>
+  </div>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="#" class="tb on"><i data-lucide="layers"></i>Sessions</a>
+    <a href="#" class="tb"><i data-lucide="layout-grid"></i>Fleet</a>
+    <a href="#" class="tb" aria-label="New session"><span class="plus"><i data-lucide="plus"></i></span></a>
+    <a href="#" class="tb"><i data-lucide="ellipsis"></i>More</a>
+  </nav>
+</div>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

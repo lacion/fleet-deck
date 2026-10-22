@@ -50,10 +50,10 @@ export function RequestCard({
         From {request.source_ip} · {identityText(request)} · Ends at {clockText(request.expires_at)}
       </p>
       <div className="fd-pair-actions">
-        <button type="button" className="fd-primary" disabled={busy} onClick={onApprove}>
+        <button type="button" className="fd-decide" disabled={busy} onClick={onApprove}>
           Yes, the codes match. Add {name}
         </button>
-        <button type="button" disabled={busy} onClick={onDeny}>
+        <button type="button" className="fd-danger" disabled={busy} onClick={onDeny}>
           No, refuse
         </button>
       </div>

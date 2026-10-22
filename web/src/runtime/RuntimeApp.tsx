@@ -30,6 +30,7 @@ import { handoverFlow } from '../session/handoverFlow';
 import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
+import { Mark } from '../ui/Mark';
 import { clearAuthoringState } from './authoringState';
 import {
   type Connection,
@@ -437,8 +438,11 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     const belowLine = inputLine === null ? state.error || logoutError : logoutError;
     return (
       <main className="fd-login">
+        <Mark size={32} />
         <h1>Fleet Deck</h1>
-        <p>Log in to your deck. Login is required on loopback, LAN, and the tailnet.</p>
+        <p className="fd-login-lead">
+          Log in to your deck. Login is required on loopback, LAN, and the tailnet.
+        </p>
         {inputLine === null ? null : <p role="alert">{inputLine}</p>}
         {state.auth === 'checking' ? <p role="status">Connecting to the deck…</p> : null}
         <form
@@ -459,11 +463,11 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
-          <button type="submit" disabled={busy || state.auth === 'checking'}>
+          <button type="submit" className="fd-primary" disabled={busy || state.auth === 'checking'}>
             {busy ? 'Logging in…' : 'Log in'}
           </button>
         </form>
-        <p>
+        <p className="fd-note">
           Or run <code>fleetdeck open</code> on the deck machine for a one-time login link.
         </p>
         {belowLine ? <p role="alert">{belowLine}</p> : null}

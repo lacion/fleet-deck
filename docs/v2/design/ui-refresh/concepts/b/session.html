@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fix flaky shim test · Fleet Deck</title>
+<script>
+  var q = new URLSearchParams(location.search).get('theme');
+  document.documentElement.dataset.theme = q === 'alt' ? 'alt' : 'dark';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="g-working" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 7V3.5A3.5 3.5 0 1 1 3.5 7Z" fill="currentColor"/></symbol>
+    <symbol id="g-verifying" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 7V3.5A3.5 3.5 0 0 1 7 10.5Z" fill="currentColor"/></symbol>
+    <symbol id="g-needs" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.5" fill="currentColor" stroke="var(--signal-edge)" stroke-width="1"/><path d="M7 3.7V7.5" stroke="var(--signal-ink)" stroke-width="1.7" stroke-linecap="round"/><circle cx="7" cy="10.2" r="1" fill="var(--signal-ink)"/></symbol>
+    <symbol id="g-queued" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 2.3"/></symbol>
+    <symbol id="g-idle" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="g-ended" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="currentColor"/><path d="M4.2 7.3 6.2 9.2 9.9 5.2" fill="none" stroke="var(--canvas)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-lost" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.2 10.8 10.8 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="mark" viewBox="0 0 18 18"><path d="M9 2.4 15.6 9 9 15.6 2.4 9Z" fill="currentColor" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M9 6.3 11.7 9 9 11.7 6.3 9Z" fill="var(--side)" stroke="var(--side)" stroke-width="0.8" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app app--session">
+
+  <!-- sidebar -->
+  <aside class="side">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 18 18"><use href="#mark"/></svg>
+      <span class="brand-name">Fleet Deck</span>
+      <span class="live"><i class="dot"></i>Live</span>
+    </div>
+    <div class="side-actions">
+      <a class="btn btn--ink" href="new.html"><i data-lucide="plus"></i>New session<kbd class="kbd-end">N</kbd></a>
+      <button class="btn btn--out" aria-label="Search sessions"><i data-lucide="search"></i><kbd>⌘K</kbd></button>
+    </div>
+    <nav class="nav" aria-label="Main">
+      <a class="nav-item" href="#"><i data-lucide="inbox"></i>Inbox<span class="end"><span class="count-signal">2</span></span></a>
+      <a class="nav-item" href="fleet.html"><i data-lucide="layout-grid"></i>Fleet</a>
+      <a class="nav-item" href="#"><i data-lucide="eye"></i>Watch</a>
+      <a class="nav-item" href="#"><i data-lucide="activity"></i>Activity</a>
+      <a class="nav-item" href="#"><i data-lucide="server"></i>Stations</a>
+      <a class="nav-item" href="#" aria-expanded="true"><i data-lucide="chevron-down"></i>More</a>
+      <div class="nav-sub">
+        <a class="nav-item" href="#"><i data-lucide="clipboard-list"></i>Plans</a>
+        <a class="nav-item" href="#"><i data-lucide="workflow"></i>Automations</a>
+        <a class="nav-item" href="#"><i data-lucide="package"></i>Artifacts</a>
+        <a class="nav-item" href="#"><i data-lucide="folders"></i>Projects</a>
+        <a class="nav-item" href="#"><i data-lucide="folder-tree"></i>Files</a>
+        <a class="nav-item" href="#"><i data-lucide="share-2"></i>Shares</a>
+        <a class="nav-item" href="#"><i data-lucide="square-terminal"></i>Terminals</a>
+      </div>
+    </nav>
+    <div class="side-label"><span>Live</span><span>6</span></div>
+    <div class="side-list">
+      <a class="s-row is-active" href="session.html" aria-current="page"><svg class="g g-needs"><use href="#g-needs"/></svg><span class="trunc">Fix flaky shim test</span></a>
+      <a class="s-row" href="#"><svg class="g g-needs"><use href="#g-needs"/></svg><span class="trunc">Stripe webhooks</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Fleet Deck UI</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Rannoch checkout flow</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Journzy iOS build</span></a>
+      <a class="s-row" href="#"><svg class="g g-idle"><use href="#g-idle"/></svg><span class="trunc">Omarchy integration docs</span></a>
+    </div>
+    <div class="side-foot">
+      <a class="btn btn--ghost" href="#"><i data-lucide="settings"></i>Settings</a>
+      <span class="spacer"></span>
+      <button class="btn btn--ghost btn--icon" aria-label="Theme"><i data-lucide="sun-moon"></i></button>
+      <span class="avatar" title="Account">LM</span>
+    </div>
+  </aside>
+
+  <!-- main -->
+  <main class="main">
+    <header class="bar">
+      <div class="crumb"><span>Lighting</span><span>/</span><span class="mono">otter-n1rr</span></div>
+      <span class="vsep"></span>
+      <h1 class="s-h">Fix flaky shim test</h1>
+      <span class="status is-need"><svg class="g g-needs"><use href="#g-needs"/></svg>Needs you</span>
+      <div class="bar-actions">
+        <button class="btn btn--ghost btn--tool"><i data-lucide="circle-stop"></i>Interrupt</button>
+        <button class="btn btn--ghost btn--tool"><i data-lucide="terminal"></i>Terminal</button>
+        <button class="btn btn--ghost btn--icon" aria-label="Open folder"><i data-lucide="folder-open"></i></button>
+        <button class="btn btn--ghost btn--icon" aria-label="More"><i data-lucide="ellipsis"></i></button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Session">
+      <a class="tab is-on" href="#">Chat</a>
+      <a class="tab" href="#">Changes<span class="n">2</span></a>
+      <a class="tab" href="#">Files</a>
+      <a class="tab" href="#">Artifacts</a>
+    </nav>
+
+    <div class="chat">
+      <div class="chat-col">
+
+        <div class="msg-user">
+          <span class="avatar">LM</span>
+          <p>The shim test fails about 1 in 20 runs on Lighting. Find out why and fix it.</p>
+        </div>
+
+        <div class="tools">
+          <div class="tool is-think"><i data-lucide="chevron-right"></i><span>Thinking · 12 s</span></div>
+          <div class="tool">
+            <i data-lucide="file-text"></i><b>Read</b><code class="trunc">crates/fleetdeck-station/src/shim/reaper.rs</code>
+            <span class="res"><i data-lucide="check" class="ok"></i>ok<span class="time">0.1 s</span></span><i data-lucide="chevron-right" class="chev"></i>
+          </div>
+          <div class="tool">
+            <i data-lucide="search"></i><b>Search</b><code class="trunc">waitpid</code><span class="dim">in</span><code class="trunc">crates/fleetdeck-station</code>
+            <span class="res"><i data-lucide="check" class="ok"></i>7 matches<span class="time">0.2 s</span></span><i data-lucide="chevron-right" class="chev"></i>
+          </div>
+        </div>
+
+        <p class="prose">The test races the reaper: the child can exit before <code>install_reaper()</code> returns, so the <code>SIGCHLD</code> is lost. Here is the fix:</p>
+
+        <div class="code">
+          <div class="code-head"><span>rust</span><button class="btn btn--ghost btn--icon" aria-label="Copy code"><i data-lucide="copy" class="ic-sm"></i></button></div>
+<pre><span class="k">pub fn</span> install_reaper() <span class="t">-&gt;</span> <span class="t">io::Result&lt;Reaper&gt;</span> {
+    <span class="k">let</span> mask = block_sigchld()?;       <span class="c">// block first</span>
+    <span class="k">let</span> reaper = Reaper::new(mask)?;   <span class="c">// then install</span>
+    reaper.drain_exited();             <span class="c">// reap what exited before</span>
+    Ok(reaper)
+}</pre>
+        </div>
+
+        <div>
+          <p class="prose" style="margin-bottom:4px">Two files need changes:</p>
+          <table class="tbl">
+            <thead><tr><th style="width:36%">File</th><th style="width:34%">Problem</th><th>Fix</th></tr></thead>
+            <tbody>
+              <tr><td><code>shim/reaper.rs</code></td><td>SIGCHLD lost before install</td><td>block, install, drain</td></tr>
+              <tr><td><code>shim/tests.rs</code></td><td>test waits 50 ms</td><td>wait for the exit event</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tools">
+          <div class="tool">
+            <i data-lucide="pencil"></i><b>Edit</b><code class="trunc">crates/fleetdeck-station/src/shim/reaper.rs</code>
+            <span class="res"><i data-lucide="check" class="ok"></i><span><span class="add">+9</span> <span class="del">−3</span></span><span class="time">0.1 s</span></span><i data-lucide="chevron-right" class="chev"></i>
+          </div>
+          <div class="tool is-wait">
+            <i data-lucide="terminal"></i><b>Bash</b><code class="trunc">cargo nextest run -p fleetdeck-station -E 'test(shim)'</code>
+            <span class="res"><svg class="g g-needs"><use href="#g-needs"/></svg>Waiting for your answer</span><i data-lucide="chevron-right" class="chev"></i>
+          </div>
+        </div>
+
+        <section class="approval" aria-label="Permission request">
+          <div class="approval-head">
+            <svg class="g g-needs"><use href="#g-needs"/></svg>
+            <span class="kind">Permission</span><span class="dim">·</span><span class="tool-name">Bash</span>
+            <span class="age">2 min ago</span>
+          </div>
+          <div class="cmd"><span class="p">$</span> cargo nextest run -p fleetdeck-station -E 'test(shim)'</div>
+          <p class="why">Run the shim tests 20 times to confirm the fix</p>
+          <div class="acts">
+            <button class="btn btn--signal">Allow<kbd>a</kbd></button>
+            <button class="btn btn--out">Allow for this session</button>
+            <button class="btn btn--out">Deny<kbd>d</kbd></button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <textarea placeholder="Message otter-n1rr…" aria-label="Message otter-n1rr"></textarea>
+        <div class="composer-bar">
+          <button class="btn btn--ghost btn--icon" aria-label="Attach an image"><i data-lucide="paperclip"></i></button>
+          <span class="model-chip"><i data-lucide="sparkles"></i>Sonnet 5.5<i data-lucide="chevron-down"></i></span>
+          <div class="right">
+            <button class="btn btn--ghost"><i data-lucide="zap"></i>Steer now</button>
+            <button class="btn btn--ink">Queue follow-up<kbd>↵</kbd></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- properties -->
+  <aside class="panel" aria-label="Properties">
+    <div class="bar"><h2>Properties</h2><button class="btn btn--ghost btn--icon" style="margin-left:auto" aria-label="Hide properties"><i data-lucide="panel-right"></i></button></div>
+    <dl class="props">
+      <div class="prop"><dt>Status</dt><dd><svg class="g g-needs"><use href="#g-needs"/></svg><span class="need-t">Needs you</span></dd></div>
+      <div class="prop"><dt>Station</dt><dd><i class="dot"></i>Lighting</dd></div>
+      <div class="prop"><dt>Branch</dt><dd><i data-lucide="git-branch" class="ic-xs dim"></i><code>fleet-sync</code></dd></div>
+      <div class="prop prop--stack"><dt>Folder</dt><dd><code>~/projects/obsurvive/fleet-deck</code></dd></div>
+      <div class="prop"><dt>Model</dt><dd>Sonnet 5.5</dd></div>
+      <div class="prop"><dt>Provider</dt><dd>Claude</dd></div>
+      <div class="prop"><dt>Mode</dt><dd>Accept edits</dd></div>
+      <div class="prop"><dt>Started</dt><dd>26 min ago</dd></div>
+      <div class="prop"><dt>Changes</dt><dd><span class="diff"><span class="add">+9</span> <span class="del">−3</span></span></dd></div>
+      <div class="prop"><dt>Tokens</dt><dd>182 k in · 9 k out</dd></div>
+      <div class="prop"><dt>Cost</dt><dd>$1.12</dd></div>
+    </dl>
+    <section class="files-list">
+      <div class="psec-head">Files changed<span class="n">2</span></div>
+      <div class="file"><i data-lucide="file-code"></i><code class="trunc">shim/reaper.rs</code><span class="st">M</span></div>
+      <div class="file"><i data-lucide="file-code"></i><code class="trunc">shim/tests.rs</code><span class="st">M</span></div>
+    </section>
+  </aside>
+
+</div>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

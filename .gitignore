@@ -10,7 +10,9 @@ spikes/**/node_modules/
 
 # Local agent skills of the owner (not part of the project).
 /.agents/
-/.claude/skills/
+/.claude/skills/*
+# The design system skill is part of the project (docs/v2/DESIGN-SYSTEM.md).
+!/.claude/skills/fleet-design-system/
 /skills-lock.json
 
 # Local secrets (Fleet Sync secret files): never tracked.

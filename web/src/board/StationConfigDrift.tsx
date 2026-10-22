@@ -28,17 +28,20 @@ export function driftLabels(reference: ConfigDigest, config: ConfigDigest): stri
   return out;
 }
 
-/** The text of the line "Config: …" of one station. */
+/**
+ * The text of the line "Config: …" of one station, or `null` when the report has nothing to
+ * compare (no reference, or a station without a config report): the line is then absent.
+ */
 export function configText(
   station: Pick<StationView, 'station_id' | 'info'>,
   reference: Pick<StationView, 'station_id' | 'info'> | undefined,
-): string {
+): string | null {
   if (reference !== undefined && reference.station_id === station.station_id) {
     return 'Config: Reference';
   }
   const config = station.info?.config;
   const base = reference?.info?.config;
-  if (config === undefined || base === undefined) return 'Config: Unknown';
+  if (config === undefined || base === undefined) return null;
   const labels = driftLabels(base, config);
   return labels.length === 0 ? 'Config: Same' : `Config: Differs: ${labels.join(', ')}`;
 }
@@ -89,7 +92,7 @@ export function useDriftReference(): DriftReference {
   return { offered, station, error, set };
 }
 
-/** The line "Config: …" in a station card. */
+/** The line "Config: …" in a station card; nothing when there is nothing to compare. */
 export function StationConfigDrift({
   station,
   reference,
@@ -97,61 +100,50 @@ export function StationConfigDrift({
   readonly station: StationView;
   readonly reference: StationView | undefined;
 }) {
-  return <p className="fd-note fd-station-config">{configText(station, reference)}</p>;
+  const text = configText(station, reference);
+  return text === null ? null : <span className="fd-station-config">{text}</span>;
 }
 
-/** The header of the page: the reference station and "Change", or the hint to pick one. */
+/**
+ * The config reference in the page header: a ghost menu button that names the reference
+ * ("Config reference: Alpha", or "Config reference…" before one is picked) and lists the
+ * stations. Without the admin scope it is a plain line, and nothing before a reference exists.
+ */
 export function ConfigReferenceHeader({
   stations,
   reference,
   canSet,
   onSet,
-  error,
 }: {
   readonly stations: readonly StationView[];
   readonly reference: StationView | undefined;
   readonly canSet: boolean;
   readonly onSet: (station: string) => void;
-  readonly error: string | null;
 }) {
+  const label =
+    reference === undefined ? 'Config reference…' : `Config reference: ${reference.name}`;
+  if (!canSet) {
+    return reference === undefined ? null : <span className="fd-note fd-station-ref">{label}</span>;
+  }
   return (
-    <div className="fd-pane-row fd-station-reference">
-      {reference === undefined ? (
-        <p className="fd-note">Pick a reference station for the config report.</p>
-      ) : (
+    <Menu summary={label} summaryClass="fd-ghost fd-sm">
+      {(close) => (
         <>
-          <p className="fd-note">Config reference: {reference.name}</p>
-          {canSet ? (
-            <Menu
-              summary="Change"
-              summaryClass="fd-ghost fd-sm"
-              label="Change the config reference"
+          <span className="fd-menu-text">Pick a reference station for the config report.</span>
+          {stations.map((s) => (
+            <button
+              key={s.station_id}
+              type="button"
+              onClick={() => {
+                close();
+                onSet(s.station_id);
+              }}
             >
-              {(close) => (
-                <>
-                  {stations.map((s) => (
-                    <button
-                      key={s.station_id}
-                      type="button"
-                      onClick={() => {
-                        close();
-                        onSet(s.station_id);
-                      }}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </>
-              )}
-            </Menu>
-          ) : null}
+              {s.name}
+            </button>
+          ))}
         </>
       )}
-      {error === null ? null : (
-        <p role="alert" className="fd-note">
-          {error}
-        </p>
-      )}
-    </div>
+    </Menu>
   );
 }

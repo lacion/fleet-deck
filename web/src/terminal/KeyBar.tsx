@@ -1,3 +1,6 @@
+import type { ReactNode } from 'react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Icon, type LucideIcon } from '../ui/icons';
+
 type Props = {
   /** Write bytes to the terminal stream. */
   readonly send: (bytes: string) => void;
@@ -37,13 +40,17 @@ const KEYS: readonly { readonly label: string; readonly aria?: string; readonly 
     { label: 'Tab', bytes: '\t' },
   ];
 
-const ARROWS: readonly { readonly label: string; readonly aria: string; readonly bytes: string }[] =
-  [
-    { label: '↑', aria: 'Up', bytes: '\x1b[A' },
-    { label: '↓', aria: 'Down', bytes: '\x1b[B' },
-    { label: '←', aria: 'Left', bytes: '\x1b[D' },
-    { label: '→', aria: 'Right', bytes: '\x1b[C' },
-  ];
+/** The arrows are Lucide icons (DESIGN-SYSTEM: one icon set); the aria-label names each. */
+const ARROWS: readonly {
+  readonly icon: LucideIcon;
+  readonly aria: string;
+  readonly bytes: string;
+}[] = [
+  { icon: ArrowUp, aria: 'Up', bytes: '\x1b[A' },
+  { icon: ArrowDown, aria: 'Down', bytes: '\x1b[B' },
+  { icon: ArrowLeft, aria: 'Left', bytes: '\x1b[D' },
+  { icon: ArrowRight, aria: 'Right', bytes: '\x1b[C' },
+];
 
 /** After the arrows: paging and the characters that a touch keyboard hides. */
 const MORE: readonly { readonly label: string; readonly aria?: string; readonly bytes: string }[] =
@@ -61,9 +68,9 @@ const MORE: readonly { readonly label: string; readonly aria?: string; readonly 
 /** Keys that a touch keyboard lacks. A press never takes the focus from the terminal. */
 export function KeyBar({ send, ctrl, setCtrl, onPaste }: Props) {
   const keep = (e: { preventDefault(): void }) => e.preventDefault();
-  const key = (label: string, bytes: string, aria?: string) => (
+  const key = (id: string, label: ReactNode, bytes: string, aria?: string) => (
     <button
-      key={label}
+      key={id}
       type="button"
       className="fd-keybar-key"
       aria-label={aria}
@@ -75,7 +82,7 @@ export function KeyBar({ send, ctrl, setCtrl, onPaste }: Props) {
   );
   return (
     <div className="fd-keybar" role="toolbar" aria-label="Terminal keys">
-      {KEYS.map((k) => key(k.label, k.bytes, k.aria))}
+      {KEYS.map((k) => key(k.label, k.label, k.bytes, k.aria))}
       <button
         type="button"
         className="fd-keybar-key"
@@ -85,8 +92,8 @@ export function KeyBar({ send, ctrl, setCtrl, onPaste }: Props) {
       >
         Ctrl
       </button>
-      {ARROWS.map((k) => key(k.label, k.bytes, k.aria))}
-      {MORE.map((k) => key(k.label, k.bytes, k.aria))}
+      {ARROWS.map((k) => key(k.aria, <Icon of={k.icon} size={16} />, k.bytes, k.aria))}
+      {MORE.map((k) => key(k.label, k.label, k.bytes, k.aria))}
       <button type="button" className="fd-keybar-key" onPointerDown={keep} onClick={onPaste}>
         Paste
       </button>

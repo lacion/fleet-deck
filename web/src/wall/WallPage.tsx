@@ -9,6 +9,7 @@ import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
 import type { SessionActions } from '../session/commands';
+import { Mark } from '../ui/Mark';
 import { useNow } from '../ui/useNow';
 import { refOf } from '../watch/tiles';
 import { MAX_TILES } from '../watch/tiles';
@@ -25,7 +26,7 @@ import { keyOf, timelineOf, useSize, useTimelines } from './hooks';
 import { asksOf, fleetSignature, needsList, stepMode, tileSessions, wallSessions } from './model';
 import { RacePane } from './RacePane';
 import { ReviewPane } from './ReviewPane';
-import { baseRemPx, shapeOf, tileLimit } from './shape';
+import { baseRemPx, shapeOf, tileGrid, tileLimit } from './shape';
 
 type Props = {
   readonly route: WallRoute;
@@ -112,9 +113,12 @@ function Wall({
 
   // The tile count follows the size of the tiles area (decision 6).
   const area = useSize(tilesArea, mode === 'mission', '.fd-wall-tiles');
-  const limit =
-    area === null ? MAX_TILES : tileLimit(area.w, area.h, baseRemPx(size.h), route.scale, area.gap);
+  const remPx = baseRemPx(size.h, shape);
+  const limit = area === null ? MAX_TILES : tileLimit(area.w, area.h, remPx, route.scale, area.gap);
   const tiles = useMemo(() => tileSessions(filtered).slice(0, limit), [filtered, limit]);
+  // The tiles fill their area: the columns and the growth of the type follow the tile count.
+  const grid =
+    area === null ? null : tileGrid(tiles.length, area.w, area.h, remPx, route.scale, area.gap);
   const focusRef = sessionRefOf(route);
   const focusCard = focusRef === null ? undefined : sessions.find((c) => refOf(c) === focusRef);
   // The timelines that the mode needs: the tiles in mission, the one session in focus.
@@ -216,9 +220,11 @@ function Wall({
   const live = freshness === 'live';
   const minute = Math.floor(clock / 60_000);
   const offset = ambientOffset(minute);
+  // The font and the size tokens follow `--fd-wall-scale` in wall.css; `--fd-wall-k` is the same
+  // factor as a number, for the primitives with a fixed size (wall.css, "the wall scope").
   const style = {
     '--fd-wall-scale': route.scale,
-    fontSize: 'calc(clamp(14px, 100dvh / 80, 28px) * var(--fd-wall-scale))',
+    '--fd-wall-k': (remPx / 14) * route.scale,
   } as CSSProperties;
   const pageOrigin = origin ?? (typeof window === 'undefined' ? '' : window.location.origin);
 
@@ -226,7 +232,14 @@ function Wall({
     switch (mode) {
       case 'mission':
         return (
-          <div className="fd-wall-grid">
+          <div
+            className="fd-wall-grid"
+            style={
+              grid === null
+                ? undefined
+                : ({ '--fd-wall-tile-k': grid.k.toFixed(3) } as CSSProperties)
+            }
+          >
             <NeedsArea needs={needs} stations={stations} origin={pageOrigin} now={clock} />
             <TilesArea
               cards={tiles}
@@ -235,6 +248,7 @@ function Wall({
               freshness={freshness}
               failed={failed}
               areaRef={tilesArea}
+              grid={grid}
             />
             {shape === 'portrait' ? null : (
               <SideArea sessions={filtered} stations={shownStations} now={clock} />
@@ -349,14 +363,17 @@ function Wall({
   return (
     <div
       ref={root}
-      className="fd-wall-root"
+      className={mode === 'ambient' ? 'fd-wall-root fd-scope-dark' : 'fd-wall-root'}
       data-shape={shape}
       data-mode={mode}
       data-testid="wall"
       style={style}
     >
       <p className="fd-wall-corner">
-        <span>Fleet Deck wall</span>{' '}
+        <span className="fd-wall-brand">
+          <Mark size={20} />
+          Fleet Deck wall
+        </span>{' '}
         <span role="status" data-state={live ? 'live' : 'reconnecting'}>
           {live ? 'Live' : 'Reconnecting'}
         </span>

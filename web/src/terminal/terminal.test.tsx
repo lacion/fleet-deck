@@ -161,15 +161,18 @@ describe('KeyBar', () => {
         onPaste={() => undefined}
       />,
     );
-    const labels = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    // A key's name: its aria-label (the arrows are icons), else its text.
+    const labels = [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map(
+      (m) => /aria-label="([^"]*)"/.exec(m[1] ?? '')?.[1] ?? m[2],
+    );
     expect(labels).toEqual([
       'Esc',
       'Tab',
       'Ctrl',
-      '↑',
-      '↓',
-      '←',
-      '→',
+      'Up',
+      'Down',
+      'Left',
+      'Right',
       'PgUp',
       'PgDn',
       'Home',
@@ -671,9 +674,9 @@ describe('terminal palette', () => {
     '--bg': '#0b0e14',
     '--hazard': '#ff6b54',
     '--ok': '#57b98a',
-    '--m-comet': '#8fbcf7',
-    '--m-fable': '#c4b0ff',
-    '--m-quill': '#6fd6cd',
+    '--focus': '#8fbcf7',
+    '--fuel': '#c4b0ff',
+    '--term-cyan': '#6fd6cd',
     '--faint': '#5c6880',
   };
   const stub = (values: Record<string, string>) => ({
@@ -704,10 +707,12 @@ describe('terminal palette', () => {
     expect(t.background).toBe('#0a0d13');
     expect(t.cursorAccent).toBe('#0a0d13');
     expect(t.foreground).toBe('#e7ecf5');
-    expect(t.cursor).toBe('#f0a63c');
+    expect(t.cursor).toBe('#e7ecf5');
     expect(t.yellow).toBe('#f0a63c');
     expect(t.red).toBe('#ff6b54');
     expect(t.blue).toBe('#8fbcf7');
+    expect(t.magenta).toBe('#c4b0ff');
+    expect(t.cyan).toBe('#6fd6cd');
     expect(t.brightBlack).toBe('#5c6880');
     expect(t.brightRed).toBe('#FF8A76');
     expect(t.brightGreen).toBe('#7BD3A6');
@@ -718,8 +723,8 @@ describe('terminal palette', () => {
     expect(t.brightWhite).toBe('#FFFFFF');
   });
 
-  test('the selection is --term-selection, else --act with a 44 alpha', () => {
-    expect(termTheme(stub(tokens)).selectionBackground).toBe('#f0a63c44');
+  test('the selection is --term-selection, else --focus with a 44 alpha', () => {
+    expect(termTheme(stub(tokens)).selectionBackground).toBe('#8fbcf744');
     const set = termTheme(stub({ ...tokens, '--term-selection': 'rgba(240, 166, 60, 0.3)' }));
     expect(set.selectionBackground).toBe('rgba(240, 166, 60, 0.3)');
   });

@@ -1,18 +1,9 @@
-import {
-  type KeyboardEvent,
-  type ReactNode,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import type { AssignActions } from '../assign/assign';
-import { AssignBar } from '../assign/AssignBar';
 import { ConflictRadar, useConflicts } from '../board/ConflictRadar';
 import type { ConflictLoader } from '../board/conflicts';
 import type { FleetExtras, SessionExtras } from '../gen';
 import type { FeedItem } from '../board/feed';
-import { Feed } from '../board/FeedPanel';
 import {
   ALL,
   archivedHidden,
@@ -25,11 +16,11 @@ import {
 } from '../board/fleet';
 import { record } from '../board/activity';
 import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
+import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
 import { NeedsYouRail } from '../board/NeedsYouRail';
-import { UsageMeters } from '../board/UsageMeters';
+import { UsageGlance } from '../board/UsageGlance';
 import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
-import { FleetPanel } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
@@ -37,7 +28,7 @@ import { useProjects } from '../integrations/context';
 import { canShare, usePeople } from '../sharing/context';
 import { openShare } from '../sharing/shareStore';
 import { useDismiss } from '../ui/dismiss';
-import { ChevronDown, ChevronUp, CircleHelp, Icon, Plus, Search, Users, X } from '../ui/icons';
+import { CircleHelp, Icon, ListFilter, Plus, Search, Users, X } from '../ui/icons';
 import { archived } from '../ui/archive';
 import { sessionRef } from '../ui/localSet';
 
@@ -53,10 +44,8 @@ type Props = {
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   readonly onOpen: (key: SessionKey) => void;
   readonly onSpawn: () => void;
-  /** DL-141: open the bottom panel on `tab`; a new `seq` asks again (the `c` key). */
-  readonly panelRequest?:
-    | { readonly tab: 'activity' | 'mail' | 'assign' | 'usage'; readonly seq: number }
-    | undefined;
+  /** DL-141: open the ops panel on `tab`; a new `seq` asks again (the `c` key). */
+  readonly panelRequest?: { readonly tab: PanelTab; readonly seq: number } | undefined;
   /** DL-141: open the help overlay (the empty board's "What is this?"). */
   readonly onHelp?: (() => void) | undefined;
   /** DL-141: start a session with this first prompt on this station (an unrouted task). */
@@ -105,50 +94,6 @@ function useExtras(
   return map;
 }
 
-const WIDE = '(min-width: 1280px)';
-
-/** True from 1280 px: the needs-you rail is a side column. Server and test snapshot: true. */
-function useWide(): boolean {
-  return useSyncExternalStore(
-    (notify) => {
-      const query = window.matchMedia(WIDE);
-      query.addEventListener('change', notify);
-      return () => query.removeEventListener('change', notify);
-    },
-    () => window.matchMedia(WIDE).matches,
-    () => true,
-  );
-}
-
-type PanelTab = 'activity' | 'mail' | 'assign' | 'usage';
-type PanelState = { readonly open: boolean; readonly tab: PanelTab };
-const PANEL_KEY = 'fd-home-panel';
-const PANEL_DEFAULT: PanelState = { open: false, tab: 'activity' };
-const PANEL_TABS: readonly PanelTab[] = ['activity', 'mail', 'assign', 'usage'];
-
-function readPanel(hasAssign: boolean): PanelState {
-  try {
-    const raw = localStorage.getItem(PANEL_KEY);
-    if (raw === null) return PANEL_DEFAULT;
-    const v: unknown = JSON.parse(raw);
-    if (typeof v !== 'object' || v === null) return PANEL_DEFAULT;
-    const { open, tab } = v as { open?: unknown; tab?: unknown };
-    if (typeof open !== 'boolean' || !PANEL_TABS.includes(tab as PanelTab)) return PANEL_DEFAULT;
-    if (tab === 'assign' && !hasAssign) return PANEL_DEFAULT;
-    return { open, tab: tab as PanelTab };
-  } catch {
-    return PANEL_DEFAULT;
-  }
-}
-
-function writePanel(state: PanelState) {
-  try {
-    localStorage.setItem(PANEL_KEY, JSON.stringify(state));
-  } catch {
-    // Storage is blocked: the panel still works for this visit.
-  }
-}
-
 type Group = FleetGroup;
 const GROUP_KEY = 'fd-home-group';
 
@@ -169,18 +114,30 @@ function writeGroup(group: Group) {
   }
 }
 
-const PANEL_LABEL: Record<PanelTab, string> = {
-  activity: 'Activity',
-  mail: 'Mail & tasks',
-  assign: 'Assign',
-  usage: 'Usage',
-};
-
 const PROVIDER_NAME: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   unknown: 'Unknown',
 };
+
+/** The status filter of the page header (DESIGN-SYSTEM §4.3); not stored. */
+export type StatusFilter = 'all' | 'working' | 'idle' | 'needs_you';
+
+const STATUS_FILTERS: readonly { readonly id: StatusFilter; readonly label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'working', label: 'Working' },
+  { id: 'idle', label: 'Idle' },
+  { id: 'needs_you', label: 'Needs you' },
+];
+
+/** True when `s` passes the status filter: Working holds a running, checking or queued
+ * session; Needs you holds a session with an open request. */
+export function statusMatches(s: DeckSession, status: StatusFilter): boolean {
+  if (status === 'all') return true;
+  if (status === 'needs_you') return s.status === 'needs_you' || s.summary.open_requests.length > 0;
+  if (status === 'idle') return s.status === 'idle';
+  return s.status === 'working' || s.status === 'verifying' || s.status === 'queued';
+}
 
 /** One active filter, as the removable chip under the toolbar shows it. */
 export type ActiveFilter = {
@@ -236,7 +193,10 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
       onKeyDown={onKeyDown}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="fd-ghost fd-sm">{active > 0 ? `Filters (${active})` : 'Filters'}</summary>
+      <summary className="fd-ghost fd-sm">
+        <Icon of={ListFilter} size={14} />
+        {active > 0 ? `Filters (${active})` : 'Filters'}
+      </summary>
       <div className="fd-menu-body fd-filters" role="group" aria-label="Fleet filters">
         {children}
       </div>
@@ -244,7 +204,7 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
   );
 }
 
-/** The fleet home: toolbar, the strip board, who needs you, and the bottom panel. */
+/** The fleet home (DESIGN-SYSTEM §4.4): the header, who needs you, the strip board, and the ops panel. */
 export function FleetHome({
   sessions,
   stations,
@@ -273,6 +233,8 @@ export function FleetHome({
     setActivity((n) => n + 1);
   }, [sessions]);
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [bellSlot, setBellSlot] = useState<HTMLElement | null>(null);
   const [picked, setGroup] = useState<Group>(readGroup);
   // DL-176: the grouping "Project" needs the project list of the owner's login.
   const hasProjects = useProjects().length > 0;
@@ -280,12 +242,15 @@ export function FleetHome({
   const [archivedOn, setArchivedOn] = useState(false);
   const cleared = archived.use();
   const { list, problem } = useConflicts(conflicts, fleetVersion(sessions));
-  const wide = useWide();
+  const [openTab, setOpenTab] = useState<PanelTab | null>(null);
   const phone = layout === 'phone';
+  const wide = useWideOps() && !phone;
   const archivedCount = sessions.filter((s) => archivedHidden(s, cleared)).length;
   const showArchived = archivedOn && archivedCount > 0;
   const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
-  const visible = filterFleet(shown, stations, filter);
+  const visible = filterFleet(shown, stations, filter).filter((s) =>
+    statusMatches(s, phone ? 'all' : status),
+  );
   const repos = repoNames(shown);
   const contested = contestedBy(list ?? []);
   const conflictCount = list?.length ?? 0;
@@ -301,6 +266,7 @@ export function FleetHome({
     (s) => s.summary.provider === null || s.summary.provider === 'unknown',
   );
   const filtered =
+    (!phone && status !== 'all') ||
     filter.station !== ALL ||
     filter.provider !== ALL ||
     filter.repo !== ALL ||
@@ -409,31 +375,59 @@ export function FleetHome({
   };
   const header = (
     <header className="fd-home-head">
-      <h1 className="fd-page-title">Fleet</h1>
-      <p className="fd-home-counts">
-        <span>{sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}</span>
-        {needsYou === 0 ? (
-          <span className="fd-home-needs" data-clear="true">
-            All clear
+      <div className="fd-home-titles">
+        <h1 className="fd-page-title">Fleet</h1>
+        <p className="fd-home-counts">
+          <span>{sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}</span>
+          <span className="fd-home-on">
+            {' '}
+            on <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>
           </span>
-        ) : (
-          <span className="fd-home-needs">
-            {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
-          </span>
-        )}
-        <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>
-        {conflictCount > 0 ? (
-          <span className="fd-home-conf">
-            {conflictCount === 1 ? '1 conflict' : `${conflictCount} conflicts`}
-          </span>
-        ) : null}
-        {limit === null ? null : (
-          <span className="fd-badge" data-tone={limit.tone}>
-            {limit.text}
-          </span>
-        )}
-      </p>
-      <div className="fd-field">
+          .{' '}
+          {needsYou === 0 ? (
+            <span className="fd-home-needs" data-clear="true">
+              All clear
+            </span>
+          ) : (
+            <span className="fd-home-needs">
+              {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
+            </span>
+          )}
+          .
+          {conflictCount > 0 ? (
+            <>
+              {' '}
+              <span className="fd-home-conf">
+                {conflictCount === 1 ? '1 conflict' : `${conflictCount} conflicts`}
+              </span>
+              .
+            </>
+          ) : null}
+          {limit === null ? null : (
+            <>
+              {' '}
+              <span className="fd-badge" data-tone={limit.tone}>
+                {limit.text}
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+      {phone ? null : (
+        <div className="fd-seg fd-home-status" role="group" aria-label="Status">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={status === f.id}
+              onClick={() => setStatus(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="fd-field fd-home-search">
         <Icon of={Search} />
         <input
           type="search"
@@ -447,26 +441,28 @@ export function FleetHome({
       {phone ? null : (
         <select
           aria-label="Group by"
-          className="fd-sm"
+          className="fd-sm fd-home-group"
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >
-          <option value="station">Station</option>
-          <option value="repo">Repo</option>
-          {hasProjects ? <option value="project">Project</option> : null}
+          <option value="station">Group: Station</option>
+          <option value="repo">Group: Repo</option>
+          {hasProjects ? <option value="project">Group: Project</option> : null}
         </select>
       )}
       {canShare(people) ? (
         <button
           type="button"
-          className="fd-ghost fd-sm"
+          className={phone ? 'fd-iconbtn fd-home-share' : 'fd-ghost fd-sm fd-home-share'}
+          title="Share board…"
           onClick={() =>
             openShare({ kind: 'board', target: '', label: 'Every session of the deck' })
           }
         >
-          <Icon of={Users} size={14} /> Share board…
+          <Icon of={Users} size={14} /> <span className="fd-home-share-text">Share board…</span>
         </button>
       ) : null}
+      {phone ? null : <span className="fd-home-bell" ref={setBellSlot} />}
     </header>
   );
   const radar =
@@ -505,6 +501,7 @@ export function FleetHome({
       sessionActions={sessionActions}
       variant={variant}
       freshness={freshness}
+      bellSlot={variant === 'side' ? bellSlot : undefined}
     />
   );
   const empty =
@@ -531,6 +528,19 @@ export function FleetHome({
         </div>
       </div>
     ) : null;
+  // The waiting mail rows of the wide Mail & tasks section (from the card extras).
+  const waitingMail = sessions.flatMap((s) => {
+    const count = cardExtras?.get(sessionRef(s.station_id, s.summary.session_id))?.mail_pending;
+    return count === undefined || count === 0
+      ? []
+      : [
+          {
+            key: sessionRef(s.station_id, s.summary.session_id),
+            name: s.summary.callsign ?? s.summary.title ?? s.summary.session_id,
+            count,
+          },
+        ];
+  });
   const panel = (
     <HomePanel
       hasAssign={assign !== undefined}
@@ -548,7 +558,20 @@ export function FleetHome({
           : onSpawnWith(stationId === '' ? null : stationId, text)
       }
       request={panelRequest}
+      onState={setOpenTab}
+      wide={wide}
+      waiting={waitingMail}
     />
+  );
+  // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
+  // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
+  // is open.
+  const ops = (
+    <div className="fd-ops" data-tab={openTab ?? undefined}>
+      {phone || openTab === 'usage' ? null : <UsageGlance sessions={visible} stations={stations} />}
+      {radar}
+      {panel}
+    </div>
   );
 
   const waiting = sessions.some((s) => s.summary.open_requests.length > 0);
@@ -556,7 +579,6 @@ export function FleetHome({
     return (
       <div className="fd-home" data-layout="phone">
         {header}
-        {radar}
         {activeRow}
         {rail('strip')}
         {empty ?? (
@@ -570,7 +592,7 @@ export function FleetHome({
             extras={cardExtras}
           />
         )}
-        {panel}
+        {ops}
       </div>
     );
   }
@@ -578,10 +600,9 @@ export function FleetHome({
     <div className="fd-home" data-layout={layout} data-rail={waiting ? 'true' : 'false'}>
       <div className="fd-home-main">
         {header}
-        {radar}
         {activeRow}
-        {wide ? null : rail('strip')}
         <div className="fd-lanes">
+          {rail('side')}
           <FleetBoard
             sessions={visible}
             stations={stations}
@@ -590,110 +611,12 @@ export function FleetHome({
             contested={contested}
             sessionActions={sessionActions}
             extras={cardExtras}
+            foldEnded
           />
           {empty}
         </div>
-        {panel}
       </div>
-      {wide ? rail('side') : null}
+      {ops}
     </div>
-  );
-}
-
-/** The bottom panel: activity, mail and tasks, assign, usage. */
-function HomePanel({
-  hasAssign,
-  guest,
-  stations,
-  sessions,
-  visible,
-  feed,
-  fleet,
-  assign,
-  onOpen,
-  onSpawn,
-  request,
-}: {
-  hasAssign: boolean;
-  /** A guest has no mail and no assign tab (the deck refuses the calls). */
-  guest: boolean;
-  stations: readonly StationView[];
-  sessions: readonly DeckSession[];
-  visible: readonly DeckSession[];
-  feed: readonly FeedItem[];
-  fleet: FleetActions | undefined;
-  assign: AssignActions | undefined;
-  onOpen: (key: SessionKey) => void;
-  onSpawn: (stationId: string, text: string) => void;
-  request: Props['panelRequest'];
-}) {
-  const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
-  const seen = useRef<number | null>(null);
-  const seq = request?.seq;
-  const asked = request?.tab;
-  useEffect(() => {
-    if (seq === undefined || asked === undefined || seq === seen.current) return;
-    seen.current = seq;
-    const next: PanelState = {
-      open: true,
-      tab: asked === 'assign' && !hasAssign ? 'activity' : asked,
-    };
-    setState(next);
-    writePanel(next);
-  }, [seq, asked, hasAssign]);
-  const set = (next: PanelState) => {
-    setState(next);
-    writePanel(next);
-  };
-  const tab: PanelTab =
-    (state.tab === 'assign' && !hasAssign) || (guest && state.tab === 'mail')
-      ? 'activity'
-      : state.tab;
-  const tabs = PANEL_TABS.filter((t) => (t !== 'assign' || hasAssign) && !(guest && t === 'mail'));
-  return (
-    <section className="fd-homepanel" data-open={state.open} aria-label="Fleet panel">
-      <div className="fd-homepanel-head">
-        <div role="tablist" aria-label="Fleet panels" className="fd-homepanel-tabs">
-          {tabs.map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              className="fd-chip"
-              aria-selected={state.open && tab === t}
-              aria-controls="fd-homepanel-body"
-              onClick={() => set({ open: true, tab: t })}
-            >
-              {PANEL_LABEL[t]}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="fd-iconbtn fd-sm"
-          aria-expanded={state.open}
-          aria-controls="fd-homepanel-body"
-          aria-label={state.open ? 'Collapse panel' : 'Expand panel'}
-          onClick={() => set({ ...state, open: !state.open })}
-        >
-          <Icon of={state.open ? ChevronDown : ChevronUp} />
-        </button>
-      </div>
-      <div
-        id="fd-homepanel-body"
-        className="fd-homepanel-body"
-        role="tabpanel"
-        hidden={!state.open}
-      >
-        {tab === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
-        {tab === 'mail' && !guest ? (
-          <FleetPanel actions={fleet} sessions={sessions} stations={stations} />
-        ) : null}
-        {tab === 'assign' && assign !== undefined ? (
-          <AssignBar actions={assign} onSpawn={onSpawn} />
-        ) : null}
-        {tab === 'usage' ? <UsageMeters sessions={visible} stations={stations} /> : null}
-      </div>
-    </section>
   );
 }

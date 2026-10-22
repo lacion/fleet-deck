@@ -101,7 +101,7 @@ describe('usage meters (DL-303)', () => {
     expect(html).not.toContain('aria-label="Usage"');
   });
 
-  test('a reset time reads as a countdown, or as a clock time after a day (R4.1)', () => {
+  test('a reset time reads as a countdown, or as a weekday and a clock time after a day (R4.1)', () => {
     const min = 60_000;
     expect(resetsText(NOW + 5 * min, NOW)).toBe('resets in 5 min');
     expect(resetsText(NOW + 60 * min, NOW)).toBe('resets in 1 h');
@@ -109,7 +109,8 @@ describe('usage meters (DL-303)', () => {
     expect(resetsText(NOW - 1, NOW)).toBe('reset due');
     const later = new Date(NOW + 30 * 60 * min);
     const hhmm = `${String(later.getHours()).padStart(2, '0')}:${String(later.getMinutes()).padStart(2, '0')}`;
-    expect(resetsText(later.getTime(), NOW)).toBe(`resets at ${hhmm}`);
+    const day = later.toLocaleDateString(undefined, { weekday: 'short' });
+    expect(resetsText(later.getTime(), NOW)).toBe(`resets ${day} ${hhmm}`);
   });
 
   test('the warning chip starts at 80% and turns to a hazard at 100% (R4.2)', () => {
@@ -125,8 +126,11 @@ describe('usage meters (DL-303)', () => {
       );
     expect(limitChip(meters(79))).toBeNull();
     expect(limitChip(meters(null))).toBeNull();
-    expect(limitChip(meters(85))).toEqual({ tone: 'act', text: 'Limit 85% · five_hour' });
-    expect(limitChip(meters(100))).toEqual({ tone: 'hazard', text: 'Limit reached · five_hour' });
+    expect(limitChip(meters(85))).toEqual({ tone: 'act', text: 'Limit 85% · 5-hour window' });
+    expect(limitChip(meters(100))).toEqual({
+      tone: 'hazard',
+      text: 'Limit reached · 5-hour window',
+    });
   });
 
   test('the fleet home and the session header show the chip (R4.2)', () => {
@@ -137,7 +141,7 @@ describe('usage meters (DL-303)', () => {
     const html = renderToStaticMarkup(
       <App sessions={[hot]} stations={[station()]} freshness="live" />,
     );
-    expect(html).toContain('data-tone="act">Limit 85% · five_hour</span>');
+    expect(html).toContain('data-tone="act">Limit 85% · 5-hour window</span>');
     const cold = card('b', 'working', 'station-a', { rate_limits: [window5h(10)] });
     const calm = renderToStaticMarkup(
       <App sessions={[cold]} stations={[station()]} freshness="live" />,
@@ -159,7 +163,7 @@ describe('usage meters (DL-303)', () => {
     ];
     const meters = rateMeters(sessions, [station()]);
     const work = instanceLimit(meters, 'station-a', 'work');
-    expect(limitSuffix(work, NOW)).toBe('42% of five_hour, resets in 1 h');
+    expect(limitSuffix(work, NOW)).toBe('42% of 5-hour window, resets in 1 h');
     expect(limitSuffix(null, NOW)).toBe('');
     const limits = new Map([
       ['work', work],

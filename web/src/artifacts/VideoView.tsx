@@ -48,7 +48,7 @@ export function VideoFrame({
         <div role="alert" className="fd-note fd-art-state fd-art-error">
           <p>{UNPLAYABLE_TEXT}</p>
           <div className="fd-art-actions">
-            <a className="fd-ghost fd-sm fd-art-action" href={url} download={downloadName}>
+            <a className="fd-btn fd-ghost fd-sm fd-art-action" href={url} download={downloadName}>
               <Icon of={ArrowDown} size={14} /> Download
             </a>
             <button type="button" className="fd-ghost fd-sm fd-art-action" onClick={onRetry}>

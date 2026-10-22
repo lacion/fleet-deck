@@ -1,65 +1,94 @@
-/* DL-171: the frame of the secondary pages and their forms (UI-DESIGN.md §3.6): the page, the
-   section, the empty state, the form grid, the field, the form actions, the tables, the folder
-   picker. Primitives come from base.css, tokens from tokens.css. */
+/* DL-171, "Flight Deck" v3 (DESIGN-SYSTEM.md §4.3, §4.7): the frame of the secondary pages and
+   their forms: the page and its header, the section, the empty state, the form grid, the field,
+   the form actions, the tables, the folder picker. Primitives come from base.css, values from
+   tokens.css. */
 
 /* ── the page frame ─────────────────────────────────────────────── */
 .fd-page {
   --page-w: 1040px;
-  --page-pad: 32px;
+  --page-pad: var(--sp-6);
   box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 20px;
   width: 100%;
   max-width: calc(var(--page-w) + 2 * var(--page-pad));
-  margin: 0 auto;
-  padding: 24px var(--page-pad) 48px;
   min-width: 0;
+  /* Left-aligned: every page starts at the same gutter; only the max width changes. */
+  margin: 0;
+  padding: var(--sp-2) var(--page-pad) 48px;
 }
 .fd-page[data-wide="true"] {
   --page-w: 1280px;
 }
-.fd-page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 16px;
-}
-.fd-page-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: var(--ctl-h);
-}
-.fd-page-title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text);
-}
-.fd-page-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
 .fd-page > * {
   min-width: 0;
 }
-/* 4 px under the header and 20 px above the content: the grid gap is 16 px. */
-.fd-page > .fd-page-desc {
+
+/* The page header (§4.3): at the left a column of the title row (title + count, --header-h)
+   and the one summary sentence under it; at the right the actions, level with the title row; a
+   soft rule closes it. */
+.fd-page-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2) var(--sp-4);
+  min-width: 0;
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-page-titles {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-page-titlerow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: var(--header-h);
+}
+.fd-page-titlerow > .fd-page-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-page-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--header-h);
+  margin-left: auto;
+}
+.fd-page-desc {
   max-width: 80ch;
-  margin: -12px 0 4px;
+  margin: calc(-1 * var(--sp-2)) 0 0;
   color: var(--dim);
-  font-size: 13px;
+  font-size: var(--fs-ui);
+  line-height: 1.45;
 }
 @media (max-width: 640px) {
   .fd-page {
-    --page-pad: 16px;
-    padding-top: 16px;
+    --page-pad: var(--sp-4);
+    gap: var(--sp-4);
+    padding-top: var(--sp-3);
+  }
+  /* The title column stays first; the actions take the next line. */
+  .fd-page-head {
+    flex-wrap: wrap;
+  }
+  .fd-page-titles {
+    flex-basis: 100%;
+  }
+  .fd-page-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    min-height: 0;
+    margin-left: 0;
   }
 }
 
@@ -68,53 +97,65 @@
   overflow-wrap: anywhere;
 }
 
-/* ── a section: a label row and a panel ─────────────────────────── */
+/* ── a section: a 15px heading row and a panel (§4.7) ───────────── */
 .fd-pagesec {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
+}
+.fd-pagesec + .fd-pagesec {
+  margin-top: var(--sp-1);
 }
 .fd-pagesec-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  min-height: var(--ctl-h);
+}
+.fd-pagesec-title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
 }
 .fd-pagesec-head > .fd-label {
   margin: 0;
 }
 .fd-pagesec-body {
-  padding: 16px;
+  padding: var(--sp-4);
   min-width: 0;
 }
 
-/* ── the empty state ────────────────────────────────────────────── */
+/* ── the empty state: a 20px icon, a sentence, one button (§4.7) ── */
 .fd-emptystate {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 40px 24px;
+  gap: var(--sp-1);
+  padding: var(--sp-6) var(--sp-5);
   text-align: center;
 }
 .fd-emptystate > .fd-icon {
+  margin-bottom: var(--sp-1);
   color: var(--faint);
-  margin-bottom: 4px;
 }
 .fd-emptystate-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 .fd-emptystate-body {
   max-width: 60ch;
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-2);
   color: var(--dim);
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 
-/* ── the form: grid, field, actions ─────────────────────────────── */
+/* ── the form: grid, field, actions (no boxed fieldsets) ────────── */
 .fd-formpanel {
-  padding: 16px;
+  padding: 20px;
   min-width: 0;
 }
 .fd-formpanel > form,
@@ -125,13 +166,13 @@
 }
 .fd-form-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-heading);
   font-weight: 600;
 }
 .fd-formgrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px 20px;
+  gap: var(--sp-4) 20px;
   min-width: 0;
 }
 @media (min-width: 900px) {
@@ -155,7 +196,7 @@
 }
 .fd-fieldlabel {
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 500;
 }
 .fd-fieldwrap input:not([type="checkbox"]):not([type="radio"]),
@@ -169,11 +210,11 @@
 }
 .fd-fieldhint {
   color: var(--faint);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .fd-fielderror {
   color: var(--hazard);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .fd-fieldwrap[data-invalid="true"] input,
 .fd-fieldwrap[data-invalid="true"] select,
@@ -183,19 +224,20 @@
 .fd-checkrow {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--sp-2);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 .fd-checkrow > input {
   flex: none;
-  margin-top: 2px;
+  margin-top: 1px;
 }
+/* A form section: a rule above it, then its heading and its fields. */
 .fd-formsec {
   display: grid;
-  gap: 12px;
+  gap: var(--sp-3);
   min-width: 0;
-  padding-top: 16px;
+  padding-top: 20px;
   border-top: 1px solid var(--border-soft);
 }
 .fd-formsec-first {
@@ -210,34 +252,39 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  padding-top: 12px;
+  gap: var(--sp-2);
+  padding-top: var(--sp-4);
   border-top: 1px solid var(--border-soft);
 }
 .fd-formactions > .fd-formerror {
   margin-right: auto;
   color: var(--hazard);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .fd-advanced {
+  padding-top: var(--sp-3);
   border-top: 1px solid var(--border-soft);
-  padding-top: 12px;
 }
 .fd-advanced > summary {
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ctl-h-sm);
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 500;
 }
+.fd-advanced > summary:hover {
+  color: var(--text);
+}
 .fd-advanced[open] > summary {
-  margin-bottom: 12px;
+  margin-bottom: var(--sp-3);
 }
 
 /* ── the tracker rows of the project form ───────────────────────── */
 .fd-trackerrow {
   display: grid;
   grid-template-columns: 140px minmax(0, 1fr) 140px auto;
-  gap: 8px 12px;
+  gap: var(--sp-2) var(--sp-3);
   align-items: end;
 }
 @media (max-width: 899px) {
@@ -247,7 +294,7 @@
   }
 }
 
-/* ── a table of a page ──────────────────────────────────────────── */
+/* ── a table of a page: 36px rows, soft dividers (§4.7) ─────────── */
 .fd-tablewrap {
   overflow-x: auto;
   min-width: 0;
@@ -255,26 +302,31 @@
 .fd-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 .fd-table th {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  height: 32px;
+  padding: 0 var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
   text-align: left;
   font-family: var(--font-ui);
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--dim);
   white-space: nowrap;
 }
 .fd-table td {
-  padding: 10px 12px;
+  height: var(--row-h);
+  padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--border-soft);
-  vertical-align: top;
+  vertical-align: middle;
   min-width: 0;
 }
 .fd-table tbody tr:last-child td {
   border-bottom: 0;
+}
+.fd-table tbody tr {
+  transition: background-color var(--t-fast);
 }
 .fd-table tbody tr:hover {
   background: var(--raised);
@@ -287,7 +339,7 @@
 }
 .fd-table .fd-cell-path {
   font-family: var(--font-data);
-  font-size: 12px;
+  font-size: var(--fs-data);
   color: var(--dim);
   overflow-wrap: anywhere;
 }
@@ -296,19 +348,32 @@
   text-align: right;
 }
 .fd-table .fd-cell-actions > * + * {
-  margin-left: 4px;
+  margin-left: var(--sp-1);
+}
+/* A secondary value of a cell (a role, a kind): plain dim text, not a badge. */
+.fd-table .fd-cell-dim {
+  color: var(--dim);
 }
 .fd-cellbadges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
 }
 .fd-tablepanel {
   padding: 0;
   overflow: hidden;
 }
+.fd-tablepanel .fd-table th:first-child,
+.fd-tablepanel .fd-table td:first-child {
+  padding-left: var(--sp-4);
+}
+.fd-tablepanel .fd-table th:last-child,
+.fd-tablepanel .fd-table td:last-child {
+  padding-right: var(--sp-4);
+}
 .fd-rowextra {
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 /* A phone: each row is a block; the cells carry their column name. */
 @media (max-width: 640px) {
@@ -322,78 +387,81 @@
     display: none;
   }
   .fd-table tr {
-    padding: 10px 12px;
+    padding: var(--sp-3);
     border-bottom: 1px solid var(--border-soft);
   }
   .fd-table tbody tr:last-child {
     border-bottom: 0;
   }
-  .fd-table td {
-    padding: 3px 0;
+  .fd-table td,
+  .fd-tablepanel .fd-table td:first-child,
+  .fd-tablepanel .fd-table td:last-child {
+    height: auto;
+    padding: 2px 0;
     border: 0;
   }
-  .fd-table td:empty {
+  .fd-table td:empty,
+  .fd-table td[data-label]:has(> .fd-cellbadges:empty) {
     display: none;
+  }
+  /* A labelled cell is a two-column row: the column name at the left, the value at the right. */
+  .fd-table td[data-label] {
+    display: flex;
+    align-items: baseline;
+    min-height: 28px;
+    padding: var(--sp-1) 0;
+  }
+  .fd-table td[data-label] > * {
+    min-width: 0;
   }
   .fd-table td[data-label]::before {
     content: attr(data-label);
-    display: block;
+    flex: none;
+    width: 96px;
+    margin-right: var(--sp-3);
     font-family: var(--font-ui);
-    font-size: var(--fs-micro);
+    font-size: var(--fs-meta);
     font-weight: 500;
-    color: var(--faint);
+    color: var(--dim);
   }
   .fd-table .fd-cell-actions {
     margin-top: 6px;
     white-space: normal;
     text-align: left;
   }
-  .fd-table .fd-cell-actions > * + * {
-    margin-left: 4px;
-  }
 }
 
-/* ── the one-time help notice ───────────────────────────────────── */
-.fd-hintnotice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px var(--sp-4);
-  background: var(--raised);
-  color: var(--dim);
-  font-size: var(--fs-body);
-}
-.fd-hintnotice > span {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ── the folder picker ──────────────────────────────────────────── */
+/* ── the folder picker: an input, Browse…, and an inset well ────── */
 .fd-folder {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .fd-folder-row {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .fd-folder-row > input {
   flex: 1 1 auto;
   min-width: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-folder-row > input::placeholder {
+  font-family: var(--font-data);
 }
 .fd-folder-row > button {
   flex: none;
 }
+/* The well: the code fill, no edge (no box in a box). */
 .fd-folder-panel {
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding: 12px;
+  padding: var(--sp-3);
   background: var(--code);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-card);
 }
 .fd-folder-crumbs {
   display: flex;
@@ -404,7 +472,7 @@
   padding: 0;
   list-style: none;
   font-family: var(--font-data);
-  font-size: 12px;
+  font-size: var(--fs-data);
 }
 .fd-folder-crumbs li {
   display: inline-flex;
@@ -421,20 +489,36 @@
 }
 .fd-folder-crumbs li > span[aria-current="location"] {
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
 }
 .fd-folder-crumbs button {
   height: auto;
   min-height: 0;
   padding: 2px 6px;
   font-family: var(--font-data);
-  font-size: 12px;
+  font-size: var(--fs-data);
+}
+.fd-folder-crumbs li:first-child button {
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+}
+@media (pointer: coarse) {
+  .fd-folder-crumbs button {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-2);
+  }
 }
 .fd-folder-quick {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+.fd-folder-quick > .fd-chip {
+  background: var(--raised);
+}
+.fd-folder-quick > .fd-chip:hover:not(:disabled) {
+  background: var(--raised-hi);
 }
 .fd-folder-list {
   display: grid;
@@ -448,11 +532,12 @@
 .fd-folder-list button {
   width: 100%;
   justify-content: flex-start;
-  height: var(--ctl-h-sm);
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2);
   background: transparent;
   border-color: transparent;
   font-family: var(--font-data);
-  font-size: 12px;
+  font-size: var(--fs-data);
   font-weight: 400;
 }
 .fd-folder-list button:hover:not(:disabled) {
@@ -466,25 +551,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  padding-top: var(--sp-1);
 }
 .fd-folder-foot > .fd-note {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
-}
-
-/* ── watch filters in one row ───────────────────────────────────── */
-.fd-wbar .fd-chip {
-  height: var(--ctl-h);
-  padding: 0 12px;
-  border-color: var(--border-soft);
-  color: var(--dim);
-}
-.fd-wbar .fd-chip[aria-pressed="true"] {
-  border-color: var(--border);
-  color: var(--text);
-}
-.fd-wbar > .fd-count {
-  margin-left: auto;
 }

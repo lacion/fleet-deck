@@ -57,6 +57,7 @@ export function CopyAsk({
       <div className="fd-term-actions">
         <button
           type="button"
+          className="fd-primary fd-sm"
           onClick={() => {
             void navigator.clipboard?.writeText(text)?.catch(() => undefined);
             onDone();
@@ -64,7 +65,7 @@ export function CopyAsk({
         >
           Copy
         </button>
-        <button type="button" onClick={onDone}>
+        <button type="button" className="fd-ghost fd-sm" onClick={onDone}>
           Ignore
         </button>
       </div>
@@ -112,21 +113,23 @@ export function termTheme(
   const code = v('--code');
   const text = v('--text');
   const act = v('--act');
+  const focus = v('--focus');
   set('background', code);
   set('foreground', text);
-  set('cursor', act);
+  // The cursor is the text color: yellow means "needs you" only (DESIGN-SYSTEM §2.2).
+  set('cursor', text);
   set('cursorAccent', code);
   set(
     'selectionBackground',
-    v('--term-selection') || (/^#[0-9a-fA-F]{6}$/.test(act) ? `${act}44` : act),
+    v('--term-selection') || (/^#[0-9a-fA-F]{6}$/.test(focus) ? `${focus}44` : focus),
   );
   set('black', v('--bg'));
   set('red', v('--hazard'));
   set('green', v('--ok'));
   set('yellow', act);
-  set('blue', v('--m-comet'));
-  set('magenta', v('--m-fable'));
-  set('cyan', v('--m-quill'));
+  set('blue', focus);
+  set('magenta', v('--fuel'));
+  set('cyan', v('--term-cyan'));
   set('white', text);
   set('brightBlack', v('--faint'));
   set('brightRed', '#FF8A76');
@@ -296,6 +299,10 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         term.options.theme = termTheme();
       };
       window.addEventListener('fd:theme', onTheme);
+      // Any change of the theme attribute repaints too (a theme set without the event).
+      const themeWatch =
+        typeof MutationObserver === 'undefined' ? null : new MutationObserver(onTheme);
+      themeWatch?.observe(document.documentElement, { attributeFilter: ['data-theme'] });
       const input = term.onData((d) => {
         if (ctrlRef.current && d.length === 1) {
           setCtrl(false);
@@ -422,6 +429,7 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         input.dispose();
         osc.dispose();
         window.removeEventListener('fd:theme', onTheme);
+        themeWatch?.disconnect();
         resized.dispose();
         ws.onclose = null;
         ws.close();
@@ -462,11 +470,11 @@ export function Terminal({ station, shellId, kind, actions, active, touch, onEnd
         <div className="fd-term-overlay" role="status">
           <p>The stream closed.</p>
           <div className="fd-term-actions">
-            <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+            <button type="button" className="fd-primary" onClick={() => setAttempt((n) => n + 1)}>
               Reconnect
             </button>
             {onEnded === undefined ? null : (
-              <button type="button" onClick={onEnded}>
+              <button type="button" className="fd-ghost" onClick={onEnded}>
                 Remove tab
               </button>
             )}

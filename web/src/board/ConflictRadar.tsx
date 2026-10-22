@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FileConflict, SessionKey, StationView } from '../gen';
 import type { RadarAnswer } from '../integrations/actions';
 import { useIntegrations, useProjects } from '../integrations/context';
-import { Icon, TriangleAlert } from '../ui/icons';
+import { Icon, Radar, TriangleAlert } from '../ui/icons';
 import { agoText, type ConflictLoader } from './conflicts';
 import { hasProjectGroups, RadarGroups, radarHasRows } from './RadarGroups';
 
@@ -59,6 +59,20 @@ export function useRadar(version: unknown): RadarAnswer | null {
   return radar;
 }
 
+/** The heading of the radar section of the ops panel, with the number of conflicts. */
+function RadarHead({ count = 0 }: { readonly count?: number }) {
+  return (
+    <h2 className="fd-ops-h">
+      <Icon of={Radar} size={14} /> Conflict radar
+      {count > 0 ? (
+        <span className="fd-badge" data-tone="hazard">
+          {count}
+        </span>
+      ) : null}
+    </h2>
+  );
+}
+
 /** Files that sessions on any station changed at the same time (DL-306). */
 export function ConflictRadar({ list: given, problem, onOpen }: Props) {
   const now = Date.now();
@@ -67,6 +81,7 @@ export function ConflictRadar({ list: given, problem, onOpen }: Props) {
   if (hasProjectGroups(radar) && radarHasRows(radar)) {
     return (
       <section className="fd-confstrip" aria-label="Conflict radar">
+        <RadarHead />
         {problem !== null ? (
           <p className="fd-confstrip-line" title={problem}>
             Conflict radar unavailable
@@ -84,6 +99,7 @@ export function ConflictRadar({ list: given, problem, onOpen }: Props) {
       aria-label="Conflict radar"
       data-state={list.length === 0 ? 'error' : undefined}
     >
+      <RadarHead count={list.length} />
       {problem !== null ? (
         <p className="fd-confstrip-line" title={problem}>
           Conflict radar unavailable

@@ -143,7 +143,8 @@ export function groupFields(all: readonly FieldMeta[]): Group[] {
 
 export type Badge = {
   readonly text: string;
-  readonly tone?: 'act';
+  /** `muted`: an outlined badge (DESIGN-SYSTEM §2.2: yellow is only a request that needs you). */
+  readonly tone?: 'muted';
   readonly title?: string;
 };
 
@@ -159,8 +160,8 @@ export function badgesOf(meta: FieldMeta, overrides: readonly string[]): Badge[]
   }
   if (meta.danger) {
     out.push({
-      text: 'needs re-auth',
-      tone: 'act',
+      text: 'Needs re-auth',
+      tone: 'muted',
       title: 'Saving this asks for your password or an elevation code',
     });
   }

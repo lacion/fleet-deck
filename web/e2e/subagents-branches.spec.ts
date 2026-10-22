@@ -136,7 +136,7 @@ test('the Changes tab lists the branches and shows the diff of one', async ({ pa
   await expect(rows.first()).toContainText('feat/docs');
   await expect(rows.first()).toContainText('2 ahead');
   await expect(rows.first()).toContainText('1 behind');
-  await expect(rows.first()).toContainText('2h');
+  await expect(rows.first()).toContainText('2 h');
   await expect(rows.nth(1)).toContainText('merged');
   expect(await fitsWidth(page)).toBe(true);
 

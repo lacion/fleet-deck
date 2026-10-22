@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { shouldIgnore } from '../app/keys';
 import { formatHash } from '../app/routes';
-import { relativeAge } from '../app/sessions';
+import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
 import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
-import { Bell, BellOff, ChevronRight, Icon } from '../ui/icons';
+import { shortModel } from '../ui/format';
+import {
+  Bell,
+  BellOff,
+  ChevronRight,
+  Folder,
+  GitBranch,
+  Icon,
+  MessageSquare,
+  Shield,
+} from '../ui/icons';
 import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import {
@@ -28,7 +39,21 @@ type Props = {
   readonly variant: 'side' | 'strip';
   readonly freshness: Freshness;
   readonly now?: number | undefined;
+  /**
+   * The header slot of the fleet home: with no request, the side variant puts its notification
+   * switch there (the last item of the page header). `null`: the slot is not mounted yet.
+   * Absent: the switch renders in place.
+   */
+  readonly bellSlot?: HTMLElement | null | undefined;
 };
+
+/** Where a request's session works: its branch, else its folder. */
+function placeOf(card: DeckSession): { readonly text: string; readonly branch: boolean } | null {
+  const s = card.summary;
+  if (s.branch !== null && s.branch !== '') return { text: s.branch, branch: true };
+  if (s.cwd !== null && s.cwd !== '') return { text: basename(s.cwd), branch: false };
+  return null;
+}
 
 /** Open approvals of every session, the oldest first (PLAN §12 needs-you rail). */
 export function NeedsYouRail({
@@ -39,6 +64,7 @@ export function NeedsYouRail({
   variant,
   freshness,
   now: given,
+  bellSlot,
 }: Props) {
   const now = useNow(given, 30000);
   const waiting = sessions
@@ -127,22 +153,33 @@ export function NeedsYouRail({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
   // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
-  // the side variant keeps only the notification switch in the corner.
+  // the side variant keeps only the notification switch, as the last item of the page header.
   if (waiting.length === 0) {
-    return variant === 'side' ? (
+    if (variant !== 'side') return null;
+    const mini = (
       <div className="fd-rail-mini">
         <NotifyToggle on={notify} onChange={setNotify} />
       </div>
-    ) : null;
+    );
+    if (bellSlot === undefined) return mini;
+    return bellSlot === null ? null : createPortal(mini, bellSlot);
   }
   return (
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
       <div className="fd-rail-top">
         <h2 className="fd-rail-head">
           <span className="fd-rail-title">Needs you</span>{' '}
-          <span className="fd-rail-count">{waiting.length}</span>
-          {anyAnswerable ? <span className="fd-rail-keys">[ ] · a/d</span> : null}
+          <span className="fd-count fd-rail-count" data-tone="act">
+            {waiting.length}
+          </span>
         </h2>
+        {anyAnswerable ? (
+          <span className="fd-rail-keys">
+            <span className="fd-kbd">[</span>
+            <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> Allow{' '}
+            <span className="fd-kbd">d</span> Deny
+          </span>
+        ) : null}
         <NotifyToggle on={notify} onChange={setNotify} />
       </div>
       <div className="fd-rail-list">
@@ -151,75 +188,106 @@ export function NeedsYouRail({
           const actions = answerableOf(w);
           const busy = pending.has(r.request_id);
           const error = errors[r.request_id];
+          const question = r.request_kind === 'question';
+          const place = placeOf(w.card);
           return (
             <article
               key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
-              className="fd-q"
+              className="fd-q fd-glow"
               data-request={r.request_id}
               data-selected={anyAnswerable && index === selected ? 'true' : undefined}
+              data-kind={question ? 'question' : 'permission'}
             >
+              <span className="fd-holder" data-status="needs_you" aria-hidden="true" />
               <div className="fd-q-row">
-                <a
-                  className="fd-q-session"
-                  href={formatHash({
-                    name: 'session',
-                    station: w.key.station_id,
-                    session: w.key.session_id,
-                    tab: 'chat',
-                  })}
-                >
-                  {w.title}
-                </a>
-                <span
-                  className="fd-badge fd-caps"
-                  data-tone={r.request_kind === 'question' ? 'info' : 'act'}
-                >
-                  {r.request_kind === 'question' ? 'Question' : 'Permission'}
+                <span className="fd-q-id">
+                  <span className="fd-q-call fd-callsign">
+                    {w.card.summary.callsign ?? w.key.session_id.slice(0, 8)}
+                  </span>
+                  <span className="fd-q-model">{shortModel(w.card.summary.model)}</span>
                 </span>
-                <span className="fd-badge">{stationName(w.key.station_id, stations)}</span>
+                <span className="fd-q-what">
+                  <a
+                    className="fd-q-session"
+                    href={formatHash({
+                      name: 'session',
+                      station: w.key.station_id,
+                      session: w.key.session_id,
+                      tab: 'chat',
+                    })}
+                  >
+                    {w.title}
+                  </a>
+                  <span className="fd-q-kind" title={r.title}>
+                    <Icon of={question ? MessageSquare : Shield} size={12} />
+                    {question ? 'Question' : `Permission · ${r.title}`}
+                  </span>
+                </span>
+                <span className="fd-q-where">
+                  {place === null ? null : (
+                    <span
+                      className="fd-q-place"
+                      title={`${place.branch ? 'Branch' : 'Folder'}: ${place.text}`}
+                    >
+                      <Icon of={place.branch ? GitBranch : Folder} size={12} />
+                      <span className="fd-q-path">{place.text}</span>
+                    </span>
+                  )}
+                  <span className="fd-q-station">{stationName(w.key.station_id, stations)}</span>
+                </span>
                 <span className="fd-q-age">{relativeAge(r.requested_at, now)}</span>
               </div>
-              <p className="fd-q-title">{r.title}</p>
-              {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
-              {actions !== null ? (
-                <div className="fd-q-answer">
-                  {r.options.map((o, i) => (
-                    <button
-                      key={o.option_id}
-                      type="button"
-                      className={i === 0 ? 'fd-primary' : undefined}
-                      aria-label={`${o.label}: ${r.title} in ${w.title}`}
-                      disabled={busy}
-                      onClick={() => answer(actions, r, o.option_id)}
-                    >
-                      {o.label}
-                      {hint(i, r.options.length) === null ? null : (
-                        <span className="fd-kbd">{hint(i, r.options.length)}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="fd-sm"
-                  aria-label={`Answer ${r.title} in ${w.title}`}
-                  onClick={() => onOpen(w.key)}
-                >
-                  Open session <Icon of={ChevronRight} size={14} />
-                </button>
-              )}
-              {error === undefined ? null : (
-                <p className="fd-q-error" role="alert">
-                  {error}
-                </p>
-              )}
+              <div className="fd-q-body">
+                {question ? <p className="fd-q-title">{r.title}</p> : null}
+                {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
+                {actions !== null ? (
+                  <div className="fd-q-answer">
+                    {r.options.map((o, i) => (
+                      <button
+                        key={o.option_id}
+                        type="button"
+                        className={optionClass(question, i, r.options.length)}
+                        aria-label={`${o.label}: ${r.title} in ${w.title}`}
+                        disabled={busy}
+                        onClick={() => answer(actions, r, o.option_id)}
+                      >
+                        {o.label}
+                        {hint(i, r.options.length) === null ? null : (
+                          <span className="fd-kbd">{hint(i, r.options.length)}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="fd-sm fd-q-open"
+                    aria-label={`Answer ${r.title} in ${w.title}`}
+                    onClick={() => onOpen(w.key)}
+                  >
+                    Open session <Icon of={ChevronRight} size={14} />
+                  </button>
+                )}
+                {error === undefined ? null : (
+                  <p className="fd-q-error" role="alert">
+                    {error}
+                  </p>
+                )}
+              </div>
             </article>
           );
         })}
       </div>
     </section>
   );
+}
+
+/** A permission's first option is the decision primary and its last one denies; a question's
+ * options are plain (DESIGN-SYSTEM §4.1). */
+function optionClass(question: boolean, i: number, n: number): string | undefined {
+  if (question) return undefined;
+  if (i === 0) return 'fd-decide';
+  return n >= 2 && i === n - 1 ? 'fd-danger' : undefined;
 }
 
 /** The key hint of option `i` of `n`: first `a`, last `d` (with two or more), the others their number. */

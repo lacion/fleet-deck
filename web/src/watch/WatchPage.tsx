@@ -5,8 +5,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename } from '../app/sessions';
 import { repoName, stationName } from '../board/fleet';
-import type { DeckSession, SessionKey, StationView } from '../gen';
+import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
+import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
 import { Eye, Icon, TriangleAlert } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
@@ -42,6 +43,10 @@ type Props = {
   /** The filter at the first render (tests). */
   readonly initialFilter?: WatchFilter;
 };
+
+/** The look of an answer: the ApprovalDock rule, at the small size. */
+const answerClass = (option: ApprovalOption, n: number) =>
+  [approvalClass(option, n), 'fd-sm'].filter(Boolean).join(' ');
 
 const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | undefined =>
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
@@ -116,19 +121,26 @@ export function Tile({
       </span>
       <span className="fd-wtile-where">
         {where}
-        {s.branch !== null && s.branch !== ''
-          ? ` · ${s.branch}`
-          : s.cwd != null
-            ? ` · ${basename(s.cwd)}`
-            : ''}
+        {s.branch !== null && s.branch !== '' ? (
+          <>
+            {' · '}
+            <code>{s.branch}</code>
+          </>
+        ) : s.cwd != null ? (
+          <>
+            {' · '}
+            <code>{basename(s.cwd)}</code>
+          </>
+        ) : null}
       </span>
       <FocusLine summary={s} />
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
       ) : lines.length === 0 ? (
-        <span className="fd-wtile-empty">
-          {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
-        </span>
+        // A tile without chat shows no filler (DESIGN-SYSTEM §1 rule 7): "Loading…" only.
+        timeline?.ready === true ? null : (
+          <span className="fd-wtile-empty">Loading…</span>
+        )
       ) : (
         <span className="fd-wtile-lines">
           {lines.map((l) => (
@@ -147,13 +159,14 @@ export function Tile({
   );
   return (
     <li
-      className="fd-wtile"
+      className={card.status === 'needs_you' ? 'fd-wtile fd-glow' : 'fd-wtile'}
       data-status={card.status}
       data-focused={focused ? 'true' : undefined}
       data-session={s.session_id}
       data-ref={readOnly ? `${card.station_id}/${s.session_id}` : undefined}
       tabIndex={readOnly ? 0 : undefined}
     >
+      <span className="fd-holder" data-status={card.status} aria-hidden="true" />
       {readOnly ? (
         <div className="fd-wtile-open">{body}</div>
       ) : (
@@ -172,7 +185,7 @@ export function Tile({
                 <button
                   key={o.option_id}
                   type="button"
-                  className={n === 0 ? 'fd-primary fd-sm' : 'fd-sm'}
+                  className={answerClass(o, n)}
                   disabled={busy}
                   aria-label={`${o.label}: ${ask.request.title} in ${s.title ?? s.session_id}`}
                   onClick={() => answer(ask.request.request_id, o.option_id)}
@@ -275,44 +288,60 @@ export function WatchPage({
       </select>
     </label>
   );
+  const needs = matching.filter((c) => c.status === 'needs_you').length;
+  // The header sentence (DESIGN-SYSTEM §4.3): the live count, then who needs you in --act.
+  const summary = (
+    <span aria-live="polite">
+      {matching.length === 1 ? '1 live session' : `${matching.length} live sessions`}.{' '}
+      {needs === 0 ? (
+        'All clear.'
+      ) : (
+        <>
+          <span className="fd-watch-needs">
+            {needs === 1 ? '1 needs you' : `${needs} need you`}
+          </span>
+          .
+        </>
+      )}
+    </span>
+  );
+  const filters = (
+    <>
+      {select(
+        'Station',
+        filter.station,
+        'All stations',
+        choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
+        (station) => setFilter({ ...filter, station }),
+      )}
+      {select(
+        'Repository',
+        filter.repo,
+        'All repositories',
+        choices.repos.map((r) => ({ value: r, label: r })),
+        (repo) => setFilter({ ...filter, repo }),
+      )}
+      <button
+        type="button"
+        className="fd-chip"
+        aria-pressed={filter.needsOnly}
+        onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
+      >
+        Needs you only
+      </button>
+      <button
+        type="button"
+        className="fd-chip"
+        aria-pressed={focusOn}
+        title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
+        onClick={() => setFocusOn(!focusOn)}
+      >
+        Focus
+      </button>
+    </>
+  );
   return (
-    <Page title="Watch" className="fd-watch" wide>
-      <div className="fd-wbar">
-        {select(
-          'Station',
-          filter.station,
-          'All stations',
-          choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
-          (station) => setFilter({ ...filter, station }),
-        )}
-        {select(
-          'Repository',
-          filter.repo,
-          'All repositories',
-          choices.repos.map((r) => ({ value: r, label: r })),
-          (repo) => setFilter({ ...filter, repo }),
-        )}
-        <button
-          type="button"
-          className="fd-chip"
-          aria-pressed={filter.needsOnly}
-          onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
-        >
-          Needs you only
-        </button>
-        <button
-          type="button"
-          className="fd-chip"
-          aria-pressed={focusOn}
-          title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
-          onClick={() => setFocusOn(!focusOn)}
-        >
-          Focus
-        </button>
-        <span className="fd-count" aria-live="polite">
-          {matching.length} live
-        </span>
-      </div>
+    <Page title="Watch" className="fd-watch" description={summary} actions={filters} wide>
       {matching.length > MAX_TILES && !focusOn ? (
         <p className="fd-note">
           Showing {MAX_TILES} of {matching.length} sessions. Filter to see the others.

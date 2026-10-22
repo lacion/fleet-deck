@@ -32,7 +32,7 @@ import { useReview } from '../review/useReview';
 import { MobStrip } from '../sharing/MobStrip';
 import { SideChat } from '../sharing/SideChat';
 import type { ShellActions } from '../shell/shell';
-import { releaseHold, type Watch } from '../terminal/handover';
+import type { Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
 import { ApprovalDock } from './ApprovalDock';
 import { hasChanges } from './changes';
@@ -43,17 +43,20 @@ import { useSessionController } from './controller';
 import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
+import { HoldNotice } from './HoldNotice';
 import { ExecutionDialog } from './ExecutionDialog';
 import { FleetControlChip } from './FleetControlChip';
 import { LandPanel } from './LandPanel';
 import { MoveBanner } from './MoveBanner';
 import { useMove } from './MoveDialog';
 import { CONFIRM_LINE, composerHidden, confirmLineShown } from './moveModel';
+import { PropertiesPanel, usePropsOpen } from './PropertiesPanel';
 import { SessionHeader } from './SessionHeader';
 import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
+import { shortModel } from '../ui/format';
 
 export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
@@ -84,6 +87,16 @@ export type SessionViewProps = {
 };
 
 const noop = () => {};
+
+/** The model chip of the composer opens the session menu and focuses its model picker. */
+function openModelPicker(pane: HTMLElement | null): void {
+  const menu = pane?.querySelector('summary[aria-label="Session menu"]')?.parentElement;
+  if (!(menu instanceof HTMLDetailsElement)) return;
+  menu.open = true;
+  requestAnimationFrame(() =>
+    menu.querySelector<HTMLElement>('.fd-model :is(select, input)')?.focus(),
+  );
+}
 const HIGHLIGHT_HOLD_MS = 2500;
 
 const WIDE = '(min-width: 1280px)';
@@ -213,6 +226,9 @@ export function SessionView(props: SessionViewProps) {
   const sidePanel = layout === 'desktop' && wide && filesOffered;
   const sideOpen = sidePanel && filesOpen;
   const tabsOffered = filesOffered && !sideOpen;
+  // §4.5: the properties panel takes the right rail while the Files panel does not.
+  const [propsOpen, toggleProps] = usePropsOpen();
+  const propsRail = layout === 'desktop' && wide && !sideOpen;
   const artifactsEnv = useArtifacts();
   const artifactsOffered = artifactsEnv !== undefined;
   // DL-179: review comments. The board hides what the deck refuses; the deck still decides.
@@ -272,7 +288,6 @@ export function SessionView(props: SessionViewProps) {
     !shellsOff &&
     (s.provider === 'claude' || s.provider === 'codex');
   const hold = s.terminal ?? null;
-  const [confirmRelease, setConfirmRelease] = useState(false);
   const [checking, setChecking] = useState(false);
   // FG-9: the newest move of the session (owner only) feeds the move banner.
   const integrations = useIntegrations();
@@ -280,6 +295,7 @@ export function SessionView(props: SessionViewProps) {
   const move = useMove(session, moveOwner);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const paneEl = useRef<HTMLElement>(null);
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
   const order: PaneTab[] = [
     'chat',
@@ -381,7 +397,7 @@ export function SessionView(props: SessionViewProps) {
   );
 
   const pane = (
-    <section className="fd-pane" aria-label="Session" data-layout={layout}>
+    <section className="fd-pane" aria-label="Session" data-layout={layout} ref={paneEl}>
       <SessionHeader
         session={session}
         stations={stations}
@@ -392,6 +408,7 @@ export function SessionView(props: SessionViewProps) {
         layout={layout}
         onNewShell={onNewShell}
         {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
+        propsPanel={propsRail ? { open: propsOpen, toggle: toggleProps } : undefined}
         models={s.models ?? sessionModels(events)}
         onCheckExecution={
           guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
@@ -417,48 +434,13 @@ export function SessionView(props: SessionViewProps) {
         <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
       ) : null}
       {hold ? (
-        <div className="fd-pane-notice" role="note">
-          <p>
-            A terminal holds this session (shell {hold.shell_id}).
-            {hold.reason ? ` ${hold.reason}` : ''}
-          </p>
-          {shells ? (
-            confirmRelease ? (
-              <div className="fd-pane-confirm" role="group" aria-label="Release the hold">
-                <p>Only do this when no terminal process uses this session.</p>
-                <div className="fd-pane-row">
-                  <button
-                    type="button"
-                    className="fd-sm"
-                    disabled={busy !== null}
-                    onClick={() => {
-                      setConfirmRelease(false);
-                      controller.act('release', () =>
-                        flow
-                          ? flow.release(hold.shell_id)
-                          : releaseHold(() => shells.release(session.station_id, hold.shell_id)),
-                      );
-                    }}
-                  >
-                    Release the hold
-                  </button>
-                  <button type="button" className="fd-sm" onClick={() => setConfirmRelease(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="fd-sm"
-                disabled={busy !== null}
-                onClick={() => setConfirmRelease(true)}
-              >
-                Release the hold
-              </button>
-            )
-          ) : null}
-        </div>
+        <HoldNotice
+          hold={hold}
+          station={session.station_id}
+          shells={shells}
+          controller={controller}
+          release={flow ? flow.release : null}
+        />
       ) : null}
       <div
         className="fd-pane-tabs"
@@ -664,6 +646,10 @@ export function SessionView(props: SessionViewProps) {
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
+                      model={shortModel(s.model)}
+                      {...(guest === null && caps?.set_model === true
+                        ? { onModel: () => openModelPicker(paneEl.current) }
+                        : {})}
                     />
                   </>
                 ) : guest?.role === 'viewer' ? (
@@ -763,6 +749,14 @@ export function SessionView(props: SessionViewProps) {
               </p>
             )}
           </aside>
+        ) : null}
+        {propsRail && propsOpen ? (
+          <PropertiesPanel
+            session={session}
+            stations={stations}
+            turns={turns}
+            subagents={tree.subagents.length}
+          />
         ) : null}
       </div>
     </section>

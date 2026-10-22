@@ -45,7 +45,7 @@ export function LoadMap({ map }: { readonly map: LoadMapData }) {
             title={cell.label}
             aria-label={cell.label}
           >
-            <span className="fd-wall-load-name">{cell.name}</span>
+            <span className="fd-wall-load-name fd-callsign">{cell.name}</span>
             <span className="fd-wall-load-value">{cell.value}</span>
           </li>
         ))}

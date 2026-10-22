@@ -1,9 +1,10 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { sessionTitle } from '../app/sessions';
+import { relativeAge, sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
 import { FileText, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { EmptyState, Page } from '../ui/page';
+import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import { liveProposer, type PlanActions, planTitle, proposerNote, STATUS_LABEL } from './plans';
 
@@ -12,6 +13,12 @@ type Assign = (
   target: { stationId: string; sessionId: string },
   text: string,
 ) => Promise<{ ok: boolean; text: string }>;
+
+/** "3 h ago" (DESIGN-SYSTEM §5), "now" under a minute. */
+const ago = (ms: number, now: number) => {
+  const age = relativeAge(ms, now);
+  return age === 'now' ? age : `${age} ago`;
+};
 
 const isLiveSession = (card: DeckSession) =>
   card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
@@ -32,6 +39,13 @@ type Props = {
   readonly initial?: readonly DeckPlan[] | null;
 };
 
+/** The badge tone of each status: a proposed plan waits (blue), an executed one is done (green). */
+const STATUS_TONE: Readonly<Record<PlanStatus, string>> = {
+  proposed: 'info',
+  executed: 'ok',
+  archived: 'muted',
+};
+
 const first = (cards: readonly DeckSession[]): string => {
   const card = cards[0];
   return card === undefined ? '' : sessionRef(card.station_id, card.summary.session_id);
@@ -49,6 +63,7 @@ export function PlanLibrary({
   initial = null,
 }: Props) {
   const [plans, setPlans] = useState<readonly DeckPlan[] | null>(initial);
+  const now = useNow(undefined, 30_000);
   const [archived, setArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -123,6 +138,7 @@ export function PlanLibrary({
   };
   return (
     <Page
+      wide
       title="Plans"
       label="Plan library"
       actions={
@@ -156,7 +172,7 @@ export function PlanLibrary({
           body="A session in plan mode adds its plan here."
         />
       ) : (
-        <ol className="fd-plan-list">
+        <ol className="fd-panel fd-plan-list">
           {plans.map((p) => {
             const title = planTitle(p.markdown);
             const proposer = p.status === 'proposed' ? liveProposer(p, sessions) : undefined;
@@ -165,12 +181,16 @@ export function PlanLibrary({
                 <article aria-label={`Plan ${title}`}>
                   <h3>{title}</h3>
                   <p className="fd-plan-meta">
-                    <span className="fd-plan-status">{STATUS_LABEL[p.status]}</span> ·{' '}
-                    {stationName(p.station_id, stations)} ·{' '}
-                    <time dateTime={new Date(p.proposed_at).toISOString()}>
-                      {new Date(p.proposed_at).toLocaleString()}
-                    </time>{' '}
-                    ·{' '}
+                    <span className="fd-badge fd-plan-status" data-tone={STATUS_TONE[p.status]}>
+                      {STATUS_LABEL[p.status]}
+                    </span>
+                    <span>{stationName(p.station_id, stations)}</span>
+                    <time
+                      dateTime={new Date(p.proposed_at).toISOString()}
+                      title={new Date(p.proposed_at).toLocaleString()}
+                    >
+                      {ago(p.proposed_at, now)}
+                    </time>
                     <button
                       type="button"
                       className="fd-link"
@@ -179,7 +199,7 @@ export function PlanLibrary({
                       {p.session_title ?? p.session_id}
                     </button>
                   </p>
-                  <details>
+                  <details className="fd-plan-fold">
                     <summary className="fd-tap">Show plan</summary>
                     <pre className="fd-plan-text">{p.markdown}</pre>
                     {p.truncated ? (
@@ -193,6 +213,7 @@ export function PlanLibrary({
                     {p.status !== 'executed' ? (
                       <button
                         type="button"
+                        className="fd-ghost"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'executed')}
                       >
@@ -202,6 +223,7 @@ export function PlanLibrary({
                     {p.status === 'archived' ? (
                       <button
                         type="button"
+                        className="fd-ghost"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'proposed')}
                       >
@@ -210,6 +232,7 @@ export function PlanLibrary({
                     ) : (
                       <button
                         type="button"
+                        className="fd-ghost"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'archived')}
                       >
@@ -219,6 +242,7 @@ export function PlanLibrary({
                     {onAssign !== undefined && p.status === 'proposed' ? (
                       <button
                         type="button"
+                        className="fd-ghost"
                         disabled={!live}
                         onClick={() =>
                           setAssigning({
@@ -282,7 +306,11 @@ export function PlanLibrary({
                         >
                           Send as mail
                         </button>
-                        <button type="button" onClick={() => setAssigning(null)}>
+                        <button
+                          type="button"
+                          className="fd-ghost"
+                          onClick={() => setAssigning(null)}
+                        >
                           Cancel
                         </button>
                       </div>

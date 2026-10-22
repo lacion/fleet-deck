@@ -772,7 +772,7 @@ export async function openFleet(page: Page): Promise<void> {
   await expect(page).toHaveURL(/#\/fleet$/);
 }
 
-/** A tab of the fleet home's bottom panel (DL-141): Activity, Mail & tasks, Assign or Usage. */
+/** A tab of the fleet home's ops panel (DESIGN-SYSTEM §4.4): Activity, Mail & tasks, Assign or Usage. */
 export async function openPanel(
   page: Page,
   tab: 'Activity' | 'Mail & tasks' | 'Assign' | 'Usage',

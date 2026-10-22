@@ -56,21 +56,31 @@ export function shareNotes(share: TaildriveShare): { text: string; warn: boolean
 export function StationTaildrive({ taildrive }: { readonly taildrive: StationInfo['taildrive'] }) {
   if (taildrive === undefined) return null;
   if (taildrive.state === 'unknown') {
-    return <p className="fd-note">Taildrive: Fleet Deck cannot read the share list.</p>;
+    return (
+      <p className="fd-note fd-station-prop-note">
+        Taildrive: Fleet Deck cannot read the share list.
+      </p>
+    );
   }
   if (taildrive.state === 'unavailable') {
     return (
-      <p className="fd-note">
+      <p className="fd-note fd-station-prop-note">
         Taildrive is not available{taildrive.reason === undefined ? '' : `: ${taildrive.reason}`}.
       </p>
     );
   }
   if (taildrive.state !== 'ok') return null;
-  if (taildrive.shares.length === 0) return <p className="fd-note">No Taildrive shares.</p>;
+  if (taildrive.shares.length === 0) {
+    return <p className="fd-note fd-station-prop-note">No Taildrive shares.</p>;
+  }
   return (
-    <div className="fd-station-taildrive" role="group" aria-label="Taildrive shares">
-      <h4 className="fd-label">Taildrive shares</h4>
-      <ul className="fd-int-list">
+    <div
+      className="fd-station-prop fd-station-taildrive"
+      role="group"
+      aria-label="Taildrive shares"
+    >
+      <h4 className="fd-station-prop-label">Taildrive shares</h4>
+      <ul className="fd-station-shares">
         {taildrive.shares.map((share) => (
           <li key={share.name} data-share={share.name}>
             <span>

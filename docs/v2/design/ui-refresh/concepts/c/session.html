@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Deck · otter-n1rr</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+const t = new URLSearchParams(location.search).get('theme');
+if (t === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="fleet.html"><span class="logo">FD</span><b>Fleet Deck</b></a>
+  <nav class="nav" aria-label="Main">
+    <a href="fleet.html">Fleet</a>
+    <a href="#">Watch</a>
+    <a href="#">Activity</a>
+    <a href="#">Stations</a>
+    <a href="#">More <i data-lucide="chevron-down"></i></a>
+  </nav>
+  <div class="tb-right">
+    <div class="search"><i data-lucide="search"></i><span>Search sessions</span><kbd class="kbd">⌘K</kbd></div>
+    <button class="btn btn-icon btn-ghost" aria-label="Switch theme"><i data-lucide="sun-moon"></i></button>
+    <button class="btn btn-ink"><i data-lucide="plus"></i>New session <kbd class="kbd">N</kbd></button>
+    <span class="live">Live</span>
+    <span class="avatar" title="Account">LM</span>
+  </div>
+</header>
+
+<main class="sess">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="fleet.html">Fleet</a><i data-lucide="chevron-right"></i><a href="fleet.html">Lighting</a><i data-lucide="chevron-right"></i><b class="callsign" style="font-size:13px">otter-n1rr</b>
+  </nav>
+
+  <section class="s-head st-lighting">
+    <span class="tab"></span>
+    <div class="s-main">
+      <div class="s-title">
+        <h1>Fix flaky shim test</h1>
+        <span class="status needs lg">Needs you</span>
+      </div>
+      <div class="s-meta">
+        <span class="callsign">otter-n1rr</span>
+        <span class="chip"><i class="sdot"></i>Lighting</span>
+        <span class="chip mono"><i data-lucide="git-branch"></i>fleet-sync</span>
+        <span class="chip mono"><i data-lucide="folder"></i>~/projects/obsurvive/fleet-deck</span>
+        <span class="chip">Sonnet 5.5</span>
+        <span class="chip">Claude</span>
+        <span class="chip"><i data-lucide="pencil"></i>Accept edits</span>
+      </div>
+    </div>
+    <div class="s-actions">
+      <button class="btn"><i data-lucide="square"></i>Interrupt</button>
+      <button class="btn"><i data-lucide="terminal"></i>Terminal</button>
+      <button class="btn btn-icon" aria-label="Open folder"><i data-lucide="folder-open"></i></button>
+      <button class="btn btn-icon" aria-label="More"><i data-lucide="ellipsis"></i></button>
+    </div>
+  </section>
+
+  <nav class="s-tabs" aria-label="Session">
+    <a class="tabp on" href="#">Chat</a>
+    <a class="tabp" href="#">Changes <span class="n">2</span></a>
+    <a class="tabp" href="#">Files</a>
+    <a class="tabp" href="#">Artifacts</a>
+  </nav>
+
+  <div class="s-body">
+
+    <section class="chat" aria-label="Chat">
+      <div class="feed"><div class="feed-in">
+        <div class="msg-user">The shim test fails about 1 in 20 runs on Lighting. Find out why and fix it.</div>
+
+        <div class="think"><i data-lucide="chevron-right"></i>Thinking · 12 s</div>
+
+        <div class="acts">
+          <div class="act"><span class="ic"><i data-lucide="file-text"></i></span><b>Read</b><span class="target">crates/fleetdeck-station/src/shim/reaper.rs</span><span class="res"><i data-lucide="check"></i>ok</span></div>
+          <div class="act"><span class="ic"><i data-lucide="search"></i></span><b>Search</b><span class="target">waitpid in crates/fleetdeck-station</span><span class="res"><i data-lucide="check"></i>7 matches</span></div>
+        </div>
+
+        <p class="prose">The test races the reaper: the child can exit before <code>install_reaper()</code> returns, so the <code>SIGCHLD</code> is lost. Here is the fix:</p>
+
+        <div class="code">
+          <div class="code-h"><span>rust</span><button class="btn btn-icon" aria-label="Copy"><i data-lucide="copy"></i></button></div>
+<pre><span class="k">pub fn</span> install_reaper() -&gt; io::Result&lt;Reaper&gt; {
+    <span class="k">let</span> mask = block_sigchld()?;       <span class="c">// block first</span>
+    <span class="k">let</span> reaper = Reaper::new(mask)?;   <span class="c">// then install</span>
+    reaper.drain_exited();             <span class="c">// reap what exited before</span>
+    Ok(reaper)
+}</pre>
+        </div>
+
+        <table class="tbl">
+          <thead><tr><th style="width:30%">File</th><th style="width:36%">Problem</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td>shim/reaper.rs</td><td>SIGCHLD lost before install</td><td>block, install, drain</td></tr>
+            <tr><td>shim/tests.rs</td><td>test waits 50 ms</td><td>wait for the exit event</td></tr>
+          </tbody>
+        </table>
+
+        <div class="acts">
+          <div class="act"><span class="ic"><i data-lucide="pencil"></i></span><b>Edit</b><span class="target">crates/fleetdeck-station/src/shim/reaper.rs</span><span class="res"><span class="add">+9</span><span class="del">−3</span><i data-lucide="check"></i>ok</span></div>
+          <div class="act wait"><span class="ic"><i data-lucide="terminal"></i></span><b>Bash</b><span class="target">cargo nextest run -p fleetdeck-station -E 'test(shim)'</span><span class="res"><i data-lucide="hourglass"></i>Waiting for your answer</span></div>
+        </div>
+      </div></div>
+
+      <section class="approval st-lighting" aria-label="Permission request">
+        <div class="ap-h">
+          <span class="kind">Permission</span><b>Bash</b>
+          <span class="age"><i data-lucide="clock"></i>2 min</span>
+        </div>
+        <div class="cmd"><i data-lucide="terminal"></i><code>cargo nextest run -p fleetdeck-station -E 'test(shim)'</code></div>
+        <p class="ap-why"><span>Reason</span>Run the shim tests 20 times to confirm the fix</p>
+        <div class="ap-actions">
+          <button class="btn btn-sun">Allow <kbd class="kbd">a</kbd></button>
+          <button class="btn">Allow for this session</button>
+          <button class="btn btn-deny">Deny <kbd class="kbd">d</kbd></button>
+        </div>
+      </section>
+
+      <div class="composer">
+        <div class="ph">Message otter-n1rr…</div>
+        <div class="c-bar">
+          <div class="l">
+            <button class="btn btn-icon btn-ghost" aria-label="Attach image"><i data-lucide="paperclip"></i></button>
+            <span class="chip btnish">Sonnet 5.5 <i data-lucide="chevron-down"></i></span>
+          </div>
+          <div class="r">
+            <button class="btn" title="Interrupts the current turn with this message"><i data-lucide="zap"></i>Steer now</button>
+            <button class="btn btn-ink">Queue follow-up <kbd class="kbd">↵</kbd></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel" aria-label="Live changes">
+      <div class="p-h"><h2>Changes</h2><span class="sum"><span class="add">+9</span><span class="del">−3</span><span class="files">in 1 file</span></span></div>
+      <div class="f-row"><i data-lucide="file-pen"></i><span>crates/fleetdeck-station/src/shim/reaper.rs</span><span class="diffstat"><span class="add">+9</span><span class="del">−3</span></span></div>
+      <div class="diff" role="img" aria-label="Diff of reaper.rs">
+        <div class="ln hunk"><span>@@ -40,10 +40,16 @@ impl Reaper {</span></div>
+        <div class="ln"><span>40</span><span>40</span><span></span><span><span class="k">use</span> crate::signals::block_sigchld;</span></div>
+        <div class="ln"><span>41</span><span>41</span><span></span><span> </span></div>
+        <div class="ln"><span>42</span><span>42</span><span></span><span><span class="c">/// Install the SIGCHLD reaper for the shim.</span></span></div>
+        <div class="ln add"><span></span><span>43</span><span>+</span><span><span class="c">///</span></span></div>
+        <div class="ln add"><span></span><span>44</span><span>+</span><span><span class="c">/// A child can exit before this function returns. We block</span></span></div>
+        <div class="ln add"><span></span><span>45</span><span>+</span><span><span class="c">/// SIGCHLD first, so that signal is not lost, then install</span></span></div>
+        <div class="ln add"><span></span><span>46</span><span>+</span><span><span class="c">/// the reaper and reap what exited before.</span></span></div>
+        <div class="ln add"><span></span><span>47</span><span>+</span><span><span class="c">///</span></span></div>
+        <div class="ln add"><span></span><span>48</span><span>+</span><span><span class="c">/// Call it once, before the first child starts.</span></span></div>
+        <div class="ln"><span>43</span><span>49</span><span></span><span><span class="k">pub fn</span> install_reaper() -&gt; io::Result&lt;Reaper&gt; {</span></div>
+        <div class="ln del"><span>44</span><span></span><span>−</span><span>    <span class="c">// Install the handler first; children start later.</span></span></div>
+        <div class="ln del"><span>45</span><span></span><span>−</span><span>    <span class="k">let</span> reaper = Reaper::new()?;</span></div>
+        <div class="ln del"><span>46</span><span></span><span>−</span><span>    reaper.start();</span></div>
+        <div class="ln add"><span></span><span>50</span><span>+</span><span>    <span class="k">let</span> mask = block_sigchld()?;       <span class="c">// block first</span></span></div>
+        <div class="ln add"><span></span><span>51</span><span>+</span><span>    <span class="k">let</span> reaper = Reaper::new(mask)?;   <span class="c">// then install</span></span></div>
+        <div class="ln add"><span></span><span>52</span><span>+</span><span>    reaper.drain_exited();             <span class="c">// reap what exited before</span></span></div>
+        <div class="ln"><span>47</span><span>53</span><span></span><span>    Ok(reaper)</span></div>
+        <div class="ln"><span>48</span><span>54</span><span></span><span>}</span></div>
+        <div class="ln"><span>49</span><span>55</span><span></span><span> </span></div>
+      </div>
+      <div class="p-files">
+        <h3>Files</h3>
+        <div class="pf"><i data-lucide="file-pen"></i><span><span class="dir">crates/fleetdeck-station/src/shim/</span>reaper.rs</span><span class="diffstat"><span class="add">+9</span><span class="del">−3</span></span></div>
+      </div>
+    </aside>
+
+  </div>
+</main>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

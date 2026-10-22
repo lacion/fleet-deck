@@ -398,11 +398,11 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   const bravo = page.locator('[data-station="st-bravo"]');
   const old = page.locator('[data-station="st-old"]');
   await expect(page.getByText('Config reference: Alpha')).toBeVisible();
-  await expect(alpha.getByText('linux · x86_64 · gpu, always_on')).toBeVisible();
-  await expect(bravo.getByText('macos · aarch64 · on battery')).toBeVisible();
+  await expect(alpha.getByText('Linux · x86_64 · gpu, always_on')).toBeVisible();
+  await expect(bravo.getByText('macOS · aarch64 · on battery')).toBeVisible();
   await expect(alpha.getByText('Config: Reference')).toBeVisible();
   await expect(bravo.getByText('Config: Differs: agents, skills')).toBeVisible();
-  await expect(old.getByText('Config: Unknown')).toBeVisible();
+  await expect(old.getByText(/^Config:/)).toHaveCount(0);
   await expect(old.getByText('linux')).toHaveCount(0);
 
   // The Taildrive shares and the warning of O37.
@@ -431,7 +431,7 @@ test('the Stations page asks for a config reference when the deck has none', asy
   await installFleetGitPlacement(page, deck);
   await logIn(page);
   await openMore(page, 'Stations');
-  await expect(page.getByText('Pick a reference station for the config report.')).toBeVisible();
+  await expect(page.getByText('Config reference…')).toBeVisible();
 });
 
 test('the session Artifacts link opens the folder, or shows the address', async ({ page }) => {
@@ -565,9 +565,9 @@ test('a refusal of the placement shows in the form and starts nothing', async ({
     answer: { status: 409, body: { error: 'no_station', message: 'No station matches: gpu.' } },
   });
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByRole('combobox', { name: 'Station' }).selectOption('auto');
+  await form.getByRole('radiogroup', { name: 'Station' }).getByText('Auto').click();
   await form.getByLabel('Directory path').fill('/work/repo');
   await form.getByLabel('Needs').fill('gpu');
   await form.getByRole('button', { name: 'Start session' }).click();

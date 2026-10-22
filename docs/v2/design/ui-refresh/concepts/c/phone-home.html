@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fleet Deck · Phone home</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+const t = new URLSearchParams(location.search).get('theme');
+if (t === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+</head>
+<body class="phone">
+
+<header class="m-top">
+  <a class="brand" href="phone-home.html"><span class="logo">FD</span><b>Fleet Deck</b></a>
+  <span class="live">Live</span>
+  <span class="avatar" title="Account">LM</span>
+</header>
+
+<main class="m-scroll">
+  <h1 class="m-hero">2 need you.</h1>
+
+  <article class="m-req st-lighting">
+    <span class="tab"></span>
+    <div class="req-top">
+      <span class="callsign">otter-n1rr</span>
+      <span class="chip"><i class="sdot"></i>Lighting</span>
+      <span class="spacer"></span>
+      <span class="kind">Permission</span>
+    </div>
+    <div class="m-t">Fix flaky shim test · <span class="muted" style="font-weight:500">2 min</span></div>
+    <div class="cmd"><code><b>Bash</b> cargo nextest run -p fleetdeck-station -E 'test(shim)'</code></div>
+    <div class="m-act">
+      <button class="btn btn-sun">Allow</button>
+      <button class="btn btn-deny">Deny</button>
+    </div>
+  </article>
+
+  <article class="m-req st-dev1">
+    <span class="tab"></span>
+    <div class="req-top">
+      <span class="callsign">kite-x81d</span>
+      <span class="chip"><i class="sdot"></i>dev1</span>
+      <span class="spacer"></span>
+      <span class="kind">Question</span>
+    </div>
+    <div class="m-t">Stripe webhooks · <span class="muted" style="font-weight:500">6 min</span></div>
+    <div class="cmd q">Use the test key or the live key for the webhook secret?</div>
+    <div class="m-act">
+      <button class="btn">Test key</button>
+      <button class="btn">Live key</button>
+    </div>
+  </article>
+
+  <nav class="seg" aria-label="Station">
+    <a class="on" href="#">All</a>
+    <a class="st-lighting" href="#"><i class="sdot"></i>Lighting</a>
+    <a class="st-dev1" href="#"><i class="sdot"></i>dev1</a>
+    <a class="st-mac" href="#"><i class="sdot"></i>mac-m4</a>
+  </nav>
+
+  <article class="ticket st-lighting">
+    <span class="tab"></span>
+    <div class="t-top"><span class="callsign">falcon-vf9n</span><span class="chip"><i class="sdot"></i>Lighting</span><span class="status working" style="margin-left:auto">Working</span></div>
+    <h3 class="t-title">Fleet Deck UI</h3>
+    <div class="t-now"><i data-lucide="pen-line"></i><b>Write</b><span class="target">concepts/BRIEF.md</span></div>
+    <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>ui-refresh</span><span class="chip">Opus 5.5</span><span class="diffstat"><span class="add">+412</span><span class="del">−0</span></span></div>
+  </article>
+
+  <article class="ticket st-dev1">
+    <span class="tab"></span>
+    <div class="t-top"><span class="callsign">lynx-4kq2</span><span class="chip"><i class="sdot"></i>dev1</span><span class="status working" style="margin-left:auto">Working</span></div>
+    <h3 class="t-title">Rannoch checkout flow</h3>
+    <div class="t-now"><i data-lucide="pencil"></i><b>Edit</b><span class="target">src/checkout/cart.ts</span></div>
+    <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>rannoch/checkout</span><span class="chip"><i data-lucide="git-pull-request"></i>PR #128</span><span class="diffstat"><span class="add">+142</span><span class="del">−37</span></span></div>
+  </article>
+</main>
+
+<nav class="m-tabbar" aria-label="Main">
+  <a class="on" href="#"><i data-lucide="layers"></i>Sessions</a>
+  <a href="#"><i data-lucide="layout-grid"></i>Fleet</a>
+  <a href="#"><i data-lucide="plus"></i>New</a>
+  <a href="#"><i data-lucide="ellipsis"></i>More</a>
+</nav>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

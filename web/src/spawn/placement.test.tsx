@@ -267,17 +267,15 @@ describe('the form', () => {
     expect(html).toMatch(/<option value="st-b" selected="">Bravo · \/srv\/atlas/);
   });
 
-  test('another start has the Station select, with Auto after the stations', () => {
+  test('another start has the Station pills, with Auto after the stations', () => {
     const html = form({ project: false });
     expect(html).not.toContain('Home');
-    expect(html).toContain('Station');
-    expect(html).toContain('Auto (best station)');
+    expect(html).toContain('role="radiogroup" aria-label="Station"');
+    expect(html).toMatch(/>Auto<span class="fd-vh"> \(best station\)<\/span><\/label><\/div>/);
   });
 
   test('without a deck that places, or a station with traits, there is no Auto', () => {
-    expect(form({ place: false })).not.toContain('Auto (best station)');
-    expect(form({ list: [reported('st-a'), reported('st-b')] })).not.toContain(
-      'Auto (best station)',
-    );
+    expect(form({ place: false })).not.toContain('(best station)');
+    expect(form({ list: [reported('st-a'), reported('st-b')] })).not.toContain('(best station)');
   });
 });

@@ -1,231 +1,412 @@
-/* The spawn form and its directory picker (DL-141, UI-DESIGN §3.4): a column of panels, labels above fields. */
+/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the page canvas. A breadcrumb head,
+   a borderless title and task, property rows (Agent, Station, Where) with a 72px key column and no
+   captions (each control carries its name as aria-label), "More options", and a one-line footer
+   with the Batch switch, Cancel and Start session. Also the native session dialog and the recent
+   folders. */
+
+/* ── the route: the sheet in the middle of the canvas ───────────── */
+/* Nothing is behind the sheet on its own route, so the canvas is not dimmed: --scrim on an empty
+   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. */
+.fd-route:has(> .fd-screen > .fd-spawn) {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.fd-screen:has(> .fd-spawn) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: var(--sp-6) var(--sp-5);
+}
+
+/* ── the sheet ──────────────────────────────────────────────────── */
 .fd-spawn {
   display: grid;
   gap: var(--sp-3);
+  width: 100%;
+  max-width: 720px;
   min-width: 0;
-  max-width: 760px;
+  margin: auto;
+  padding: var(--sp-5);
+  background: var(--raised);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--shadow-pop);
   overflow-wrap: anywhere;
 }
 .fd-spawn form {
   display: grid;
-  gap: var(--sp-3);
-}
-.fd-spawn form > .fd-panel {
-  display: grid;
-  gap: var(--sp-3);
-  min-width: 0;
-  padding: var(--sp-4);
-}
-/* Pickers of one panel in one line; on a phone they stack by themselves. */
-.fd-spawn-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  gap: 12px;
+  gap: var(--sp-4);
   min-width: 0;
 }
-.fd-spawn-row > .fd-note {
-  grid-column: 1 / -1;
-}
-.fd-spawn form > details.fd-spawn-options {
-  display: grid;
-  gap: var(--sp-3);
-  min-width: 0;
-  padding: var(--sp-4);
-}
-.fd-spawn-options > summary {
-  cursor: pointer;
-}
-.fd-spawn .fd-panel > .fd-label {
+.fd-spawn p {
   margin: 0;
-  font-weight: 500;
 }
-.fd-spawn label {
+/* The head: a breadcrumb "<station> › New session". */
+.fd-spawn-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: var(--ctl-h-sm);
+}
+.fd-spawn-head > .fd-badge {
+  min-width: 0;
+}
+.fd-spawn-crumb {
+  display: inline-flex;
+  color: var(--faint);
+}
+.fd-spawn-head > h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fd-spawn > .fd-empty {
+  padding: var(--sp-3) 0;
+}
+
+/* ── the fields of the options: a caption above each control ────── */
+.fd-spawn label:where(:not(.fd-seg > label, .fd-spawn-station)) {
   display: grid;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--sp-1);
+  min-width: 0;
   color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 16px;
 }
 .fd-spawn input:not([type="checkbox"], [type="radio"]),
 .fd-spawn select,
 .fd-spawn textarea {
   width: 100%;
   min-width: 0;
+  font-weight: 400;
+}
+/* A placeholder is words, never a path: it must not look like a filled value. */
+.fd-spawn input::placeholder,
+.fd-spawn .fd-folder-row > input::placeholder {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
 }
 .fd-spawn textarea {
   resize: vertical;
 }
-.fd-picker {
-  display: grid;
-  gap: var(--sp-2);
+.fd-spawn [aria-invalid="true"] {
+  border-color: var(--hazard);
+}
+.fd-spawn [role="alert"] {
+  color: var(--hazard);
+  font-size: var(--fs-meta);
+}
+.fd-spawn fieldset {
   min-width: 0;
-  margin: 0;
-  padding: var(--sp-3);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-panel);
-}
-.fd-picker legend {
-  padding: 0 var(--sp-1);
-  font-size: 12px;
-  color: var(--dim);
-}
-.fd-picker p {
-  margin: 0;
-}
-.fd-chosen {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-.fd-chosen > p {
-  min-width: 0;
-}
-.fd-chosen > button {
-  flex: none;
-}
-.fd-picker ul {
   margin: 0;
   padding: 0;
-  list-style: none;
+  border: 0;
+}
+/* On the sheet fill, a plain button is an outlined secondary button (Browse…, Check access). */
+.fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
+.fd-spawn .fd-outcome > button {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+.fd-spawn
+  :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
+    :disabled
+  ),
+.fd-spawn .fd-outcome > button:hover:not(:disabled) {
+  background: var(--raised-hi);
+  border-color: var(--border);
+}
+
+/* ── title and task: no border at rest ──────────────────────────── */
+.fd-spawn-compose {
   display: grid;
   gap: var(--sp-1);
-}
-.fd-picker li button {
-  width: 100%;
-  text-align: left;
-  display: flex;
-  justify-content: space-between;
-  gap: var(--sp-2);
-}
-.fd-picker-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-}
-.fd-path {
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  color: var(--faint);
-}
-.fd-tag {
-  padding: 1px 7px;
-  border-radius: var(--r-chip);
-  background: var(--border-soft);
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-}
-/* Pinned and recent directories: one chip row under the picker. */
-.fd-recent {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
   min-width: 0;
 }
-.fd-recent .fd-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  border-color: var(--border-soft);
-  color: var(--dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
+.fd-spawn-compose > label {
+  display: block;
 }
-.fd-recent .fd-chip:hover {
-  border-color: var(--dim);
+.fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
+  display: block;
+  width: calc(100% + 2 * var(--sp-2));
+  margin: 0 calc(-1 * var(--sp-2));
+  padding: var(--sp-1) var(--sp-2);
+  background-color: transparent;
+  border-color: transparent;
+  border-radius: 0;
   color: var(--text);
 }
-.fd-recent .fd-chip[data-pinned] .fd-icon {
-  fill: currentColor;
+/* The focus of a borderless field: the 2px blue marker at its left edge, not a box. */
+.fd-spawn .fd-spawn-compose > label > :is(input, textarea):focus {
+  border-color: transparent;
+  box-shadow: inset 2px 0 0 var(--focus);
 }
-/* The batch and coordinator checkboxes: option rows, the box left of its text. */
-.fd-spawn .fd-spawn-opt {
-  display: flex;
-  gap: var(--sp-2);
-  align-items: flex-start;
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  font-size: var(--fs-body);
-  color: var(--text);
-  cursor: pointer;
+.fd-spawn .fd-spawn-title > input {
+  height: 36px;
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
-.fd-spawn .fd-spawn-opt:hover {
-  border-color: var(--act);
+.fd-spawn .fd-spawn-title > input::placeholder {
+  font-size: var(--fs-18);
 }
-.fd-spawn .fd-spawn-opt:has(input:checked) {
-  border-color: var(--act);
-  background: var(--act-bg);
+.fd-spawn .fd-spawn-task > textarea {
+  /* Six lines at least; the field grows with the task (where the browser can). */
+  min-height: calc(6 * 1.5em + 2 * var(--sp-1));
+  max-height: 50vh;
+  field-sizing: content;
+  font-size: var(--fs-15);
+  line-height: 1.5;
+  resize: none;
 }
-.fd-spawn .fd-spawn-opt:has(input:focus-visible) {
-  outline: 2px solid var(--act);
-  outline-offset: 2px;
-}
-.fd-spawn .fd-spawn-opt input {
-  margin-top: 2px;
+.fd-spawn-compose > .fd-note {
+  color: var(--faint);
 }
 /* The batch preview: the exact list, counted, before the start. */
 .fd-batch-preview {
   display: grid;
   gap: var(--sp-2);
   min-width: 0;
+  margin-top: var(--sp-2);
   padding: var(--sp-3);
-  background: var(--code);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
-}
-.fd-batch-preview > p {
-  margin: 0;
+  background: var(--surface);
+  border-radius: var(--r-card);
 }
 .fd-batch-preview ol {
   display: grid;
-  gap: 3px;
+  gap: var(--sp-1);
   margin: 0;
-  padding-left: 22px;
-  font-family: var(--font-data);
-  font-size: 12px;
+  padding: 0;
+  list-style-position: inside;
   color: var(--dim);
+  font-size: var(--fs-meta);
 }
 .fd-batch-preview li {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* The submit row: status at the left, the primary button at the right. */
-.fd-spawn-submit {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--sp-3);
-}
-.fd-spawn-status {
+
+/* ── property rows: the key at the left, the controls on its line ── */
+.fd-spawn-props {
   display: grid;
-  gap: var(--sp-2);
-  flex: 1;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-spawn-prop {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: var(--sp-3);
+  align-items: start;
   min-width: 0;
 }
-.fd-spawn-status p {
+.fd-spawn-prop > h3.fd-label {
   margin: 0;
+  line-height: var(--ctl-h);
 }
-.fd-spawn-submit > button {
-  flex: none;
-}
-.fd-outcome {
+.fd-spawn-fields {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
 }
-@media (max-width: 480px) {
-  .fd-spawn-submit {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.fd-spawn-fields > * {
+  flex: 0 1 auto;
+  min-width: 0;
 }
-.fd-spawn-branch {
+/* A note, a directory field or a group of sub-fields takes its own line. */
+.fd-spawn-fields
+> :is(
+  .fd-note,
+  .fd-fieldwrap,
+  .fd-spawn-dir,
+  .fd-spawn-placement,
+  .fd-spawn-branch,
+  .fd-spawn-clone
+) {
+  flex: 1 1 100%;
+}
+/* A note under a control sits close to it. */
+.fd-spawn-fields > .fd-note {
+  margin-top: calc(-1 * var(--sp-1));
+}
+.fd-spawn-fields > .fd-spawn-risk {
+  color: var(--hazard);
+}
+.fd-spawn-fields > .fd-spawn-need {
+  color: var(--faint);
+}
+/* A segmented control may wrap on a narrow sheet. */
+.fd-spawn-seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.fd-spawn-fields > .fd-badge {
+  flex: none;
+}
+/* With the limits of its instances (R4.3) the provider choice is a stacked list: one row per
+   instance, all rows as wide as the widest, the limit at the right so the instances compare. */
+.fd-spawn-seg:has(.fd-spawn-seg-meta) {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.fd-spawn-seg:has(.fd-spawn-seg-meta) > label {
+  justify-content: space-between;
+  gap: var(--sp-3);
+  height: auto;
+  min-height: var(--ctl-h-sm);
+  padding-block: 2px;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+}
+/* The name keeps one line; the limit after it wraps on a narrow sheet, quieter than the name. */
+.fd-spawn-seg-name {
+  flex: none;
+  max-width: 100%;
+}
+.fd-spawn-seg-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-align: right;
+}
+/* The model and the mode: one pill look (concept B), as wide as their value, a leading icon
+   (sparkles, shield) inside the pill. */
+.fd-spawn-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-pillwrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.fd-spawn-pillwrap > .fd-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--sp-2);
+  transform: translateY(-50%);
+  color: var(--dim);
+  pointer-events: none;
+}
+.fd-spawn .fd-spawn-pill {
+  width: auto;
+  max-width: 100%;
+}
+.fd-spawn select.fd-spawn-pill {
+  field-sizing: content;
+}
+.fd-spawn .fd-spawn-pillwrap > select.fd-spawn-pill {
+  padding-left: 26px;
+}
+.fd-spawn input.fd-spawn-model {
+  width: 200px;
+}
+/* The directory: the value is mono (a path). */
+.fd-spawn .fd-folder-row > input,
+.fd-spawn input[aria-label="Directory path"],
+.fd-spawn .fd-spawn-branch input,
+.fd-spawn .fd-spawn-url input {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+/* The stations: radio pills with the name, the reach and the free slots. The chosen one is
+   --raised-hi with a 1px --focus ring (the selection marker). */
+.fd-spawn-stations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-station {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--t-fast),
+    color var(--t-fast),
+    box-shadow var(--t-fast);
+}
+.fd-spawn-station:hover {
+  background: var(--raised-hi);
+  color: var(--text);
+}
+.fd-spawn-station:has(> input:checked) {
+  background: var(--raised-hi);
+  box-shadow: inset 0 0 0 1px var(--focus);
+  color: var(--text);
+}
+.fd-spawn-station > input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.fd-spawn-station:has(> input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.fd-spawn-station > .fd-wide {
+  font-size: var(--fs-ui);
+}
+.fd-spawn-free {
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+.fd-spawn-off {
+  color: var(--hazard);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+
+/* FG-6: the placement fields under "Auto (best station)". */
+.fd-spawn-placement {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-placement > [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+}
+
+/* DL-144: the branch and base of a new worktree, the clone repository. */
+.fd-spawn-branch,
+.fd-spawn-clone {
   display: grid;
   gap: var(--sp-2);
   min-width: 0;
@@ -248,14 +429,16 @@
   gap: var(--sp-2);
   min-width: 0;
 }
+.fd-spawn-url > .fd-spawn-check {
+  height: var(--ctl-h);
+}
 .fd-spawn-access {
   display: grid;
   gap: var(--sp-2);
   margin: 0;
   min-width: 0;
-}
-.fd-spawn-access p {
-  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
 }
 .fd-spawn-access .fd-code {
   max-height: 12rem;
@@ -265,13 +448,53 @@
 .fd-spawn-url > .fd-spawn-access {
   grid-column: 1 / -1;
 }
+
+/* ── option rows: a checkbox or a switch left of its text ───────── */
+.fd-spawn .fd-spawn-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 400;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.fd-spawn .fd-spawn-opt > input[type="checkbox"]:not(.fd-switch) {
+  margin-top: 1px;
+}
+.fd-spawn .fd-spawn-opt > .fd-switch {
+  margin-top: 0;
+}
+
+/* ── More options ───────────────────────────────────────────────── */
+.fd-spawn-options {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-spawn-options > summary.fd-label {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  height: var(--ctl-h);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+}
+.fd-spawn-options > summary.fd-label:hover {
+  color: var(--text);
+}
+.fd-spawn-options > :not(summary) {
+  margin-left: calc(72px + var(--sp-3));
+}
+.fd-spawn-browse {
+  justify-self: start;
+}
 .fd-spawn-setup-field {
   display: grid;
   gap: var(--sp-2);
   min-width: 0;
-}
-.fd-spawn-setup-field p {
-  margin: 0;
 }
 .fd-spawn textarea.fd-spawn-setup {
   font-family: var(--font-data);
@@ -282,23 +505,173 @@
   display: grid;
   gap: var(--sp-2);
   min-width: 0;
-  border: 0;
-  padding: 0;
-  margin: 4px 0 4px 1.5em;
+  margin: 0 0 0 var(--sp-5);
 }
-.fd-spawn .fd-spawn-fleet > legend {
-  padding: 0;
+.fd-spawn .fd-spawn-fleet legend {
   margin-bottom: var(--sp-2);
+  padding: 0;
+  color: var(--dim);
   font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.fd-spawn .fd-spawn-fleet + .fd-spawn-fleet {
+  margin-top: var(--sp-2);
+}
+.fd-spawn .fd-spawn-scope {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+/* ── the footer: one line, Batch at the left, the actions at the right ── */
+.fd-spawn-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0 calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5));
+  padding: var(--sp-3) var(--sp-5);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-spawn .fd-spawn-batch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fd-spawn-status {
+  display: grid;
+  flex: 1 1 12rem;
+  gap: var(--sp-1);
+  justify-items: end;
+  min-width: 0;
+  text-align: right;
+}
+.fd-spawn-status .fd-note {
+  color: var(--faint);
+}
+.fd-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.fd-outcome > p[role="status"] {
+  color: var(--text);
+  font-size: var(--fs-meta);
+}
+.fd-spawn-actions {
+  display: flex;
+  flex: none;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+
+/* ── a phone: the sheet is the page; the actions stay above the bottom bar ── */
+@media (max-width: 640px) {
+  .fd-route:has(> .fd-screen > .fd-spawn) {
+    background: none;
+  }
+  .fd-screen:has(> .fd-spawn) {
+    padding: var(--sp-4) var(--sp-4) 0;
+  }
+  .fd-spawn {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .fd-spawn .fd-spawn-task > textarea {
+    min-height: calc(4 * 1.5em + 2 * var(--sp-1));
+  }
+  .fd-spawn-prop {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--sp-2);
+  }
+  .fd-spawn-prop > h3.fd-label {
+    line-height: 16px;
+  }
+  /* The model and the mode share one line. */
+  .fd-spawn-fields > .fd-spawn-pills {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+  }
+  .fd-spawn-pills > * {
+    flex: 1 1 0;
+  }
+  .fd-spawn .fd-spawn-pills > input,
+  .fd-spawn .fd-spawn-pillwrap > select {
+    width: 100%;
+    min-width: 0;
+  }
+  .fd-spawn-options > :not(summary) {
+    margin-left: 0;
+  }
+  .fd-spawn-foot {
+    position: sticky;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    z-index: 4;
+    margin: 0 calc(-1 * var(--sp-4));
+    padding: var(--sp-2) var(--sp-4);
+    background: var(--bg);
+    border-top: 0;
+    box-shadow: 0 -1px 0 var(--border-soft);
+  }
+  .fd-spawn-status {
+    flex-basis: 100%;
+    order: -1;
+    justify-items: start;
+    text-align: left;
+  }
+  .fd-spawn-status:empty {
+    display: none;
+  }
+  .fd-spawn-actions {
+    flex: 1 1 auto;
+  }
+  .fd-spawn-actions > * {
+    flex: 1 1 0;
+  }
+}
+
+/* ── pinned and recent folders (the folder picker, the Files page) ── */
+.fd-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-recent .fd-chip {
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--raised);
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+.fd-recent .fd-chip:hover:not(:disabled) {
+  background: var(--raised-hi);
+  color: var(--text);
+}
+.fd-recent .fd-chip[data-pinned] .fd-icon {
+  fill: currentColor;
+}
+/* A path in a list (the Files panel). */
+.fd-path {
+  font-family: var(--font-data);
   font-size: var(--fs-micro);
-  font-weight: 500;
   color: var(--faint);
 }
 
-/* B7: the dialog that browses the native sessions of a station (design native-sessions.md §2.6). */
-.fd-spawn-browse {
-  justify-self: start;
-}
+/* ── B7: the native sessions of a station (design native-sessions.md §2.6) ── */
 .fd-overlay .fd-native {
   width: min(760px, 94vw);
   max-height: 100%;
@@ -306,9 +679,13 @@
   overflow: auto;
   overflow-wrap: anywhere;
 }
+.fd-native > h2 {
+  margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 640;
+}
 .fd-native h3.fd-label {
   margin: 0;
-  font-weight: 500;
 }
 .fd-native-group {
   display: grid;
@@ -317,7 +694,7 @@
 }
 .fd-native-list {
   display: grid;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -326,10 +703,14 @@
   display: grid;
   gap: var(--sp-1);
   min-width: 0;
-  padding: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   background: var(--raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-lift);
+  transition: background-color var(--t-fast);
+}
+.fd-native-row:hover {
+  background: var(--raised-hi);
 }
 .fd-native-row[data-depth="1"] {
   margin-left: var(--sp-5);
@@ -345,36 +726,39 @@
   min-width: 0;
   /* A row of two or three lines: not the fixed height of a button. */
   height: auto;
-  line-height: inherit;
   padding: 0;
-  text-align: left;
   background: none;
   border: 0;
   color: var(--text);
+  line-height: 1.4;
+  text-align: left;
+}
+.fd-native-open:hover:not(:disabled) {
+  background: none;
 }
 .fd-native-title {
-  flex: 1 1 14rem;
   min-width: 0;
   margin: 0;
   overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-title);
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
 }
-.fd-native-cwd,
-.fd-native-meta {
+.fd-native-cwd {
+  min-width: 0;
   margin: 0;
   color: var(--dim);
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
-.fd-native-cwd {
-  flex: 1 1 100%;
-  min-width: 0;
-}
 .fd-native-meta {
-  flex: 1 1 100%;
+  margin: 0;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
 }
 .fd-native-line {
   margin: 0;
@@ -403,7 +787,7 @@
   justify-content: flex-end;
 }
 /* A phone: the dialog is the whole screen. */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .fd-overlay:has(> .fd-native) {
     padding: 0;
   }

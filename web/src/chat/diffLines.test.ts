@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { diffLineKind } from './diffLines';
+import { diffLineKind, diffLineKinds, fileHeads } from './diffLines';
 
 describe('diffLineKind', () => {
   test('a diff --git line starts a file', () => {
@@ -37,5 +37,40 @@ describe('diffLineKind', () => {
   test('a context line and an empty line are ctx', () => {
     expect(diffLineKind(' unchanged')).toBe('ctx');
     expect(diffLineKind('')).toBe('ctx');
+  });
+});
+
+describe('diffLineKinds', () => {
+  const lines = [
+    'diff --git a/q.sql b/q.sql',
+    '--- a/q.sql',
+    '+++ b/q.sql',
+    '@@ -1,2 +1,2 @@',
+    '--- note',
+    '+++ x',
+    ' select 1;',
+    'diff --git a/r.sql b/r.sql',
+    '--- a/r.sql',
+    '+++ b/r.sql',
+  ];
+
+  test('a -/+ line in a hunk is del/add; the header lines of the next file are meta again', () => {
+    expect(diffLineKinds(lines)).toEqual([
+      'file',
+      'meta',
+      'meta',
+      'hunk',
+      'del',
+      'add',
+      'ctx',
+      'file',
+      'meta',
+      'meta',
+    ]);
+  });
+
+  test('the file header counts the -/+ lines of a hunk that look like header lines', () => {
+    expect(fileHeads(lines).get(0)).toEqual({ path: 'q.sql', add: 1, del: 1 });
+    expect(fileHeads(lines).get(7)).toEqual({ path: 'r.sql', add: 0, del: 0 });
   });
 });

@@ -219,7 +219,9 @@ describe('TailnetCardView', () => {
 
   test('Use tailnet with the table of both lists', () => {
     const html = card(view());
-    expect(html).toContain('This deck on the tailnet: deck.tail1234.ts.net (100.64.0.1, fd7a::1)');
+    expect(html).toContain(
+      'This deck on the tailnet: <code class="fd-tailnet-addr">deck.tail1234.ts.net</code> (<code class="fd-tailnet-addr">100.64.0.1, fd7a::1</code>)',
+    );
     expect(html).toContain('Board address');
     expect(html).toContain('Link address');
     expect(html).toContain('Now');

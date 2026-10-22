@@ -1,4 +1,7 @@
-/* DL-178: the Tailnet card of Settings → Deck and the guided Add station dialog. */
+/* DL-178: the Tailnet card of Settings → Deck and the guided Add station dialog
+   ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). The primitives come from base.css. */
+
+/* ════════════════════ the Tailnet card (Settings → Deck) ═════════════════════ */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
@@ -8,65 +11,214 @@
 }
 .fd-tailnet h2 {
   margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: 1.15;
+}
+.fd-tailnet h3 {
+  margin: 0;
+  font-size: var(--fs-ui);
+  font-weight: 600;
 }
 .fd-tailnet p {
   margin: 0;
 }
+/* A switch field: the field grid of the settings (§4.7): the label (200px), then the switch, and
+   the help and the state lines under the switch. The label keeps the switch inside it (its name);
+   the grid puts the text in the label column. */
 .fd-tailnet label.fd-tailnet-switch {
-  display: flex;
+  display: grid;
+  grid-template-columns: 200px auto;
+  column-gap: var(--sp-5);
+  justify-content: start;
   align-items: center;
-  gap: var(--sp-2);
+  min-height: var(--ctl-h);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1.25;
 }
+.fd-tailnet label.fd-tailnet-switch > .fd-switch {
+  grid-row: 1;
+  grid-column: 2;
+}
+.fd-tailnet-auto > :not(label),
+.fd-tailnet-cert > :not(label, h3) {
+  margin-left: calc(200px + var(--sp-5));
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+}
+/* Narrow screens: the label goes above its switch, like the settings fields. */
+@media (max-width: 720px) {
+  .fd-tailnet label.fd-tailnet-switch {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-tailnet label.fd-tailnet-switch > .fd-switch {
+    grid-row: 2;
+    grid-column: 1;
+  }
+  .fd-tailnet-auto > :not(label),
+  .fd-tailnet-cert > :not(label, h3) {
+    margin-left: 0;
+  }
+}
+/* The host and the addresses are code-like values: mono. */
+.fd-tailnet-addr {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-tailnet > button {
+  justify-self: start;
+}
+/* The two settings of the card: sections under a faint rule. */
+.fd-tailnet-auto,
+.fd-tailnet-cert {
+  display: grid;
+  gap: var(--sp-1);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The columns hug their
+   values, 32px apart; an address never breaks. */
 .fd-tailnet-table {
-  border-collapse: collapse;
+  justify-self: start;
+  width: auto;
+  min-width: 480px;
   max-width: 100%;
+  border-collapse: collapse;
 }
 .fd-tailnet-table th,
 .fd-tailnet-table td {
-  padding: var(--sp-1) var(--sp-3) var(--sp-1) 0;
+  height: 36px;
+  padding: var(--sp-1) var(--sp-6) var(--sp-1) 0;
   text-align: left;
-  vertical-align: top;
-  overflow-wrap: anywhere;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-tailnet-table :is(th, td):last-child {
+  padding-right: 0;
+}
+.fd-tailnet-table th:first-child {
+  width: 120px;
+}
+.fd-tailnet-table thead th {
+  height: 28px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.fd-tailnet-table tbody th {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.fd-tailnet-table td {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.fd-tailnet-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+/* A phone: each row stacks: its name, then "Board" and "Link" with their addresses. A list of
+   addresses wraps only between two addresses. */
+@media (max-width: 640px) {
+  .fd-tailnet-table,
+  .fd-tailnet-table tbody {
+    display: block;
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+  }
+  .fd-tailnet-table thead {
+    display: none;
+  }
+  .fd-tailnet-table tr {
+    display: grid;
+    gap: var(--sp-1);
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .fd-tailnet-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .fd-tailnet-table th,
+  .fd-tailnet-table td {
+    display: flex;
+    gap: var(--sp-3);
+    width: auto;
+    height: auto;
+    padding: 0;
+    border: 0;
+  }
+  .fd-tailnet-table th:first-child {
+    width: auto;
+  }
+  .fd-tailnet-table td {
+    white-space: normal;
+  }
+  .fd-tailnet-table td::before {
+    content: attr(data-label);
+    flex: none;
+    width: 40px;
+    color: var(--faint);
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+  }
 }
 .fd-fingerprint {
   font-family: var(--font-data);
   word-break: break-all;
 }
-.fd-pair-request {
-  display: grid;
-  gap: var(--sp-2);
-  min-width: 0;
-  margin: var(--sp-3) 0;
-  padding: var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-}
-.fd-pair-request p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.fd-pair-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-}
-@media (max-width: 600px) {
-  .fd-pair-actions > button {
-    flex: 1 1 100%;
-  }
-}
 
-/* ── the guided Add station dialog ──────────────────────────────── */
-.fd-int-dialog > * {
+/* ═══════════════════════ the guided Add station dialog ═══════════════════════ */
+/* The dialog frame (§4.7) comes from the shared .fd-dialog in shell.css. */
+.fd-overlay .fd-dialog:has(> .fd-add-dialog) {
+  position: relative;
+  gap: var(--sp-4);
+  width: min(560px, 92vw);
+}
+/* The title keeps clear of the close button. */
+.fd-overlay .fd-dialog:has(> .fd-add-dialog) > h2 {
+  padding-right: var(--sp-6);
+}
+/* Close: an x icon button in the header row, centered on the title line (20px padding, the
+   15px title at line-height 1.15). Last in the tab order: the first choice gets the focus. */
+.fd-add-close {
+  position: absolute;
+  top: calc(20px + var(--fs-heading) * 0.575);
+  right: 14px;
+  transform: translateY(-50%);
+}
+.fd-int-dialog > :where(*) {
   min-width: 0;
+}
+.fd-add-dialog {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-add-dialog > :where(*) {
+  min-width: 0;
+}
+.fd-add-dialog :where(button:not([class])):hover:not(:disabled) {
+  background: var(--raised-hi);
+}
+.fd-add-back {
+  display: flex;
+  margin: calc(-1 * var(--sp-2)) 0 0 -8px;
 }
 .fd-add-flow {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
 }
-.fd-add-flow > *,
+.fd-add-flow > :where(*),
 .fd-add-flow p,
 .fd-add-flow h3,
 .fd-add-flow h4 {
@@ -74,11 +226,30 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.fd-add-flow h3 {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
 .fd-add-flow > div:not([class]) {
   display: flex;
 }
-.fd-add-small {
+.fd-add-flow > label {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  margin-bottom: calc(-1 * var(--sp-2));
+}
+.fd-add-flow > textarea {
+  width: 100%;
+  font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+.fd-add-flow code {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-add-small {
+  font-size: var(--fs-meta);
 }
 .fd-add-top {
   display: flex;
@@ -87,39 +258,101 @@
   justify-content: space-between;
   gap: var(--sp-2) var(--sp-3);
 }
+/* A text button is a link: --focus, no fill. */
 .fd-add-text-btn {
   height: auto;
+  min-height: 0;
   padding: var(--sp-1) 0;
   background: transparent;
   border-color: transparent;
-  color: var(--m-comet);
+  color: var(--focus);
+  font-weight: 500;
 }
 .fd-add-text-btn:hover:not(:disabled) {
+  background: transparent;
   border-color: transparent;
   text-decoration: underline;
 }
+/* On touch the text button keeps the 44px target of every control (§6). */
+@media (pointer: coarse) {
+  .fd-add-text-btn {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-1);
+  }
+}
 
-/* the start screen */
+/* ── the start screen: the question and the ways to add a station ── */
+.fd-add-question {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+}
+.fd-add-choices {
+  display: grid;
+  gap: var(--sp-2);
+}
 .fd-add-choice {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-content: stretch;
-  gap: var(--sp-1);
-  justify-items: start;
+  grid-template-columns: 16px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: var(--sp-3);
   width: 100%;
   height: auto;
-  min-height: var(--tap-min);
-  padding: var(--sp-3) var(--sp-4);
+  min-height: 56px;
+  padding: 10px var(--sp-3);
+  background: var(--raised-hi);
+  border-radius: var(--r-card);
+  color: var(--text);
   text-align: left;
   line-height: 1.35;
 }
+.fd-add-choice:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--raised-hi) 92%, var(--text));
+}
+.fd-add-choice > .fd-icon {
+  color: var(--faint);
+  transition: transform var(--t-fast);
+}
+.fd-add-choice:hover:not(:disabled) > .fd-icon {
+  color: var(--text);
+  transform: translateX(2px);
+}
+/* The icon alone, no tile (no box in the choice box). */
+.fd-add-choice-icon {
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+}
+.fd-add-choice-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
 .fd-add-choice-title {
-  font-size: var(--fs-title);
+  font-size: var(--fs-ui);
   font-weight: 600;
 }
 .fd-add-choice-note {
   color: var(--dim);
+  font-size: var(--fs-meta);
   font-weight: 400;
+}
+/* No computer to add: a quiet choice without a fill or a chevron (it still opens the tailnet
+   view, which says why). */
+.fd-add-choice[data-dim="true"] {
+  background: transparent;
+}
+.fd-add-choice[data-dim="true"]:hover:not(:disabled) {
+  background: var(--raised-hi);
+}
+.fd-add-choice[data-dim="true"] .fd-add-choice-title {
+  color: var(--dim);
+  font-weight: 500;
+}
+.fd-add-choice[data-dim="true"] .fd-add-choice-icon,
+.fd-add-choice[data-dim="true"] .fd-add-choice-note {
+  color: var(--faint);
 }
 .fd-int-dialog > h3 {
   margin: 0;
@@ -127,26 +360,35 @@
 }
 .fd-add-fold {
   display: grid;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   min-width: 0;
 }
 .fd-add-fold > summary {
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
   color: var(--dim);
-  font-weight: 500;
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
+.fd-add-fold > summary:hover,
 .fd-add-fold[open] > summary {
-  margin-bottom: var(--sp-2);
+  color: var(--text);
 }
 .fd-add-fold .fd-add-text-btn {
   justify-self: start;
+  margin-left: 20px;
+}
+.fd-add-fold > .fd-note {
+  margin: 0 0 var(--sp-1) 20px;
 }
 
-/* the steps */
+/* ── the steps: numbered marks joined by a rule ──────────────────── */
 .fd-steps {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-4);
+  align-items: center;
+  gap: var(--sp-2) 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -154,8 +396,18 @@
 .fd-steps-item {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 6px;
   color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-steps-item + .fd-steps-item::before {
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 1px;
+  margin: 0 var(--sp-1) 0 2px;
+  background: var(--border);
 }
 .fd-steps-item[data-state="current"] {
   color: var(--text);
@@ -169,49 +421,56 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1.5px solid var(--faint);
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
   border-radius: 50%;
-  font-size: var(--fs-data);
+  font-size: var(--fs-micro);
+  font-weight: 600;
   line-height: 1;
 }
 .fd-steps-item[data-state="current"] .fd-steps-mark {
-  background: var(--act);
-  border-color: var(--act);
-  color: var(--act-ink);
+  background: var(--ink-fill);
+  border-color: var(--ink-fill);
+  color: var(--ink-on);
 }
 .fd-steps-item[data-state="done"] .fd-steps-mark {
-  border-color: var(--ok);
+  background: var(--ok-bg);
+  border-color: transparent;
   color: var(--ok);
 }
 
-/* the window chip */
+/* ── the request window chip: an open window is a blue state ────── */
 .fd-add-chip {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-1) var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
-  background: var(--act-bg);
-  border: 1px solid var(--border);
+  min-height: 24px;
+  padding: 0 var(--sp-1) 0 10px;
+  background: var(--focus-bg);
   border-radius: var(--r-pill);
-  font-size: var(--fs-data);
+  color: var(--focus);
+  font-size: var(--fs-meta);
+  font-weight: 500;
 }
 .fd-add-chip .fd-add-text-btn {
-  padding: 0;
+  padding: 0 6px;
+  color: var(--text);
+  font-size: var(--fs-meta);
 }
 
-/* the devices */
+/* ── the devices: rows with a reach dot ───────────────────────────── */
 .fd-add-group {
   display: grid;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   min-width: 0;
 }
 .fd-add-group h3,
-.fd-add-others h3 {
-  font-size: var(--fs-body);
+.fd-add-others h3,
+.fd-reports h3 {
   color: var(--dim);
+  font-size: var(--fs-meta);
   font-weight: 600;
 }
 .fd-add-others {
@@ -222,11 +481,6 @@
   display: grid;
   gap: var(--sp-2);
   min-width: 0;
-}
-.fd-reports h3 {
-  font-size: var(--fs-body);
-  color: var(--dim);
-  font-weight: 600;
 }
 .fd-reports-window,
 .fd-reports-confirm {
@@ -250,18 +504,24 @@
   align-items: center;
   gap: var(--sp-3);
   min-width: 0;
-  padding: var(--sp-2) 0;
-  border-bottom: 1px solid var(--border-soft);
+  min-height: 44px;
+  padding: 6px 0;
 }
+.fd-add-device + .fd-add-device {
+  border-top: 1px solid var(--border-soft);
+}
+/* Online: a filled --ok dot; offline: a hollow ring. */
 .fd-add-dot {
   flex: none;
   width: 8px;
   height: 8px;
+  margin: 0 2px;
+  border: 1.5px solid var(--faint);
   border-radius: 50%;
-  background: var(--faint);
 }
 .fd-add-dot[data-online="true"] {
   background: var(--ok);
+  border-color: var(--ok);
 }
 .fd-add-device-main {
   display: grid;
@@ -272,13 +532,19 @@
 .fd-add-device-line {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 0 var(--sp-2);
+}
+.fd-add-device-line > strong {
+  font-weight: 600;
 }
 .fd-add-device-os {
   color: var(--dim);
+  font-size: var(--fs-meta);
 }
 .fd-add-device-dns {
   color: var(--faint);
+  font-family: var(--font-data);
   font-size: var(--fs-data);
   overflow-wrap: anywhere;
 }
@@ -286,29 +552,33 @@
   flex: none;
   height: var(--ctl-h-sm);
   padding: 0 var(--sp-3);
+  font-size: var(--fs-meta);
 }
 
-/* the command and the secret */
+/* ── the command and the secret: a code block with its buttons at the right ── */
 .fd-add-command {
   display: grid;
-  gap: var(--sp-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
   min-width: 0;
-  padding: var(--sp-3);
+  padding: 10px 10px 10px var(--sp-3);
   background: var(--code);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-card);
 }
 .fd-add-command code,
 .fd-add-mask {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
   user-select: all;
 }
 .fd-add-mask {
-  user-select: none;
+  color: var(--faint);
   letter-spacing: 0;
+  user-select: none;
 }
 .fd-add-command textarea {
   width: 100%;
@@ -320,29 +590,40 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
+.fd-add-command-actions > button {
+  height: var(--ctl-h-sm);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
+}
+@media (max-width: 480px) {
+  .fd-add-command {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fd-add-command-actions {
+    justify-content: flex-start;
+  }
 }
 
-/* the wait and the end */
+/* ── the wait and the end ─────────────────────────────────────────── */
 .fd-add-wait {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   color: var(--dim);
+  font-size: var(--fs-meta);
 }
+/* A wait is a blue state (§2.2 queued, verifying), never yellow. */
 .fd-add-spinner {
   flex: none;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--act);
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--focus);
   border-radius: 50%;
-  animation: fd-add-spin 0.9s linear infinite;
-}
-@keyframes fd-add-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: fd-turn 0.9s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .fd-add-spinner {
@@ -354,12 +635,54 @@
   font-weight: 600;
 }
 
+/* ── a pairing request: a decision card (the approval card of §4.5) ── */
+.fd-pair-request {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-3) 19px;
+  background: var(--raised);
+  border-radius: var(--r-panel);
+  outline: 1px solid var(--act-line);
+  outline-offset: -1px;
+  box-shadow:
+    inset 3px 0 0 var(--act),
+    var(--shadow-lift);
+}
+/* A setup report is information, not a decision: no needs-you outline. */
+.fd-pair-request.fd-report {
+  outline: 0;
+  box-shadow:
+    inset 3px 0 0 var(--faint-decor),
+    var(--shadow-lift);
+}
+.fd-pair-request h4 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.fd-pair-request p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fd-pair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+@media (max-width: 600px) {
+  .fd-pair-actions > button {
+    flex: 1 1 100%;
+  }
+}
+
 /* the code to compare */
 .fd-add-fingerprint {
-  padding: var(--sp-3);
+  padding: 10px var(--sp-3);
   background: var(--code);
-  border: 2px solid var(--act);
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-card);
 }
 .fd-add-fingerprint .fd-fingerprint {
   display: block;
@@ -373,6 +696,7 @@
 .fd-add-scopes {
   margin: 0;
   padding-left: var(--sp-5);
+  color: var(--dim);
 }
 
 /* DL-190: the trust badge and the note of a device link entry. */

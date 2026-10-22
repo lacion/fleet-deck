@@ -354,8 +354,10 @@ describe('session header (DL-140)', () => {
   test('a rate limit of 80% or more shows a chip; 100% is a hazard (R4.2)', () => {
     const limited = (used: number) =>
       session({ rate_limits: [{ scope: 'five_hour', used_percent: used, resets_at: null }] });
-    expect(header(limited(85))).toContain('data-tone="act">Limit 85% · five_hour</span>');
-    expect(header(limited(100))).toContain('data-tone="hazard">Limit reached · five_hour</span>');
+    expect(header(limited(85))).toContain('data-tone="act">Limit 85% · 5-hour window</span>');
+    expect(header(limited(100))).toContain(
+      'data-tone="hazard">Limit reached · 5-hour window</span>',
+    );
     expect(header(limited(79))).not.toContain('Limit ');
     expect(header(session())).not.toContain('Limit ');
   });
@@ -439,20 +441,30 @@ describe('session header (DL-140)', () => {
   });
 
   test('the mode fact shows the mode with its tone, and is absent without a mode or for default', () => {
+    // The chip shows the sentence-case name of the mode; the title keeps the raw id.
+    const label: Readonly<Record<string, string>> = {
+      plan: 'Plan',
+      acceptEdits: 'Accept edits',
+      auto: 'Auto',
+      dontAsk: 'Don&#x27;t ask',
+      bypassPermissions: 'Bypass permissions',
+      'danger-full-access': 'danger-full-access',
+    };
     const fact = (mode: string) =>
       new RegExp(
-        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode">(<svg[^>]*>.*?</svg>)?${mode}</span>`,
+        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode: ${mode}">(<svg[^>]*>.*?</svg>)${label[mode]}</span>`,
       );
     const tone = (mode: string) => fact(mode).exec(header(session({ mode })))?.[1];
     expect(tone('plan')).toBe('plan');
     // DL-171: hazard red only for a mode that skips the approvals; the other modes have no tone.
     for (const risky of ['dontAsk', 'bypassPermissions', 'danger-full-access']) {
       expect(tone(risky)).toBe('hazard');
-      // a risky mode has the shield icon
-      expect(fact(risky).exec(header(session({ mode: risky })))?.[2]).toContain('<svg');
+      // a risky mode has the shield-alert icon
+      expect(fact(risky).exec(header(session({ mode: risky })))?.[2]).toContain('shield-alert');
     }
+    // every chip has an icon, like the other place chips; a calm mode has no alert icon
     for (const calm of ['acceptEdits', 'auto', 'plan']) {
-      expect(fact(calm).exec(header(session({ mode: calm })))?.[2]).toBeUndefined();
+      expect(fact(calm).exec(header(session({ mode: calm })))?.[2]).not.toContain('shield-alert');
     }
     for (const calm of ['acceptEdits', 'auto']) {
       expect(fact(calm).test(header(session({ mode: calm })))).toBe(true);
@@ -630,7 +642,7 @@ describe('approval dock (DL-140)', () => {
     const html = dock([request('r1'), request('r2')]);
     expect(html).toContain('Needs you · 2');
     expect(html).toContain('aria-label="Needs you"');
-    expect(html.match(/class="fd-primary"/g)).toHaveLength(2);
+    expect(html.match(/class="fd-decide"/g)).toHaveLength(2);
     expect(html).toContain('Deny');
   });
 
@@ -664,7 +676,9 @@ describe('composer (DL-140)', () => {
   });
 
   test('the buttons keep their texts and the textarea keeps its label', () => {
-    expect(composer()).toMatch(/<\/svg> Send<\/button>/);
+    expect(composer()).toMatch(
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+    );
     expect(composer()).toContain('>Message</label>');
     expect(composer()).toContain('Add image');
     const working = composer({ working: true, steer: true, nativeQueue: false });

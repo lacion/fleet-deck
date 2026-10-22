@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Dialog } from '../integrations/Dialog';
 import type { PairingInvitation, StationView } from '../gen';
 import { type SettingsEnv, useSettings } from '../settings/context';
@@ -7,6 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
+import { ChevronRight, Globe, Icon, type LucideIcon, Send, X } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -49,21 +50,40 @@ function Start({
       alive = false;
     };
   }, [tailnet]);
+  // A tailnet without a computer to add is a quiet choice under the invitation (it still opens
+  // the tailnet view, which says why).
+  const dim = count === 0 || count === 'unavailable';
+  // The move remounts the tailnet choice; when it had the focus, the focus goes to the first
+  // choice, so that Escape and Tab still work inside the dialog.
+  const choices = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (dim && document.activeElement === document.body) {
+      choices.current?.querySelector<HTMLElement>('button')?.focus();
+    }
+  }, [dim]);
+  const tailnetChoice =
+    env === undefined ? null : (
+      <Choice
+        icon={Globe}
+        title="A computer on my tailnet"
+        note={countText(count)}
+        dim={dim}
+        onClick={() => onPick('tailnet')}
+      />
+    );
   return (
     <>
-      <h3>Where is the new station?</h3>
-      {env === undefined ? null : (
-        <button type="button" className="fd-add-choice" onClick={() => onPick('tailnet')}>
-          <span className="fd-add-choice-title">A computer on my tailnet</span>
-          <span className="fd-add-choice-note">{countText(count)}</span>
-        </button>
-      )}
-      <button type="button" className="fd-add-choice" onClick={() => onPick('invite')}>
-        <span className="fd-add-choice-title">Any computer, with a one-time invitation</span>
-        <span className="fd-add-choice-note">
-          The new station connects to this deck. It works behind a router or a firewall.
-        </span>
-      </button>
+      <h3 className="fd-add-question">Where is the new station?</h3>
+      <div className="fd-add-choices" ref={choices}>
+        {dim ? null : tailnetChoice}
+        <Choice
+          icon={Send}
+          title="Any computer, with a one-time invitation"
+          note="The new station connects to this deck. It works behind a router or a firewall."
+          onClick={() => onPick('invite')}
+        />
+        {dim ? tailnetChoice : null}
+      </div>
       <details className="fd-add-fold">
         <summary>Other ways</summary>
         <button type="button" className="fd-add-text-btn" onClick={() => onPick('listen')}>
@@ -71,6 +91,39 @@ function Start({
         </button>
       </details>
     </>
+  );
+}
+
+/** One way to add a station: an icon, the title and a note, and a chevron (none when dim). */
+function Choice({
+  icon,
+  title,
+  note,
+  dim = false,
+  onClick,
+}: {
+  readonly icon: LucideIcon;
+  readonly title: string;
+  readonly note: string;
+  readonly dim?: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="fd-add-choice"
+      data-dim={dim ? 'true' : undefined}
+      onClick={onClick}
+    >
+      <span className="fd-add-choice-icon">
+        <Icon of={icon} />
+      </span>
+      <span className="fd-add-choice-text">
+        <span className="fd-add-choice-title">{title}</span>
+        <span className="fd-add-choice-note">{note}</span>
+      </span>
+      {dim ? null : <Icon of={ChevronRight} />}
+    </button>
   );
 }
 
@@ -100,31 +153,38 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
 
   return (
     <Dialog title="Add station" onClose={close}>
-      {view === 'start' ? null : (
-        <div>
-          <button type="button" className="fd-add-text-btn" onClick={back}>
-            ← Back
-          </button>
-        </div>
-      )}
-      {view === 'start' ? <Start env={env} onPick={setView} /> : null}
-      {view === 'tailnet' && env !== undefined ? (
-        <TailnetPairing env={env} onInvite={() => setView('invite')} />
-      ) : null}
-      {view === 'invite' ? (
-        <InviteView
-          actions={actions}
-          stations={stations}
-          invitation={invitation}
-          setInvitation={setInvitation}
-        />
-      ) : null}
-      {view === 'listen' ? (
-        <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
-      ) : null}
-      <button type="button" onClick={close}>
-        Close
-      </button>
+      <div className="fd-add-dialog">
+        {view === 'start' ? null : (
+          <div className="fd-add-back">
+            <button type="button" className="fd-ghost fd-sm" onClick={back}>
+              ← Back
+            </button>
+          </div>
+        )}
+        {view === 'start' ? <Start env={env} onPick={setView} /> : null}
+        {view === 'tailnet' && env !== undefined ? (
+          <TailnetPairing env={env} onInvite={() => setView('invite')} />
+        ) : null}
+        {view === 'invite' ? (
+          <InviteView
+            actions={actions}
+            stations={stations}
+            invitation={invitation}
+            setInvitation={setInvitation}
+          />
+        ) : null}
+        {view === 'listen' ? (
+          <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
+        ) : null}
+        <button
+          type="button"
+          className="fd-iconbtn fd-add-close"
+          aria-label="Close"
+          onClick={close}
+        >
+          <Icon of={X} />
+        </button>
+      </div>
     </Dialog>
   );
 }

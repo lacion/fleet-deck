@@ -8,6 +8,7 @@ import { useSettings } from '../settings/context';
 import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
 import { resourceWarnings } from '../board/resources';
+import { AgentFields } from './AgentFields';
 import { BranchFields } from './BranchFields';
 import { BrowseSessions } from './BrowseSessions';
 import { CloneAccess } from './CloneAccess';
@@ -21,11 +22,11 @@ import {
   NO_FLEET,
   showFleetFields,
 } from './fleetControl';
-import { ModelField } from './ModelField';
 import { KindChoice, PlacementFields, StationChoice, TypedDirectory } from './PlacementFields';
 import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
+import { CloneFields, PropRow, Seg, type SegOption, SheetHead, SpawnFoot } from './SpawnSheet';
 import {
   AUTO,
   autoOffered,
@@ -34,12 +35,12 @@ import {
   branchProblem,
   importIdProblem,
   knownModels,
+  limitBadge,
   MAX_BATCH_REF,
   moreOptionsOpen,
   type PlacedStart,
   placeStarts,
   projectOfStart,
-  providerChoiceLabel,
   providerKinds,
   type PreflightResult,
   readSetupCmds,
@@ -55,6 +56,20 @@ import {
 } from './spawn';
 import { coarsePointer, type SpawnFormProps } from './spawnFormProps';
 import { useFleetElevation } from './useFleetElevation';
+
+/** The id of the note under the directory that says what is missing. */
+const NEED_ID = 'fd-spawn-need';
+
+/** The workspace choices: a short segment, the full sentence as its tooltip (DL-144). */
+const PLACES: readonly SegOption<'here' | 'worktree' | 'clone'>[] = [
+  { value: 'here', label: 'This directory', title: 'Work in this directory' },
+  { value: 'worktree', label: 'New worktree', title: 'A new worktree on its own branch' },
+  {
+    value: 'clone',
+    label: 'Clone repository',
+    title: 'Clone a repository into a new directory here',
+  },
+];
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
  * model, title and first prompt. One button press sends one command. */
@@ -97,10 +112,13 @@ export function SpawnForm({
   const provider = providers.find((p) => p.instance === instance);
   const now = useNow(givenNow, 30000);
   const meters = rateMeters(sessions, stations);
+  // R4.3: the tightest limit of each instance and the one with the most room, on the provider
+  // choices; the limit of the chosen instance also as a fuel badge from WARN_PERCENT on.
   const limits = new Map(
     providers.map((p) => [p.instance, instanceLimit(meters, stationId, p.instance)]),
   );
   const roomiest = mostRoom(limits);
+  const badge = limitBadge(instanceLimit(meters, stationId, instance), now);
   // The directory as typed or picked; `cwd` is the trimmed text, or `null` when it is empty.
   const [cwdText, setCwd] = useState<string | null>(initialCwd ?? null);
   const byHome = project !== undefined && homes.length > 0;
@@ -266,39 +284,64 @@ export function SpawnForm({
     !refProblem &&
     !fleetBad;
   // Say why the start button is off: a disabled button alone looks like a
-  // button that does nothing (owner report after M3).
-  const missing = [
-    live ? null : 'the board must be live',
-    canDrive ? null : 'your login needs the drive scope',
-    auto || station !== undefined ? null : 'choose a station',
-    hasTarget || (!auto && station === undefined) ? null : 'choose a provider',
-    cwdOk ? null : 'choose a directory (type an absolute path, or Browse… and Use this folder)',
-    cloneReady
+  // button that does nothing (owner report after M3). Each reason shows once, where it belongs:
+  // the board and the scope at the top, the directory under its field, a repository, branch,
+  // setup or grant problem at its field; the footer names the rest. Nothing while a start runs.
+  const dirNote =
+    busy || cwdOk || byHome
       ? null
-      : repoError !== null
-        ? repoError.replace(/\.$/, '')
-        : 'enter the new directory name',
-    branchFields && branchName !== '' && branchProblem(branchName) !== null
-      ? 'fix the branch name'
-      : null,
-    branchFields && branchName !== '' && base.trim() !== '' && baseProblem(base.trim()) !== null
-      ? 'fix the base'
-      : null,
-    setupBad ? 'fix the setup command' : null,
-    fleetBad ? 'fix the grant limits' : null,
-  ].filter((m): m is string => m !== null);
+      : cwd === null
+        ? 'Choose a folder to start.'
+        : 'Type an absolute path (it starts with /).';
+  const scopeNote = actions !== undefined && !canDrive;
+  const missing = (
+    busy
+      ? []
+      : [
+          canDrive || scopeNote ? null : 'your login needs the drive scope',
+          auto || station !== undefined ? null : 'choose a station',
+          hasTarget || (!auto && station === undefined) ? null : 'choose a provider',
+          cwdOk || dirNote !== null ? null : 'choose a directory',
+          cloneReady || repoError !== null ? null : 'enter the new directory name',
+        ]
+  ).filter((m): m is string => m !== null);
+  const describedBy =
+    [
+      scopeNote ? 'fd-spawn-scope' : null,
+      live ? null : 'fd-spawn-live',
+      dirNote === null ? null : NEED_ID,
+      missing.length === 0 ? null : 'fd-spawn-missing',
+    ]
+      .filter((id) => id !== null)
+      .join(' ') || undefined;
+  const startable = ready && importProblem === null;
 
+  // DL-308: a clone is one session: no Batch switch then.
+  const batchShown = place !== 'clone';
   return (
     <section className="fd-spawn" aria-label="New session">
-      <h2>New session</h2>
-      {actions !== undefined && !canDrive ? (
-        <p className="fd-note">Starting sessions needs the drive scope.</p>
+      <SheetHead station={auto ? undefined : station} />
+      {scopeNote ? (
+        <p className="fd-note" id="fd-spawn-scope">
+          Starting sessions needs the drive scope.
+        </p>
       ) : null}
-      {live ? null : <p className="fd-note">The form is off until the board is live.</p>}
+      {live ? null : (
+        <p className="fd-note" id="fd-spawn-live">
+          The form is off until the board is live.
+        </p>
+      )}
       {targets.length === 0 ? (
-        <p>No linked station has reported its providers yet.</p>
+        <p className="fd-empty">No linked station has reported its providers yet.</p>
       ) : (
         <form
+          // ⌘↵ (Ctrl+↵) starts, as the kbd hint of the Start button says.
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && startable) {
+              event.preventDefault();
+              event.currentTarget.requestSubmit();
+            }
+          }}
           onSubmit={(event) => {
             event.preventDefault();
             setRepoSeen(true);
@@ -430,32 +473,31 @@ export function SpawnForm({
             })().finally(() => setBusy(false));
           }}
         >
-          <div className="fd-panel">
-            <h3 className="fd-label">Task</h3>
-            <label>
-              What should the agent do? (optional)
+          <div className="fd-spawn-compose">
+            <label className="fd-spawn-title">
+              <span className="fd-vh">Title (optional)</span>
+              <input
+                value={title}
+                placeholder="Session title (optional)"
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </label>
+            <label className="fd-spawn-task">
+              <span className="fd-vh">What should the agent do? (optional)</span>
               <textarea
-                rows={5}
+                rows={6}
+                placeholder="What should the agent do?"
                 // A phone keeps its keyboard closed until the person taps the field.
                 autoFocus={!coarsePointer()}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
               />
             </label>
-            <label>
-              Title (optional)
-              <input value={title} onChange={(event) => setTitle(event.target.value)} />
-            </label>
-            {place === 'clone' ? null : (
-              <label className="fd-spawn-opt">
-                <input
-                  type="checkbox"
-                  checked={batch}
-                  onChange={(event) => setBatch(event.target.checked)}
-                />
-                Batch: one session in its own worktree for each line (3x task starts three)
-              </label>
-            )}
+            {batch && batchShown ? (
+              <p className="fd-note">
+                One session in its own worktree for each line. 3x task starts three.
+              </p>
+            ) : null}
             {previewing ? (
               <div className="fd-batch-preview" aria-label="Sessions to start">
                 <p className="fd-label">{batchLines.length} sessions, each in its own worktree</p>
@@ -469,9 +511,43 @@ export function SpawnForm({
               </div>
             ) : null}
           </div>
-          <div className="fd-panel">
-            <h3 className="fd-label">Where</h3>
-            <div className="fd-spawn-row">
+          <div className="fd-spawn-props">
+            <PropRow head="Agent">
+              {auto ? (
+                <KindChoice kinds={kinds} value={kind} onChange={setKind} />
+              ) : (
+                <AgentFields
+                  providers={providers}
+                  instance={instance}
+                  onInstance={(next) => {
+                    setInstance(next);
+                    setImportPin(null);
+                    setMode('');
+                    setModel('');
+                  }}
+                  limits={limits}
+                  roomiest={roomiest}
+                  now={now}
+                  badge={badge}
+                  fieldKey={`${stationId}/${instance}`}
+                  model={model}
+                  models={knownModels(sessions, stationId, instance)}
+                  onModel={setModel}
+                  modes={modes}
+                  mode={mode}
+                  onMode={setMode}
+                />
+              )}
+              {mode === 'bypassPermissions' ? (
+                <p className="fd-note fd-spawn-risk">Runs every tool without asking</p>
+              ) : null}
+              {versionWarning(provider) === null ? null : (
+                <p className="fd-note" role="status" data-version-warning>
+                  {versionWarning(provider)}
+                </p>
+              )}
+            </PropRow>
+            <PropRow head={byHome ? 'Home' : 'Station'}>
               <StationChoice
                 homes={byHome ? homes : null}
                 targets={targets}
@@ -485,159 +561,98 @@ export function SpawnForm({
                   setModel('');
                 }}
               />
-              <label>
-                Workspace
-                <select
-                  value={place}
-                  onChange={(event) => {
-                    const next = event.target.value as 'here' | 'worktree' | 'clone';
-                    setPlace(next);
-                    if (next !== 'clone') {
-                      setNameTouched(false);
-                      setNameText('');
-                    }
-                  }}
-                >
-                  <option value="here">Work in this directory</option>
-                  <option value="worktree">A new worktree on its own branch</option>
-                  <option value="clone">Clone a repository into a new directory here</option>
-                </select>
-              </label>
-            </div>
-            {resourceTexts.length > 0 ? (
-              <p className="fd-note" role="status" data-resource-warning>
-                {`This station is low on resources: ${resourceTexts.join('; ')}. You can still start the session.`}
-              </p>
-            ) : null}
-            {byHome ? null : auto ? (
-              <TypedDirectory value={cwdText ?? ''} onChange={setCwd} />
-            ) : (
-              <div className="fd-fieldwrap" role="group" aria-label="Directory">
-                <span className="fd-fieldlabel">Directory</span>
-                <FolderPicker
-                  stationId={stationId}
-                  value={cwdText ?? ''}
-                  onChange={(path) => {
-                    setImportPin(null);
-                    setCwd(path);
-                  }}
-                  list={actions?.list}
-                  sessions={sessions}
-                  label="Directory path"
-                  browseDisabled={!live || !canDrive}
-                  initialOpen={initialListing !== null}
-                  initialListing={initialListing}
+              {resourceTexts.length > 0 ? (
+                <p className="fd-note" role="status" data-resource-warning>
+                  {`This station is low on resources: ${resourceTexts.join('; ')}. You can still start the session.`}
+                </p>
+              ) : null}
+              {placing ? (
+                <PlacementFields
+                  needs={needs}
+                  onNeeds={setNeeds}
+                  prefer={prefer}
+                  onPrefer={setPrefer}
+                  batch={previewing}
+                  spread={spread}
+                  onSpread={setSpread}
                 />
-              </div>
-            )}
-            {placing ? (
-              <PlacementFields
-                needs={needs}
-                onNeeds={setNeeds}
-                prefer={prefer}
-                onPrefer={setPrefer}
-                batch={previewing}
-                spread={spread}
-                onSpread={setSpread}
+              ) : null}
+            </PropRow>
+            <PropRow head="Where">
+              <Seg
+                label="Workspace"
+                value={place}
+                options={PLACES}
+                onChange={(next) => {
+                  setPlace(next);
+                  if (next !== 'clone') {
+                    setNameTouched(false);
+                    setNameText('');
+                  }
+                }}
               />
-            ) : null}
-            {branchFields ? (
-              <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
-            ) : null}
-            {place === 'clone' ? (
-              <>
-                <div className="fd-spawn-url">
-                  <label>
-                    Repository
-                    <input
-                      value={repoText}
-                      placeholder="owner/name, host/owner/name or a URL"
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      onChange={(event) => setRepoText(event.target.value)}
-                      onBlur={() => setRepoSeen(true)}
-                    />
-                  </label>
-                  <CloneAccess
-                    url={cloneUrl}
-                    checking={checking}
-                    result={accessResult}
-                    onCheck={checkAccess}
+              {byHome ? null : auto ? (
+                <TypedDirectory
+                  value={cwdText ?? ''}
+                  onChange={setCwd}
+                  invalid={cwd !== null && !cwdOk}
+                  describedBy={dirNote === null ? undefined : NEED_ID}
+                />
+              ) : (
+                <div className="fd-fieldwrap" role="group" aria-label="Directory">
+                  <FolderPicker
+                    stationId={stationId}
+                    value={cwdText ?? ''}
+                    onChange={(path) => {
+                      setImportPin(null);
+                      setCwd(path);
+                    }}
+                    list={actions?.list}
+                    sessions={sessions}
+                    label="Directory path"
+                    placeholder="Choose a folder"
+                    invalid={cwd !== null && !cwdOk}
+                    describedBy={dirNote === null ? undefined : NEED_ID}
+                    browseDisabled={!live || !canDrive}
+                    initialOpen={initialListing !== null}
+                    initialListing={initialListing}
                   />
                 </div>
-                <p className="fd-note" role={repoError !== null && repoSeen ? 'alert' : undefined}>
-                  {repoError ?? `Clones ${cloneUrl}`}
-                </p>
-                <label>
-                  New directory name
-                  <input
-                    value={cloneName}
-                    onChange={(event) => {
-                      setNameTouched(true);
-                      setNameText(event.target.value);
-                    }}
-                  />
-                </label>
-              </>
-            ) : null}
-          </div>
-          <div className="fd-panel">
-            <h3 className="fd-label">Agent</h3>
-            <div className="fd-spawn-row">
-              {auto ? (
-                <KindChoice kinds={kinds} value={kind} onChange={setKind} />
-              ) : (
-                <>
-                  <label>
-                    Provider
-                    <select
-                      value={instance}
-                      onChange={(event) => {
-                        setInstance(event.target.value);
-                        setImportPin(null);
-                        setMode('');
-                        setModel('');
-                      }}
-                    >
-                      {providers.map((p) => (
-                        <option key={p.instance} value={p.instance}>
-                          {providerChoiceLabel(
-                            p,
-                            limits.get(p.instance) ?? null,
-                            now,
-                            p.instance === roomiest,
-                          )}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Permission mode
-                    <select value={mode} onChange={(event) => setMode(event.target.value)}>
-                      <option value="">Station default</option>
-                      {modes.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <ModelField
-                    key={`${stationId}/${instance}`}
-                    value={model}
-                    models={knownModels(sessions, stationId, instance)}
-                    onChange={setModel}
-                  />
-                </>
               )}
-            </div>
-            {versionWarning(provider) === null ? null : (
-              <p className="fd-note" role="status" data-version-warning>
-                {versionWarning(provider)}
-              </p>
-            )}
+              {dirNote === null ? null : (
+                <p className="fd-note fd-spawn-need" id={NEED_ID}>
+                  {dirNote}
+                </p>
+              )}
+              {branchFields ? (
+                <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
+              ) : null}
+              {place === 'clone' ? (
+                <CloneFields
+                  repoText={repoText}
+                  onRepo={setRepoText}
+                  onRepoSeen={() => setRepoSeen(true)}
+                  access={
+                    <CloneAccess
+                      url={cloneUrl}
+                      checking={checking}
+                      result={accessResult}
+                      onCheck={checkAccess}
+                    />
+                  }
+                  repoError={repoError}
+                  repoAlert={repoSeen}
+                  cloneUrl={cloneUrl}
+                  cloneName={cloneName}
+                  onName={(name) => {
+                    setNameTouched(true);
+                    setNameText(name);
+                  }}
+                />
+              ) : null}
+            </PropRow>
           </div>
-          <details className="fd-panel fd-spawn-options" open={optionsOpen}>
+          <details className="fd-spawn-options" open={optionsOpen}>
             <summary
               className="fd-label"
               onClick={(event) => {
@@ -709,47 +724,33 @@ export function SpawnForm({
             </p>
             {importProblem === null ? null : <p role="alert">{importProblem}</p>}
           </details>
-          <div className="fd-spawn-submit">
-            <div className="fd-spawn-status">
-              {busy || missing.length === 0 ? null : (
-                <p className="fd-note" id="fd-spawn-missing" data-missing>
-                  To start: {missing.join('; ')}.
-                </p>
-              )}
-              {outcome === null ? null : (
-                <div className="fd-outcome">
-                  <p role={outcome.ok ? 'status' : 'alert'}>{outcome.text}</p>
-                  {outcome.sessionId !== null && station !== undefined ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onOpen({
-                          station_id: station.station_id,
-                          session_id: outcome.sessionId ?? '',
-                        })
-                      }
-                    >
-                      Open the new session
-                    </button>
-                  ) : null}
-                </div>
-              )}
-            </div>
-            <button
-              type="submit"
-              className="fd-primary"
-              disabled={!ready || importProblem !== null}
-              aria-describedby={missing.length === 0 ? undefined : 'fd-spawn-missing'}
-            >
-              {busy
+          <SpawnFoot
+            batchShown={batchShown}
+            batch={batch}
+            onBatch={setBatch}
+            missing={missing}
+            describedBy={describedBy}
+            outcome={outcome}
+            onOpenNew={
+              outcome?.sessionId != null && station !== undefined
+                ? () =>
+                    onOpen({
+                      station_id: station.station_id,
+                      session_id: outcome.sessionId ?? '',
+                    })
+                : null
+            }
+            disabled={!startable}
+            label={
+              busy
                 ? 'Starting…'
                 : importing
                   ? 'Import session'
                   : previewing
                     ? `Start ${batchLines.length} sessions`
-                    : 'Start session'}
-            </button>
-          </div>
+                    : 'Start session'
+            }
+          />
         </form>
       )}
       {browsing && browse !== null && station !== undefined ? (

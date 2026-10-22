@@ -9,7 +9,7 @@ import {
 } from 'react';
 import type { ImageInput } from '../gen';
 import { useDismiss } from '../ui/dismiss';
-import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
+import { ArrowUp, ChevronDown, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
@@ -48,6 +48,10 @@ type Props = {
   /** B8: the Claude results that the next prompt carries, and the removal of one. */
   readonly chips?: readonly ShellChip[];
   readonly onRemoveChip?: (id: string) => void;
+  /** The short model name of the session (`Sonnet 5.5`): the model chip of the toolbar. */
+  readonly model?: string;
+  /** Opens the model picker of the session menu; absent: the chip only shows the model. */
+  readonly onModel?: () => void;
 };
 
 /** The most rows the text box grows to. */
@@ -513,6 +517,20 @@ export function Composer(props: Props) {
             }}
           />
         </label>
+        {props.model === undefined ? null : props.onModel === undefined ? (
+          <span className="fd-composer-model">{props.model}</span>
+        ) : (
+          <button
+            type="button"
+            className="fd-sm fd-composer-model"
+            aria-label={`Model: ${props.model}`}
+            title="Change the model"
+            onClick={props.onModel}
+          >
+            {props.model}
+            <Icon of={ChevronDown} size={12} />
+          </button>
+        )}
         {reason ? (
           <span className="fd-composer-note">{reason}</span>
         ) : props.working && !props.nativeQueue ? (
@@ -528,17 +546,28 @@ export function Composer(props: Props) {
           ) : props.working ? (
             <>
               {props.steer ? (
-                <button type="button" disabled={blocked} onClick={() => send('steer')}>
+                <button
+                  type="button"
+                  className="fd-ghost"
+                  disabled={blocked}
+                  onClick={() => send('steer')}
+                >
                   Steer now
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>
                 Queue follow-up
+                <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                  ↵
+                </span>
               </button>
             </>
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
               <Icon of={ArrowUp} size={14} /> Send
+              <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                ↵
+              </span>
             </button>
           )}
         </div>

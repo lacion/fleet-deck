@@ -55,7 +55,7 @@ test('the board pairs both stations and lists their Claude and Codex agents', as
   await phone.pair(alpha, bravo);
   for (const name of ['alpha', 'bravo']) {
     const st = phone.stationCard(name);
-    await expect(st).toContainText('Link up');
+    await expect(st).toContainText('online');
     await expect(phone.provider(name, PROVIDER)).toContainText('Claude 2.1.999');
     await expect(phone.provider(name, CODEX)).toContainText('Codex 0.160.999');
   }
@@ -66,7 +66,10 @@ test('the spawn form offers the Codex modes that the station reports', async () 
   const page = phone.page;
   await (await phone.bar()).getByRole('link', { name: 'New' }).click();
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByRole('combobox', { name: 'Provider' }).selectOption({ label: CODEX_LABEL });
+  await form
+    .getByRole('radiogroup', { name: 'Provider' })
+    .locator('label', { hasText: CODEX_LABEL })
+    .click();
   const modes = await form.getByLabel('Permission mode').locator('option').allTextContents();
   expect(modes).toContain('untrusted/read-only');
   expect(modes).toContain('untrusted/workspace-write');
@@ -78,8 +81,8 @@ test('a Codex session on alpha asks for an approval that the needs-you rail answ
   const page = phone.page;
   const id = await phone.spawn(alpha, CODEX_LABEL, 'Codex approval', 'ask echo hi');
   await expect(phone.card(id)).toContainText('gpt-sim-1');
-  // The place is in the callsign tooltip of the strip (ui-pass wave 1).
-  await expect(phone.card(id).locator('.fd-strip-call')).toHaveAttribute(
+  // The place is in the tooltip of the strip's where field (DESIGN-SYSTEM §4.1).
+  await expect(phone.card(id).locator('.fd-strip-where')).toHaveAttribute(
     'title',
     `Branch: ${BRANCH}`,
   );
@@ -217,10 +220,10 @@ test('a station link drop shows the station unreachable until it returns', async
   await phone.fleet();
   await bravo.stop();
   await phone.stations(2);
-  await expect(phone.stationCard('bravo')).toContainText('Unreachable');
-  await expect(phone.stationCard('alpha')).toContainText('Link up');
+  await expect(phone.stationCard('bravo')).toContainText('offline');
+  await expect(phone.stationCard('alpha')).toContainText('online');
   await bravo.start();
-  await expect(phone.stationCard('bravo')).toContainText('Link up');
+  await expect(phone.stationCard('bravo')).toContainText('online');
   await phone.fleet();
   await expect(page.locator('.fd-strip')).toHaveCount(4);
   phone.expectRouted({

@@ -179,8 +179,8 @@ describe('the list view model (B7)', () => {
     expect(entryTitle(native('a', { title: ' Fix it ' }))).toBe('Fix it');
     expect(entryTitle(native('a', { first_prompt: 'one\n  two' }))).toBe('one two');
     expect(entryTitle(native('abc'))).toBe('abc');
-    expect(ageText(1_000_000, 1_000_000 + 5 * 60_000)).toBe('5m ago');
-    expect(ageText(1_000_000, 1_000_000 + 2 * 86_400_000)).toBe('2d ago');
+    expect(ageText(1_000_000, 1_000_000 + 5 * 60_000)).toBe('5 min ago');
+    expect(ageText(1_000_000, 1_000_000 + 2 * 86_400_000)).toBe('2 d ago');
     expect(ageText(1_000_000, 1_000_000 + 1000)).toBe('now');
     expect(sizeText(512)).toBe('512 B');
     expect(sizeText(12_345)).toBe('12.3 KB');

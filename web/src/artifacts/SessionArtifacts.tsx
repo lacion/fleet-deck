@@ -95,7 +95,7 @@ export function SessionArtifacts({
   }
   return (
     <section className="fd-art" aria-label="Artifacts">
-      <h3 className="fd-label">Artifacts</h3>
+      <h3 className="fd-vh">Artifacts</h3>
       <SessionArtifactsList
         state={state}
         now={now}

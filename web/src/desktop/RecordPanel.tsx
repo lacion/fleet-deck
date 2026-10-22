@@ -71,7 +71,7 @@ export function RecordPanel({
             setError(null);
           }}
         />
-        <button type="button" className="fd-ghost fd-sm" disabled={off} onClick={press}>
+        <button type="button" className="fd-sm" disabled={off} onClick={press}>
           Record
         </button>
       </div>

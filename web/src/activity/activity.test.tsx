@@ -118,7 +118,7 @@ describe('the activity page', () => {
     expect(html).toContain('href="#/s/station-a/a"');
     expect(html).toContain('data-kind="mail"');
     expect(html).toContain('data-kind="approval"');
-    expect(html).toContain('>1m</time>');
+    expect(html).toContain('>1 min</time>');
     expect(html).toContain('aria-label="Channels"');
     expect(html).toContain('aria-label="Activity, newest first"');
   });

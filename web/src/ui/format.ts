@@ -15,6 +15,12 @@ export function modelFamily(model: string | null): ModelFamily | null {
  */
 export function shortModel(model: string | null): string {
   if (model === null || model === '') return 'default';
+  // An OpenAI id: "gpt-6.1-codex" → "GPT-6.1 Codex", "gpt-6" → "GPT-6".
+  const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-(\w+))?/i.exec(model);
+  if (gpt) {
+    const tail = gpt[2];
+    return tail ? `GPT-${gpt[1]} ${tail.charAt(0).toUpperCase()}${tail.slice(1)}` : `GPT-${gpt[1]}`;
+  }
   const family = modelFamily(model);
   if (family === null) return model;
   // A `[1m]` suffix is not part of the version (it hid the minor version).
@@ -70,3 +76,16 @@ const RISKY_MODES: readonly string[] = ['dontAsk', 'bypassPermissions', 'danger-
 
 export const isRiskyMode = (mode: string | null | undefined): boolean =>
   mode !== null && mode !== undefined && RISKY_MODES.includes(mode);
+
+/** The sentence-case names of the permission modes; an unknown mode shows its raw id. */
+const MODE_LABELS: Readonly<Record<string, string>> = {
+  default: 'Default',
+  plan: 'Plan',
+  acceptEdits: 'Accept edits',
+  dontAsk: "Don't ask",
+  auto: 'Auto',
+  bypassPermissions: 'Bypass permissions',
+};
+
+/** `acceptEdits` → `Accept edits`; a mode outside the list stays as it is. */
+export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;

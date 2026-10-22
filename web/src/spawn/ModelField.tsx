@@ -1,36 +1,55 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import type { ModelChoice } from '../gen';
+import { Icon, type LucideIcon, Sparkles } from '../ui/icons';
 
 const OTHER = '__other__';
 
+/** Where the list of models comes from: the title of the select. */
+const FROM = 'From the last session of this provider on this station.';
+
 /**
- * The model field of the spawn form (DL-151). With a list of models that the
- * provider reported, a select with "Provider default" and "Other…" (which
- * shows the free-text input); without one, the free-text input. The parent
- * gives the component a `key` of the station and the provider instance, so a
- * change of either closes "Other…".
+ * A select pill of the Agent row with a leading icon (DESIGN-SYSTEM §4.6, concept B): the icon
+ * sits inside the pill, at its left edge; the select keeps its own name.
+ */
+export function PillWrap({
+  icon,
+  children,
+}: {
+  readonly icon: LucideIcon;
+  readonly children: ReactNode;
+}) {
+  return (
+    <span className="fd-spawn-pillwrap">
+      <Icon of={icon} size={14} />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The model field of the spawn form (DL-151): a compact pill in the Agent row of the sheet
+ * (DESIGN-SYSTEM §4.6). A select with "Default model", the models that the provider reported (when
+ * it reported a list) and "Other…", which shows the free-text input. The field name is the
+ * `aria-label`: the row has no captions. The parent gives the component a `key` of the station
+ * and the provider instance, so a change of either closes "Other…".
  */
 export function ModelField(props: {
   value: string;
   models: readonly ModelChoice[] | null;
   onChange: (model: string) => void;
 }) {
-  const [other, setOther] = useState(false);
   const { value, models, onChange } = props;
-  if (models === null) {
-    return (
-      <label>
-        Model (optional)
-        <input value={value} onChange={(event) => onChange(event.target.value)} />
-      </label>
-    );
-  }
+  // A value that is not in the list (typed before a station change) stays visible under "Other…".
+  const [other, setOther] = useState(
+    () => value !== '' && !(models ?? []).some((m) => m.value === value),
+  );
   return (
     <>
-      <label>
-        Model (optional)
+      <PillWrap icon={Sparkles}>
         <select
           aria-label="Model (optional)"
+          className="fd-sm fd-spawn-pill"
+          title={models === null ? 'Model' : FROM}
           value={other ? OTHER : value}
           onChange={(event) => {
             const next = event.target.value;
@@ -43,22 +62,26 @@ export function ModelField(props: {
             onChange(next);
           }}
         >
-          <option value="">Provider default</option>
-          {models.map((m) => (
+          <option value="">Default model</option>
+          {(models ?? []).map((m) => (
             <option key={m.value} value={m.value} title={m.description ?? undefined}>
               {m.label}
             </option>
           ))}
           <option value={OTHER}>Other…</option>
         </select>
-      </label>
+      </PillWrap>
       {other ? (
-        <label>
-          Model id or alias
-          <input value={value} onChange={(event) => onChange(event.target.value)} />
-        </label>
+        <input
+          className="fd-sm fd-spawn-pill fd-spawn-model"
+          aria-label="Model id or alias"
+          placeholder="Model id or alias"
+          spellCheck={false}
+          autoCapitalize="off"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
       ) : null}
-      <p className="fd-note">From the last session of this provider on this station.</p>
     </>
   );
 }

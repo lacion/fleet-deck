@@ -472,11 +472,10 @@ describe('the wall for a display login', () => {
     expect(html).toContain('This artifact is not available.');
   });
 
-  test('the station row shows the reduced resources without a disk label', () => {
+  test('the station row shows the load and the memory in one short line, without the disk', () => {
     const html = wall({});
-    expect(html).toContain('CPU load 2.5 on 8 cores');
-    expect(html).toContain('Memory ');
-    expect(html).toMatch(/Disk: [^<]*free of/);
+    expect(html).toContain('CPU 2.5/8 · Mem 8.0/16.0 GB');
+    expect(html).not.toContain('Disk');
   });
 
   test('the side area reads the same resources', () => {
@@ -497,7 +496,7 @@ describe('the wall for a display login', () => {
         now={1}
       />,
     );
-    expect(html).toContain('CPU load 0.5 on 4 cores');
+    expect(html).toContain('CPU 0.5/4');
   });
 });
 

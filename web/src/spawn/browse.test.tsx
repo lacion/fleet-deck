@@ -95,7 +95,7 @@ describe('the sessions dialog (B7)', () => {
     expect(html).toContain('claude · Claude');
     expect(html).toContain('Fix the checks');
     expect(html).toContain('/home/me/app');
-    expect(html).toContain('5m ago · 2.0 KB');
+    expect(html).toContain('5 min ago · 2.0 KB');
     expect(html).toContain('class="fd-native-open"');
     expect(html).not.toContain('Already in Fleet Deck');
     expect(html).not.toContain('Fleet Deck cannot verify');

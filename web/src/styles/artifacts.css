@@ -1,4 +1,5 @@
-/* R12 (DL-165): the artifacts of the board: the list, the viewer, the share and publish dialogs. */
+/* R12 (DL-165): the artifacts of the board: the list, the viewer, the share and publish dialogs
+   ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). Primitives come from base.css. */
 
 /* ---------- the list ---------- */
 
@@ -10,79 +11,133 @@
 
 .fd-art-list {
   display: grid;
-  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
+  border-top: 1px solid var(--border-soft);
 }
 
+.fd-art-list > li {
+  border-bottom: 1px solid var(--border-soft);
+}
+/* The page header already draws a rule over the global list: no second rule. */
+.fd-art-page .fd-art-list {
+  border-top: 0;
+}
+
+/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns. */
 .fd-art-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
+  grid-template-areas: "icon title where kind version age";
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   width: 100%;
   height: auto;
-  min-height: var(--ctl-h);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-ctl);
+  min-height: var(--row-h);
+  padding: 0 var(--sp-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--text);
-  font-size: var(--fs-body);
+  font-size: var(--fs-ui);
+  font-weight: 400;
+  line-height: 1.4;
   text-align: left;
   text-decoration: none;
+  transition: background-color var(--t-fast);
 }
-.fd-art-row:hover {
+.fd-art-row:hover,
+.fd-art-row:hover:not(:disabled) {
   background: var(--raised);
-  border-color: var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+.fd-art-row:focus-visible {
+  outline-offset: -2px;
+}
+/* Without the where column (the session's tab). */
+.fd-art-row:not(:has(> .fd-art-where)) {
+  grid-template-columns: 14px minmax(0, 1fr) 96px 36px 48px;
+  grid-template-areas: "icon title kind version age";
 }
 
+/* The kind icon sits 8px before the title (the grid gap is 12px). */
+.fd-art-kind {
+  display: inline-flex;
+  grid-area: icon;
+  margin-right: calc(-1 * var(--sp-1));
+  color: var(--faint);
+}
 .fd-art-title {
-  flex: 1 1 160px;
+  grid-area: title;
   min-width: 0;
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fd-art-row > .fd-badge {
+  grid-area: kind;
+  justify-self: start;
+  max-width: 100%;
+}
+.fd-art-row > .fd-art-ver {
+  grid-area: version;
+  justify-self: start;
+}
 
 .fd-art-age,
 .fd-art-where {
-  color: var(--faint);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-}
-
-.fd-art-where {
-  flex-basis: 100%;
   min-width: 0;
   overflow: hidden;
+  color: var(--faint);
+  font-size: var(--fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fd-art-age {
+  grid-area: age;
+  text-align: right;
+}
+.fd-art-where {
+  grid-area: where;
+  color: var(--dim);
+}
 
+/* The filters sit in the page header at the right of the title (§4.3): the search field, then
+   the three selects. A narrow main column wraps them under the title. */
+.fd-art-page > .fd-page-head {
+  flex-wrap: wrap;
+}
+.fd-art-page > .fd-page-head > .fd-page-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .fd-art-filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  justify-content: flex-end;
+  align-items: center;
   gap: var(--sp-2);
-  margin-bottom: var(--sp-3);
+  min-width: 0;
+  margin: 0;
 }
 .fd-art-filters label {
-  display: grid;
-  gap: 6px;
-  color: var(--dim);
-  font-size: 12px;
+  display: flex;
+  flex: none;
+  min-width: 0;
 }
 .fd-art-filters .fd-art-search {
-  flex: 1 1 220px;
-  min-width: 0;
+  width: 240px;
 }
-.fd-art-filters input,
-.fd-art-filters select {
+.fd-art-filters input {
   width: 100%;
   min-width: 0;
+}
+.fd-art-filters select {
+  min-width: 0;
+  max-width: 200px;
 }
 
 .fd-art-state {
@@ -92,6 +147,48 @@
 }
 .fd-art-error {
   color: var(--hazard);
+}
+
+@media (max-width: 640px) {
+  /* Two lines: the icon and the title, then the kind and the version at the left, the age at
+     the right (and the where line on the global page). */
+  .fd-art-row,
+  .fd-art-row:not(:has(> .fd-art-where)) {
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "icon title title title"
+      ". kind version age";
+    gap: var(--sp-1) var(--sp-2);
+    padding: var(--sp-2) 0;
+  }
+  .fd-art-row:has(> .fd-art-where) {
+    grid-template-areas:
+      "icon title title title"
+      ". where where where"
+      ". kind version age";
+  }
+  .fd-art-kind {
+    margin-right: 0;
+  }
+  .fd-art-row:hover,
+  .fd-art-row:hover:not(:disabled) {
+    background: transparent;
+  }
+  .fd-art-filters {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .fd-art-filters .fd-art-search {
+    flex-basis: 100%;
+    width: auto;
+  }
+  .fd-art-filters label:not(.fd-art-search) {
+    flex: 1 1 0;
+  }
+  .fd-art-filters select {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 /* ---------- the viewer ---------- */
@@ -106,7 +203,7 @@
 }
 .fd-art-viewer[data-variant="page"] {
   height: 100%;
-  padding: var(--sp-4) var(--sp-5);
+  padding: var(--sp-3) var(--sp-5) var(--sp-5);
 }
 .fd-pane-body[data-tab="artifacts"] {
   display: flex;
@@ -116,26 +213,36 @@
   flex: 1;
 }
 
+/* The viewer bar: back, the title, the kind and the version, then the actions. */
 .fd-art-bar {
   display: flex;
   flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1) var(--sp-2);
+  min-height: var(--header-h);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
 }
 .fd-art-name {
-  flex: 1 1 160px;
+  flex: 0 1 auto;
   min-width: 0;
-  margin: 0;
+  margin: 0 var(--sp-1) 0 0;
   overflow: hidden;
   font-size: var(--fs-heading);
-  font-weight: 600;
+  font-weight: 640;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fd-art-version {
+  display: inline-flex;
+  margin-right: auto;
+}
 .fd-art-version select {
   height: var(--ctl-h-sm);
-  font-size: 11.5px;
+  padding-left: var(--sp-2);
+  font-size: var(--fs-meta);
 }
 .fd-art-back,
 .fd-art-action {
@@ -144,10 +251,25 @@
   gap: 4px;
   text-decoration: none;
 }
+.fd-art-back {
+  margin-left: calc(-1 * var(--sp-2));
+}
 @media (pointer: coarse) {
   .fd-art-back {
     min-height: 44px;
   }
+}
+
+/* The delete confirmation under the bar. */
+.fd-art-confirm {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--hazard-bg);
+  border-radius: var(--r-card);
+}
+.fd-art-confirm > p {
+  flex: 1 1 240px;
+  margin: 0;
+  color: var(--text);
 }
 
 .fd-art-body {
@@ -161,24 +283,26 @@
   flex: 1;
   width: 100%;
   min-height: 60vh;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
+  background: white; /* ds-exception: an HTML artifact is a web page; it renders on the browser's white */
+  border: 0;
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-lift);
 }
 .fd-art-image {
   align-self: center;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  border-radius: var(--r-card);
 }
 .fd-art-md {
   flex: 1;
   min-width: 0;
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
   overflow: auto;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
+  border: 0;
+  border-radius: var(--r-panel);
 }
 
 /* ---------- the dialogs ---------- */
@@ -194,7 +318,8 @@
   display: grid;
   gap: 6px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-meta);
+  font-weight: 500;
 }
 .fd-share-form input,
 .fd-share-form select {
@@ -210,7 +335,6 @@
 }
 .fd-share-list {
   display: grid;
-  gap: var(--sp-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -220,10 +344,16 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
+  min-height: var(--row-h);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-share-list li:last-child {
+  border-bottom: 0;
 }
 .fd-share-list li[data-state="revoked"],
 .fd-share-list li[data-state="expired"] {
-  opacity: 0.7;
+  color: var(--faint);
 }
 .fd-share-what {
   font-weight: 500;
@@ -241,19 +371,36 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-color: var(--border);
+  background: var(--raised);
   color: var(--dim);
   text-decoration: none;
 }
 .fd-art-chip:hover:not(:disabled) {
+  background: var(--raised-hi);
   color: var(--text);
+  text-decoration: none;
 }
 
+/* Each file row has a fixed 24px trailing slot for "Publish as artifact" (empty when it is not
+   offered), so the size column stays aligned. */
 .fd-files-item {
   display: flex;
   align-items: center;
+  gap: var(--sp-1);
+}
+.fd-files-item > .fd-files-row {
+  flex: 1;
 }
 .fd-files-item > .fd-files-publish {
-  order: 2;
   flex: none;
+  width: var(--ctl-h-sm);
+  color: var(--faint);
+}
+.fd-files-item > button.fd-files-publish:hover:not(:disabled) {
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  .fd-files-item > .fd-files-publish {
+    min-width: var(--tap-min);
+  }
 }

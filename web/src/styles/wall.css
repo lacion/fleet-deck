@@ -1,9 +1,57 @@
-/* R13 P1: `#/wall`, the read-only command center (design omarchy.md §4). One root fills the
-   viewport. The base font is clamp(14px, 100dvh / 80, 28px) times --fd-wall-scale; every size
-   below is in `em` of that font or in `--fd-wall-rem` (the base font, not scaled). */
+/* R13 P1: `#/wall`, the read-only command center (design omarchy.md §4), in the Flight Deck
+   system (docs/v2/DESIGN-SYSTEM.md §4.9): the same tokens, panels and strips as the board, with
+   the type one step larger for distance reading. One root fills the viewport. */
+
+/* ── the wall scope: the board tokens, drawn at the size of the wall ─────────────────────────
+   `--fd-wall-rem` is the layout unit of the tiles (clamp(14px, 100dvh / 80, 28px), the same as
+   `baseRemPx` in wall/shape.ts). `--fd-wall-u` is one board pixel on this wall: 1px on a 1080p
+   screen at scale 1, more on a larger screen or a larger scale. `--fd-wall-t` is one board type
+   pixel: the type is one step larger (--fs-ui 13px → 15px). The size tokens below are the
+   tokens of tokens.css times these units, so every primitive and every area style that uses a
+   token grows with the wall. WallPage also sets `--fd-wall-k` (the same factor as a number) for
+   the primitives with a fixed size (status glyph, holder, mark). */
 .fd-wall-root {
   --fd-wall-scale: 1;
   --fd-wall-rem: clamp(14px, 100dvh / 80, 28px);
+  --fd-wall-u: calc(var(--fd-wall-rem) * var(--fd-wall-scale) / 14);
+  --fd-wall-t: calc(var(--fd-wall-u) * 15 / 13);
+
+  --fs-micro: calc(var(--fd-wall-t) * 11);
+  --fs-meta: calc(var(--fd-wall-t) * 12);
+  --fs-data: calc(var(--fd-wall-t) * 12);
+  --fs-ui: calc(var(--fd-wall-t) * 13);
+  --fs-body: calc(var(--fd-wall-t) * 13);
+  --fs-chat: calc(var(--fd-wall-t) * 14);
+  --fs-title: calc(var(--fd-wall-t) * 14);
+  --fs-heading: calc(var(--fd-wall-t) * 15);
+  --fs-strip-title: calc(var(--fd-wall-t) * 17);
+  --fs-code: calc(var(--fd-wall-t) * 12.5);
+  --fs-page: calc(var(--fd-wall-t) * 20);
+  --fs-hero: calc(var(--fd-wall-t) * 26);
+  --fs-12: calc(var(--fd-wall-t) * 12);
+  --fs-13: calc(var(--fd-wall-t) * 13);
+  --fs-15: calc(var(--fd-wall-t) * 15);
+  --fs-18: calc(var(--fd-wall-t) * 18);
+  --fs-24: calc(var(--fd-wall-t) * 24);
+  /* display numbers: the ambient counts and the pairing code, read across a room */
+  --fs-display: calc(var(--fd-wall-t) * 56);
+
+  --sp-1: calc(var(--fd-wall-u) * 4);
+  --sp-2: calc(var(--fd-wall-u) * 8);
+  --sp-3: calc(var(--fd-wall-u) * 12);
+  --sp-4: calc(var(--fd-wall-u) * 16);
+  --sp-5: calc(var(--fd-wall-u) * 24);
+  --sp-6: calc(var(--fd-wall-u) * 32);
+  --r-chip: calc(var(--fd-wall-u) * 5);
+  --r-ctl: calc(var(--fd-wall-u) * 6);
+  --r-card: calc(var(--fd-wall-u) * 8);
+  --r-panel: calc(var(--fd-wall-u) * 12);
+  --r-sheet: calc(var(--fd-wall-u) * 16);
+  --ctl-h: calc(var(--fd-wall-u) * 28);
+  --ctl-h-sm: calc(var(--fd-wall-u) * 24);
+  --row-h: calc(var(--fd-wall-u) * 36);
+  --strip-h: calc(var(--fd-wall-u) * 44);
+
   position: fixed;
   top: 0;
   left: 0;
@@ -16,8 +64,18 @@
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: calc(var(--fd-wall-rem) * var(--fd-wall-scale));
-  line-height: 1.35;
+  font-size: var(--fs-ui);
+  line-height: 1.4;
+}
+
+/* An ultra-wide wall is read from further away: its unit has a higher floor (`baseRemPx`). */
+.fd-wall-root[data-shape="ultra"] {
+  --fd-wall-rem: clamp(16px, 100dvh / 80, 28px);
+}
+
+/* A phone held upright: the display numbers stay inside the screen. */
+.fd-wall-root[data-shape="portrait"] {
+  --fs-display: min(calc(var(--fd-wall-t) * 56), 18vw);
 }
 
 .fd-wall-root *,
@@ -26,14 +84,78 @@
   box-sizing: border-box;
 }
 
+/* The primitives with a fixed size grow with the wall (they hold no text). */
+.fd-wall-root :is(.fd-dot, .fd-holder, .fd-mark) {
+  zoom: var(--fd-wall-k, 1);
+}
+/* The badge and the count hold text: their box follows the wall units. */
+.fd-wall-root .fd-badge {
+  height: calc(var(--fd-wall-u) * 20);
+  padding: 0 calc(var(--fd-wall-u) * 7);
+}
+.fd-wall-root .fd-count {
+  min-width: calc(var(--fd-wall-u) * 18);
+  height: calc(var(--fd-wall-u) * 18);
+  padding: 0 calc(var(--fd-wall-u) * 5);
+  font-size: var(--fs-micro);
+}
+
+/* ── the frame: a slim header row, then the mode ──────────────────────────────────────────── */
+.fd-wall-root[data-shape] {
+  grid-template-rows: auto minmax(0, 1fr);
+  row-gap: var(--sp-2);
+}
+
+.fd-wall-root[data-shape] > * {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
 .fd-wall-corner {
-  position: absolute;
-  right: var(--sp-3);
-  bottom: var(--sp-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
   margin: 0;
-  color: var(--faint);
-  font-size: 0.7em;
+  padding: 0 var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  line-height: 1;
   pointer-events: none;
+}
+
+.fd-wall-root[data-shape] > .fd-wall-corner {
+  grid-row: 1;
+  justify-self: stretch;
+}
+
+.fd-wall-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text);
+  font-size: var(--fs-title);
+  font-stretch: 115%;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* The connection state: a dot and the word (Live, Reconnecting). */
+.fd-wall-corner [role="status"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.fd-wall-corner [role="status"]::before {
+  content: "";
+  width: calc(var(--fd-wall-u) * 8);
+  height: calc(var(--fd-wall-u) * 8);
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .fd-wall-corner [data-state="live"] {
@@ -48,31 +170,42 @@
   align-self: center;
   justify-self: center;
   margin: 0;
-  font-size: 1.4em;
+  color: var(--dim);
+  font-size: var(--fs-page);
+  font-weight: 500;
 }
 
 .fd-wall-note {
   margin: 0;
   color: var(--faint);
-  font-size: 0.8em;
+  font-size: var(--fs-meta);
 }
 
 .fd-wall-h {
-  margin: 0 0 var(--sp-2);
-  font-size: 1em;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-3);
+  color: var(--text);
+  font-size: var(--fs-title);
   font-weight: 600;
-  color: var(--dim);
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fd-wall-label {
-  margin: var(--sp-2) 0 var(--sp-1);
-  font-size: 0.8em;
+  margin: var(--sp-3) 0 var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
   font-weight: 600;
-  color: var(--faint);
 }
 
-/* mission: the grid of the four areas, one template for each shape */
+/* ── mission: the grid of the four areas, one template for each shape ─────────────────────── */
 .fd-wall-grid {
+  /* The growth of the tile type (`tileGrid`, set by WallPage): the tiles and the needs area. */
+  --fd-wall-tile-k: 1;
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
@@ -92,25 +225,27 @@
   grid-area: stream;
 }
 
+/* The needs area takes the height of its requests; the area under it takes the rest. */
 .fd-wall-root[data-shape="ultra"] .fd-wall-grid {
-  grid-template-columns: 20% minmax(0, 1fr) 20%;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 24%);
+  grid-template-columns: 22% minmax(0, 1fr) 22%;
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
   grid-template-areas:
     "needs tiles side"
-    "needs stream side";
+    "stream tiles side";
 }
 
 .fd-wall-root[data-shape="wide"] .fd-wall-grid {
-  grid-template-columns: 24% minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 26%);
+  grid-template-columns: 26% minmax(0, 1fr);
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr) minmax(0, 30%);
   grid-template-areas:
     "needs tiles"
+    "side tiles"
     "side stream";
 }
 
 .fd-wall-root[data-shape="standard"] .fd-wall-grid {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 24%) minmax(0, 1fr) minmax(0, 20%);
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr) auto;
   grid-template-areas:
     "needs"
     "tiles"
@@ -119,30 +254,45 @@
 
 .fd-wall-root[data-shape="portrait"] .fd-wall-grid {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 26%) minmax(0, 1fr) minmax(0, 20%);
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr) minmax(0, 24%);
   grid-template-areas:
     "needs"
     "tiles"
     "stream";
 }
 
+/* An area is a bay: the panel fill, no edge (depth from fills). */
 .fd-wall-area {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--r-panel);
 }
 
 .fd-wall-area[data-area="tiles"] {
-  background: transparent;
-  border-color: transparent;
   padding: 0;
+  background: transparent;
 }
 
-/* needs */
+/* The needs area grows with its requests, up to most of the screen. Its type grows with the tile
+   type (`--fd-wall-tile-k`): a request never reads smaller than a tile. */
+.fd-wall-area[data-area="needs"] {
+  --fs-meta: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+  --fs-data: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+  --fs-ui: calc(var(--fd-wall-t) * 13 * var(--fd-wall-tile-k));
+  --fs-title: calc(var(--fd-wall-t) * 14 * var(--fd-wall-tile-k));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 64dvh;
+}
+
+.fd-wall-area[data-area="needs"] > .fd-wall-h {
+  margin-bottom: var(--sp-2);
+}
+
+/* ── needs: one needs-you strip per request, with its QR code ─────────────────────────────── */
 .fd-wall-needs {
   display: flex;
   flex-direction: column;
@@ -154,22 +304,36 @@
 
 .fd-wall-root[data-shape="standard"] .fd-wall-needs,
 .fd-wall-root[data-shape="portrait"] .fd-wall-needs {
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 340), 1fr));
 }
 
 .fd-wall-need {
-  display: flex;
-  flex: 1 1 0;
-  gap: var(--sp-2);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-width: 0;
-  justify-content: space-between;
-  padding: var(--sp-2);
-  background: var(--act-bg);
-  border: 1px solid var(--act);
+  background: var(--raised);
   border-radius: var(--r-card);
+  box-shadow: var(--shadow-lift);
+}
+
+.fd-wall-need > .fd-holder {
+  border-radius: var(--r-card) 0 0 var(--r-card);
 }
 
 .fd-wall-need-text {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  row-gap: var(--sp-1);
+  column-gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+}
+
+.fd-wall-need-text > * {
+  grid-column: 1 / -1;
   min-width: 0;
 }
 
@@ -177,16 +341,90 @@
   margin: 0;
 }
 
-.fd-wall-need-what,
-.fd-wall-need-sum {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.fd-wall-need-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
   white-space: nowrap;
 }
 
-.fd-wall-need-sum {
+.fd-wall-need-text > .fd-wall-need-head {
+  grid-column: 1;
+}
+
+.fd-wall-need-head > .fd-callsign {
+  flex: none;
+  color: var(--text);
+  font-size: var(--fs-title);
+}
+
+.fd-wall-need-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--dim);
-  font-size: 0.85em;
+  font-size: var(--fs-meta);
+}
+
+.fd-wall-need-head > .fd-badge {
+  flex: none;
+}
+
+/* A narrow strip leaves out the station (its tile shows it) rather than cut it to one letter. */
+@container (max-width: 22em) {
+  .fd-wall-need-where {
+    display: none;
+  }
+}
+
+/* The age sits at the right of the head line. */
+.fd-wall-need-text > .fd-wall-need-age {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: center;
+  color: var(--act);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* The question is the one thing the wall must show: it wraps, up to three lines. */
+.fd-wall-need-what {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--act);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.fd-wall-need-sum {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  overflow-wrap: anywhere;
+}
+
+/* A command shows as code, on up to two lines. */
+.fd-wall-need[data-kind="command"] .fd-wall-need-sum {
+  margin-top: var(--sp-1);
+  /* the edge of the box is a border, not a padding: a clamped third line must not show in it */
+  padding: 0 var(--sp-2);
+  border-block: var(--sp-1) solid var(--code);
+  background: var(--code);
+  border-radius: var(--r-chip);
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .fd-wall-need-qr {
@@ -194,18 +432,56 @@
   flex: none;
   flex-direction: column;
   align-items: center;
-  width: 7em;
+  gap: var(--sp-1);
+  width: calc(var(--fd-wall-u) * 104);
+  padding: var(--sp-3) var(--sp-3) var(--sp-2) 0;
   text-align: center;
+}
+
+.fd-wall-need-qr .fd-wall-note {
+  font-size: var(--fs-micro);
+  line-height: 1.25;
 }
 
 .fd-wall-qr {
   display: block;
-  width: 6em;
-  height: 6em;
+  width: calc(var(--fd-wall-u) * 88);
+  height: calc(var(--fd-wall-u) * 88);
+  border-radius: var(--r-chip);
 }
 
-/* tiles */
+/* A wide wall has a narrow needs column: a smaller code leaves the width to the question. */
+.fd-wall-root[data-shape="wide"] .fd-wall-need-qr {
+  width: calc(var(--fd-wall-u) * 92);
+}
+
+.fd-wall-root[data-shape="wide"] .fd-wall-qr {
+  width: calc(var(--fd-wall-u) * 80);
+  height: calc(var(--fd-wall-u) * 80);
+}
+
+/* The needs row of a standard or a portrait wall is short: a smaller code. */
+.fd-wall-root:is([data-shape="standard"], [data-shape="portrait"]) .fd-wall-need-qr {
+  width: calc(var(--fd-wall-u) * 88);
+  padding-top: var(--sp-2);
+}
+
+.fd-wall-root:is([data-shape="standard"], [data-shape="portrait"]) .fd-wall-qr {
+  width: calc(var(--fd-wall-u) * 72);
+  height: calc(var(--fd-wall-u) * 72);
+}
+
+/* ── tiles: the session tiles of the watch page, sized by the wall ────────────────────────── */
+/* Before the wall measures the area, the tiles have their smallest size. Then `tileGrid` (shape.ts)
+   gives the column count and `--fd-wall-tile-k`: the tiles share the whole area, and their type
+   grows when there are few of them. */
 .fd-wall-tiles {
+  --fs-micro: calc(var(--fd-wall-t) * 11 * var(--fd-wall-tile-k));
+  --fs-meta: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+  --fs-data: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+  --fs-ui: calc(var(--fd-wall-t) * 13 * var(--fd-wall-tile-k));
+  --fs-title: calc(var(--fd-wall-t) * 14 * var(--fd-wall-tile-k));
+
   display: grid;
   grid-template-columns: repeat(
       auto-fill,
@@ -221,36 +497,153 @@
   list-style: none;
 }
 
+.fd-wall-tiles[data-grid="fill"] {
+  grid-template-columns: repeat(var(--fd-wall-tile-cols, 1), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+/* A tile has the height of its row: the request at its foot stays, the chat lines give way. */
 .fd-wall-root .fd-wtile {
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
   min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.fd-wall-tiles :is(.fd-dot, .fd-holder) {
+  zoom: calc(var(--fd-wall-k, 1) * var(--fd-wall-tile-k));
+}
+
+.fd-wall-root .fd-wtile-open {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The parts of a tile keep their height; only the chat lines give way. */
+.fd-wall-root .fd-wtile-open > * {
+  flex: none;
+}
+
+/* The chat lines show whole lines only, the newest kept: the column runs from the bottom up (the
+   newest first by `order`, packed at the top), and a line that does not fit wraps into a second column, out of view. */
+.fd-wall-root .fd-wtile-open > .fd-wtile-lines {
+  flex: 0 1 auto;
+  flex-flow: column-reverse wrap;
+  justify-content: flex-end;
+  column-gap: var(--sp-4);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-wall-root .fd-wtile-line {
+  flex: none;
+  width: 100%;
+}
+
+.fd-wall-root .fd-wtile-line:nth-last-child(2) {
+  order: 2;
+}
+
+.fd-wall-root .fd-wtile-line:nth-last-child(3) {
+  order: 3;
+}
+
+.fd-wall-root .fd-wtile-line:nth-last-child(4) {
+  order: 4;
+}
+
+.fd-wall-root .fd-wtile-line:nth-last-child(n + 5) {
+  order: 5;
+}
+
+.fd-wall-root .fd-wtile-head {
+  min-height: calc(var(--fd-wall-u) * 20 * var(--fd-wall-tile-k));
+}
+
+.fd-wall-root .fd-wtile-ask {
+  flex: none;
 }
 
 .fd-wall-root .fd-wtile:focus-visible {
-  outline: 2px solid var(--act);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
-.fd-wall-root .fd-wtile-where,
-.fd-wall-root .fd-wtile-empty,
-.fd-wall-root .fd-wtile-note,
-.fd-wall-root .fd-wtile-line,
-.fd-wall-root .fd-wtile-tool,
-.fd-wall-root .fd-focus {
-  font-size: 0.8em;
+/* ── side: usage, stations, pull requests and the load map ────────────────────────────────── */
+.fd-wall-area[data-area="side"] {
+  display: flex;
+  flex-direction: column;
 }
 
-.fd-wall-root .fd-wtile-title {
-  font-size: 1em;
+.fd-wall-block {
+  flex: none;
 }
 
-/* side */
 .fd-wall-block + .fd-wall-block {
   margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
 }
 
 .fd-wall-block p {
   margin: 0;
+}
+
+/* Usage: one line of text, the meter, then the station and the reset time. */
+.fd-wall-block[data-part="usage"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-wall-block[data-part="usage"] > .fd-wall-h {
+  margin-bottom: 0;
+}
+
+.fd-wall-block[data-part="usage"] > p:not(.fd-wall-note) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wall-block[data-part="usage"] > .fd-wall-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wall-block[data-part="usage"] > .fd-meter {
+  height: calc(var(--fd-wall-u) * 6);
+}
+
+/* The stations show what fits; the rows that do not fit are left out whole. */
+.fd-wall-block[data-part="stations"] {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A standard wall: the side is a band under the tiles, its blocks side by side. */
+.fd-wall-root[data-shape="standard"] .fd-wall-area[data-area="side"] {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  column-gap: var(--sp-5);
+  max-height: calc(var(--fd-wall-u) * 220);
+}
+
+.fd-wall-root[data-shape="standard"] .fd-wall-block + .fd-wall-block {
+  margin-top: 0;
+  padding-top: 0;
+  padding-left: var(--sp-5);
+  border-top: 0;
+  border-left: 1px solid var(--border-soft);
 }
 
 .fd-wall-list {
@@ -262,24 +655,74 @@
   list-style: none;
 }
 
-.fd-wall-station {
-  display: flex;
-  flex-direction: column;
+.fd-wall-block[data-part="prs"] .fd-wall-list {
+  gap: var(--sp-1);
+  color: var(--dim);
 }
 
-.fd-wall-station[data-reachable="false"] .fd-wall-station-name {
+.fd-wall-station {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-2);
+  row-gap: 2px;
+  flex: none;
+  width: 100%;
+}
+
+.fd-wall-reach {
+  width: calc(var(--fd-wall-u) * 8);
+  height: calc(var(--fd-wall-u) * 8);
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.fd-wall-station[data-reachable="false"] .fd-wall-reach {
+  background: var(--hazard);
+}
+
+.fd-wall-station-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-stretch: 115%;
+  font-weight: 620;
+}
+
+.fd-wall-station > .fd-wall-note {
+  color: var(--dim);
+}
+
+.fd-wall-station[data-reachable="false"] > .fd-wall-note {
   color: var(--hazard);
 }
 
-/* side: the load of each session (R13 P9). It is the last block and takes the height that is left. */
-.fd-wall-area[data-area="side"] {
-  display: flex;
-  flex-direction: column;
+/* The figures of a station on one line; the line ends in an ellipsis when it is too long. */
+.fd-wall-station-stats {
+  grid-column: 2 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--fs-meta);
 }
 
+/* A column that wraps: a row that does not fit moves to a second column, out of view. */
+.fd-wall-block[data-part="stations"] > .fd-wall-list {
+  flex: 1 1 auto;
+  flex-flow: column wrap;
+  align-content: flex-start;
+  column-gap: var(--sp-4);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The load of each session (R13 P9). It is the last block and takes the height that is left.
+   The cells are fuel: the busier, the stronger. */
 .fd-wall-loadblock {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
@@ -292,7 +735,7 @@
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 72), 1fr));
   grid-auto-flow: dense;
   gap: var(--sp-1);
   margin: 0;
@@ -305,11 +748,10 @@
   flex-direction: column;
   min-width: 0;
   padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--ok);
+  background: var(--fuel-bg);
   border-radius: var(--r-chip);
-  background: var(--raised);
-  font-family: var(--font-data);
-  font-size: 0.8em;
+  font-size: var(--fs-meta);
+  line-height: 1.25;
 }
 
 .fd-wall-load li[data-size="2"] {
@@ -321,62 +763,99 @@
 }
 
 .fd-wall-load li[data-heat="mid"] {
-  border-color: var(--act);
-  background: var(--act-bg);
+  background: color-mix(in srgb, var(--fuel) 28%, var(--surface));
 }
 
 .fd-wall-load li[data-heat="high"] {
-  border-color: var(--hazard);
-  background: var(--hazard-bg);
+  background: color-mix(in srgb, var(--fuel) 52%, var(--surface));
 }
 
 .fd-wall-load li[data-heat="unknown"] {
-  border: 1px dashed var(--faint-decor);
-  background: none;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .fd-wall-load-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
 }
 
 .fd-wall-load-value {
   color: var(--dim);
 }
 
-/* stream: the newest at the bottom */
+.fd-wall-load li[data-heat="high"] .fd-wall-load-value {
+  color: var(--text);
+}
+
+/* ── stream: the newest under the heading; the oldest give way at the bottom ───────────────── */
 .fd-wall-area[data-area="stream"] {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+}
+
+.fd-wall-area[data-area="stream"] > .fd-wall-h {
+  flex: none;
 }
 
 .fd-wall-stream {
+  display: flex;
+  flex: 1 1 auto;
+  /* the list runs oldest first: drawn from the bottom up, the newest row is at the top */
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  min-height: 0;
+  overflow: hidden;
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 0.85em;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  /* the oldest rows fade out at the bottom */
+  mask-image: linear-gradient(to top, transparent, black calc(var(--fd-wall-u) * 16));
 }
 
 .fd-wall-stream li {
+  flex: none;
+  padding: 2px 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fd-wall-stream time {
-  color: var(--faint);
-  font-family: var(--font-data);
+.fd-wall-stream li + li {
+  border-bottom: 1px solid var(--border-soft);
 }
 
-/* focus and review */
+/* The times have one column: the names start at the same place on every row. */
+.fd-wall-stream time {
+  display: inline-block;
+  min-width: 6ch;
+  margin-right: var(--sp-2);
+  color: var(--faint);
+  text-align: right;
+}
+
+.fd-wall-stream strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── focus and review: the chat and the changes of one session ────────────────────────────── */
 .fd-wall-focus {
   display: grid;
   grid-template-columns: minmax(0, 60fr) minmax(0, 40fr);
   gap: var(--sp-3);
   min-width: 0;
   min-height: 0;
+}
+
+/* Upright: the chat over the changes. */
+.fd-wall-root[data-shape="portrait"] .fd-wall-focus {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 40%);
 }
 
 .fd-wall-focus-chat,
@@ -387,16 +866,29 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--r-panel);
 }
 
 .fd-wall-single {
   padding: 0;
-  border: 0;
   background: transparent;
+}
+
+.fd-wall-single > .fd-wall-h {
+  margin: 0 var(--sp-1) var(--sp-3);
+  font-size: var(--fs-heading);
+}
+
+.fd-wall-diff > .fd-wall-note,
+.fd-wall-diff > .fd-turn-stat {
+  margin: 0 0 var(--sp-2);
+}
+
+.fd-wall-diff > .fd-turn-stat {
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
 }
 
 .fd-wall-chat {
@@ -406,6 +898,8 @@
   justify-content: flex-end;
   min-height: 0;
   overflow: hidden;
+  /* the oldest lines fade out under the title, as in the activity stream */
+  mask-image: linear-gradient(to bottom, transparent, black calc(var(--fd-wall-u) * 24));
 }
 
 .fd-wall-chatlines {
@@ -415,37 +909,186 @@
 }
 
 .fd-wall-chatline {
+  max-width: var(--chat-w);
   margin: 0;
+  font-size: var(--fs-chat);
+  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+/* The agent text: the chat Markdown (read-only), drawn at the size of the wall. */
+.fd-wall-chatline[data-kind="message"] {
+  max-width: calc(var(--fd-wall-u) * 720);
+  white-space: normal;
+}
+
+.fd-wall-chatline .fd-md-code {
+  margin: var(--sp-2) 0;
+  border-radius: var(--r-card);
+}
+
+.fd-wall-chatline .fd-md-code-head {
+  height: calc(var(--fd-wall-u) * 26);
+  padding: 0 var(--sp-3);
+}
+
+/* The wall does not scroll sideways: a long code line wraps under itself. */
+.fd-wall-chatline .fd-md-code pre {
+  padding: var(--sp-2) var(--sp-3);
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fd-wall-chatline .fd-md-code-head + pre {
+  padding-top: 0;
+}
+
+.fd-wall-chatline .fd-md-table {
+  overflow: hidden;
+}
+
+.fd-wall-chatline .fd-md table {
+  font-size: var(--fs-ui);
+  overflow-wrap: break-word;
+}
+
+.fd-wall-chatline .fd-md td code {
+  white-space: normal;
+}
+
+/* The tool calls run on a flight path: a rule at the left with a node for each call; the tool name
+   in the interface type, the target in mono, one line each. */
 .fd-wall-chatline[data-kind="tool"] {
+  position: relative;
+  margin-left: var(--sp-1);
+  padding: 2px 0 2px var(--sp-4);
+  border-left: 2px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.fd-wall-chatline[data-kind="tool"]::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--fd-wall-u) * 7);
+  left: calc(var(--fd-wall-u) * -6);
+  width: calc(var(--fd-wall-u) * 10);
+  height: calc(var(--fd-wall-u) * 10);
+  border-radius: 50%;
+  /* a done call: a filled ok node */
+  background: var(--ok);
+  box-shadow: none;
+}
+
+/* A call that is not done is a ring: it runs (ok), it waits for your answer (act), it ended
+   without a result (faint); a failed or denied call a hazard ring. */
+.fd-wall-chatline[data-kind="tool"]:is([data-state], [data-mark])::before {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+
+.fd-wall-chatline[data-kind="tool"][data-state="waiting"]::before {
+  box-shadow: inset 0 0 0 2px var(--act);
+}
+
+.fd-wall-chatline[data-kind="tool"][data-state="ended"]::before {
+  box-shadow: inset 0 0 0 2px var(--faint-decor);
+}
+
+.fd-wall-chatline[data-kind="tool"][data-mark]::before {
+  box-shadow: inset 0 0 0 2px var(--hazard);
+}
+
+.fd-wall-tool-name {
+  font-weight: 600;
+}
+
+.fd-wall-tool-target {
+  display: inline-block;
+  max-width: calc(100% - 8ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
   color: var(--dim);
   font-family: var(--font-data);
-  font-size: 0.85em;
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
 }
 
+.fd-wall-tool-mark {
+  color: var(--hazard);
+  font-size: var(--fs-meta);
+}
+
+/* The person's prompt is a bubble at the right. */
 .fd-wall-chatline[data-kind="prompt"] {
-  color: var(--faint);
+  align-self: flex-end;
+  max-width: 75%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border-radius: var(--r-card);
+  color: var(--text);
 }
 
+/* An open request: the needs-you holder and text. */
 .fd-wall-chatline[data-kind="ask"] {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--act-bg);
+  border-left: 3px solid var(--act);
+  border-radius: 0 var(--r-card) var(--r-card) 0;
   color: var(--act);
+  font-weight: 600;
 }
 
 .fd-wall-chatline[data-kind="error"] {
   color: var(--hazard);
 }
 
+/* The changes wrap: the wall does not scroll sideways, so no code is lost at the right edge. A
+   wrapped line starts under the text, not under the +/− sign. */
+.fd-wall-diff .fd-diff {
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  font-size: var(--fs-data);
+}
+
+.fd-wall-diff .fd-dl {
+  padding: 0 var(--sp-3) 0 calc(var(--sp-3) + 2ch);
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fd-wall-diff .fd-dl[data-kind="file"] {
+  min-height: calc(var(--fd-wall-u) * 28);
+  margin-top: var(--sp-1);
+  padding: var(--sp-1) var(--sp-3);
+  text-indent: 0;
+  white-space: nowrap;
+  background: var(--raised);
+}
+
+.fd-wall-diff .fd-dl[data-kind="file"] > .fd-icon {
+  flex: none;
+  width: calc(var(--fd-wall-u) * 14);
+  height: calc(var(--fd-wall-u) * 14);
+}
+
+.fd-wall-diff .fd-dl[data-kind="file"]:first-child {
+  margin-top: 0;
+}
+
 .fd-wall-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  font-size: 0.8em;
 }
 
-/* race */
+/* ── race: the compare columns of one batch ───────────────────────────────────────────────── */
 .fd-wall-cols {
   display: grid;
   grid-template-columns: repeat(var(--fd-wall-cols, 4), minmax(0, 1fr));
@@ -470,18 +1113,42 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--r-panel);
+}
+
+.fd-wall-col > .fd-wall-note {
+  color: var(--dim);
+}
+
+.fd-wall-col > .fd-wall-cost {
+  margin-top: var(--sp-3);
+  color: var(--fuel);
+  font-weight: 600;
+}
+
+.fd-wall-col > .fd-turn-stat {
+  margin: 0 0 var(--sp-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
 }
 
 .fd-wall-files {
   margin: 0;
   padding: 0;
   list-style: none;
+  color: var(--dim);
   font-family: var(--font-data);
-  font-size: 0.8em;
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  line-height: 1.5;
+}
+
+.fd-wall-files li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fd-wall-message,
@@ -491,58 +1158,110 @@
   -webkit-line-clamp: 10;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  font-size: var(--fs-chat);
+  line-height: 1.5;
 }
 
-/* artifact */
+.fd-wall-digest {
+  margin-top: var(--sp-2);
+  color: var(--dim);
+}
+
+/* ── artifact ─────────────────────────────────────────────────────────────────────────────── */
 .fd-wall-artifact {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  border-radius: var(--r-panel);
 }
 
 .fd-wall-artifact .fd-art-frame {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #fff;
+  background: #fff; /* ds-exception: the sandboxed artifact page draws on white, as in a browser */
 }
 
-/* ambient: dark in every theme, low motion */
+/* ── ambient: dark in every theme, low motion ─────────────────────────────────────────────── */
+/* A wall in the light theme keeps the night deck here (the screen idles, often in a dark room):
+   WallPage adds .fd-scope-dark, and tokens.css gives that scope the dark color tokens. */
+
 .fd-wall-root[data-mode="ambient"] {
   color-scheme: dark;
-  background: #000;
+  background: var(--code);
   place-items: center;
 }
 
+.fd-wall-root[data-mode="ambient"] .fd-wall-corner {
+  opacity: 0.6;
+}
+
 .fd-wall-ambient {
+  max-width: 100%;
+  padding-inline: var(--sp-4);
+  overflow-wrap: anywhere;
   text-align: center;
 }
 
 .fd-wall-counts {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-  gap: 4em;
-  margin: 0 0 1.5em;
+  gap: var(--sp-4);
+  margin: 0 0 var(--sp-5);
 }
 
 .fd-wall-counts div {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column-reverse;
   align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
 }
 
 .fd-wall-counts dt {
   color: var(--dim);
+  font-size: var(--fs-heading);
+  font-weight: 500;
 }
 
 .fd-wall-counts dd {
   margin: 0;
-  font-size: 4em;
-  font-weight: 600;
+  font-size: var(--fs-display);
+  font-stretch: 115%;
+  font-weight: 640;
   line-height: 1;
 }
 
+.fd-wall-counts [data-tone="act"] dd {
+  color: var(--act);
+}
+
 .fd-wall-ambient-line {
-  margin: 0 0 0.5em;
+  margin: 0 0 var(--sp-2);
   color: var(--dim);
-  font-size: 1.2em;
+  font-size: var(--fs-heading);
+}
+
+/* ── phone ─────────────────────────────────────────────────────────────────────────────────── */
+/* A phone: the wall scrolls. The needs and the activity take their height; the tiles keep a fixed
+   share of the screen (the tile count reads that height, so it must not follow the tiles). */
+@media (max-width: 639px) {
+  .fd-wall-root[data-shape="portrait"] .fd-wall-grid {
+    grid-template-rows: auto minmax(60dvh, 1fr) minmax(calc(var(--fd-wall-u) * 240), auto);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* The needs and the activity are as tall as their content (the grid scrolls, not the area). */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-area:is([data-area="needs"], [data-area="stream"]) {
+    min-height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .fd-wall-root[data-shape="portrait"] .fd-wall-stream {
+    max-height: calc(var(--fd-wall-u) * 320);
+  }
 }

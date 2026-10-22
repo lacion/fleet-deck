@@ -2,16 +2,23 @@
 import { useEffect, useState } from 'react';
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import type { DeckSession, ShareInfo, SpaceView, StationView } from '../gen';
+import type { DeckSession, ShareInfo, ShareKind, ShareRole, SpaceView, StationView } from '../gen';
 import { untilText } from '../automations/automations';
 import { useSettings } from '../settings/context';
 import type { ElevationAsk } from '../settings/elevation';
 import { useFleetElevation } from '../spawn/useFleetElevation';
-import { Icon, Plus, Share2 } from '../ui/icons';
+import {
+  Icon,
+  Layers,
+  LayoutGrid,
+  type LucideIcon,
+  MessageSquare,
+  Plus,
+  Share2,
+} from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { canShare, usePeople } from './context';
-import { roleLabel } from './member';
 import type { ShareCalls } from './people';
 import { day, NewShareDialog } from './ShareDialog';
 import { sharesChanged, useSharesVersion } from './shareStore';
@@ -47,6 +54,20 @@ export function shareState(share: ShareInfo, now: number): 'revoked' | 'expired'
   if (share.revoked_at !== null) return 'revoked';
   return share.expires_at <= now ? 'expired' : 'live';
 }
+
+/** The kind of a share in sentence case, with its icon (§5: no raw enum values). */
+const KIND: Readonly<Record<ShareKind, { readonly label: string; readonly icon: LucideIcon }>> = {
+  session: { label: 'Session', icon: MessageSquare },
+  space: { label: 'Space', icon: Layers },
+  board: { label: 'Board', icon: LayoutGrid },
+};
+
+/** The role of a share in sentence case. */
+const ROLE: Readonly<Record<ShareRole, string>> = {
+  viewer: 'Viewer',
+  collaborator: 'Collaborator',
+  approver: 'Approver',
+};
 
 /** What a share covers, in words. */
 export function targetText(
@@ -109,27 +130,22 @@ function ShareRow({
     <tr data-state={state} data-dim={state === 'live' ? undefined : 'true'}>
       <td>
         <span className="fd-cellbadges">
-          <span className="fd-badge" data-tone="info">
-            {share.kind}
+          <span className="fd-badge">
+            <Icon of={KIND[share.kind].icon} size={12} />
+            {KIND[share.kind].label}
           </span>
           <span className="fd-cell-name">{where}</span>
         </span>
       </td>
       <td data-label="Role">
         <span className="fd-cellbadges">
-          <span className="fd-badge" data-tone={share.role === 'viewer' ? 'muted' : 'act'}>
-            {roleLabel(share.role)}
-          </span>
+          <span className="fd-cell-dim">{ROLE[share.role]}</span>
           {share.role !== 'viewer' ? (
             <span className="fd-badge" data-tone="muted">
-              {share.steering === 'mob' ? 'mob' : 'open'}
+              {share.steering === 'mob' ? 'Mob' : 'Open'}
             </span>
           ) : null}
-          {share.history ? (
-            <span className="fd-badge" data-tone="info">
-              History shared
-            </span>
-          ) : null}
+          {share.history ? <span className="fd-badge">History shared</span> : null}
           {state === 'live' ? null : (
             <span className="fd-badge" data-tone="muted">
               {state === 'revoked' ? 'Revoked' : 'Expired'}
@@ -140,9 +156,7 @@ function ShareRow({
       <td data-label="Members">
         {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
       </td>
-      <td className="fd-cell-path" data-label="Uses left">
-        {share.uses_left}
-      </td>
+      <td data-label="Uses left">{share.uses_left}</td>
       <td
         data-label="Expires"
         title={day(state === 'revoked' ? (share.revoked_at ?? 0) : share.expires_at)}
@@ -151,7 +165,7 @@ function ShareRow({
       </td>
       <td className="fd-cell-actions">
         {state !== 'live' ? null : confirming ? (
-          <span role="group" aria-label="Revoke the share">
+          <span className="fd-share-confirm" role="group" aria-label="Revoke the share">
             <span>Revoke this share? The members lose access at once.</span>
             <button
               type="button"
@@ -167,7 +181,7 @@ function ShareRow({
             </button>
           </span>
         ) : historyConfirming ? (
-          <span role="group" aria-label="Share the earlier history">
+          <span className="fd-share-confirm" role="group" aria-label="Share the earlier history">
             <span>{HISTORY_WARNING}</span>
             <button
               type="button"

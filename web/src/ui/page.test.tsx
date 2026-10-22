@@ -44,7 +44,7 @@ describe('Page (DL-171)', () => {
         <p>x</p>
       </Section>,
     );
-    expect(html).toContain('<h2 class="fd-label">Forge</h2>');
+    expect(html).toContain('<h2 class="fd-pagesec-title">Forge</h2>');
     expect(html).toContain('class="fd-panel fd-pagesec-body"');
   });
 });
@@ -63,7 +63,7 @@ describe('EmptyState (DL-171)', () => {
     expect(html).toContain('<p class="fd-emptystate-title">No shares yet</p>');
     expect(html).toContain('<p class="fd-emptystate-body">Share a session.</p>');
     expect(html).toContain('New share</button>');
-    expect(html).toContain('width="24"');
+    expect(html).toContain('width="20"');
   });
 });
 

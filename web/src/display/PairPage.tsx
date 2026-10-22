@@ -3,6 +3,7 @@
 // full screen, and polls until the owner has approved it. It has no button and no control.
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, type Fetch } from '../runtime/api';
+import { Mark } from '../ui/Mark';
 import { useNow } from '../ui/useNow';
 import { type expectedLaunch, pollPairing, startPairing } from './api';
 
@@ -119,6 +120,7 @@ export function PairPage({
   return (
     <main className="fd-wall-root fd-pair" data-mode="pair">
       <section className="fd-pair-box" aria-label="Pair this wall display">
+        <Mark size={32} />
         <h1 className="fd-pair-title">Pair this wall display</h1>
         {state.kind === 'waiting' ? (
           <>

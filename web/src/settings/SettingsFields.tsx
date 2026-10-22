@@ -1,8 +1,11 @@
 // DL-172: the sections and fields of a settings view. It shows the values it is given; the tab
-// keeps the edits and the state.
+// keeps the edits and the state. DESIGN-SYSTEM §4.7: each group is a section with a heading and no
+// box; its fields sit in a two-column grid (the label, then the control and its hint). The badges
+// of a field ("Applies after a restart") end its hint line, so they add no line of their own.
 import type { DeckSession, MonitorInfo, SettingsView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
-import { Field, FormGrid, Section } from '../ui/page';
+import { Icon, Lock } from '../ui/icons';
+import { Field } from '../ui/page';
 import { FieldEditor, GROUP_KINDS, MONITOR_KEY } from './FieldEditor';
 import { InstancesEditor } from './InstancesEditor';
 import { badgesOf, groupFields, shown, type Values } from './model';
@@ -24,11 +27,14 @@ export type FieldsProps = {
   readonly onSecret: (instanceId: string, name: string | null) => void;
 };
 
+/** The badges of a field, at the end of its hint. */
 function Badges({ items }: { readonly items: ReturnType<typeof badgesOf> }) {
   return items.length === 0 ? null : (
     <span className="fd-set-badges">
       {items.map((b) => (
         <span key={b.text} className="fd-badge" data-tone={b.tone} title={b.title}>
+          {/* the muted badge is the re-auth badge: a lock, then the words */}
+          {b.tone === 'muted' ? <Icon of={Lock} size={12} /> : null}
           {b.text}
         </span>
       ))}
@@ -52,8 +58,9 @@ export function SettingsFields({
   return (
     <>
       {groupFields(view.fields).map((group) => (
-        <Section key={group.title} label={group.title}>
-          <FormGrid>
+        <section key={group.title} className="fd-set-sec" aria-label={group.title}>
+          <h2 className="fd-set-sechead">{group.title}</h2>
+          <div className="fd-set-grid">
             {group.fields.map((meta) => {
               const value = shown(view, edits, meta.key);
               const locked = meta.read_only || view.overrides.includes(meta.key);
@@ -104,8 +111,8 @@ export function SettingsFields({
                 </Field>
               );
             })}
-          </FormGrid>
-        </Section>
+          </div>
+        </section>
       ))}
     </>
   );

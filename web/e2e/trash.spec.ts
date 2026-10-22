@@ -59,7 +59,7 @@ test('a clean worktree moves to the trash, then is deleted with the typed folder
   });
   await row.getByRole('button', { name: 'Move to trash' }).click();
   await expect(row).toHaveAttribute('data-verdict', 'trashed');
-  await expect(row).toContainText('In the trash since 3h ago');
+  await expect(row).toContainText('In the trash since 3 h ago');
   await expect(row).toContainText('/w/.trash/s1-abc');
   const trashCall = deck.calls.find((c) => c.path.endsWith('/worktrees/trash'));
   expect(trashCall?.body).toMatchObject({ session_id: 's1' });

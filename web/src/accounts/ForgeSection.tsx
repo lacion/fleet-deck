@@ -128,7 +128,6 @@ export function ForgeConnect({
       </Field>
       <button
         type="button"
-        className="fd-primary"
         disabled={run.phase === 'starting' || host.trim() === ''}
         onClick={() => void start()}
       >

@@ -15,6 +15,7 @@ import remarkGfm from 'remark-gfm';
 import { CommentChip } from '../review/CommentChip';
 import { remarkCommentChips } from '../review/tokens';
 import { Check, Copy, Icon } from '../ui/icons';
+import { highlight } from './highlight';
 
 const COPIED_MS = 1500;
 const PLUGINS = [remarkGfm];
@@ -37,7 +38,17 @@ function languageOf(children: ReactNode): string | undefined {
   return className?.match(/language-(\S+)/)?.[1];
 }
 
+/** The `code` element of a fenced block with its token colors; anything else as it is. */
+function colored(children: ReactNode, lang: string | undefined): ReactNode {
+  const first = Children.toArray(children)[0];
+  if (!isValidElement(first) || first.type !== 'code') return children;
+  const { className, children: text } = first.props as { className?: string; children?: ReactNode };
+  if (typeof text !== 'string') return children;
+  return <code className={className}>{highlight(text, lang)}</code>;
+}
+
 function CodeBlock({ children }: { children?: ReactNode }) {
+  const lang = languageOf(children);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -53,7 +64,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   return (
     <div className="fd-md-code">
       <div className="fd-md-code-head">
-        <span className="fd-md-lang">{languageOf(children) ?? ''}</span>
+        <span className="fd-md-lang">{lang ?? ''}</span>
         <button
           type="button"
           className="fd-iconbtn fd-sm fd-md-copy"
@@ -64,7 +75,22 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           <Icon of={copied ? Check : Copy} size={14} />
         </button>
       </div>
-      <pre>{children}</pre>
+      <pre>{colored(children, lang)}</pre>
+    </div>
+  );
+}
+
+/** A code block without the copy button: the wall shows the chat read-only (R13 P1). */
+function StillCodeBlock({ children }: { children?: ReactNode }) {
+  const lang = languageOf(children);
+  return (
+    <div className="fd-md-code" data-readonly="true">
+      {lang === undefined ? null : (
+        <div className="fd-md-code-head">
+          <span className="fd-md-lang">{lang}</span>
+        </div>
+      )}
+      <pre>{colored(children, lang)}</pre>
     </div>
   );
 }
@@ -95,19 +121,30 @@ const components: Components = {
   ),
 };
 
+const stillComponents: Components = {
+  ...components,
+  pre: ({ node: _node, children }: ComponentProps<'pre'> & { node?: unknown }) => (
+    <StillCodeBlock>{children}</StillCodeBlock>
+  ),
+};
+
 /**
  * `comments` (DL-179): the short ids of the comments that the caller may see. A token of one of
  * them in the text becomes a chip; `onComment` opens the thread. Without `comments` nothing changes.
+ * `readOnly`: the code blocks have no copy button (the wall display has no control).
  */
 export const Markdown = memo(function Markdown({
   text,
   comments,
   onComment,
+  readOnly = false,
 }: {
   text: string;
   comments?: ReadonlySet<string>;
   onComment?: (shortId: string) => void;
+  readOnly?: boolean;
 }) {
+  const base = readOnly ? stillComponents : components;
   const chips = comments !== undefined && comments.size > 0 ? comments : undefined;
   const plugins = useMemo(
     () => (chips === undefined ? PLUGINS : [...PLUGINS, remarkCommentChips(chips)]),
@@ -116,9 +153,9 @@ export const Markdown = memo(function Markdown({
   const parts = useMemo<Components>(
     () =>
       chips === undefined
-        ? components
+        ? base
         : {
-            ...components,
+            ...base,
             span: ({
               node: _node,
               children,
@@ -132,7 +169,7 @@ export const Markdown = memo(function Markdown({
               );
             },
           },
-    [chips, onComment],
+    [base, chips, onComment],
   );
   return (
     <div className="fd-md">

@@ -136,7 +136,7 @@ describe('App', () => {
     expect(html).toContain('This session is not on the board.');
   });
 
-  test('the sidebar lists one group per station, a needs-you chip and the ended count', () => {
+  test('the sidebar lists the needs-you group first, one group per station and the ended count', () => {
     const html = renderToStaticMarkup(
       <App
         initialLayout="desktop"
@@ -148,19 +148,27 @@ describe('App', () => {
         ]}
       />,
     );
-    // desktop: a chip links to the first session that needs you; no group of its own
-    expect(html).toMatch(
-      /<a class="fd-needschip" href="#\/s\/station-b\/n1">[\s\S]*?1 needs you<\/a>/,
-    );
-    expect(html).not.toContain('data-group="needs"');
+    // desktop (§4.2): the Fleet row counts the requests; the "Needs you" group comes first
+    expect(html).not.toContain('fd-needschip');
+    expect(html).toMatch(/Fleet<span class="fd-count" data-tone="act">1<\/span><\/a>/);
+    const needs = html.indexOf('data-group="needs"');
+    expect(needs).toBeGreaterThan(-1);
     expect(html).toContain('Ended <span class="fd-count">1</span>');
     const alpha = html.indexOf('aria-label="Station Alpha"');
     const beta = html.indexOf('aria-label="Station Beta"');
+    expect(needs).toBeLessThan(alpha);
     expect(alpha).toBeGreaterThan(-1);
     expect(alpha).toBeLessThan(beta);
-    // the sidebar lists the needs-you session once, in its own station
+    // the sidebar lists the needs-you session once, in "Needs you"; the count of its station is
+    // the rows shown under it, and the station total moves to the title
     const sidebar = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
     expect(sidebar.match(/Needs me/g)?.length).toBe(1);
+    expect(html.slice(beta, html.indexOf('</h3>', beta))).toContain(
+      '<span class="fd-count" title="1 session on Beta">0</span>',
+    );
+    expect(html.slice(alpha, html.indexOf('</h3>', alpha))).toContain(
+      '<span class="fd-count" title="2 sessions on Alpha">1</span>',
+    );
   });
 
   test('the phone session list keeps the needs-you group before the stations', () => {
@@ -176,10 +184,11 @@ describe('App', () => {
     );
     const needs = html.indexOf('data-group="needs"');
     expect(needs).toBeGreaterThan(-1);
-    expect(html).toMatch(/Needs you<\/span><span class="fd-count">1<\/span>/);
+    expect(html).toMatch(/Needs you<\/span><span class="fd-count" data-tone="act">1<\/span>/);
     expect(needs).toBeLessThan(html.indexOf('aria-label="Station Alpha"'));
-    // a needs-you session is listed again in its own station
-    expect(html.match(/Needs me/g)?.length).toBeGreaterThanOrEqual(2);
+    // a needs-you session is listed once, in "Needs you", not again in its own station
+    const list = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
+    expect(list.match(/Needs me/g)?.length).toBe(1);
   });
 
   test('an empty fleet says so in the sidebar', () => {

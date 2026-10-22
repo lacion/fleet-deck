@@ -18,10 +18,10 @@ describe('relativeAge', () => {
     const now = 10 * 86_400_000;
     expect(relativeAge(now - 5_000, now)).toBe('now');
     expect(relativeAge(now - 59_000, now)).toBe('now');
-    expect(relativeAge(now - 60_000, now)).toBe('1m');
-    expect(relativeAge(now - 5 * 60_000, now)).toBe('5m');
-    expect(relativeAge(now - 3 * 3_600_000, now)).toBe('3h');
-    expect(relativeAge(now - 2 * 86_400_000, now)).toBe('2d');
+    expect(relativeAge(now - 60_000, now)).toBe('1 min');
+    expect(relativeAge(now - 5 * 60_000, now)).toBe('5 min');
+    expect(relativeAge(now - 3 * 3_600_000, now)).toBe('3 h');
+    expect(relativeAge(now - 2 * 86_400_000, now)).toBe('2 d');
   });
 
   test('a time in the future is now', () => {
@@ -93,6 +93,16 @@ describe('sidebar model', () => {
 
   test('the j/k order is the live sessions of the groups, each once', () => {
     expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'w1', 'i1']);
+  });
+
+  test('the j/k order follows the rows: the needs-you group first, then the stations', () => {
+    const two = [station('station-a'), station('station-b')];
+    const list = [
+      card('a-idle', 'idle', 'station-a'),
+      card('b-needs', 'needs_you', 'station-b'),
+      card('b-idle', 'idle', 'station-b'),
+    ];
+    expect(ids(sidebarOrder(sidebarModel(list, two, '')))).toEqual(['b-needs', 'a-idle', 'b-idle']);
   });
 
   test('a station that is not in the list gets a group with its id', () => {

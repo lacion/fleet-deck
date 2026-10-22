@@ -58,7 +58,7 @@ export function DisplaysTab({
             onDone={refresh}
           />
           <section aria-label="Wall displays" className="fd-disp-section">
-            <h2 className="fd-form-title">Wall displays</h2>
+            <h2 className="fd-form-title fd-disp-title">Wall displays</h2>
             {state.list.displays.length === 0 ? (
               <p className="fd-note">No wall display yet.</p>
             ) : (

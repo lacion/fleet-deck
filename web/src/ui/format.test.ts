@@ -17,8 +17,14 @@ describe('shortModel', () => {
     expect(shortModel('claude-3-5-sonnet-20241022')).toBe('Sonnet');
   });
 
+  test('a GPT id becomes GPT, the version and the variant', () => {
+    expect(shortModel('gpt-6.1-codex')).toBe('GPT-6.1 Codex');
+    expect(shortModel('gpt-5-codex')).toBe('GPT-5 Codex');
+    expect(shortModel('gpt-6')).toBe('GPT-6');
+  });
+
   test('a model outside the known families stays as it is', () => {
-    expect(shortModel('gpt-5-codex')).toBe('gpt-5-codex');
+    expect(shortModel('o3-mini')).toBe('o3-mini');
   });
 
   test('no model is the default', () => {

@@ -2,12 +2,10 @@
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
 import { useState } from 'react';
 import { formatHash } from '../app/routes';
-import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
-import { digestLines, GeneratedMark } from '../ui/generated';
+import { GeneratedMark } from '../ui/generated';
 import { Menu } from '../ui/Menu';
-import { CopyButton, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
 import {
   Archive,
   ArchiveRestore,
@@ -15,16 +13,18 @@ import {
   ChevronLeft,
   Ellipsis,
   FileText,
-  Folder,
   FolderGit2,
+  FolderOpen,
   GitCompare,
   Icon,
+  PanelRight,
   Pencil,
   Play,
   Power,
   Search,
   Server,
   Send,
+  CircleStop,
   Square,
   SquareTerminal,
   Star,
@@ -49,7 +49,7 @@ import { projectOfSession } from '../integrations/model';
 import { OpenPrDialog } from '../integrations/OpenPrDialog';
 import type { FleetActions } from '../fleet/fleet';
 import { SessionAccessDialog } from '../fleet/SessionAccess';
-import { Badges, Place } from './HeaderBadges';
+import { Badges, Details, Facts, Place, StatusFact, Who } from './HeaderBadges';
 import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
@@ -76,6 +76,8 @@ type Props = {
   readonly onNewShell?: (() => void) | undefined;
   /** The Files side panel: the header shows its toggle when given. */
   readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
+  /** The properties panel: the header shows its toggle when given. */
+  readonly propsPanel?: { readonly open: boolean; readonly toggle: () => void } | undefined;
   /** The models that the provider harness reports (`session.models`). */
   readonly models?: readonly ModelChoice[] | null;
   /** Opens the check of the previous run (DL-182); the menu offers it when given (owner only). */
@@ -99,55 +101,6 @@ function retryText(retryAt: number | null, now: number): string | null {
     : `retry in ${Math.ceil(ms / 60_000)} min`;
 }
 
-/** The facts of a session: its id (with a copy button), callsign, worktree, age and event count. */
-function Details({ session, now }: { readonly session: DeckSession; readonly now: number }) {
-  const s = session.summary;
-  const digest = digestLines(s.digest);
-  return (
-    <dl className="fd-sh-details">
-      <div>
-        <dt>Session</dt>
-        <dd>
-          <span>{s.session_id}</span>
-          <CopyButton text={s.session_id} label="Copy the session id" />
-        </dd>
-      </div>
-      {s.callsign ? (
-        <div>
-          <dt>Callsign</dt>
-          <dd>{s.callsign}</dd>
-        </div>
-      ) : null}
-      {s.worktree ? (
-        <div>
-          <dt>Worktree</dt>
-          <dd>{s.worktree}</dd>
-        </div>
-      ) : null}
-      {digest.length > 0 ? (
-        <div data-field="digest">
-          <dt>Summary (generated)</dt>
-          <dd>
-            <ul className="fd-sh-digest">
-              {digest.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </dd>
-        </div>
-      ) : null}
-      <div>
-        <dt>Updated</dt>
-        <dd>{relativeAge(s.updated_at, now)}</dd>
-      </div>
-      <div>
-        <dt>Events</dt>
-        <dd>{s.session_seq}</dd>
-      </div>
-    </dl>
-  );
-}
-
 export function SessionHeader({
   session,
   stations,
@@ -158,6 +111,7 @@ export function SessionHeader({
   layout = 'desktop',
   onNewShell,
   filesPanel,
+  propsPanel,
   models = null,
   onCheckExecution,
   onMoveStarted,
@@ -205,11 +159,14 @@ export function SessionHeader({
   const hasModes = !guest && caps?.set_mode === true && caps.modes.length > 0;
   const hasModel = !guest && caps?.set_model === true;
   const hasAuto = !guest && caps?.resume === true;
-  const place = [
-    stationName(session.station_id, stations),
-    s.branch,
-    s.cwd ? shortenMiddle(s.cwd, MAX_PATH_CHARS) : null,
-  ].filter((part): part is string => part !== null && part !== '');
+  const place = (
+    <Place
+      station={stationName(session.station_id, stations)}
+      branch={s.branch}
+      cwd={s.cwd}
+      {...(phone ? {} : { session })}
+    />
+  );
   const outcome = controller.outcome;
   const now = useNow(undefined, 30000);
   const ref = sessionRef(session.station_id, s.session_id);
@@ -511,7 +468,7 @@ export function SessionHeader({
                   </span>
                 ) : null}
               </div>
-              <Place parts={place} cwd={s.cwd} />
+              {place}
             </div>
             <div className="fd-menu-sep" />
             <Details session={session} now={now} />
@@ -606,9 +563,18 @@ export function SessionHeader({
             <Icon of={ChevronLeft} />
           </button>
         ) : null}
+        <span className="fd-holder" data-status={session.status} aria-hidden="true" />
+        {phone ? null : (
+          <div className="fd-sh-call">
+            {s.callsign ? <span className="fd-callsign fd-sh-callsign">{s.callsign}</span> : null}
+            <Who session={session} />
+          </div>
+        )}
         <div className="fd-sh-id">
+          {phone && s.callsign ? (
+            <span className="fd-callsign fd-sh-callsign">{s.callsign}</span>
+          ) : null}
           <div className="fd-sh-line">
-            <span className="fd-dot" data-status={session.status} aria-hidden="true" />
             {renaming ? (
               <RenameForm
                 title={s.title}
@@ -639,10 +605,15 @@ export function SessionHeader({
                 )}
               </>
             )}
-            {phone ? null : <Badges session={session} />}
           </div>
-          {phone ? null : <Place parts={place} cwd={s.cwd} />}
+          {phone ? null : (
+            <div className="fd-sh-chips">
+              <Facts session={session} />
+              {place}
+            </div>
+          )}
         </div>
+        {phone && !renaming ? <StatusFact session={session} /> : null}
         <div className="fd-sh-actions">
           <Avatars
             who={
@@ -658,14 +629,16 @@ export function SessionHeader({
                 type="button"
                 className="fd-iconbtn"
                 aria-label="Interrupt"
+                title="Interrupt"
                 disabled={busy !== null}
                 onClick={() => run('interrupt', (a) => a.interrupt())}
               >
-                <Icon of={Square} />
+                <Icon of={CircleStop} />
               </button>
             ) : (
               <button
                 type="button"
+                className="fd-ghost"
                 disabled={busy !== null}
                 onClick={() => run('interrupt', (a) => a.interrupt())}
               >
@@ -723,7 +696,19 @@ export function SessionHeader({
               aria-pressed={filesPanel.open}
               onClick={filesPanel.toggle}
             >
-              <Icon of={Folder} />
+              <Icon of={FolderOpen} />
+            </button>
+          ) : null}
+          {propsPanel ? (
+            <button
+              type="button"
+              className="fd-iconbtn"
+              aria-label="Properties"
+              title="Properties"
+              aria-pressed={propsPanel.open}
+              onClick={propsPanel.toggle}
+            >
+              <Icon of={PanelRight} />
             </button>
           ) : null}
           {overflow}

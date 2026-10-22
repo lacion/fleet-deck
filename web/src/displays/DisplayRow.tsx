@@ -143,7 +143,7 @@ export function DisplayRow({
     <li className="fd-panel fd-disp-row" data-display={display.display_id}>
       <header className="fd-disp-head">
         <h3 className="fd-disp-name">{display.name}</h3>
-        <span className="fd-note">
+        <span className="fd-note fd-disp-seen">
           Added {relativeAge(display.created_at, now)} ·{' '}
           {display.last_seen === null
             ? 'never used'
@@ -254,7 +254,7 @@ export function DisplayRow({
         </div>
       ) : (
         <div className="fd-formactions">
-          <button type="button" className="fd-primary" disabled={busy} onClick={save}>
+          <button type="button" disabled={busy} onClick={save}>
             Save
           </button>
           <button
@@ -277,7 +277,7 @@ export function DisplayRow({
           </button>
           <button
             type="button"
-            className="fd-ghost"
+            className="fd-danger"
             disabled={busy}
             onClick={() => setConfirm(true)}
           >

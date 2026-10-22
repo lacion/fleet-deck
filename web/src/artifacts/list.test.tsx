@@ -31,7 +31,7 @@ describe('artifact list', () => {
     expect(html).toContain('Plan');
     expect(html).toContain('>HTML<');
     expect(html).toContain('v2');
-    expect(html).toContain('5m');
+    expect(html).toContain('5 min');
     expect(html).toContain('Alpha · Review');
     expect(html).toContain('href="#/artifact/station-a/a1"');
   });

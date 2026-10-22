@@ -1,7 +1,7 @@
 // R13 P1: the shape class and the tile count are pure functions of the viewport and the URL.
 import { describe, expect, test } from 'bun:test';
 import { MAX_TILES } from '../watch/tiles';
-import { baseRemPx, shapeOf, tileLimit } from './shape';
+import { baseRemPx, shapeOf, TILE_GROW_MAX, tileGrid, tileLimit } from './shape';
 
 describe('shapeOf', () => {
   test('the aspect ratio picks the shape', () => {
@@ -36,6 +36,36 @@ describe('baseRemPx', () => {
     expect(baseRemPx(1440)).toBe(18);
     expect(baseRemPx(300)).toBe(14);
     expect(baseRemPx(4000)).toBe(28);
+  });
+
+  test('an ultra wall has a floor of 16 px', () => {
+    expect(baseRemPx(1080, 'ultra')).toBe(16);
+    expect(baseRemPx(1080, 'wide')).toBe(14);
+    expect(baseRemPx(1440, 'ultra')).toBe(18);
+  });
+});
+
+describe('tileGrid', () => {
+  const GAP = 8;
+
+  test('few tiles share the area and their type grows, up to the limit', () => {
+    // 1060 × 700 at 14 px: a smallest tile is 308 × 154.
+    const three = tileGrid(3, 1060, 700, 14, 1, GAP);
+    expect(three.columns).toBe(2);
+    // 526 / 308 = 1.71: the type grows to the limit.
+    expect(three.k).toBe(TILE_GROW_MAX);
+    expect(tileGrid(1, 2000, 1000, 14, 1, GAP)).toEqual({ columns: 1, k: TILE_GROW_MAX });
+    // The needs area grows by the same factor: the cap keeps it inside its column.
+    expect(TILE_GROW_MAX).toBe(1.25);
+  });
+
+  test('a full area keeps the columns that fit, and the type grows only by the room left', () => {
+    // 3 × 4 tiles: the rows are (700 - 3 × 8) / 4 = 169 px high, 169 / 154 = 1.10.
+    const twelve = tileGrid(12, 1060, 700, 14, 1, GAP);
+    expect(twelve.columns).toBe(3);
+    expect(twelve.k).toBeCloseTo(169 / 154, 2);
+    expect(tileGrid(30, 1060, 700, 14, 1, GAP).k).toBe(1);
+    expect(tileGrid(0, 1060, 700, 14, 1, GAP).columns).toBe(1);
   });
 });
 

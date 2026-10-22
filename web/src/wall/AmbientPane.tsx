@@ -3,7 +3,7 @@
 import { relativeAge } from '../app/sessions';
 import { rateMeters, resetsText, tightest } from '../board/usage';
 import type { DeckSession, StationView } from '../gen';
-import { ambientCounts, type Need } from './model';
+import { ambientCounts, type Need, usageLine } from './model';
 
 export function AmbientPane({
   sessions,
@@ -26,7 +26,7 @@ export function AmbientPane({
           <dt>Running</dt>
           <dd>{counts.running}</dd>
         </div>
-        <div>
+        <div data-tone={counts.needs > 0 ? 'act' : undefined}>
           <dt>Needs you</dt>
           <dd>{counts.needs}</dd>
         </div>
@@ -37,7 +37,7 @@ export function AmbientPane({
       </dl>
       {meter === null || meter.usedPercent === null ? null : (
         <p className="fd-wall-ambient-line">
-          {meter.label} · {meter.scope}: {Math.round(meter.usedPercent)}% used
+          {usageLine(meter)}
           {meter.resetsAt === null ? '' : `, ${resetsText(meter.resetsAt, now)}`}
         </p>
       )}

@@ -1,11 +1,11 @@
 // R13 P1 (design §4.2): the four areas of the mission mode: needs, tiles, side and stream.
 // Everything here only reads. A part with no data is left out.
-import { type RefObject, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from 'react';
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { gb, usedShare } from '../board/resources';
-import { rateMeters, resetsText, tightest } from '../board/usage';
+
+import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
 import { usePrs, useProjects } from '../integrations/context';
@@ -17,7 +17,7 @@ import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
-import { type Need, oneLine, wallSessions } from './model';
+import { NEED_LABEL, type Need, oneLine, usageLine, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
 
@@ -34,7 +34,14 @@ export function NeedsArea({
 }) {
   return (
     <section className="fd-wall-area" data-area="needs" aria-label="Needs you">
-      <h2 className="fd-wall-h">Needs you</h2>
+      <h2 className="fd-wall-h">
+        Needs you
+        {needs.length === 0 ? null : (
+          <span className="fd-count" data-tone="act">
+            {needs.length}
+          </span>
+        )}
+      </h2>
       {needs.length === 0 ? (
         <p className="fd-wall-note">Nothing needs you.</p>
       ) : (
@@ -42,19 +49,29 @@ export function NeedsArea({
           {needs.map(({ card, request }) => {
             const s = card.summary;
             return (
-              <li key={`${refOf(card)}/${request.request_id}`} className="fd-wall-need">
+              <li
+                key={`${refOf(card)}/${request.request_id}`}
+                className="fd-wall-need fd-glow"
+                data-kind={request.request_kind}
+              >
+                <span className="fd-holder" data-status="needs_you" aria-hidden="true" />
                 <div className="fd-wall-need-text">
                   <p className="fd-wall-need-head">
-                    <strong>{s.callsign ?? s.title ?? s.session_id}</strong>{' '}
-                    <span>{stationName(card.station_id, stations)}</span>
+                    <strong className="fd-callsign">{s.callsign ?? s.title ?? s.session_id}</strong>{' '}
+                    <span className="fd-wall-need-where">
+                      {stationName(card.station_id, stations)}
+                    </span>{' '}
+                    <span className="fd-badge" data-tone="act">
+                      {NEED_LABEL[request.request_kind] ?? 'Request'}
+                    </span>
                   </p>
                   <p className="fd-wall-need-what">
-                    <span className="fd-badge">{request.request_kind}</span> {request.title}
+                    <span className="fd-wall-need-q">{request.title}</span>
                   </p>
                   {request.details.trim() === '' ? null : (
-                    <p className="fd-wall-need-sum">{oneLine(request.details)}</p>
+                    <p className="fd-wall-need-sum">{oneLine(request.details, 240)}</p>
                   )}
-                  <p className="fd-wall-note">
+                  <p className="fd-wall-note fd-wall-need-age">
                     <time dateTime={new Date(request.requested_at).toISOString()}>
                       {relativeAge(request.requested_at, now)}
                     </time>
@@ -82,6 +99,7 @@ export function TilesArea({
   freshness,
   failed,
   areaRef,
+  grid = null,
 }: {
   readonly cards: readonly DeckSession[];
   readonly stations: readonly StationView[];
@@ -89,12 +107,21 @@ export function TilesArea({
   readonly freshness: Freshness;
   readonly failed: ReadonlySet<string>;
   readonly areaRef: RefObject<HTMLElement | null>;
+  /** The columns of the tiles (`tileGrid`); `null` before a measure. The growth of the type,
+   * `--fd-wall-tile-k`, is set on the grid: the needs area grows with the tiles. */
+  readonly grid?: { readonly columns: number; readonly k: number } | null;
 }) {
+  const style: CSSProperties | undefined =
+    cards.length === 0
+      ? { display: 'none' }
+      : grid === null
+        ? undefined
+        : ({ '--fd-wall-tile-cols': grid.columns } as CSSProperties);
   return (
     <section className="fd-wall-area" data-area="tiles" aria-label="Sessions" ref={areaRef}>
       {cards.length === 0 ? <p className="fd-wall-note">No live session.</p> : null}
       {/* Always rendered: the wall reads the grid gap from it to count the tiles that fit. */}
-      <ul className="fd-wall-tiles" style={cards.length === 0 ? { display: 'none' } : undefined}>
+      <ul className="fd-wall-tiles" data-grid={grid === null ? undefined : 'fill'} style={style}>
         {cards.map((card) => {
           const timeline = timelineOf(timelines, keyOf(card));
           return (
@@ -116,44 +143,26 @@ export function TilesArea({
   );
 }
 
-type DiskLike = {
-  readonly total_bytes: number;
-  readonly free_bytes: number;
-  readonly label?: string;
-};
+/** One decimal place of gigabytes, without the unit: "20.4". */
+const gbNumber = (bytes: number): string => (bytes / 1e9).toFixed(1);
 
 function StationRow({ station }: { readonly station: StationView }) {
-  // A wall display gets `display_resources` (no disk label, no path) in place of `info`.
+  // A wall display gets `display_resources` (no disk label, no path) in place of `info`. The wall
+  // shows the load and the memory only: one short line that a person reads across a room.
   const r = station.info?.resources ?? station.display_resources;
-  const disks: readonly DiskLike[] = r?.disks ?? [];
-  const fullest = disks.reduce<DiskLike | null>(
-    (best, d) =>
-      best === null ||
-      usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
-        usedShare(best.total_bytes - best.free_bytes, best.total_bytes)
-        ? d
-        : best,
-    null,
-  );
+  const stats = [
+    r?.cpu == null ? null : `CPU ${(r.cpu.load5_x100 / 100).toFixed(1)}/${r.cpu.cores}`,
+    r?.memory == null
+      ? null
+      : `Mem ${gbNumber(r.memory.total_bytes - r.memory.available_bytes)}/${gbNumber(r.memory.total_bytes)} GB`,
+  ].filter((t): t is string => t !== null);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
+      <span className="fd-wall-reach" aria-hidden="true" />
       <span className="fd-wall-station-name">{station.name}</span>
       <span className="fd-wall-note">{station.reachable ? 'Link up' : 'Unreachable'}</span>
-      {r?.cpu == null ? null : (
-        <span className="fd-wall-note">
-          CPU load {(r.cpu.load5_x100 / 100).toFixed(1)} on {r.cpu.cores} cores
-        </span>
-      )}
-      {r?.memory == null ? null : (
-        <span className="fd-wall-note">
-          Memory {gb(r.memory.available_bytes)} free of {gb(r.memory.total_bytes)}
-        </span>
-      )}
-      {fullest == null ? null : (
-        <span className="fd-wall-note">
-          Disk{fullest.label === undefined ? '' : ` ${fullest.label}`}: {gb(fullest.free_bytes)}{' '}
-          free of {gb(fullest.total_bytes)}
-        </span>
+      {stats.length === 0 ? null : (
+        <span className="fd-wall-station-stats">{stats.join(' · ')}</span>
       )}
     </li>
   );
@@ -183,12 +192,18 @@ export function SideArea({
       {meter === null || meter.usedPercent === null ? null : (
         <div className="fd-wall-block" data-part="usage">
           <h2 className="fd-wall-h">Usage</h2>
-          <p>
-            {meter.label} · {meter.scope}: {Math.round(meter.usedPercent)}% used
+          <p>{usageLine(meter)}</p>
+          <span
+            className="fd-meter"
+            data-level={meter.usedPercent >= WARN_PERCENT ? 'high' : undefined}
+            aria-hidden="true"
+          >
+            <span style={{ width: `${Math.min(100, Math.max(0, meter.usedPercent))}%` }} />
+          </span>
+          <p className="fd-wall-note">
+            {stationName(meter.stationId, stations)}
+            {meter.resetsAt === null ? '' : ` · ${resetsText(meter.resetsAt, now)}`}
           </p>
-          {meter.resetsAt === null ? null : (
-            <p className="fd-wall-note">{resetsText(meter.resetsAt, now)}</p>
-          )}
         </div>
       )}
       {stations.length === 0 ? null : (
@@ -274,13 +289,15 @@ export function StreamArea({
     // `filterStations` stands for `filter.stations`.
     [sessions, filterStations, filter.repo],
   );
-  // The deck sends the newest first; the wall shows the newest at the bottom.
+  // The deck sends the newest first. The list runs oldest first, and `.fd-wall-stream` draws it
+  // from the bottom up: the newest row sits under the heading, the oldest are cut at the bottom.
   const rows = (items ?? [])
     .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
     .slice(0, STREAM_ITEMS)
     .reverse();
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
+      <h2 className="fd-wall-h">Activity</h2>
       {error !== null ? <p className="fd-wall-note">{error}</p> : null}
       {items === null ? (
         error === null ? (

@@ -124,13 +124,13 @@ describe('the group Other stations (FG-10)', () => {
   test('the Fetch button and the fetched line', () => {
     const html = view(ready([row()], { fetched_at: NOW - 5 * 60_000 }));
     expect(html).toContain('>Fetch</button>');
-    expect(html).toContain('Fetched 5m ago');
+    expect(html).toContain('Fetched 5 min ago');
     expect(view(ready([row()], { fetched_at: NOW - 1000 }))).toContain('Fetched just now');
     expect(view(ready([row()]))).not.toContain('Fetched');
     const busy = view(ready([row()]), { fetching: true });
     expect(busy).toContain('Fetching…');
     expect(busy).toContain('disabled');
-    expect(fetchedText(NOW - 3 * 3_600_000, NOW)).toBe('Fetched 3h ago');
+    expect(fetchedText(NOW - 3 * 3_600_000, NOW)).toBe('Fetched 3 h ago');
   });
 
   test('loading, a refusal and a failed fetch', () => {

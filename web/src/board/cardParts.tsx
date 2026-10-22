@@ -2,8 +2,22 @@ import { firstLine, isStartFailure } from '../app/failures';
 import { formatHash } from '../app/routes';
 import type { CardStatus, DeckSession } from '../gen';
 import { MIN_SIBLINGS } from '../compare/compare';
+import type { RunningTool } from '../gen';
 import { errorSentence } from '../ui/format';
-import { Icon, TriangleAlert } from '../ui/icons';
+import {
+  FileText,
+  Globe,
+  Icon,
+  type LucideIcon,
+  MessageSquare,
+  Pencil,
+  Plug,
+  Search,
+  Shield,
+  SquareTerminal,
+  Workflow,
+  Wrench,
+} from '../ui/icons';
 import { isHibernated } from '../views/hibernate';
 import { FocusLine, focusOf } from '../views/marks';
 import { PushBadge, StaleBaseChip } from './PushBadge';
@@ -53,14 +67,27 @@ const FOCUS_STATUSES: readonly CardStatus[] = [
   'idle',
 ];
 
+/** The icon of a running tool, by its kind (the same icons as the chat's tool rows). */
+const TOOL_ICON: Record<RunningTool['tool_kind'], LucideIcon> = {
+  shell: SquareTerminal,
+  edit: Pencil,
+  read: FileText,
+  search: Search,
+  web: Globe,
+  mcp: Plug,
+  subagent: Workflow,
+  other: Wrench,
+};
+
 function NoteLine({ card, focus }: { readonly card: DeckSession; readonly focus: boolean }) {
   const s = card.summary;
   const ask = s.open_requests[0];
   if (ask !== undefined) {
     return (
       <span className="fd-card-note">
-        <span className="fd-card-ask">
-          <Icon of={TriangleAlert} size={12} /> {ask.title}
+        <span className="fd-card-ask" data-kind={ask.request_kind}>
+          <Icon of={ask.request_kind === 'question' ? MessageSquare : Shield} size={12} />{' '}
+          {ask.title}
         </span>
       </span>
     );
@@ -70,7 +97,14 @@ function NoteLine({ card, focus }: { readonly card: DeckSession; readonly focus:
     return (
       <span className="fd-card-note">
         <span className="fd-card-tool">
-          {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
+          <Icon of={TOOL_ICON[tool.tool_kind] ?? Wrench} size={12} />{' '}
+          <span className="fd-card-tool-name">{tool.title}</span>
+          {tool.input_summary === '' ? null : (
+            <>
+              {' '}
+              <span className="fd-card-tool-arg">{tool.input_summary}</span>
+            </>
+          )}
         </span>
       </span>
     );

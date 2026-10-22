@@ -157,10 +157,15 @@ export class Phone {
     const page = this.page;
     await (await this.bar()).getByRole('link', { name: 'New' }).click();
     const form = page.getByRole('region', { name: 'New session' });
+    // The station and the provider are radio pills (DESIGN-SYSTEM §4.6): click the label.
     await form
-      .getByRole('combobox', { name: 'Station', exact: true })
-      .selectOption({ label: station.name });
-    await form.getByRole('combobox', { name: 'Provider' }).selectOption({ label: provider });
+      .getByRole('radiogroup', { name: 'Station', exact: true })
+      .locator('label', { hasText: station.name })
+      .click();
+    await form
+      .getByRole('radiogroup', { name: 'Provider' })
+      .locator('label', { hasText: provider })
+      .click();
     await form.getByRole('button', { name: 'Browse…' }).click();
     await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
     await form.getByRole('button', { name: 'Open demo' }).click();

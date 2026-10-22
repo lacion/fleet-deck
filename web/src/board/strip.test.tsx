@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { activeFilters, clearFilter, FleetHome } from '../app/FleetHome';
+import { activeFilters, clearFilter, FleetHome, statusMatches } from '../app/FleetHome';
+import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, OpenRequest } from '../gen';
 import { card, station } from '../testing/fleet';
 import { priority } from '../ui/localSet';
 import { emptyFilter } from './fleet';
 import { FleetBoard, STRIP_ORDER, stripCards } from './FleetBoard';
+import { HomePanel } from './HomePanel';
 
 const NOW = 1_760_000_040_000;
 
@@ -129,13 +131,16 @@ describe('strip markup', () => {
       }),
       card('nocall'),
     ]);
-    expect(html).toMatch(/class="fd-strip-call"[^>]*>falcon-899q</);
+    expect(html).toMatch(/class="fd-strip-call fd-callsign"[^>]*>falcon-899q</);
     expect(html).toContain('>Fix the test<');
     expect(html).toContain('class="fd-strip-model" data-family="opus">Opus 4.1<');
-    expect(html).toContain('>4m<');
+    expect(html).toContain('>4 min<');
     // no callsign: the first 8 characters of the id
-    expect(html).toMatch(/class="fd-strip-call"[^>]*>nocall</);
-    expect(html).not.toContain('fd-dot');
+    expect(html).toMatch(/class="fd-strip-call fd-callsign"[^>]*>nocall</);
+    // the status glyph leads the title (state not by color alone, DESIGN-SYSTEM §6)
+    expect(html).toContain(
+      '<span class="fd-strip-title"><span class="fd-dot" data-status="working" aria-hidden="true"></span>',
+    );
   });
 
   test('the meta cell shows an icon only for a fact that is present', () => {
@@ -217,7 +222,10 @@ describe('toolbar filters', () => {
   test('the toolbar has a Filters menu with the filter group inside, and the group select', () => {
     const html = home([card('a')]);
     expect(html).toContain('<details class="fd-menu fd-filters-menu">');
-    expect(html).toMatch(/<summary class="fd-ghost fd-sm">Filters<\/summary>/);
+    expect(html).toMatch(
+      /<summary class="fd-ghost fd-sm"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
+    );
+    expect(html).toContain('<option value="station" selected="">Group: Station</option>');
     expect(html).toContain('role="group" aria-label="Fleet filters"');
     expect(html).toContain('aria-label="Group by"');
     expect(html).not.toContain('fd-active-filters');
@@ -265,5 +273,106 @@ describe('phone board', () => {
     expect(html).not.toContain('aria-label="Group by"');
     expect(html).not.toContain('fd-strip-station');
     expect(html).toContain('Offline sessions');
+  });
+});
+
+describe('flight deck fixes', () => {
+  test('a strip without known changes has no changes cell: its where cell spans the column', () => {
+    const html = board([card('a')]);
+    expect(html).toContain('data-nochanges="true"');
+    expect(html).not.toContain('fd-strip-changes');
+  });
+
+  test('every lane head shows how many strips it holds, a station lane too', () => {
+    const html = board([card('a'), card('b'), card('c', 'working', 'station-b')]);
+    expect(html).toContain(
+      '<h2 class="fd-lane-name fd-wide">Alpha</h2><span class="fd-count">2</span>',
+    );
+    expect(html).toContain(
+      '<h2 class="fd-lane-name fd-wide">Beta</h2><span class="fd-count">1</span>',
+    );
+  });
+
+  test('a folded board puts the ended strips of a lane in a collapsed Ended group with its tools', () => {
+    const html = board([card('a'), card('e', 'ended'), card('l', 'lost')], { foldEnded: true });
+    expect(html).toContain(
+      '<details class="fd-lane-ended"><summary><span class="fd-dot" data-status="ended" aria-hidden="true"></span>Ended · 2</summary>',
+    );
+    expect(html).toMatch(
+      /<details class="fd-lane-ended">[\s\S]*data-session="e"[\s\S]*Resume all \(0\)[\s\S]*Clear \(2\)[\s\S]*<\/details>/,
+    );
+    expect(html).not.toContain('Offline sessions');
+    expect(board([card('a')], { foldEnded: true })).not.toContain('fd-lane-ended');
+    // not folded (the phone): the ended strip stays in its lane and the offline row closes the board
+    const flat = board([card('a'), card('e', 'ended')]);
+    expect(flat).not.toContain('fd-lane-ended');
+    expect(flat).toContain('Offline sessions');
+  });
+
+  test('the status filter: Working holds queued and verifying, Needs you an open request', () => {
+    expect(statusMatches(card('q', 'queued'), 'working')).toBe(true);
+    expect(statusMatches(card('v', 'verifying'), 'working')).toBe(true);
+    expect(statusMatches(card('i', 'idle'), 'working')).toBe(false);
+    expect(statusMatches(card('i', 'idle'), 'idle')).toBe(true);
+    expect(statusMatches(card('e', 'ended'), 'idle')).toBe(false);
+    expect(
+      statusMatches(card('w', 'working', 'station-a', { open_requests: [ask] }), 'needs_you'),
+    ).toBe(true);
+    expect(statusMatches(card('e', 'ended'), 'all')).toBe(true);
+  });
+
+  test('the desktop header has the status segments and, with nothing waiting, the bell slot', () => {
+    const html = home([card('a')]);
+    expect(html).toContain('<div class="fd-seg fd-home-status" role="group" aria-label="Status">');
+    expect(html).toContain('<button type="button" aria-pressed="true">All</button>');
+    expect(html).toContain('<span class="fd-home-bell"></span>');
+    const phone = home([card('a')], 'phone');
+    expect(phone).not.toContain('fd-home-status');
+    expect(phone).not.toContain('fd-home-bell');
+  });
+
+  test('wide, the ops panel has a Mail & tasks section and Activity, Assign and Usage foot buttons', () => {
+    const actions: FleetActions = {
+      mail: async () => ({ ok: true, text: '' }),
+      task: async () => ({ ok: true, text: '' }),
+      tasks: async () => [],
+      grants: async () => [],
+      revoke: async () => ({ ok: true, text: '' }),
+      renew: async () => ({ ok: true, text: '' }),
+      caps: async () => ({ ok: true, text: '' }),
+      desktopOps: async () => [],
+      give: async () => ({ ok: true, text: '' }),
+      changeAccess: async () => ({ ok: true, text: '' }),
+    };
+    const html = renderToStaticMarkup(
+      <HomePanel
+        hasAssign
+        guest={false}
+        stations={[station()]}
+        sessions={[card('a')]}
+        visible={[card('a')]}
+        feed={[]}
+        fleet={actions}
+        assign={undefined}
+        onOpen={() => {}}
+        onSpawn={() => {}}
+        request={undefined}
+        wide
+        waiting={[{ key: 'station-a/a', name: 'heron-mc2q', count: 1 }]}
+      />,
+    );
+    expect(html).toContain('data-layout="section" aria-label="Mail and tasks"');
+    expect(html).toContain('<span class="fd-count">1</span>');
+    expect(html).toContain('1 mail waiting');
+    expect(html).toContain('For delivery to heron-mc2q');
+    expect(html).toContain('<details class="fd-fleet-compose"><summary>New mail or task</summary>');
+    expect(html).not.toContain('role="tablist"');
+    expect(html).toMatch(
+      /<div class="fd-ops-foot"><button type="button" class="fd-ghost" aria-expanded="false">/,
+    );
+    expect(html).toContain('</svg> Activity</button>');
+    expect(html).toContain('</svg> Assign</button>');
+    // The glance shows only the tightest meters: the foot keeps the full Usage panel.
+    expect(html).toContain('</svg> Usage</button>');
   });
 });

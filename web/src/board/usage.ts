@@ -70,7 +70,12 @@ export type RateMeter = {
   readonly key: string;
   readonly stationId: string;
   readonly instance: string;
+  /** "Station · instance": the Usage tab, where every account has its own row. */
   readonly label: string;
+  /** The provider display name of the instance: "Claude", "Codex", "Personal". */
+  readonly provider: string;
+  /** The station name (the glance shows it only when several stations report limits). */
+  readonly station: string;
   readonly scope: string;
   /** `null`: the provider did not say (unknown, not zero). */
   readonly usedPercent: number | null;
@@ -99,6 +104,8 @@ export function rateMeters(
           stationId: s.station_id,
           instance,
           label: `${stationName(s.station_id, stations)} · ${instance}`,
+          provider: providerName(instance),
+          station: stationName(s.station_id, stations),
           scope: limit.scope,
           usedPercent: limit.used_percent,
           resetsAt: limit.resets_at,
@@ -108,6 +115,23 @@ export function rateMeters(
   }
   return [...latest.values()].map((v) => v.meter).sort(tighter);
 }
+
+/** The display name of a provider instance: "claude" → "Claude", "codex" → "Codex". */
+export function providerName(instance: string): string {
+  if (instance === 'claude') return 'Claude';
+  if (instance === 'codex') return 'Codex';
+  return instance.charAt(0).toUpperCase() + instance.slice(1);
+}
+
+/** The words of a rate-limit scope: "five_hour" → "5-hour window" (never the raw protocol scope). */
+export const SCOPE_TEXT: Readonly<Record<string, string>> = {
+  five_hour: '5-hour window',
+  seven_day: 'weekly window',
+  weekly: 'weekly window',
+};
+
+/** The words of a scope; a scope without words loses its underscores ("seven_day_opus" → "seven day opus"). */
+export const scopeText = (scope: string): string => SCOPE_TEXT[scope] ?? scope.replace(/_/g, ' ');
 
 /** Orders meters: highest use first, unknown use last, then by key. */
 function tighter(a: RateMeter, b: RateMeter): number {
@@ -123,8 +147,8 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 
 /**
- * When a window resets: "resets in 2 h 10 min", "resets at 14:30" (local
- * time) when it is more than a day away, "reset due" when the time is past (R4.1).
+ * When a window resets: "resets in 2 h 10 min", "resets Mon 14:30" (local
+ * weekday and time) when it is more than a day away, "reset due" when the time is past (R4.1).
  */
 export function resetsText(resetsAt: number, now: number): string {
   const ms = resetsAt - now;
@@ -132,7 +156,8 @@ export function resetsText(resetsAt: number, now: number): string {
   if (ms > DAY_MS) {
     const d = new Date(resetsAt);
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `resets at ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const day = d.toLocaleDateString(undefined, { weekday: 'short' });
+    return `resets ${day} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   const minutes = Math.ceil(ms / MINUTE_MS);
   const h = Math.floor(minutes / 60);
@@ -158,21 +183,22 @@ export function instanceLimit(
 /** From this use a limit warns (R4.2). */
 export const WARN_PERCENT = 80;
 
-/** The warning chip for the given meters: nothing under 80%, "Limit 85% · five_hour", or "Limit reached" at 100% (R4.2). */
+/** The warning chip for the given meters: nothing under 80%, "Limit 85% · 5-hour window", or "Limit reached" at 100% (R4.2). */
 export function limitChip(
   meters: readonly RateMeter[],
 ): { readonly tone: 'act' | 'hazard'; readonly text: string } | null {
   const m = tightest(meters);
   if (m === null || m.usedPercent === null || m.usedPercent < WARN_PERCENT) return null;
-  if (m.usedPercent >= 100) return { tone: 'hazard', text: `Limit reached · ${m.scope}` };
-  return { tone: 'act', text: `Limit ${Math.round(m.usedPercent)}% · ${m.scope}` };
+  if (m.usedPercent >= 100)
+    return { tone: 'hazard', text: `Limit reached · ${scopeText(m.scope)}` };
+  return { tone: 'act', text: `Limit ${Math.round(m.usedPercent)}% · ${scopeText(m.scope)}` };
 }
 
-/** The provider label of the spawn form with the limit of its instance (R4.3): "claude · 42% of five_hour, resets in 1 h". */
+/** The provider label of the spawn form with the limit of its instance (R4.3): "claude · 42% of 5-hour window, resets in 1 h". */
 export function limitSuffix(m: RateMeter | null, now: number): string {
   if (m === null || m.usedPercent === null) return '';
   const resets = m.resetsAt === null ? '' : `, ${resetsText(m.resetsAt, now)}`;
-  return `${Math.round(m.usedPercent)}% of ${m.scope}${resets}`;
+  return `${Math.round(m.usedPercent)}% of ${scopeText(m.scope)}${resets}`;
 }
 
 /** The instance with the most room: the lowest tightest use; only when at least two instances report and the lowest is unique. */

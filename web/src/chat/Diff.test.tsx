@@ -58,21 +58,74 @@ function review(patch: Partial<DiffReview> = {}): DiffReview {
 }
 
 describe('Diff', () => {
-  test('a file line is plain text without onOpenFile', () => {
+  test('a file is a header row: the path and its +/−, without the git plumbing', () => {
     const html = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
-    expect(html).toContain('diff --git a/src/a.ts b/src/a.ts');
+    expect(html).toContain(
+      '<span class="fd-dl-path"><span class="fd-dl-dir">src/</span><span class="fd-dl-base">a.ts</span></span>',
+    );
+    expect(html).toContain('<span data-sign="add">+1</span><span data-sign="del">−1</span>');
     expect(html).not.toContain('fd-dl-file');
+    for (const plumbing of ['diff --git', 'index 83db48f', '--- a/src/a.ts', '+++ b/src/a.ts']) {
+      expect(html).not.toContain(plumbing);
+    }
+    expect(html).toContain('@@ -1 +1 @@');
   });
 
-  test('a file line has the path as a button with onOpenFile', () => {
+  test('in a hunk, a line that looks like a file header is a content line', () => {
+    // A deleted `-- note` (SQL, Lua) is `--- note` in the patch; an added `++ x` is `+++ x`.
+    const sql = [
+      'diff --git a/q.sql b/q.sql',
+      'index 1..2 100644',
+      '--- a/q.sql',
+      '+++ b/q.sql',
+      '@@ -1,2 +1,2 @@',
+      '--- note',
+      '+++ x',
+      ' select 1;',
+    ].join('\n');
+    const html = renderToStaticMarkup(
+      <Diff patch={sql} truncated={false} id="t1" review={review()} />,
+    );
+    expect(html).not.toContain('--- a/q.sql');
+    expect(html).not.toContain('+++ b/q.sql');
+    expect(html).toContain('<span data-sign="add">+1</span><span data-sign="del">−1</span>');
+    expect(html).toMatch(/<span class="fd-dl" data-kind="del">.*--- note<\/span>/);
+    expect(html).toMatch(/<span class="fd-dl" data-kind="add">.*\+\+\+ x<\/span>/);
+    expect(html).toContain('aria-label="Comment on q.sql line 1 (old side)"');
+    expect(html).toContain('aria-label="Comment on q.sql line 1"');
+  });
+
+  test('a file header has the path as a button with onOpenFile', () => {
     const html = renderToStaticMarkup(
       <Diff patch={patch} truncated={false} id="t1" onOpenFile={() => {}} />,
     );
     expect(html).toContain(
-      'diff --git a/src/a.ts b/<button type="button" class="fd-dl-file">src/a.ts</button>',
+      '<button type="button" class="fd-dl-file" aria-label="src/a.ts"><span class="fd-dl-dir">src/</span><span class="fd-dl-base">a.ts</span></button>',
     );
-    // only the file line has a button
+    // only the file header has a button
     expect(html.match(/fd-dl-file/g)).toHaveLength(1);
+  });
+
+  test('with review, the old and the new number have a gutter each', () => {
+    const ctx = [
+      'diff --git a/x b/x',
+      '--- a/x',
+      '+++ b/x',
+      '@@ -4,2 +4,2 @@',
+      ' same',
+      '-a',
+      '+b',
+    ].join('\n');
+    const html = renderToStaticMarkup(
+      <Diff patch={ctx} truncated={false} id="t1" review={review({ canWrite: false })} />,
+    );
+    const gutters = (old: string, now: string) =>
+      `<span class="fd-dl-g" data-side="old">${old}</span><span class="fd-dl-g" data-side="new">${now}</span>`;
+    // context: both numbers (the new one is the comment target)
+    expect(html).toContain(gutters('4', '<span class="fd-dl-n">4</span>'));
+    // deleted: the new gutter is blank; added: the old gutter is blank
+    expect(html).toContain(gutters('<span class="fd-dl-n">5</span>', ''));
+    expect(html).toContain(gutters('', '<span class="fd-dl-n">5</span>'));
   });
 
   test('without review the line numbers are not shown', () => {

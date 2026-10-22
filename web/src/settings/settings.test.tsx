@@ -216,8 +216,8 @@ describe('the badges of a field', () => {
       { text: 'Applies after a restart' },
       { text: 'Set by the command line (--listen)' },
       {
-        text: 'needs re-auth',
-        tone: 'act',
+        text: 'Needs re-auth',
+        tone: 'muted',
         title: 'Saving this asks for your password or an elevation code',
       },
     ]);
@@ -228,7 +228,7 @@ describe('the badges of a field', () => {
     const html = fields();
     expect(html).toContain('Applies after a restart');
     expect(html).toContain('Set by the command line (--listen)');
-    expect(html).toContain('data-tone="act"');
+    expect(html).toContain('data-tone="muted"');
     expect(html).toContain('title="Saving this asks for your password or an elevation code"');
     expect(html).toContain('aria-label="Listen addresses 1"');
     expect(html).toMatch(/<input[^>]*aria-label="Listen addresses 1" disabled=""/);

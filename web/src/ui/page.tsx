@@ -19,7 +19,11 @@ type PageProps = {
   readonly children: ReactNode;
 };
 
-/** The page frame: padding, a centered column, the title row and the description. */
+/**
+ * The page frame: padding, a left-aligned column, and the page header (DESIGN-SYSTEM §4.3): the
+ * title and its count with the description under them at the left, the actions at the right, then
+ * a rule.
+ */
 export function Page({
   title,
   count,
@@ -37,21 +41,25 @@ export function Page({
       aria-label={label ?? title}
     >
       <header className="fd-page-head">
-        <h1 className="fd-page-title">{title}</h1>
-        {count === undefined ? null : <span className="fd-count">{count}</span>}
+        <div className="fd-page-titles">
+          <div className="fd-page-titlerow">
+            <h1 className="fd-page-title">{title}</h1>
+            {count === undefined ? null : <span className="fd-count">{count}</span>}
+          </div>
+          {description === undefined || description === null ? null : (
+            <p className="fd-page-desc">{description}</p>
+          )}
+        </div>
         {actions === undefined || actions === null ? null : (
           <div className="fd-page-actions">{actions}</div>
         )}
       </header>
-      {description === undefined || description === null ? null : (
-        <p className="fd-page-desc">{description}</p>
-      )}
       {children}
     </section>
   );
 }
 
-/** A labelled block of a page: the `.fd-label` row, then the content in a `.fd-panel`. */
+/** A labelled block of a page: a 15px heading row, then the content in a `.fd-panel` (§4.7). */
 export function Section({
   label,
   actions,
@@ -64,7 +72,7 @@ export function Section({
   return (
     <section className="fd-pagesec" aria-label={label}>
       <div className="fd-pagesec-head">
-        <h2 className="fd-label">{label}</h2>
+        <h2 className="fd-pagesec-title">{label}</h2>
         {actions === undefined ? null : <div className="fd-page-actions">{actions}</div>}
       </div>
       <div className="fd-panel fd-pagesec-body">{children}</div>
@@ -72,7 +80,7 @@ export function Section({
   );
 }
 
-/** What an empty list shows: an icon, a title, a sentence and one action. */
+/** What an empty list shows: a 20px icon, a title, a sentence and one action (§4.7). */
 export function EmptyState({
   icon,
   title,
@@ -86,7 +94,7 @@ export function EmptyState({
 }) {
   return (
     <div className="fd-panel fd-emptystate">
-      <Icon of={icon} size={24} />
+      <Icon of={icon} size={20} />
       <p className="fd-emptystate-title">{title}</p>
       <p className="fd-emptystate-body">{body}</p>
       {action === undefined ? null : action}
