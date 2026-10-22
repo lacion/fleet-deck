@@ -73,16 +73,14 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   // DL-149: the archived sessions live on the deck; attach once logged in,
   // and again after a new login.
   const loggedIn = state.login !== null && !guest;
-  useEffect(
-    () =>
-      loggedIn
-        ? archived.attach({
-            get: (p) => connection.get(p),
-            post: (p, b) => connection.post(p, b),
-          })
-        : undefined,
-    [connection, loggedIn],
-  );
+  useEffect(() => {
+    if (!loggedIn) return undefined;
+    // The detach of the archive is the cleanup.
+    return archived.attach({
+      get: (p) => connection.get(p),
+      post: (p, b) => connection.post(p, b),
+    });
+  }, [connection, loggedIn]);
   const [password, setPassword] = useState('');
   const [joinHash, setJoinHash] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : joinToken(window.location.hash),

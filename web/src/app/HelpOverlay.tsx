@@ -147,8 +147,11 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
   useFocusReturn(root, close);
   useOverlay();
   useDismiss(root, true, onClose);
-  // The Close button of the header has the focus; the long body still opens at its top.
-  useEffect(() => body.current?.scrollTo({ top: 0 }), []);
+  // The Close button of the header has the focus; the long body still opens at its top. A block
+  // body: scrollTo returns a Promise in new browsers, and an effect may only return a cleanup.
+  useEffect(() => {
+    body.current?.scrollTo({ top: 0 });
+  }, []);
   return (
     <div className="fd-overlay">
       <div

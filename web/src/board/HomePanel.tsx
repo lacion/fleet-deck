@@ -162,7 +162,9 @@ export function HomePanel({
   // meters, and the Usage panel keeps every meter and the unknown parts.
   const foot: readonly PanelTab[] = tabs.filter((t) => t !== 'mail');
   const shown = state.open && (!wide || foot.includes(tab)) ? tab : null;
-  useEffect(() => onState?.(shown), [onState, shown]);
+  useEffect(() => {
+    onState?.(shown);
+  }, [onState, shown]);
   const body = (
     <>
       {shown === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
