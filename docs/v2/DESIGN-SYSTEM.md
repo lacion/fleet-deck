@@ -36,7 +36,7 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--border-soft` | `#212B39` | `#E4E9F0` | the faintest divider (list separators) |
 | `--text` | `#E9EEF4` | `#111821` | primary text |
 | `--dim` | `#A5B0BF` | `#4A5666` | secondary text |
-| `--faint` | `#8896A7` | `#5F6B7B` | tertiary text (≥ 4.5:1 on `--bg`, `--surface`, `--raised`) |
+| `--faint` | `#8896A7` | `#596575` | tertiary text (≥ 4.5:1 on `--bg`, `--surface`, `--raised`, `--raised-hi`, `--badge-bg` and the `--add-bg`/`--del-bg` diff lines) |
 | `--faint-decor` | `#5B6779` | `#9AA5B4` | decoration only (hollow rings, ticks), never text |
 | `--ink-fill` *(new)* | `#E9EEF4` | `#111821` | fill of the general primary button |
 | `--ink-on` *(new)* | `#111821` | `#FFFFFF` | text on `--ink-fill` |
@@ -45,9 +45,9 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--ctl-edge` *(new)* | `#6B778A` | `#788496` | edge of a form control (input, select, textarea, checkbox, radio, the off switch track) and the ring of a pressed segment or chip: ≥ 3:1 on `--bg`, `--surface`, `--raised`, `--raised-hi` (WCAG 1.4.11) |
 | `--pressed-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of a pressed `.fd-seg` segment (light: a white segment with `--shadow-lift` on the track) |
 | `--switch-knob` *(new)* | `var(--text)` (`#E9EEF4`) | `var(--raised)` (`#FFFFFF`) | knob of an off `.fd-switch` (the on knob is `--ink-on`) |
-| `--knob-shadow` *(new)* | `none` | `0 1px 2px rgba(17,24,33,.25)` | shadow of the switch knob |
+| `--knob-shadow` *(new)* | `0 0 0 0 transparent` | `0 1px 2px rgba(17,24,33,.25)` | shadow of the switch knob |
 | `--selected-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of the selected nav row, sidebar session row or activity channel (`--raised-hi` does not show on the light `--bg` and `--surface`) |
-| `--selected-lift` *(new)* | `none` | `var(--shadow-lift)` | lift of a selected row (light only) |
+| `--selected-lift` *(new)* | `0 0 0 0 transparent` | `var(--shadow-lift)` | lift of a selected row (light only) |
 
 `.fd-scope-dark` *(new)*: a part that stays dark in every theme (the wall ambient mode). `tokens.css` gives it the dark color block (`:root, .fd-scope-dark`).
 
@@ -137,7 +137,8 @@ Weights: 400 body, 500 UI emphasis, 600 titles, 640–680 page titles and callsi
 
 - `--shadow-pop`: dark `0 1px 0 rgba(255,255,255,.04) inset, 0 16px 40px rgba(0,0,0,.45)`; light `0 12px 32px rgba(17,24,33,.12)`. Only on floating layers: menus, dialogs, popovers, the approval card, the composer, toasts, bottom sheets.
 - `--scrim` *(new)*: dark `rgba(6,10,15,.6)`; light `rgba(17,24,33,.28)` — the one dim layer behind every dialog, the drawer and a sheet.
-- `--shadow-lift` *(new)*: dark `none`; light `0 1px 2px rgba(17,24,33,.07)` — strips and cards in the light theme.
+- `--shadow-lift` *(new)*: dark `0 0 0 0 transparent`; light `0 1px 2px rgba(17,24,33,.07)` — strips and cards in the light theme.
+- A shadow token (`--shadow-lift`, `--selected-lift`, `--knob-shadow`) is **never `none`**: area rules put it in a `box-shadow` list (`inset 3px 0 0 var(--ok), var(--shadow-lift)`), and `…, none` is invalid, so the browser drops the whole declaration. "No shadow" is the zero shadow `0 0 0 0 transparent`.
 - `--t-fast` 120ms ease-out (hover, press), `--t-move` 200ms ease (expand, slide), `--t-drawer` 220ms ease-out.
 - `--pulse-needs` 2400ms: the needs-you glow breathes (opacity of the glow only). `--pulse-working` 2400ms: the working glyph arc turns. Nothing else moves without a user action. `@media (prefers-reduced-motion: reduce)` stops every animation.
 
@@ -156,7 +157,7 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-danger` | transparent, `--hazard` text; hover `--hazard-bg` |
 | `.fd-sm` | 24px, padding 0 8px, 12px; on a `<select>` the padding-right stays 28px (the chevron) |
 | `.fd-iconbtn` | square ghost (28 or 24), icon 16px |
-| `input`, `select`, `textarea` | `--raised` fill, 1px `--ctl-edge` edge, `--r-ctl`, 13px; focus: edge `--focus` + a 1px `--focus` ring (a 2px blue edge; `--focus-bg` is never a focus cue); placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
+| `input`, `select`, `textarea` | `--raised` fill, 1px `--ctl-edge` edge, `--r-ctl`, 13px; focus: edge `--focus` + a 1px `--focus` ring (a 2px blue edge; `--focus-bg` is never a focus cue) and a 2px transparent outline (forced colors paint it); placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
 | `input[type=checkbox]`, `input[type=radio]` | `appearance: none`, 16px (24px with `pointer: coarse`), `--raised` fill, 1px `--ctl-edge` (hover `--faint`); checked: `--ink-fill` fill with an `--ink-on` check (mask) / dot; radius 4px / 50% |
 | `.fd-switch` (role=switch) | 32×18 track, `--ctl-edge` off / `--ok` on, 14px knob: off `--switch-knob`, on `--ink-on`, shadow `--knob-shadow` |
 | `.fd-seg` *(new)* | segmented control: a `--surface` track (2px padding, `--r-ctl`), segments 24px, the pressed one (`aria-pressed=true` or `aria-selected=true` or `:checked`) `--pressed-bg` fill + a 1px inset `--ctl-edge` ring + `--shadow-lift` + `--text` weight 600, others `--dim` |
@@ -171,7 +172,7 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px. `.fd-menu > summary.fd-ghost` *(new)*: a summary that looks like a ghost button (transparent, `--dim`; hover and open `--raised` + `--text`) |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
-| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600, a sticky 28px header row (icon, mono path, +/− counts; the git plumbing lines are not drawn) with a `--border-soft` rule; with review, two number gutters (old, new; only new on a phone) |
+| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600, a sticky 28px header row (icon, mono path, +/− counts; the git plumbing lines are not drawn) with a `--border-soft` rule, at most the visible width (`100cqi`): the folders of the path ellipsize and the counts stay at the right edge; with review, two number gutters (old, new; only new on a phone) |
 | `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
 | `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free a hollow 1px `--ctl-edge` outline (shape, not color alone). Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
 | `.fd-avatar` *(new)* | the account avatar: 24px circle, `--badge-bg` fill with a 1px inset `--btn-edge` ring, `--text` 11px weight 600 initials |
@@ -290,7 +291,7 @@ Sentence case; plain verbs; one name per action across a flow (Allow → "Allowe
 
 ## 6. Accessibility floor
 
-Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette; focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`.
+Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette; focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`), gives the pressed segment a `Highlight` outline and draws the switch in system colors.
 
 ## 7. Expansion log
 
@@ -318,3 +319,6 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | `--selected-bg`, `--selected-lift` | the selected nav or channel row (`--raised-hi`) vanished on the light `--bg` and `--surface`; replaces a `[data-theme=light]` override in views.css | sidebar nav and session rows, activity channels |
 | 2026-10-22 | free `.fd-slots` tick is a hollow `--ctl-edge` outline; the `.fd-diff` file header row moved from chat.css to base.css | used and free slots differed by color alone (WCAG 1.4.1); every diff (chat, review, wall) has the same file header | slot meters (fleet, session properties, stations); every diff |
 | 2026-10-22 | `.fd-diff` grid column; prose links underlined; input focus 2px blue edge; needs-you dot `--act` edge; ended dot `--faint`; muted badge without edge; coarse chips and `.fd-tap` 44px, checkbox and radio 24px | accessibility review: state by fill alone, link by color alone, 16px and 36px targets, glyphs under 3:1 | every diff, prose link, input, status glyph and touch control |
+| 2026-10-22 | dark `--shadow-lift`, `--selected-lift`, `--knob-shadow` are `0 0 0 0 transparent` (not `none`) | `--shadow-lift` dark is a transparent zero shadow, so it can sit in a box-shadow list: with `none` the dark theme dropped every holder, the pressed segment ring and the selection ring of a needs-you card | every strip, card, segment and switch |
+| 2026-10-22 | light `--faint` `#596575`; the `.fd-diff` file header row is at most `100cqi` wide | faint text was 4.3–4.4:1 on `--badge-bg` and the diff line fills; on a phone the header was as wide as the longest line and cut the +/− counts | key hints, neutral badges, diff line numbers; every diff header |
+| 2026-10-22 | `@media (forced-colors: active)` block; input focus keeps a transparent outline | forced colors drop box-shadow and backgrounds: input focus, the glyph shapes, the pressed segment and the switch state were invisible | every input, status glyph, holder, meter, segment, switch, the terminal dock handle |
