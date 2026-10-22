@@ -1,4 +1,4 @@
-// DL-175: the "Show" menu at the top of the chat tab: what the chat shows (design ui-pass X2).
+// DL-175: the "Show" menu at the top right of the chat column: what the chat shows (design ui-pass X2).
 import { type KeyboardEvent, useRef, useState } from 'react';
 import { useDismiss } from '../ui/dismiss';
 import { type ChatFilter, FILTER_KEYS, FILTER_LABEL, type FilterCounts } from './filter';
@@ -23,7 +23,8 @@ export function FilterBar(props: {
   };
   const hidden = FILTER_KEYS.filter((key) => !filter.show[key]).length;
   return (
-    <div className="fd-chat-filters">
+    // In the chat log the menu is a control, not news: its label changes are not announced.
+    <div className="fd-chat-filters" aria-live="off">
       <details
         className="fd-menu fd-chat-show"
         ref={ref}
