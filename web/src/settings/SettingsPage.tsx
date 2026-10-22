@@ -1,4 +1,5 @@
 // DL-172, DL-173: `#/settings`: the Deck tab, one tab for each station and the Accounts tab.
+import { useEffect, useRef } from 'react';
 import { AccountsTab } from '../accounts/AccountsTab';
 import { DisplaysTab } from '../displays/DisplaysTab';
 import type { DeckSession, StationView } from '../gen';
@@ -46,6 +47,9 @@ export function tabsOf(stations: readonly StationView[]): TabLink[] {
 export const tabId = (route: SettingsRoute): string =>
   route.tab === 'station' ? `station:${route.station}` : route.tab;
 
+/** The width of the fade at the right edge of the tab row on a phone (settings.css). */
+const TAB_FADE = 32;
+
 export function SettingsTabs({
   route,
   stations,
@@ -56,8 +60,19 @@ export function SettingsTabs({
   readonly navigate: Navigate;
 }) {
   const current = tabId(route);
+  const row = useRef<HTMLDivElement>(null);
+  // On a narrow screen the row scrolls: the selected tab comes into view, clear of the edge fade.
+  useEffect(() => {
+    const list = row.current;
+    const tab = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (list === null || list === undefined || tab === null || tab === undefined) return;
+    const box = list.getBoundingClientRect();
+    const at = tab.getBoundingClientRect();
+    if (at.left < box.left) list.scrollLeft += at.left - box.left;
+    else if (at.right > box.right - TAB_FADE) list.scrollLeft += at.right - box.right + TAB_FADE;
+  }, [current]);
   return (
-    <div className="fd-pane-tabs fd-set-tabs" role="tablist" aria-label="Settings">
+    <div ref={row} className="fd-pane-tabs fd-set-tabs" role="tablist" aria-label="Settings">
       {tabsOf(stations).map((t) => (
         <button
           key={t.id}

@@ -19,6 +19,30 @@ export type EditorProps = {
   readonly monitors?: readonly MonitorInfo[] | undefined;
 };
 
+/** The remove button of one row: an `x` icon button; its name says which row it removes. */
+function RemoveButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="fd-iconbtn fd-set-remove"
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <Icon of={X} size={16} />
+    </button>
+  );
+}
+
 /** The rows of a list of texts: one input and "Remove" for each, then an "Add" button. */
 function TextRows({
   label,
@@ -51,15 +75,11 @@ function TextRows({
             data-mono={mono ? 'true' : undefined}
             onChange={(e) => onChange(rows.map((r, at) => (at === i ? e.target.value : r)))}
           />
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
+          <RemoveButton
+            label={`Remove ${label} ${i + 1}`}
             disabled={disabled}
-            aria-label={`Remove ${label} ${i + 1}`}
             onClick={() => onChange(rows.filter((_, at) => at !== i))}
-          >
-            <Icon of={X} size={14} /> Remove
-          </button>
+          />
         </div>
       ))}
       <div>
@@ -117,15 +137,11 @@ function MonitorRows({
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
+          <RemoveButton
+            label={`Remove ${label} ${i + 1}`}
             disabled={disabled}
-            aria-label={`Remove ${label} ${i + 1}`}
             onClick={() => onChange(rows.filter((_, at) => at !== i))}
-          >
-            <Icon of={X} size={14} /> Remove
-          </button>
+          />
         </div>
       ))}
       <div>
@@ -173,15 +189,11 @@ function FolderRows({
             label={`${label} ${i + 1}`}
             onChange={(path) => onChange(rows.map((r, at) => (at === i ? path : r)))}
           />
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
+          <RemoveButton
+            label={`Remove ${label} ${i + 1}`}
             disabled={disabled}
-            aria-label={`Remove ${label} ${i + 1}`}
             onClick={() => onChange(rows.filter((_, at) => at !== i))}
-          >
-            <Icon of={X} size={14} /> Remove
-          </button>
+          />
         </div>
       ))}
       <div>
@@ -237,15 +249,11 @@ function RepoGroupRows({
             autoComplete="off"
             onChange={(e) => edit(i, 1, e.target.value)}
           />
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
+          <RemoveButton
+            label={`Remove ${label} ${i + 1}`}
             disabled={disabled}
-            aria-label={`Remove ${label} ${i + 1}`}
             onClick={() => onChange(rows.filter((_, at) => at !== i).map((r) => [r[0], r[1]]))}
-          >
-            <Icon of={X} size={14} /> Remove
-          </button>
+          />
         </div>
       ))}
       <div>
@@ -303,15 +311,11 @@ function ShareMountRows({
             data-mono="true"
             onChange={(e) => edit(i, 1, e.target.value)}
           />
-          <button
-            type="button"
-            className="fd-ghost fd-sm"
+          <RemoveButton
+            label={`Remove ${label} ${i + 1}`}
             disabled={disabled}
-            aria-label={`Remove ${label} ${i + 1}`}
             onClick={() => onChange(rows.filter((_, at) => at !== i).map((r) => [r[0], r[1]]))}
-          >
-            <Icon of={X} size={14} /> Remove
-          </button>
+          />
         </div>
       ))}
       <div>
