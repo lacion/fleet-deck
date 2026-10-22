@@ -1,0 +1,338 @@
+// The UI polish checks of the Flight Deck board (the test gaps of the UI refresh): the `c` key on
+// the wide fleet home, the outcome notes of a coordinator grant, the 44px touch targets of the Add
+// station flow and the folder crumbs, forced colors, the free-text model of New session and the
+// j/k order of the sidebar. The phone project runs every test that is not desktop-only; the
+// desktop project runs this file too (playwright.config.ts).
+import { expect, type Locator, type Page, test } from '@playwright/test';
+import { fitsWidth, logIn, PASSWORD } from './fake-deck';
+import { OTTER } from './gallery-data';
+import { LIGHTING, polishDeck, SECRET_PROJECT } from './polish-scene';
+
+const desktopOnly = () =>
+  test.skip(test.info().project.name !== 'desktop', 'the desktop layout only');
+const phoneOnly = () => test.skip(test.info().project.name !== 'phone', 'the phone layout only');
+
+async function setUp(page: Page) {
+  const scene = polishDeck();
+  await page.routeWebSocket('**/shells/*/attach', () => {});
+  await scene.deck.install(page);
+  await logIn(page);
+  await page.locator('a.fd-srow').first().waitFor();
+  return scene;
+}
+
+async function goTo(page: Page, hash: string) {
+  await page.evaluate((h) => {
+    window.location.hash = h;
+  }, hash);
+}
+
+/** No element has the focus: a global key goes to the board, not to an input. */
+async function blur(page: Page) {
+  await page.evaluate(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  });
+}
+
+async function confirmIdentity(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'Confirm it is you' });
+  await dialog.getByLabel('Password').fill(PASSWORD);
+  await dialog.getByRole('button', { name: 'Confirm' }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
+/** Every visible element of `list` is at least 44px high; the message names the short ones. */
+async function expectTall(list: Locator, what: string) {
+  const count = await list.count();
+  expect(count, `${what}: no element to measure`).toBeGreaterThan(0);
+  const short: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const el = list.nth(i);
+    if (!(await el.isVisible())) continue;
+    const box = await el.boundingBox();
+    const height = box?.height ?? 0;
+    if (height < 44) short.push(`"${(await el.innerText()).trim()}" ${height.toFixed(1)}px`);
+  }
+  expect(short, `${what}: targets under 44px`).toEqual([]);
+}
+
+async function screenshot(page: Page, name: string) {
+  await page.evaluate(() => document.fonts.ready);
+  await page.mouse.move(0, 0);
+  await page.screenshot({
+    path: `test-results/gallery/${test.info().project.name}-polish-${name}.png`,
+    fullPage: false,
+    animations: 'disabled',
+  });
+}
+
+test('1: on the wide fleet home, "c" opens the Mail & tasks form with the focus in it', async ({
+  page,
+}) => {
+  desktopOnly();
+  await setUp(page);
+  await goTo(page, '#/fleet');
+  await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+  // From 1280px Mail & tasks is a section of the ops column, its form folded.
+  const mail = page.getByRole('region', { name: 'Mail and tasks' });
+  await expect(mail).toBeVisible();
+  const fold = mail.locator('details.fd-fleet-compose');
+  await expect(fold).not.toHaveAttribute('open');
+  await blur(page);
+  await page.keyboard.press('c');
+  await expect(fold).toHaveAttribute('open');
+  await expect(mail.getByLabel('Text')).toBeFocused();
+  // The focus is in the text: a second "c" is a letter of the mail, not a key of the board.
+  await page.keyboard.press('c');
+  await expect(mail.getByLabel('Text')).toHaveValue('c');
+});
+
+test('2: Revoke and Renew of a coordinator grant show their outcome note', async ({ page }) => {
+  desktopOnly();
+  const { grants } = await setUp(page);
+  await goTo(page, '#/fleet');
+  const mail = page.getByRole('region', { name: 'Mail and tasks' });
+  const list = mail.getByRole('list', { name: 'Coordinator grants' });
+  await expect(list.getByRole('listitem')).toHaveCount(2);
+  const live = list.getByRole('listitem').filter({ hasText: 'active' });
+  const idle = list.getByRole('listitem').filter({ hasText: 'expired' });
+  // The form stays folded: the note shows outside the fold.
+  await expect(mail.locator('details.fd-fleet-compose')).not.toHaveAttribute('open');
+
+  await idle.getByRole('button', { name: 'Renew' }).click();
+  await expect(mail.getByRole('status')).toHaveText(
+    'Renewal sent; the grant is active when its station confirms.',
+  );
+  await expect(mail.getByRole('status')).toBeVisible();
+  expect(grants.rows.find((g) => g.grant_id === 'g-idle')?.state).toBe('active');
+
+  await live.first().getByRole('button', { name: 'Revoke' }).click();
+  await expect(mail.getByRole('status')).toHaveText('Grant revoked.');
+  await expect(mail.getByRole('status')).toBeVisible();
+  await expect(list).toContainText('read, mail: revoked');
+});
+
+test('3: the text buttons of Add station and the folder crumbs are 44px high on touch', async ({
+  page,
+}) => {
+  phoneOnly();
+  await setUp(page);
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+  // Add station: the start screen ("Other ways" → listen), then the Run step (Stop, the way back).
+  await goTo(page, '#/stations');
+  await page.getByRole('button', { name: 'Add station' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add station' });
+  await expect(dialog).toContainText('Where is the new station?');
+  await dialog.locator('details.fd-add-fold > summary').click();
+  await expect(
+    dialog.getByRole('button', { name: 'Connect to a station that listens' }),
+  ).toBeVisible();
+  await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station start');
+  await dialog.getByRole('button', { name: /A computer on my tailnet/ }).click();
+  await expect(dialog.getByRole('button', { name: '← Back' })).toBeVisible();
+  await dialog
+    .locator('[data-device="lab-box.tail1234.ts.net"]')
+    .getByRole('button', { name: 'Add' })
+    .click();
+  await confirmIdentity(page);
+  await expect(dialog).toContainText('Run this command on lab-box');
+  await expect(dialog.getByRole('button', { name: 'Stop' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Choose another computer' })).toBeVisible();
+  await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station run step');
+  await expectTall(dialog.getByRole('button', { name: '← Back' }), 'Add station back');
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  // New session → Browse…: the crumbs of the folder (Roots, projects, and app as the place).
+  await goTo(page, '#/new');
+  const form = page.getByRole('region', { name: 'New session' });
+  await form.getByRole('button', { name: 'Browse…' }).click();
+  await form.getByRole('button', { name: 'Open projects' }).click();
+  await form.getByRole('button', { name: 'Open app' }).click();
+  const crumbs = form.getByRole('navigation', { name: 'Folder path' });
+  await expect(crumbs.locator('[aria-current="location"]')).toHaveText('app');
+  await expect(crumbs.getByRole('button')).toHaveText(['Roots', 'projects']);
+  await expectTall(crumbs.getByRole('button'), 'folder picker crumbs');
+  expect(await fitsWidth(page)).toBe(true);
+
+  // The project page → Secret files → Browse…: the crumbs of the home folder.
+  await goTo(page, `#/project/${SECRET_PROJECT}`);
+  const secrets = page.getByRole('region', { name: 'Secret files' });
+  await secrets.getByRole('button', { name: 'Browse…' }).click();
+  const browser = secrets.getByRole('region', { name: 'Browse the home' });
+  await browser.getByRole('button', { name: 'Open config' }).click();
+  await browser.getByRole('button', { name: 'Open local' }).click();
+  const secretCrumbs = browser.getByRole('navigation', { name: 'Folder path' });
+  await expect(secretCrumbs.getByRole('button')).toHaveText(['fleet-deck', 'config', 'local']);
+  await expectTall(secretCrumbs.getByRole('button'), 'secret files crumbs');
+});
+
+/** The edge of an element in forced colors: a border or an outline with a style and a width. */
+async function edges(list: Locator): Promise<{ name: string; edge: boolean }[]> {
+  return list.evaluateAll((els) =>
+    els
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && el.checkVisibility({ visibilityProperty: true });
+      })
+      .map((el) => {
+        const s = getComputedStyle(el);
+        const side = (k: 'Top' | 'Right' | 'Bottom' | 'Left') =>
+          s.getPropertyValue(`border-${k.toLowerCase()}-style`) !== 'none' &&
+          parseFloat(s.getPropertyValue(`border-${k.toLowerCase()}-width`)) > 0;
+        const border = side('Top') || side('Right') || side('Bottom') || side('Left');
+        const outline = s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0;
+        const name =
+          el.getAttribute('aria-label') ??
+          el.getAttribute('name') ??
+          (el.id === '' ? `${el.tagName.toLowerCase()}.${el.className}` : `#${el.id}`);
+        return { name, edge: border || outline };
+      }),
+  );
+}
+
+/** The name that `edges` gives the composer text (it has no aria-label and no name). */
+const COMPOSER = '#fd-composer-text';
+
+/** The inputs, switches and segmented controls of the page that have no edge. */
+async function edgeless(page: Page, seen: { inputs: number; switches: number; segs: number }) {
+  const fields = await edges(
+    page.locator(
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]), textarea:not(.xterm-helper-textarea), select',
+    ),
+  );
+  const switches = await edges(page.locator('input[role="switch"], .fd-switch'));
+  // The design (DESIGN-SYSTEM §5): forced colors give the pressed segment a Highlight outline.
+  const segs = await edges(
+    page.locator(
+      '.fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked))',
+    ),
+  );
+  seen.inputs += fields.length;
+  seen.switches += switches.length;
+  seen.segs += segs.length;
+  return [...fields, ...switches, ...segs].filter((e) => !e.edge).map((e) => e.name);
+}
+
+/** Forced colors on, the scene in place, and the media query matches. */
+async function forcedColors(page: Page) {
+  await page.emulateMedia({ forcedColors: 'active' });
+  await setUp(page);
+  expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+}
+
+test('4a: in forced colors the home renders and its controls keep an edge', async ({ page }) => {
+  await forcedColors(page);
+  const seen = { inputs: 0, switches: 0, segs: 0 };
+  // The home: the session list on the phone, the Fleet board on the desktop.
+  if (test.info().project.name === 'phone') {
+    const list = page.getByRole('complementary', { name: 'Sessions' });
+    await expect(list.getByRole('region', { name: 'Needs you' })).toBeVisible();
+  } else {
+    await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+  }
+  await screenshot(page, 'forced-colors-home');
+  expect(await edgeless(page, seen)).toEqual([]);
+  expect(seen.inputs).toBeGreaterThan(0);
+});
+
+test('4b: in forced colors the session renders and its controls keep an edge', async ({ page }) => {
+  // DEFECT (session area, web/src/styles/session.css `.fd-composer`): the composer dock draws its
+  // edge with a box-shadow ring and its textarea has `border: 0`. Forced colors drop box-shadow,
+  // so the composer has no visible edge in Windows High Contrast. Remove test.fail() when the
+  // dock (or its textarea) keeps a border or an outline in `@media (forced-colors: active)`.
+  test.fail();
+  await forcedColors(page);
+  await goTo(page, `#/s/${LIGHTING}/${OTTER}`);
+  const pane = page.getByRole('region', { name: 'Session' });
+  await expect(pane.getByRole('heading', { level: 2 })).toHaveText('Fix flaky shim test');
+  await expect(pane.getByRole('button', { name: 'Allow', exact: true }).first()).toBeVisible();
+  await expect(page.locator('#fd-composer-text')).toBeVisible();
+  await screenshot(page, 'forced-colors-session');
+  const seen = { inputs: 0, switches: 0, segs: 0 };
+  // Every control but the composer text: their own edge.
+  const others = await edgeless(page, seen);
+  expect(others.filter((name) => name !== COMPOSER)).toEqual([]);
+  // The composer: the text box or its dock has an edge.
+  const dock = await edges(page.locator('.fd-composer, .fd-composer textarea'));
+  expect(
+    dock.some((e) => e.edge),
+    'the composer has no border or outline',
+  ).toBe(true);
+});
+
+test('4c: in forced colors the inputs, switches and segments of New session keep an edge', async ({
+  page,
+}) => {
+  await forcedColors(page);
+  await goTo(page, '#/new');
+  await expect(page.getByRole('region', { name: 'New session' })).toBeVisible();
+  const seen = { inputs: 0, switches: 0, segs: 0 };
+  expect(await edgeless(page, seen)).toEqual([]);
+  expect(seen.inputs).toBeGreaterThan(0);
+  expect(seen.switches).toBeGreaterThan(0);
+  expect(seen.segs).toBeGreaterThan(0);
+});
+
+test('5: the model "Other…" shows the free-text model input next to the pills', async ({
+  page,
+}) => {
+  await setUp(page);
+  await goTo(page, '#/new');
+  const form = page.getByRole('region', { name: 'New session' });
+  const model = form.getByLabel('Model (optional)');
+  await expect(form.getByLabel('Model id or alias')).toHaveCount(0);
+  await model.selectOption({ label: 'Other…' });
+  const typed = form.getByLabel('Model id or alias');
+  await expect(typed).toBeVisible();
+  // The input is a pill of the same row of pills as the model and the permission mode.
+  const pills = form.locator('.fd-spawn-pills');
+  await expect(pills.getByLabel('Model id or alias')).toBeVisible();
+  await expect(pills.getByLabel('Model (optional)')).toBeVisible();
+  await expect(pills.getByLabel('Permission mode')).toBeVisible();
+  await typed.fill('claude-opus-4-1');
+  await expect(typed).toHaveValue('claude-opus-4-1');
+  await expect(model).toHaveValue('__other__');
+  const box = await typed.boundingBox();
+  const width = page.viewportSize()?.width ?? 0;
+  expect(box).not.toBeNull();
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(width);
+  expect(await fitsWidth(page)).toBe(true);
+  await screenshot(page, 'model-other');
+});
+
+test('6: j from the first session walks the sidebar rows in their visible order', async ({
+  page,
+}) => {
+  desktopOnly();
+  await setUp(page);
+  const sidebar = page.getByRole('complementary', { name: 'Sessions' });
+  await expect(sidebar.getByRole('region', { name: 'Needs you' })).toBeVisible();
+  // The visible rows, top to bottom: "Needs you" first, then the station groups. The rows of a
+  // closed "Ended" fold are not visible and j skips them.
+  const hrefs = await sidebar
+    .locator('a.fd-srow')
+    .evaluateAll((els) =>
+      els.filter((el) => el.checkVisibility()).map((el) => el.getAttribute('href') ?? ''),
+    );
+  const order = [...new Set(hrefs)];
+  expect(order.length).toBeGreaterThan(2);
+  const needs = await sidebar
+    .getByRole('region', { name: 'Needs you' })
+    .locator('a.fd-srow')
+    .evaluateAll((els) => els.map((el) => el.getAttribute('href') ?? ''));
+  expect(order.slice(0, needs.length)).toEqual(needs);
+
+  const quote = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await sidebar.locator(`a.fd-srow[href="${order[0]}"]`).first().click();
+  await expect(page).toHaveURL(new RegExp(`${quote(order[0] ?? '')}$`));
+  for (const next of order.slice(1)) {
+    await page.keyboard.press('j');
+    await expect(page).toHaveURL(new RegExp(`${quote(next)}$`));
+  }
+  // After the last row, j goes back to the first.
+  await page.keyboard.press('j');
+  await expect(page).toHaveURL(new RegExp(`${quote(order[0] ?? '')}$`));
+});
