@@ -391,4 +391,34 @@ describe('the focus chat pane', () => {
     expect(html).toContain('Loading…');
     expect(html).not.toContain('No chat yet.');
   });
+
+  test('a call that is not done says its state to a screen reader', () => {
+    const started: Event = {
+      kind: 'tool.started',
+      node_id: 'n1',
+      parent_node_id: null,
+      tool_kind: 'shell',
+      title: 'Bash',
+      input_summary: 'cargo test',
+      files: [],
+      provider_refs: {},
+    };
+    const running = renderToStaticMarkup(
+      <ChatPane events={envelopes('s', [started])} ready unavailable={false} />,
+    );
+    expect(running).toContain('data-state="running"');
+    expect(running).toContain('<span class="fd-vh"> · Running</span>');
+    const ended = renderToStaticMarkup(
+      <ChatPane
+        events={envelopes('s', [
+          started,
+          { kind: 'session.ended', reason: 'process_exit', exit_code: 0 },
+        ])}
+        ready
+        unavailable={false}
+      />,
+    );
+    expect(ended).toContain('data-state="ended"');
+    expect(ended).toContain('<span class="fd-vh"> · Ended</span>');
+  });
 });
