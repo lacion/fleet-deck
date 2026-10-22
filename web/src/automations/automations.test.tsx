@@ -9,6 +9,7 @@ import {
   browserOffset,
   CUSTOM,
   describeCron,
+  describeCronParts,
   draftOf,
   draftProblem,
   emptyDraft,
@@ -99,6 +100,8 @@ describe('automation rules (DL-168)', () => {
     expect(presetOf('30 2 * * 1-5')).toBe(CUSTOM);
     expect(describeCron('@weekdays')).toBe('Weekdays at 09:00');
     expect(describeCron('30 2 * * 1-5')).toBe('cron 30 2 * * 1-5');
+    expect(describeCronParts('@weekdays')).toEqual({ label: 'Weekdays at 09:00' });
+    expect(describeCronParts(' 30 2 * * 1-5 ')).toEqual({ cron: '30 2 * * 1-5' });
   });
 
   test('the browser offset is a fixed offset text', () => {
@@ -248,6 +251,12 @@ describe('automations page', () => {
     expect(html).toContain('nothing new');
     expect(html).toContain('Run now');
     expect(html).toContain('Run history');
+  });
+
+  test('a raw cron expression is code; a preset stays in words', () => {
+    const html = page({ initial: [view({ schedule: schedule({ cron: '0 3 * * *' }) })] });
+    expect(html).toContain('<span>cron <code>0 3 * * *</code></span>');
+    expect(page({ initial: [view()] })).toContain('<span>Weekdays at 09:00</span>');
   });
 
   test('a disabled automation says so and has no next run', () => {

@@ -106,9 +106,22 @@ export const CUSTOM = 'custom';
 export const presetOf = (cron: string): string =>
   PRESETS.some((p) => p.value === cron.trim()) ? cron.trim() : CUSTOM;
 
-/** What a cron text means in words, for the list: a preset's label, else the expression. */
-export const describeCron = (cron: string): string =>
-  PRESETS.find((p) => p.value === cron.trim())?.label ?? `cron ${cron.trim()}`;
+/**
+ * What a cron text means, in its parts: a preset's label (words, sans), else the raw expression
+ * (code, mono: DESIGN-SYSTEM §1 rule 5).
+ */
+export function describeCronParts(
+  cron: string,
+): { readonly label: string } | { readonly cron: string } {
+  const preset = PRESETS.find((p) => p.value === cron.trim());
+  return preset === undefined ? { cron: cron.trim() } : { label: preset.label };
+}
+
+/** What a cron text means as one text: a preset's label, else "cron" and the expression. */
+export const describeCron = (cron: string): string => {
+  const parts = describeCronParts(cron);
+  return 'label' in parts ? parts.label : `cron ${parts.cron}`;
+};
 
 /** `+02:00` for the offset of the browser now (a fixed offset: the deck has no time zone database). */
 export function browserOffset(date: Date = new Date()): string {
