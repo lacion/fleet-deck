@@ -7,13 +7,13 @@ import { providerLabel } from '../board/lanes';
 import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
-import { Icon, ShieldAlert } from '../ui/icons';
+import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { homeShort } from './CopyButton';
 import { StatusFact } from './HeaderBadges';
 import { runningSubagents } from './timeline';
-import { type FinalizedTurn, useDiffTotal } from './workspace';
+import { type FinalizedTurn, useDiffPaths, useDiffTotal } from './workspace';
 
 // The open state lives for the page: every session opens the panel the way the last one left it.
 let open = true;
@@ -111,14 +111,48 @@ type Props = {
   readonly turns: readonly FinalizedTurn[];
   /** The subagents that the timeline shows. */
   readonly subagents: number;
+  /** A changed file opens the Changes tab on that file. */
+  readonly onOpenChange: (path: string) => void;
 };
 
+/** The changed files that the Changes row lists; more show as "+N more". */
+export const PROPS_FILES_MAX = 5;
+
+/** The first changed files of the loaded session diff: a press opens the Changes tab on one. */
+export function ChangedList({
+  paths,
+  onOpen,
+}: {
+  readonly paths: readonly string[] | undefined;
+  readonly onOpen: (path: string) => void;
+}) {
+  if (paths === undefined || paths.length === 0) return null;
+  const more = paths.length - PROPS_FILES_MAX;
+  return (
+    <ul className="fd-props-files" aria-label="Changed files">
+      {paths.slice(0, PROPS_FILES_MAX).map((path) => (
+        <li key={path}>
+          <button type="button" className="fd-ghost" title={path} onClick={() => onOpen(path)}>
+            <code className="fd-props-file">
+              <bdi>{path}</bdi>
+            </code>
+            <Icon of={ChevronRight} size={14} />
+          </button>
+        </li>
+      ))}
+      {more > 0 ? <li className="fd-props-more">+{more} more</li> : null}
+    </ul>
+  );
+}
+
 /** The properties of one session: status, place, agent, changes, usage and subagents. */
-export function PropertiesPanel({ session, stations, turns, subagents }: Props) {
+export function PropertiesPanel({ session, stations, turns, subagents, onOpenChange }: Props) {
   const s = session.summary;
   const now = useNow(undefined, 30000);
   const station = stations.find((st) => st.station_id === session.station_id);
-  const total = changeTotal(useDiffTotal(sessionRef(session.station_id, s.session_id)), turns);
+  const ref = sessionRef(session.station_id, s.session_id);
+  const total = changeTotal(useDiffTotal(ref), turns);
+  const paths = useDiffPaths(ref);
   const { input_tokens: input, output_tokens: output } = s.usage;
   const cost = costText(s.usage);
   const meters = rateMeters([session], stations);
@@ -137,7 +171,11 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
           <span className="fd-props-station">{stationName(session.station_id, stations)}</span>
           {station === undefined ? null : (
             <span className="fd-props-aside" data-up={station.reachable}>
-              <span className="fd-props-reach" aria-hidden="true" />
+              <span
+                className="fd-dot"
+                data-status={station.reachable ? 'online' : 'unreachable'}
+                aria-hidden="true"
+              />
               {station.reachable ? 'online' : 'offline'}
             </span>
           )}
@@ -186,6 +224,7 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
                 <span className="fd-props-aside">
                   {total.files_changed} {total.files_changed === 1 ? 'file' : 'files'}
                 </span>
+                <ChangedList paths={paths} onOpen={onOpenChange} />
               </>
             )}
           </Row>

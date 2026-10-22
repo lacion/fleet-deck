@@ -147,10 +147,27 @@ export function workspaceFiles(get: Get, station: string, workspace: string): Fi
 const diffTotals = new Map<string, DiffSummary>();
 const diffListeners = new Set<() => void>();
 
-/** Records the size of a session diff that the Changes tab loaded. */
-export function setDiffTotal(ref: string, summary: DiffSummary): void {
+// The changed paths of the same session diff (patch order), for the Properties panel.
+const diffPaths = new Map<string, readonly string[]>();
+
+/** Records the size (and the changed paths, when known) of a session diff that the Changes tab loaded. */
+export function setDiffTotal(ref: string, summary: DiffSummary, paths?: readonly string[]): void {
   diffTotals.set(ref, summary);
+  if (paths === undefined) diffPaths.delete(ref);
+  else diffPaths.set(ref, paths);
   for (const l of diffListeners) l();
+}
+
+/** The changed paths of the loaded session diff of one session, or `undefined`. */
+export function useDiffPaths(ref: string): readonly string[] | undefined {
+  return useSyncExternalStore(
+    (l) => {
+      diffListeners.add(l);
+      return () => diffListeners.delete(l);
+    },
+    () => diffPaths.get(ref),
+    () => diffPaths.get(ref),
+  );
 }
 
 /** The loaded session diff size of one session, or `undefined`; re-renders on a change. */

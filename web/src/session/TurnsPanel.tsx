@@ -15,6 +15,7 @@ import { ReviewBar } from '../review/ReviewBar';
 import { ChevronRight, Icon } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { BranchesView } from './BranchesView';
+import { changedPaths } from './changedFiles';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
 import {
@@ -45,7 +46,45 @@ type Props = {
   readonly branchesOffered?: boolean | undefined;
   /** FG-10: the project of the session; the Branches view then shows "Other stations". */
   readonly projectId?: string | undefined;
+  /** §4.5: a changed file of the Properties panel; "Since spawn" shows and scrolls to it. */
+  readonly fileRequest?: FileRequest | undefined;
 };
+
+/** A request to show one file; `seq` makes a second request of the same path new. */
+export type FileRequest = { readonly path: string; readonly seq: number };
+
+/**
+ * The turn diffs in flight (by turn id). A second Show press while a load runs starts no second
+ * request; a Hide press during a load drops its late answer, so the diff stays closed.
+ */
+export class DiffFlight {
+  private readonly pending = new Set<string>();
+  private readonly hidden = new Set<string>();
+
+  /** `true`: start a load of `turnId`; `false`: one runs (it shows its answer again). */
+  start(turnId: string): boolean {
+    this.hidden.delete(turnId);
+    if (this.pending.has(turnId)) return false;
+    this.pending.add(turnId);
+    return true;
+  }
+
+  /** The load of `turnId` runs and no Hide came after its Show. */
+  loading(turnId: string): boolean {
+    return this.pending.has(turnId) && !this.hidden.has(turnId);
+  }
+
+  /** A Hide press: a running load of `turnId` drops its answer. */
+  hide(turnId: string): void {
+    if (this.pending.has(turnId)) this.hidden.add(turnId);
+  }
+
+  /** The load of `turnId` ended; `true` when its answer may show (no Hide came). */
+  finish(turnId: string): boolean {
+    this.pending.delete(turnId);
+    return !this.hidden.delete(turnId);
+  }
+}
 
 type View = 'spawn' | 'turns' | 'branches';
 
@@ -128,6 +167,7 @@ function SinceSpawn({
   review,
   onOpenFile,
   onRefresh,
+  target,
 }: {
   readonly summary: SessionSummary;
   readonly actions: SessionActions | undefined;
@@ -135,6 +175,8 @@ function SinceSpawn({
   readonly review: ReviewProps | undefined;
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly onRefresh: () => void;
+  /** The file to scroll to and focus when the diff shows (a Properties panel request). */
+  readonly target?: FileRequest | undefined;
 }) {
   const [state, setState] = useState<{
     readonly diff: SessionDiff | null;
@@ -153,7 +195,7 @@ function SinceSpawn({
       (diff) => {
         if (!live) return;
         setState({ diff, error: null });
-        setDiffTotal(ref, diff.summary);
+        setDiffTotal(ref, diff.summary, changedPaths(diff.patch));
       },
       (e: unknown) => {
         if (live) {
@@ -170,8 +212,18 @@ function SinceSpawn({
   }, [ref]);
   const base = summary.base;
   const { diff, error } = state;
+  const box = useRef<HTMLDivElement>(null);
+  const shown = target?.seq;
+  // The file header of the requested file (its button names the path) gets the focus.
+  useEffect(() => {
+    if (diff === null || target === undefined) return;
+    const heads = box.current?.querySelectorAll<HTMLElement>('.fd-dl-file') ?? [];
+    const head = [...heads].find((h) => h.getAttribute('aria-label') === target.path);
+    head?.scrollIntoView({ block: 'start' });
+    head?.focus({ preventScroll: true });
+  }, [diff, shown]);
   return (
-    <div className="fd-since" data-view="spawn">
+    <div className="fd-since" data-view="spawn" ref={box}>
       <p className="fd-note">
         Since the session started
         {base ? (
@@ -289,46 +341,55 @@ export function TurnsPanel(props: Props) {
   const [loads, setLoads] = useState(0);
   const hasBase = Boolean(summary.base);
   const files = actions?.files ?? null;
+  const flight = useRef(new DiffFlight());
+  const [, setFlights] = useState(0);
+  // A file request of the Properties panel opens "Since spawn" on that file.
+  const [target, setTarget] = useState<FileRequest>();
+  const request = props.fileRequest;
+  useEffect(() => {
+    if (request === undefined) return;
+    setTarget(request);
+    if (hasBase) setChosen('spawn');
+  }, [request?.seq]);
   const showDiff = (turnId: string) => {
     if (!files) return;
+    const started = flight.current.start(turnId);
+    setFlights((n) => n + 1);
+    if (!started) return;
     const turn = turns.find((t) => t.turnId === turnId);
     const from = turn?.start?.state === 'available' ? turn.start.commit : null;
     const to = turn?.end?.state === 'available' ? turn.end.commit : null;
-    const fail = (e: unknown) =>
-      setDiffs((all) => ({
-        ...all,
-        [turnId]: e instanceof Error ? e.message : 'The diff request failed.',
-      }));
-    const plain = (fellBack: boolean) =>
-      files
-        .diff(turnId)
-        .then(
-          (diff) => setDiffs((all) => ({ ...all, [turnId]: { diff, snapshot: null, fellBack } })),
-          fail,
-        );
-    if (review === undefined || from === null || to === null) {
-      void plain(false);
-      return;
-    }
+    const plain = (fellBack: boolean): Promise<LoadedDiff> =>
+      files.diff(turnId).then((diff) => ({ diff, snapshot: null, fellBack }));
     // The stable checkpoint selector; any failure shows the plain diff without comment controls.
-    review.actions.turnDiff(review.key, from, to).then(
-      (diff) =>
-        setDiffs((all) => ({
-          ...all,
-          [turnId]: {
-            diff,
-            snapshot: turnSnapshot(diff.from_commit, diff.to_commit),
-            fellBack: false,
-          },
-        })),
-      () => void plain(true),
+    const load: Promise<LoadedDiff> =
+      review === undefined || from === null || to === null
+        ? plain(false)
+        : review.actions.turnDiff(review.key, from, to).then(
+            (diff) => ({
+              diff,
+              snapshot: turnSnapshot(diff.from_commit, diff.to_commit),
+              fellBack: false,
+            }),
+            () => plain(true),
+          );
+    // A Hide press during the load drops the answer (DiffFlight).
+    const settle = (shown: LoadedDiff | string) => {
+      if (flight.current.finish(turnId)) setDiffs((all) => ({ ...all, [turnId]: shown }));
+      setFlights((n) => n + 1);
+    };
+    load.then(settle, (e: unknown) =>
+      settle(e instanceof Error ? e.message : 'The diff request failed.'),
     );
   };
-  const hideDiff = (turnId: string) =>
+  const hideDiff = (turnId: string) => {
+    flight.current.hide(turnId);
+    setFlights((n) => n + 1);
     setDiffs((all) => {
       const { [turnId]: _hidden, ...rest } = all;
       return rest;
     });
+  };
   // A click on a comment chip chooses the view of its thread and loads the diff of its turn.
   const latest = useRef(showDiff);
   latest.current = showDiff;
@@ -408,6 +469,7 @@ export function TurnsPanel(props: Props) {
           review={review}
           onOpenFile={onOpenFile}
           onRefresh={() => setLoads((n) => n + 1)}
+          target={target}
         />
         <Bar review={review} />
       </section>
@@ -438,6 +500,7 @@ export function TurnsPanel(props: Props) {
           const block = revertBlock(t, summary, caps);
           const diff = diffs[t.turnId];
           const loaded = diffOpen(diff);
+          const loading = !loaded && flight.current.loading(t.turnId);
           return (
             <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
               <span className="fd-turn-name">Turn {i + 1}</span>
@@ -456,10 +519,11 @@ export function TurnsPanel(props: Props) {
                   type="button"
                   className="fd-sm fd-turn-diff"
                   aria-expanded={loaded}
-                  onClick={() => (loaded ? hideDiff(t.turnId) : showDiff(t.turnId))}
+                  aria-busy={loading || undefined}
+                  onClick={() => (loaded || loading ? hideDiff(t.turnId) : showDiff(t.turnId))}
                 >
                   <Icon of={ChevronRight} size={14} />
-                  {loaded ? 'Hide the diff' : 'Show the diff'}
+                  {loaded ? 'Hide the diff' : loading ? 'Loading…' : 'Show the diff'}
                 </button>
               ) : null}
               {caps?.rollback === true && !t.reverted ? (

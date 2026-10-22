@@ -9,7 +9,7 @@ import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
 import { type PaneTab, SessionView } from './SessionView';
-import { diffOpen, SinceNotes } from './TurnsPanel';
+import { DiffFlight, diffOpen, SinceNotes } from './TurnsPanel';
 import {
   artifactFiles,
   fileActions,
@@ -178,6 +178,32 @@ describe('turns and reverts (DL-097)', () => {
     expect(diffOpen(undefined)).toBe(false);
     expect(diffOpen('The diff request failed.')).toBe(false);
     expect(diffOpen(loaded)).toBe(true);
+  });
+
+  test('the diff toggle: Show, then Hide before the answer keeps the diff closed', () => {
+    const flight = new DiffFlight();
+    // Show: one request starts; the button says "Loading…" (aria-busy).
+    expect(flight.start('t1')).toBe(true);
+    expect(flight.loading('t1')).toBe(true);
+    // A second Show press during the load starts no second request.
+    expect(flight.start('t1')).toBe(false);
+    // Hide during the load: the button says "Show the diff" again, the late answer is dropped.
+    flight.hide('t1');
+    expect(flight.loading('t1')).toBe(false);
+    expect(flight.finish('t1')).toBe(false);
+    // The next Show loads again, and its answer shows.
+    expect(flight.start('t1')).toBe(true);
+    expect(flight.finish('t1')).toBe(true);
+    // Show, Hide, Show during one load: the running load shows its answer.
+    expect(flight.start('t2')).toBe(true);
+    flight.hide('t2');
+    expect(flight.start('t2')).toBe(false);
+    expect(flight.loading('t2')).toBe(true);
+    expect(flight.finish('t2')).toBe(true);
+    // A Hide of a loaded diff (no load runs) leaves no mark on the next load.
+    flight.hide('t3');
+    expect(flight.start('t3')).toBe(true);
+    expect(flight.finish('t3')).toBe(true);
   });
 
   test('a turn without file changes says so and has no Show the diff', () => {

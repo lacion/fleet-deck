@@ -187,24 +187,12 @@
 .fd-sh-status[data-status="unreachable"] {
   color: var(--hazard);
 }
-/* The permission mode: a chip; red only for a mode that skips the approvals. */
+/* The permission mode: a .fd-badge (the --badge-bg fill of the other chips of the row); the
+   badge's hazard tone is red only for a mode that skips the approvals. */
 .fd-sh-mode {
-  display: inline-flex;
   flex: none;
-  align-items: center;
   gap: 4px;
-  height: 20px;
-  padding: 0 7px;
-  background: var(--raised-hi);
-  border-radius: var(--r-chip);
-  color: var(--dim);
-  font-size: var(--fs-meta);
-  font-weight: 500;
   white-space: nowrap;
-}
-.fd-sh-mode[data-tone="hazard"] {
-  background: var(--hazard-bg);
-  color: var(--hazard);
 }
 /* The actions at the right, after a field rule. */
 .fd-sh-actions {
@@ -622,16 +610,6 @@
   font-stretch: 115%;
   font-weight: 620;
 }
-.fd-props-reach {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ok);
-}
-.fd-props-aside[data-up="false"] .fd-props-reach {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--hazard);
-}
 .fd-props-mono {
   min-width: 0;
   color: var(--text);
@@ -676,6 +654,49 @@
 }
 .fd-props .fd-del {
   color: var(--hazard);
+}
+/* The changed files under the Changes totals (§4.5, concept A): 28px ghost rows with --border-soft
+   rules between them and no box. The path keeps its end in view; a press opens the Changes tab. */
+.fd-props-files {
+  display: grid;
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-props-files > li:not(:first-child, .fd-props-more) {
+  border-top: 1px solid var(--border-soft);
+}
+.fd-props-files button {
+  justify-content: space-between;
+  gap: var(--sp-2);
+  width: calc(100% + 2 * var(--sp-1));
+  min-width: 0;
+  height: var(--ctl-h);
+  margin-inline: calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1);
+  color: var(--text);
+  font-weight: 400;
+}
+.fd-props-files button > .fd-icon {
+  color: var(--faint);
+}
+.fd-props-file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-props-more {
+  padding-top: var(--sp-1);
+  color: var(--faint);
+  font-size: var(--fs-meta);
 }
 .fd-props-fuel {
   color: var(--fuel);
@@ -816,9 +837,12 @@
 .fd-q-dock-foot > .fd-options {
   margin-left: auto;
 }
-/* A plain option sits on the card fill: it steps up one surface to read as a button. */
+/* A plain option sits on the --raised card: it steps up one surface and has the --btn-edge-raised
+   edge of a plain button on a --raised layer (§3), so that it reads as a button in both themes.
+   The edge is a border, so forced colors keep it. */
 .fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger) {
   background: var(--raised-hi);
+  border-color: var(--btn-edge-raised);
 }
 .fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
   background: var(--border);
@@ -946,6 +970,12 @@
 fieldset:disabled .fd-opt {
   cursor: not-allowed;
   opacity: 0.5;
+}
+/* The option is the tap target: 44px on a touch screen, as the decision buttons of the dock. */
+@media (pointer: coarse) {
+  .fd-opt {
+    min-height: var(--tap-min);
+  }
 }
 .fd-opt-other {
   display: grid;
@@ -1095,7 +1125,8 @@ fieldset:disabled .fd-opt {
   gap: var(--sp-1);
   margin-left: auto;
 }
-/* The model chip after the attach button: a 24px --raised-hi chip that opens the model picker. */
+/* The model chip after the attach button: a 24px --badge-bg chip that opens the model picker
+   (--raised-hi does not show on the white --raised composer of the light theme). */
 .fd-composer-model {
   display: inline-flex;
   flex: none;
@@ -1103,7 +1134,7 @@ fieldset:disabled .fd-opt {
   gap: var(--sp-1);
   height: var(--ctl-h-sm);
   padding: 0 var(--sp-2);
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   border-radius: var(--r-ctl);
   color: var(--dim);
   font-size: var(--fs-meta);
@@ -1239,6 +1270,11 @@ button.fd-composer-model > .fd-icon {
 }
 .fd-pane[data-layout="phone"] .fd-pane-body {
   padding: var(--sp-3);
+}
+/* The phone rule of artifacts.css takes the inline padding of a row away; in the session the
+   artifact icons stay on the column of the Files tab icons (8px inset). */
+.fd-pane[data-layout="phone"] .fd-pane-body[data-tab="artifacts"] .fd-art-row {
+  padding-inline: var(--sp-2);
 }
 .fd-revert,
 .fd-turns,
@@ -1816,9 +1852,13 @@ button.fd-cchip:hover:not(:disabled) {
   padding: 0;
   list-style: none;
 }
-/* 36px rows divided by --border-soft, the same as the artifact list (§4.7). */
+/* 36px rows divided by --border-soft, the same as the artifact list (§4.7): rules only between
+   the rows, none under the last one. */
 .fd-files ul > li {
   border-bottom: 1px solid var(--border-soft);
+}
+.fd-files ul > li:last-child {
+  border-bottom: 0;
 }
 .fd-files-row {
   display: flex;
@@ -1924,8 +1964,10 @@ button.fd-cchip:hover:not(:disabled) {
   gap: 4px;
   min-width: 0;
 }
+/* The root crumb has the icon-to-name gap of a file row (8px), so that its name starts on the
+   column of the names under it. */
 .fd-files-crumb {
-  gap: 4px;
+  gap: var(--sp-2);
   height: auto;
   padding: 0;
   background: none;
@@ -2218,5 +2260,21 @@ button.fd-cchip:hover:not(:disabled) {
   .fd-composer:focus-within {
     outline: 2px solid Highlight;
     outline-offset: -2px;
+  }
+  /* The phone request sheet has no outline and a box-shadow top bar: forced colors drop both. */
+  .fd-pane[data-layout="phone"] .fd-q-dock {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+    border-top: 4px solid CanvasText;
+  }
+  /* A chosen answer shows by its fill and its edge only: forced colors drop the fill. */
+  .fd-opt:has(input:checked) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .fd-opt:has(input:checked)::before {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
   }
 }

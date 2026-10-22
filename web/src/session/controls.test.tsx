@@ -452,7 +452,7 @@ describe('session header (DL-140)', () => {
     };
     const fact = (mode: string) =>
       new RegExp(
-        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode: ${mode}">(<svg[^>]*>.*?</svg>)${label[mode]}</span>`,
+        `<span class="fd-badge fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode: ${mode}">(<svg[^>]*>.*?</svg>)${label[mode]}</span>`,
       );
     const tone = (mode: string) => fact(mode).exec(header(session({ mode })))?.[1];
     expect(tone('plan')).toBe('plan');
