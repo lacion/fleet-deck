@@ -48,7 +48,7 @@ export function ModelField(props: {
       <PillWrap icon={Sparkles}>
         <select
           aria-label="Model (optional)"
-          className="fd-sm fd-spawn-pill"
+          className="fd-spawn-pill"
           title={models === null ? 'Model' : FROM}
           value={other ? OTHER : value}
           onChange={(event) => {
@@ -73,7 +73,7 @@ export function ModelField(props: {
       </PillWrap>
       {other ? (
         <input
-          className="fd-sm fd-spawn-pill fd-spawn-model"
+          className="fd-spawn-pill fd-spawn-model"
           aria-label="Model id or alias"
           placeholder="Model id or alias"
           spellCheck={false}

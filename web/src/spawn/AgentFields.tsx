@@ -74,7 +74,7 @@ export function AgentFields({
         <PillWrap icon={Shield}>
           <select
             aria-label="Permission mode"
-            className="fd-sm fd-spawn-pill"
+            className="fd-spawn-pill"
             title="Permission mode"
             value={mode}
             onChange={(event) => onMode(event.target.value)}

@@ -192,7 +192,8 @@ describe('spawn form: the setup command (DL-148)', () => {
       );
     expect(render('bun install')).not.toContain('role="alert"');
     expect(render('a'.repeat(4097))).toContain(
-      '<p role="alert">The setup command is longer than 4096 characters.</p>',
+      // The id is in the description of the Start button while the problem stays.
+      '<p id="fd-spawn-setup-error" role="alert">The setup command is longer than 4096 characters.</p>',
     );
     expect(render('a\0b')).toContain('The setup command contains a NUL character.');
     expect(render('x')).toContain(

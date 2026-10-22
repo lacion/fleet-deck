@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { RateMeter } from '../board/usage';
 import type { StationInfo, StationProvider } from '../gen';
 import { station } from '../testing/fleet';
+import { submitKeyHint } from './keyHint';
 import { AUTO, limitBadge, providerChoice } from './spawn';
 import { SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
 
@@ -55,13 +56,15 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
   });
 
   test('the footer keeps one line: no missing line without missing steps, the kbd hint in Start', () => {
-    const foot = (missing: string[]) =>
+    const foot = (missing: string[], need: string | null = null, grant: string | null = null) =>
       renderToStaticMarkup(
         <SpawnFoot
           batchShown
           batch={false}
           onBatch={() => {}}
           missing={missing}
+          need={need}
+          grantProblem={grant}
           describedBy={missing.length === 0 ? undefined : 'fd-spawn-missing'}
           outcome={null}
           onOpenNew={null}
@@ -70,8 +73,36 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
         />,
       );
     expect(foot([])).not.toContain('data-missing');
-    expect(foot([])).toContain('<span class="fd-kbd" aria-hidden="true">⌘↵</span>');
+    expect(foot([])).toContain(`<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span>`);
     expect(foot(['fix the base'])).toContain('data-missing="true">To start: fix the base.</p>');
+    // A phone: the directory note sits first in the status slot, above the sticky buttons.
+    expect(foot([], 'Choose a folder to start.')).toContain(
+      '<div class="fd-spawn-status"><p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p></div>',
+    );
+    expect(foot([])).not.toContain('fd-spawn-need');
+    // The grant problem: a hidden copy that only the button description reads.
+    expect(foot([], null, 'The session limit is 1 to 50.')).toContain(
+      '<span hidden="" id="fd-spawn-grant-error">The session limit is 1 to 50.</span>',
+    );
+    expect(foot([])).not.toContain('fd-spawn-grant-error');
+  });
+
+  test('the kbd hint names the key of the platform: ⌘↵ on Apple systems, else Ctrl+↵', () => {
+    const real = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    const hint = (platform: string) => {
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: platform });
+      return submitKeyHint();
+    };
+    try {
+      expect(hint('MacIntel')).toBe('⌘↵');
+      expect(hint('iPhone')).toBe('⌘↵');
+      expect(hint('iPad')).toBe('⌘↵');
+      expect(hint('Linux x86_64')).toBe('Ctrl+↵');
+      expect(hint('Win32')).toBe('Ctrl+↵');
+    } finally {
+      if (real === undefined) delete (navigator as { platform?: string }).platform;
+      else Object.defineProperty(navigator, 'platform', real);
+    }
   });
 
   test('the limit badge names the window in words and shows from WARN_PERCENT on (R4.3)', () => {
