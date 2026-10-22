@@ -7,7 +7,12 @@ import { IntegrationsProvider } from '../integrations/context';
 import { fakeActions } from '../integrations/fixtures';
 import { station } from '../testing/fleet';
 import { StationsPanel } from './StationsPanel';
-import { ConfigReferenceHeader, configText, driftLabels } from './StationConfigDrift';
+import {
+  ConfigReferenceHeader,
+  configText,
+  driftLabels,
+  StationConfigDrift,
+} from './StationConfigDrift';
 import { exposedText, shareNotes, StationTaildrive } from './StationTaildrive';
 import { StationTraits, traitsText } from './StationTraits';
 
@@ -29,27 +34,30 @@ const withConfig = (id: string, config: ConfigDigest | undefined) =>
 
 describe('the traits line', () => {
   test('os, arch, battery and labels', () => {
-    expect(traitsText({ os: 'linux', arch: 'x86_64', labels: [] })).toBe('linux · x86_64');
+    expect(traitsText({ os: 'linux', arch: 'x86_64', labels: [] })).toBe('Linux · x86_64');
     expect(
       traitsText({ os: 'macos', arch: 'aarch64', on_battery: true, labels: ['gpu', 'big'] }),
-    ).toBe('macos · aarch64 · on battery · gpu, big');
+    ).toBe('macOS · aarch64 · on battery · gpu, big');
     expect(traitsText({ os: 'linux', arch: 'x86_64', on_battery: false, labels: ['gpu'] })).toBe(
-      'linux · x86_64 · gpu',
+      'Linux · x86_64 · gpu',
     );
+    // The display name of the OS; an id without one stays as it is.
+    expect(traitsText({ os: 'omarchy', arch: 'x86_64', labels: [] })).toBe('Omarchy · x86_64');
+    expect(traitsText({ os: 'freebsd', arch: 'amd64', labels: [] })).toBe('freebsd · amd64');
   });
 
   test('an older station sends no traits: no line', () => {
     expect(renderToStaticMarkup(<StationTraits traits={undefined} />)).toBe('');
     expect(
       renderToStaticMarkup(<StationTraits traits={{ os: 'linux', arch: 'x', labels: [] }} />),
-    ).toContain('linux · x');
+    ).toContain('Linux · x');
   });
 });
 
 describe('the config line', () => {
   const reference = withConfig('st-ref', digest());
 
-  test('the reference, the same, the differences and unknown', () => {
+  test('the reference, the same, the differences, and no line without a comparison', () => {
     expect(configText(reference, reference)).toBe('Config: Reference');
     expect(configText(withConfig('st-b', digest()), reference)).toBe('Config: Same');
     expect(
@@ -68,12 +76,15 @@ describe('the config line', () => {
         reference,
       ),
     ).toBe('Config: Differs: codex, agents, skills, AGENTS.md');
-    expect(configText(withConfig('st-c', undefined), reference)).toBe('Config: Unknown');
-    // A reference without a report makes every other station unknown.
-    expect(configText(withConfig('st-b', digest()), withConfig('st-ref', undefined))).toBe(
-      'Config: Unknown',
-    );
-    expect(configText(withConfig('st-b', digest()), undefined)).toBe('Config: Unknown');
+    // No "unknown" (DESIGN-SYSTEM §1.7): nothing to compare is no line.
+    expect(configText(withConfig('st-c', undefined), reference)).toBeNull();
+    expect(configText(withConfig('st-b', digest()), withConfig('st-ref', undefined))).toBeNull();
+    expect(configText(withConfig('st-b', digest()), undefined)).toBeNull();
+    expect(
+      renderToStaticMarkup(
+        <StationConfigDrift station={withConfig('st-c', undefined)} reference={reference} />,
+      ),
+    ).toBe('');
   });
 
   test('the version of a provider counts, and a missing version equals a missing version', () => {
@@ -86,41 +97,38 @@ describe('the config line', () => {
     ).toEqual([]);
   });
 
-  test('the header names the reference with Change, or asks for one', () => {
+  test('the header menu names the reference, or asks for one', () => {
     const stations = [station('station-a'), station('st-b')];
     const none = renderToStaticMarkup(
-      <ConfigReferenceHeader
-        stations={stations}
-        reference={undefined}
-        canSet
-        onSet={() => {}}
-        error={null}
-      />,
+      <ConfigReferenceHeader stations={stations} reference={undefined} canSet onSet={() => {}} />,
     );
+    expect(none).toContain('<summary class="fd-ghost fd-sm">Config reference…</summary>');
     expect(none).toContain('Pick a reference station for the config report.');
-    expect(none).not.toContain('Change');
     const set = renderToStaticMarkup(
-      <ConfigReferenceHeader
-        stations={stations}
-        reference={stations[0]}
-        canSet
-        onSet={() => {}}
-        error="Unknown station."
-      />,
+      <ConfigReferenceHeader stations={stations} reference={stations[0]} canSet onSet={() => {}} />,
     );
-    expect(set).toContain('Config reference: Alpha');
-    expect(set).toContain('Change');
-    expect(set).toContain('Unknown station.');
+    expect(set).toContain('<summary class="fd-ghost fd-sm">Config reference: Alpha</summary>');
+    expect(set.match(/<button type="button">/g)?.length).toBe(2);
+    // Without the admin scope: the reference as a plain line, and nothing before one exists.
     const locked = renderToStaticMarkup(
       <ConfigReferenceHeader
         stations={stations}
         reference={stations[0]}
         canSet={false}
         onSet={() => {}}
-        error={null}
       />,
     );
-    expect(locked).not.toContain('Change');
+    expect(locked).toBe('<span class="fd-note fd-station-ref">Config reference: Alpha</span>');
+    expect(
+      renderToStaticMarkup(
+        <ConfigReferenceHeader
+          stations={stations}
+          reference={undefined}
+          canSet={false}
+          onSet={() => {}}
+        />,
+      ),
+    ).toBe('');
   });
 });
 
@@ -247,7 +255,7 @@ describe('the Stations page', () => {
         } as unknown as StationInfo,
       }),
     ]);
-    expect(html).toContain('linux · x86_64 · on battery · gpu');
+    expect(html).toContain('Linux · x86_64 · on battery · gpu');
     expect(html).toContain('out · /srv/out · as ada');
   });
 
