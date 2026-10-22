@@ -528,17 +528,28 @@ export function Composer(props: Props) {
           ) : props.working ? (
             <>
               {props.steer ? (
-                <button type="button" disabled={blocked} onClick={() => send('steer')}>
+                <button
+                  type="button"
+                  className="fd-ghost"
+                  disabled={blocked}
+                  onClick={() => send('steer')}
+                >
                   Steer now
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>
                 Queue follow-up
+                <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                  ↵
+                </span>
               </button>
             </>
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
               <Icon of={ArrowUp} size={14} /> Send
+              <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                ↵
+              </span>
             </button>
           )}
         </div>

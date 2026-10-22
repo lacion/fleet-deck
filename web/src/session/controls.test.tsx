@@ -630,7 +630,7 @@ describe('approval dock (DL-140)', () => {
     const html = dock([request('r1'), request('r2')]);
     expect(html).toContain('Needs you · 2');
     expect(html).toContain('aria-label="Needs you"');
-    expect(html.match(/class="fd-primary"/g)).toHaveLength(2);
+    expect(html.match(/class="fd-decide"/g)).toHaveLength(2);
     expect(html).toContain('Deny');
   });
 
@@ -664,7 +664,9 @@ describe('composer (DL-140)', () => {
   });
 
   test('the buttons keep their texts and the textarea keeps its label', () => {
-    expect(composer()).toMatch(/<\/svg> Send<\/button>/);
+    expect(composer()).toMatch(
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+    );
     expect(composer()).toContain('>Message</label>');
     expect(composer()).toContain('Add image');
     const working = composer({ working: true, steer: true, nativeQueue: false });
