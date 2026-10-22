@@ -376,7 +376,9 @@ describe('session pane (DL-140)', () => {
 
     const idle = view(session({ current_run: null }), timeline());
     expect(idle).not.toContain('Steer now');
-    expect(idle).toMatch(/<\/svg> Send<\/button>/);
+    expect(idle).toMatch(
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+    );
 
     const none = view(session({ capabilities: null }), timeline());
     expect(none).not.toContain('Steer now');
@@ -430,7 +432,7 @@ describe('session pane (DL-140)', () => {
     expect(codex).toContain('Other answer');
     // Nothing is chosen yet: the answer cannot be sent.
     expect(codex).toMatch(
-      /<button type="submit" class="fd-primary" disabled="">Send answer<\/button>/,
+      /<button type="submit" class="fd-decide" disabled="">Send answer<\/button>/,
     );
     expect(codex).not.toContain('>Answer</button>');
     const claude = view(session({ open_requests: [recordedRequest('ask_user_question')] }));

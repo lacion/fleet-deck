@@ -346,15 +346,9 @@ export function TurnsPanel(props: Props) {
   if (turns.length === 0 && !hasBase && !hasBranches) return null;
   const toggle =
     views.length >= 2 ? (
-      <div className="fd-viewtoggle" role="group" aria-label="Changes view">
+      <div className="fd-viewtoggle fd-seg" role="group" aria-label="Changes view">
         {views.map((v) => (
-          <button
-            key={v}
-            type="button"
-            className="fd-chip"
-            aria-pressed={view === v}
-            onClick={() => setChosen(v)}
-          >
+          <button key={v} type="button" aria-pressed={view === v} onClick={() => setChosen(v)}>
             {VIEW_LABEL[v]}
           </button>
         ))}

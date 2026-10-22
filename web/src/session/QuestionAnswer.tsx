@@ -73,7 +73,7 @@ export function QuestionAnswer({ request, form, enabled, busy, onAnswer }: Props
       <div className="fd-options">
         <button
           type="submit"
-          className="fd-primary"
+          className="fd-decide"
           disabled={!enabled || busy || !complete(form, answers)}
         >
           Send answer
