@@ -5,9 +5,9 @@
   margin-top: 2px;
   padding: 0 5px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--r-chip);
   color: var(--faint);
-  font-size: 10px;
+  font-size: var(--fs-micro);
   line-height: 1.5;
 }
 .fd-sh-line > .fd-generated {
@@ -19,7 +19,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--faint);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;

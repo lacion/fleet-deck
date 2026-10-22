@@ -51,14 +51,14 @@ const rail = (
   );
 
 describe('needs-you rail', () => {
-  test('an answerable request has one button per option, the first one primary', () => {
+  test('an answerable request has one button per option: decide first, deny last', () => {
     const html = rail(request());
     expect(html).toContain('<h2 class="fd-rail-head"><span class="fd-rail-title">Needs you</span>');
     expect(html).toMatch(
-      /<button type="button" class="fd-primary" aria-label="Allow: Run tests in Fix login">Allow<span class="fd-kbd">a<\/span><\/button>/,
+      /<button type="button" class="fd-decide" aria-label="Allow: Run tests in Fix login">Allow<span class="fd-kbd">a<\/span><\/button>/,
     );
     expect(html).toMatch(
-      /<button type="button" aria-label="Deny: Run tests in Fix login">Deny<span class="fd-kbd">d<\/span><\/button>/,
+      /<button type="button" class="fd-danger" aria-label="Deny: Run tests in Fix login">Deny<span class="fd-kbd">d<\/span><\/button>/,
     );
     expect(html).not.toContain('Open session');
     expect(html.match(/aria-label="(Allow|Deny): /g)).toHaveLength(2);
@@ -75,7 +75,9 @@ describe('needs-you rail', () => {
       }),
     );
     expect(html).toContain('data-request="r1" data-selected="true"');
-    expect(html).toContain('<span class="fd-rail-keys">[ ] · a/d</span>');
+    expect(html).toContain(
+      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move',
+    );
     expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
     expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
     expect(html).toMatch(/Deny<span class="fd-kbd">d<\/span>/);
@@ -139,8 +141,8 @@ describe('needs-you rail', () => {
   test('a question form is answered in the session, not in the rail', () => {
     const html = rail(recordedRequest('codex-question_rpc'));
     expect(html).toContain('Open session');
-    expect(html).not.toContain('class="fd-primary"');
-    expect(html).toContain('data-tone="info">Question<');
+    expect(html).not.toContain('class="fd-decide"');
+    expect(html).toMatch(/class="fd-q-kind"[^>]*>.*Question</);
   });
 
   test('an empty rail keeps only the notification switch on the side, and nothing as a strip', () => {

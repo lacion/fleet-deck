@@ -16,6 +16,8 @@ import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
   CloudOff,
+  Folder,
+  GitBranch,
   Icon,
   Layers,
   type LucideIcon,
@@ -34,7 +36,7 @@ import type { Contested } from './fleet';
 import { stationName } from './fleet';
 import { costText } from './usage';
 
-/** One fact of the meta cell: a 13 px icon and an optional number. */
+/** One fact of the meta cell: a 12 px icon and an optional number. */
 function Ico({
   kind,
   icon,
@@ -52,13 +54,17 @@ function Ico({
 }) {
   return (
     <span className="fd-strip-ico" data-ico={kind} data-tone={tone} title={title} {...extra}>
-      <Icon of={icon} size={13} />
+      <Icon of={icon} size={12} />
       {n === undefined ? null : <span>{n}</span>}
     </span>
   );
 }
 
-/** One session strip: the whole strip is the link to the session (ui-pass §3). */
+/**
+ * One session strip (DESIGN-SYSTEM §4.1): the holder, the callsign over the model, the title and
+ * what the session does now, the facts, where it works, its changes and its age. The whole strip
+ * is the link to the session; the chips that are links of their own sit on a line under it.
+ */
 export function FleetStrip({
   card,
   stations,
@@ -91,9 +97,9 @@ export function FleetStrip({
   const files = extra?.files ?? [];
   const place =
     s.branch !== null && s.branch !== ''
-      ? { text: s.branch, title: `Branch: ${s.branch}` }
+      ? { text: s.branch, title: `Branch: ${s.branch}`, branch: true }
       : s.cwd !== null && s.cwd !== ''
-        ? { text: basename(s.cwd), title: `Folder: ${basename(s.cwd)}` }
+        ? { text: basename(s.cwd), title: `Folder: ${basename(s.cwd)}`, branch: false }
         : null;
   const mail = extra?.mail_pending ?? 0;
   const title = s.title ?? '';
@@ -104,7 +110,7 @@ export function FleetStrip({
     <ProjectChip key="project" card={card} />,
   ];
   return (
-    <li className="fd-stripwrap">
+    <li className="fd-stripwrap" data-status={card.status}>
       <a
         className="fd-strip"
         href={formatHash({
@@ -119,33 +125,44 @@ export function FleetStrip({
         data-contested={contested === undefined ? undefined : 'true'}
         data-archived={cleared ? 'true' : undefined}
       >
-        <span className="fd-strip-call" title={place?.title}>
-          {s.callsign ?? s.session_id.slice(0, 8)}
-        </span>
-        <span className="fd-strip-title" title={digest === null ? undefined : `Summary: ${digest}`}>
-          {showStation ? (
-            <span className="fd-strip-station">{stationName(card.station_id, stations)}</span>
-          ) : null}
-          <span className="fd-strip-text">
-            {title !== '' ? (
-              title
-            ) : place === null ? null : (
-              <span className="fd-strip-place">{place.text}</span>
-            )}
+        <span className="fd-holder" data-status={card.status} aria-hidden="true" />
+        <span className="fd-strip-id">
+          <span className="fd-strip-call fd-callsign">
+            {s.callsign ?? s.session_id.slice(0, 8)}
           </span>
-          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
-          {starred ? (
-            <span className="fd-card-star" title="Priority">
-              <Icon of={Star} size={12} />
-            </span>
-          ) : null}
-          <UnreadMark count={unreadOf(card)} />
+          <span className="fd-strip-model" data-family={modelFamily(s.model) ?? undefined}>
+            {shortModel(s.model)}
+          </span>
         </span>
-        <span
-          className="fd-strip-now"
-          title={files.length === 0 ? undefined : `Touched: ${files.map(basename).join(', ')}`}
-        >
-          <CardNote card={card} focus />
+        <span className="fd-strip-main">
+          <span
+            className="fd-strip-title"
+            title={digest === null ? undefined : `Summary: ${digest}`}
+          >
+            {showStation ? (
+              <span className="fd-strip-station">{stationName(card.station_id, stations)}</span>
+            ) : null}
+            <span className="fd-strip-text">
+              {title !== '' ? (
+                title
+              ) : place === null ? null : (
+                <span className="fd-strip-place">{place.text}</span>
+              )}
+            </span>
+            {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
+            {starred ? (
+              <span className="fd-card-star" title="Priority">
+                <Icon of={Star} size={12} />
+              </span>
+            ) : null}
+            <UnreadMark count={unreadOf(card)} />
+          </span>
+          <span
+            className="fd-strip-now"
+            title={files.length === 0 ? undefined : `Touched: ${files.map(basename).join(', ')}`}
+          >
+            <CardNote card={card} focus />
+          </span>
         </span>
         <span className="fd-strip-meta">
           {isRiskyMode(s.mode) ? (
@@ -163,12 +180,6 @@ export function FleetStrip({
               tone="hazard"
               title={`Contested with ${contested.with.join(', ')}`}
             />
-          )}
-          {total === undefined || !hasChanges(total) ? null : (
-            <span className="fd-strip-diff" title="Changed since the session started">
-              <span className="fd-add">+{total.insertions}</span>{' '}
-              <span className="fd-del">−{total.deletions}</span>
-            </span>
           )}
           {mail > 0 ? (
             <Ico kind="mail" icon={Mail} title="Mail waiting for delivery" n={mail} />
@@ -205,8 +216,26 @@ export function FleetStrip({
           {cleared ? <Ico kind="archived" icon={Archive} title="Archived" /> : null}
           {freshness === 'stale' ? <Ico kind="stale" icon={CloudOff} title="Stale" /> : null}
         </span>
-        <span className="fd-strip-model" data-family={modelFamily(s.model) ?? undefined}>
-          {shortModel(s.model)}
+        <span className="fd-strip-where" title={place?.title}>
+          {place === null ? null : (
+            <>
+              <Icon of={place.branch ? GitBranch : Folder} size={12} />
+              <span className="fd-strip-path">{place.text}</span>
+            </>
+          )}
+        </span>
+        <span className="fd-strip-changes">
+          {total === undefined || !hasChanges(total) ? null : (
+            <>
+              <span className="fd-strip-diff" title="Changed since the session started">
+                <span className="fd-add">+{total.insertions}</span>{' '}
+                <span className="fd-del">−{total.deletions}</span>
+              </span>
+              <span className="fd-strip-files">
+                {total.files_changed === 1 ? '1 file' : `${total.files_changed} files`}
+              </span>
+            </>
+          )}
         </span>
         <span className="fd-strip-age" title={cost === null ? undefined : `Cost ${cost}`}>
           {relativeAge(s.updated_at, now)}

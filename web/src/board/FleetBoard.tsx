@@ -457,6 +457,69 @@ function lanesOf(
 const settled = (lane: Lane) =>
   lane.cards.every((c) => c.status === 'ended' || c.status === 'lost');
 
+/** The platform names of the station traits, as the owner reads them. */
+const OS_NAME: Readonly<Record<string, string>> = {
+  linux: 'Linux',
+  macos: 'macOS',
+  darwin: 'macOS',
+  omarchy: 'Omarchy',
+  windows: 'Windows',
+};
+
+/** The station facts of a lane head: platform, and the reach (dot and word). */
+function StationFacts({
+  station,
+  freshness,
+}: {
+  readonly station: StationView;
+  readonly freshness: Freshness;
+}) {
+  const traits = station.info?.traits;
+  const up = freshness !== 'stale' && station.reachable;
+  return (
+    <>
+      {traits === undefined ? null : (
+        <span className="fd-lane-platform">
+          {OS_NAME[traits.os.toLowerCase()] ?? traits.os} · {traits.arch}
+        </span>
+      )}
+      <span className="fd-lane-reach" data-up={up ? 'true' : 'false'}>
+        {up ? 'online' : 'offline'}
+      </span>
+    </>
+  );
+}
+
+/** A slot meter shows one tick per slot up to this many; a bigger station shows the count only. */
+const MAX_TICKS = 16;
+
+/** The slot meter of a station lane: "3 of 12", the needs-you slots first (DESIGN-SYSTEM §4.4). */
+function LaneSlots({
+  station,
+  cards,
+}: {
+  readonly station: StationView;
+  readonly cards: readonly DeckSession[];
+}) {
+  const info = station.info;
+  if (info == null || info.max_sessions == null) return null;
+  const max = info.max_sessions;
+  const used = Math.min(info.live_sessions, max);
+  const needs = Math.min(cards.filter((c) => c.status === 'needs_you').length, used);
+  return (
+    <span className="fd-lane-slots">
+      {max > 0 && max <= MAX_TICKS ? (
+        <span className="fd-slots" aria-hidden="true">
+          {Array.from({ length: max }, (_, i) => (
+            <span key={i} data-slot={i < needs ? 'needs_you' : i < used ? 'used' : undefined} />
+          ))}
+        </span>
+      ) : null}
+      {info.live_sessions} of {max}
+    </span>
+  );
+}
+
 /** The board: one lane for each station, repo or project; one strip for each session. */
 export function FleetBoard({
   sessions,
@@ -484,10 +547,9 @@ export function FleetBoard({
             : lane.cards.filter((c) =>
                 contested.has(sessionRef(c.station_id, c.summary.session_id)),
               ).length;
-        const warnings =
-          group === 'station'
-            ? resourceWarnings(stations.find((s) => s.station_id === lane.id)?.info?.resources)
-            : [];
+        const view =
+          group === 'station' ? stations.find((s) => s.station_id === lane.id) : undefined;
+        const warnings = group === 'station' ? resourceWarnings(view?.info?.resources) : [];
         return (
           <section
             key={lane.id}
@@ -497,9 +559,13 @@ export function FleetBoard({
             data-project={group === 'project' ? lane.id : undefined}
             aria-label={lane.label}
           >
-            <h2 className="fd-lane-head">
-              <span className="fd-lane-name">{lane.name}</span>{' '}
-              <span className="fd-count">{lane.cards.length}</span>
+            <div className="fd-lane-head">
+              <h2 className="fd-lane-name fd-wide">{lane.name}</h2>
+              {view === undefined ? (
+                <span className="fd-count">{lane.cards.length}</span>
+              ) : (
+                <StationFacts station={view} freshness={freshness} />
+              )}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
                   ▲ Low resources
@@ -508,7 +574,8 @@ export function FleetBoard({
               {group === 'repo' && contestedCount > 0 ? (
                 <span className="fd-lane-conf">▲ {contestedCount} contested</span>
               ) : null}
-            </h2>
+              {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
+            </div>
             <ul className="fd-strips">
               {stripCards(lane.cards, starred).map((card) => (
                 <FleetStrip
