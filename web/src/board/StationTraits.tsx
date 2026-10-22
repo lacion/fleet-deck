@@ -1,10 +1,12 @@
-// FG-6 (design §9.4): the traits line of a station card: "<os> · <arch>[ · on battery][ · <label>,
-// <label>]". An older station sends no `traits`: no line.
+// FG-6 (design §9.4): the traits line of a station card: "<OS> · <arch>[ · on battery][ · <label>,
+// <label>]", with the display name of the OS ("Linux", "macOS", "Omarchy"). An older station sends
+// no `traits`: no line.
 import type { StationTraits as Traits } from '../gen';
+import { osLabel } from '../tailnet/model';
 
 /** The text of the line. */
 export function traitsText(t: Traits): string {
-  const parts = [t.os, t.arch];
+  const parts = [osLabel(t.os), t.arch];
   if (t.on_battery === true) parts.push('on battery');
   if (t.labels.length > 0) parts.push(t.labels.join(', '));
   return parts.join(' · ');

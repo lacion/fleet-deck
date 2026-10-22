@@ -474,6 +474,15 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
   const canPair = actions?.canAdmin === true && freshness === 'live';
   const drift = useDriftReference();
   const reference = stations.find((s) => s.station_id === drift.station);
+  const referenceMenu =
+    drift.offered && stations.length > 0 ? (
+      <ConfigReferenceHeader
+        stations={stations}
+        reference={reference}
+        canSet={actions?.canAdmin === true}
+        onSet={(id) => void drift.set(id)}
+      />
+    ) : null;
   return (
     <Page
       title="Stations"
@@ -481,15 +490,20 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
       className="fd-stations"
       actions={
         actions?.canAdmin === true ? (
-          <button
-            type="button"
-            className="fd-primary"
-            disabled={!canPair}
-            onClick={() => setAdding(true)}
-          >
-            <Icon of={Plus} /> Add station
-          </button>
-        ) : undefined
+          <>
+            {referenceMenu}
+            <button
+              type="button"
+              className="fd-primary"
+              disabled={!canPair}
+              onClick={() => setAdding(true)}
+            >
+              <Icon of={Plus} /> Add station
+            </button>
+          </>
+        ) : (
+          referenceMenu
+        )
       }
     >
       {actions === undefined || actions.canAdmin ? null : (
@@ -499,15 +513,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
         <PairingDialog actions={actions} stations={stations} onClose={() => setAdding(false)} />
       ) : null}
       {removeError === null ? null : <p role="alert">{removeError}</p>}
-      {drift.offered && stations.length > 0 ? (
-        <ConfigReferenceHeader
-          stations={stations}
-          reference={reference}
-          canSet={actions?.canAdmin === true}
-          onSet={(id) => void drift.set(id)}
-          error={drift.error}
-        />
-      ) : null}
+      {drift.offered && drift.error !== null ? <p role="alert">{drift.error}</p> : null}
       {stations.length === 0 ? (
         <EmptyState
           icon={Server}
@@ -544,8 +550,8 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   {freshness === 'stale'
                     ? 'Stale link status'
                     : station.reachable
-                      ? 'Link up'
-                      : 'Unreachable'}
+                      ? 'online'
+                      : 'offline'}
                 </span>
                 <span className="fd-station-load">
                   {info?.max_sessions == null ? null : (
@@ -607,25 +613,25 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     </Menu>
                   </div>
                 ) : null}
-              </div>
-              <div className="fd-station-live">
-                <span
-                  title={
-                    station.last_seen === null ||
-                    Number.isNaN(new Date(station.last_seen).getTime())
-                      ? undefined
-                      : new Date(station.last_seen).toISOString()
-                  }
-                >
-                  Last seen{' '}
-                  {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
-                </span>
-                {drift.offered ? (
-                  <StationConfigDrift station={station} reference={reference} />
-                ) : null}
-                {freshness === 'stale' ? (
-                  <span>Last reported: {station.reachable ? 'link up' : 'unreachable'}.</span>
-                ) : null}
+                <div className="fd-station-live">
+                  <span
+                    title={
+                      station.last_seen === null ||
+                      Number.isNaN(new Date(station.last_seen).getTime())
+                        ? undefined
+                        : new Date(station.last_seen).toISOString()
+                    }
+                  >
+                    Last seen{' '}
+                    {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
+                  </span>
+                  {drift.offered ? (
+                    <StationConfigDrift station={station} reference={reference} />
+                  ) : null}
+                  {freshness === 'stale' ? (
+                    <span>Last reported: {station.reachable ? 'online' : 'offline'}.</span>
+                  ) : null}
+                </div>
               </div>
               <div className="fd-station-props">
                 <div className="fd-station-prop">
@@ -672,7 +678,6 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                 <StationTaildrive taildrive={info?.taildrive} />
               </div>
               <div className="fd-station-folds">
-                <DesktopPanel station={station} />
                 <details className="fd-station-details">
                   <summary className="fd-label">Details</summary>
                   <dl className="fd-facts">
@@ -729,6 +734,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     now={now}
                   />
                 )}
+                {info?.desktop === undefined ? null : <DesktopPanel station={station} />}
               </div>
               {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">

@@ -1,5 +1,5 @@
 /* The Plans and Stations screens ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.4 and §4.7):
-   the plan library, the station panels, their folds (Desktop, Details, Shells, Worktrees) and
+   the plan library, the station panels, their folds (Details, Shells, Worktrees, Desktop) and
    the worktree inventory. The visual primitives come from base.css. */
 
 /* ════════════════════════════ Plans ════════════════════════════ */
@@ -209,14 +209,9 @@
   min-width: 0;
 }
 
-/* The config reference line under the page header. */
-.fd-station-reference {
-  align-items: center;
-  min-height: var(--ctl-h);
-}
-
-.fd-station-reference .fd-note {
-  margin: 0;
+/* The config reference in the page header (a plain line without the admin scope). */
+.fd-station-ref {
+  font-size: var(--fs-meta);
 }
 
 .fd-station-list {
@@ -241,14 +236,15 @@
   margin: 0;
 }
 
-/* ── the header: name, platform, reach; the slots and the menu at the right ── */
+/* ── the header: name, platform, reach; the slots and the menu at the right; the meta line
+   (last seen, config) under them ── */
 .fd-station-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-1) var(--sp-3);
+  gap: 0 var(--sp-3);
   min-height: var(--ctl-h);
-  padding: var(--sp-3) var(--sp-3) 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3) var(--sp-4);
 }
 
 /* A station name is a place: the wide width (§2.3, the same values as .fd-wide). */
@@ -329,10 +325,11 @@
 /* ── the meta line: last seen, config, the stale note ─────────────── */
 .fd-station-live {
   display: flex;
+  flex: 1 0 100%;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 0;
-  padding: 2px var(--sp-4) var(--sp-3);
+  order: 10;
+  min-height: 20px;
   color: var(--faint);
   font-size: var(--fs-meta);
 }
@@ -341,10 +338,6 @@
   content: "·";
   padding: 0 6px;
   color: var(--faint);
-}
-
-.fd-station-live > .fd-note {
-  color: inherit;
 }
 
 /* ── the property rows: a label column and the values (concept B) ─── */
@@ -544,39 +537,29 @@
   color: var(--act);
 }
 
-/* ── the folds: Desktop, Details, Shells, Worktrees ─────────────────── */
+/* ── the folds: one footer row of toggles (Details, Shells, Worktrees, Desktop) ──────
+   Each fold stays a <details>. All of them span the same subgrid: the summaries sit side by
+   side in the first row as small ghost toggles, and an open fold shows its content in a row
+   of its own under them (the nth fold in row n + 1). The overlapping <details> boxes let the
+   clicks through to the summaries and the contents. */
 .fd-station-folds {
   display: grid;
   border-top: 1px solid var(--border-soft);
 }
 
-.fd-station-folds > :where(*) {
+.fd-station-folds > details {
   min-width: 0;
   margin: 0;
   padding: 0 var(--sp-4);
 }
 
-.fd-station-folds > :where(* + *) {
-  border-top: 1px solid var(--border-soft);
-}
-
-/* The Desktop fold (displays.css) sits flush like the others. */
-.fd-station-folds > .fd-desk {
-  margin-top: 0;
-}
-
-.fd-station-folds > .fd-desk:not([open]) {
-  gap: 0;
-}
-
 .fd-station-folds > details > summary {
   display: flex;
   align-items: center;
-  min-height: 36px;
+  min-height: var(--row-h);
   color: var(--dim);
   font-size: var(--fs-meta);
-  font-weight: 600;
-  transition: color var(--t-fast);
+  font-weight: 500;
 }
 
 .fd-station-folds > details > summary:hover,
@@ -588,12 +571,100 @@
   padding-bottom: var(--sp-3);
 }
 
-/* A fold without content (no desktop) is a quiet line of the same height. */
-.fd-station-folds > p {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  color: var(--faint);
+@supports selector(::details-content) {
+  .fd-station-folds {
+    grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
+    grid-template-rows: minmax(var(--row-h), auto) repeat(4, auto);
+    column-gap: 2px;
+    padding: 0 var(--sp-2);
+  }
+
+  .fd-station-folds > details,
+  .fd-station-folds > details[open] {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    gap: 0;
+    padding: 0;
+    pointer-events: none;
+  }
+
+  .fd-station-folds > details > summary,
+  .fd-station-folds > details::details-content {
+    pointer-events: auto;
+  }
+
+  /* A toggle: the small ghost button look (.fd-ghost.fd-sm); an open fold is pressed. */
+  .fd-station-folds > details > summary {
+    grid-row: 1;
+    align-self: center;
+    min-height: var(--ctl-h-sm);
+    padding: 0 var(--sp-2);
+    border-radius: var(--r-ctl);
+    white-space: nowrap;
+    transition:
+      background-color var(--t-fast),
+      color var(--t-fast);
+  }
+
+  .fd-station-folds > details > summary:hover {
+    background: var(--raised);
+  }
+
+  .fd-station-folds > details[open] > summary {
+    background: var(--raised-hi);
+  }
+
+  .fd-station-folds > details > summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  .fd-station-folds > details::details-content {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .fd-station-folds > details[open]::details-content {
+    padding: var(--sp-1) var(--sp-2) var(--sp-3);
+  }
+
+  .fd-station-folds > details:nth-child(2) > summary {
+    grid-column: 2;
+  }
+
+  .fd-station-folds > details:nth-child(3) > summary {
+    grid-column: 3;
+  }
+
+  .fd-station-folds > details:nth-child(4) > summary {
+    grid-column: 4;
+  }
+
+  .fd-station-folds > details:nth-child(1)::details-content {
+    grid-row: 2;
+  }
+
+  .fd-station-folds > details:nth-child(2)::details-content {
+    grid-row: 3;
+  }
+
+  .fd-station-folds > details:nth-child(3)::details-content {
+    grid-row: 4;
+  }
+
+  .fd-station-folds > details:nth-child(4)::details-content {
+    grid-row: 5;
+  }
+
+  /* The Desktop fold (displays.css) keeps the column of its parts. */
+  .fd-station-folds > .fd-desk[open]::details-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
 }
 
 /* Details: a compact two-column grid; a label is sans, a code-like value is mono. */
@@ -848,10 +919,25 @@
   font-size: var(--fs-data);
 }
 
-/* ── the phone: the header wraps, the property label sits above its values ── */
+/* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
-  .fd-station-head {
-    padding-right: var(--sp-2);
+  /* The page actions take their own line: Add station first, at the left edge. */
+  .fd-stations .fd-page-actions > .fd-menu {
+    order: 1;
+  }
+
+  .fd-station-load {
+    order: 3;
+    margin-left: 0;
+  }
+
+  .fd-station-menu {
+    margin-left: auto;
+  }
+
+  .fd-station-live {
+    flex: 1 1 auto;
+    order: 4;
   }
 
   .fd-station-prop {
