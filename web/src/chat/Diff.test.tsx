@@ -386,6 +386,40 @@ describe('Diff', () => {
     expect(html).not.toContain('<img');
   });
 
+  test('a new, a deleted and a mode-changed file show a status badge in the header', () => {
+    const html = renderToStaticMarkup(
+      <Diff
+        patch={[
+          'diff --git a/empty.ts b/empty.ts',
+          'new file mode 100644',
+          'index 0000000..e69de29',
+          'diff --git a/gone.ts b/gone.ts',
+          'deleted file mode 100644',
+          'diff --git a/run.sh b/run.sh',
+          'old mode 100644',
+          'new mode 100755',
+        ].join('\n')}
+        truncated={false}
+        id="t1"
+      />,
+    );
+    expect(html).toContain(
+      '<span class="fd-badge fd-dl-status" data-tone="ok" title="New file">new</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-badge fd-dl-status" data-tone="hazard" title="Deleted file">deleted</span>',
+    );
+    expect(html).toContain('title="The file mode changed">mode 100644 → 100755</span>');
+    for (const plumbing of ['new file mode', 'deleted file mode', 'old mode', 'new mode']) {
+      expect(html).not.toContain(plumbing);
+    }
+  });
+
+  test('a file that only changes its lines has no status badge', () => {
+    const html = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
+    expect(html).not.toContain('fd-dl-status');
+  });
+
   test('splitDiffFileLine takes the path after b/', () => {
     expect(splitDiffFileLine('diff --git a/x/old.ts b/x/new.ts')).toEqual({
       head: 'diff --git a/x/old.ts b/',
