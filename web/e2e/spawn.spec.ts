@@ -66,7 +66,7 @@ function picker(deck: FakeDeck): void {
 }
 
 async function chooseApp(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   await form.getByRole('button', { name: 'Open projects' }).click();
@@ -108,7 +108,8 @@ test('a session starts from the form with a picked directory and opens', async (
   const form = page.getByRole('region', { name: 'New session' });
   await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
   await form.getByLabel('Permission mode').selectOption('plan');
-  await form.getByLabel('Model (optional)').fill('sonnet');
+  await form.getByLabel('Model (optional)').selectOption('__other__');
+  await form.getByLabel('Model id or alias').fill('sonnet');
   await form.getByLabel('Title (optional)').fill('Fix the login');
   await form.getByLabel('What should the agent do? (optional)').fill('Find the bug in login.ts');
   expect(await fitsWidth(page)).toBe(true);
@@ -215,7 +216,7 @@ test('a read-only login cannot browse or start', async ({ page }) => {
   picker(deck);
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await expect(form).toContainText('Starting sessions needs the drive scope.');
   await expect(form.getByRole('button', { name: 'Browse…' })).toBeDisabled();
@@ -304,7 +305,7 @@ test('More options is folded and stays open while an option has a value', async 
   picker(deck);
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   const fold = form.locator('details.fd-spawn-options');
   await expect(fold).not.toHaveAttribute('open', '');
@@ -411,7 +412,7 @@ test('a recent directory chip selects its directory for the start', async ({ pag
   }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   const recent = form.getByLabel('Recent directories');

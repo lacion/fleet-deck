@@ -41,6 +41,11 @@ report "text-transform uppercase (labels are sentence case)" "$(grep -nE 'text-t
 # 5. The model and provider hues are retired: models are never colored.
 report "model or provider hue (models are not colored)" "$(grep -nE 'var\(--(m|p)-[a-z]+' $area | grep -v 'ds-exception')"
 
+# 5b. A shadow token is never `none`: it sits in box-shadow lists, where `…, none`
+# is invalid and drops the whole declaration. tokens.css is not in $area, so name it.
+report "shadow token set to none (use 0 0 0 0 transparent: it sits in box-shadow lists)" \
+    "$(grep -nE -- '--(shadow-lift|selected-lift|knob-shadow|shadow-pop): *none' web/src/styles/tokens.css web/src/ui/palette.ts)"
+
 # 6. Components: no raw colors or font sizes in inline styles.
 tsx=$(find web/src -name '*.tsx' ! -name '*.test.tsx' ! -path '*/gen/*')
 report "inline style with a raw color or size (use a class and tokens)" \

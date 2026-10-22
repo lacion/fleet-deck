@@ -53,7 +53,7 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   const card = page.locator('[data-station="st-alpha"]');
   await expect(card).toContainText('online');
   await expect(card).toContainText('0 of 4 sessions');
-  await expect(card.locator('.fd-load-bar')).toBeVisible();
+  await expect(card.locator('.fd-slots')).toBeVisible();
   // The version, the ids and the key sit in the Details fold.
   await expect(card.getByText('Station ID')).toBeHidden();
   await card.getByText('Details', { exact: true }).click();

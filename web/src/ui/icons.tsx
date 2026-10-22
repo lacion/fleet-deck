@@ -73,6 +73,7 @@ export {
   ShieldAlert,
   ShieldCheck,
   Smartphone,
+  Sparkles,
   Square,
   SquareTerminal,
   Star,

@@ -138,6 +138,7 @@ export function PlanLibrary({
   };
   return (
     <Page
+      wide
       title="Plans"
       label="Plan library"
       actions={
@@ -171,7 +172,7 @@ export function PlanLibrary({
           body="A session in plan mode adds its plan here."
         />
       ) : (
-        <ol className="fd-plan-list">
+        <ol className="fd-panel fd-plan-list">
           {plans.map((p) => {
             const title = planTitle(p.markdown);
             const proposer = p.status === 'proposed' ? liveProposer(p, sessions) : undefined;

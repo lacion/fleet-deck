@@ -27,8 +27,11 @@ test('the sidebar lists the needs-you group first, then the sessions under their
 
   const alpha = sidebar.getByRole('region', { name: 'Station Alpha' });
   await expect(alpha.getByRole('heading', { level: 3 })).toContainText('Alpha');
-  // a session that needs you lists once, in "Needs you"; the station still counts it
-  await expect(alpha.getByRole('heading', { level: 3 })).toContainText('2');
+  // a session that needs you lists once, in "Needs you"; the station count is the rows shown
+  // under it, and its title still counts every session of the station
+  const alphaCount = alpha.getByRole('heading', { level: 3 }).locator('.fd-count');
+  await expect(alphaCount).toHaveText('1');
+  await expect(alphaCount).toHaveAttribute('title', '2 sessions on Alpha');
   await expect(alpha.getByRole('link')).toHaveCount(1);
   await expect(alpha).toContainText('Write the docs');
   const beta = sidebar.getByRole('region', { name: 'Station Beta' });

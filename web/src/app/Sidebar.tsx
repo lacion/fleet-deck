@@ -551,17 +551,7 @@ export function Sidebar({
         </div>
         {/* The phone: the grouping sits in the search row; the list has no head row. */}
         {full ? null : groupSeg}
-        {/* The phone: New session sits in the search row (§4.2 row 2), as on the desktop. */}
-        {full || guest ? null : (
-          <button
-            type="button"
-            className="fd-iconbtn fd-sidebar-new"
-            aria-label="New session"
-            onClick={() => onNavigate({ name: 'new' })}
-          >
-            <Icon of={Plus} />
-          </button>
-        )}
+        {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
       </div>
       {full ? (
         <BoardLinks

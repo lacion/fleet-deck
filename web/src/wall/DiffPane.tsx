@@ -2,7 +2,7 @@
 // its base commit. The review mode adds the sent review comments; no comment control shows.
 import { useMemo } from 'react';
 import { Diff } from '../chat/Diff';
-import { diffLineKind, fileHeads, isPlumbing } from '../chat/diffLines';
+import { diffLineKinds, fileHeads, isPlumbing } from '../chat/diffLines';
 import type { DeckSession } from '../gen';
 import type { ReviewActions } from '../review/api';
 import { diffReview } from '../review/diffReview';
@@ -34,11 +34,13 @@ function PathText({ path }: { readonly path: string }) {
  */
 function WallDiff({ patch, truncated }: { readonly patch: string; readonly truncated: boolean }) {
   const lines = useMemo(() => patch.split('\n'), [patch]);
+  // In a hunk a '--- …' or '+++ …' line is a deleted or added line, not plumbing (as in `Diff`).
+  const kinds = useMemo(() => diffLineKinds(lines), [lines]);
   const heads = useMemo(() => fileHeads(lines), [lines]);
   return (
     <pre className="fd-diff" data-diff="wall-focus">
       {lines.map((line, n) => {
-        const kind = diffLineKind(line);
+        const kind = kinds[n] ?? 'meta';
         const head = kind === 'file' ? heads.get(n) : undefined;
         if (head !== undefined) {
           return (

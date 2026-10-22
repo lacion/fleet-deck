@@ -23,8 +23,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  background: var(--surface);
-  border-radius: var(--r-panel);
 }
 
 .fd-plan-list > :where(li + li) {
@@ -85,13 +83,17 @@
   > :not(.fd-plan-status):not(.fd-badge)
   + :not(.fd-plan-status):not(.fd-badge)::before {
   content: "·";
+  /* inline-block: the underline of a link item does not run under its separator */
+  display: inline-block;
   padding: 0 6px;
   color: var(--faint);
 }
 
 .fd-plan-meta .fd-link {
   display: inline;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
   height: auto;
   min-height: 0;
   padding: 0;
@@ -106,7 +108,7 @@
 
 .fd-plan-meta .fd-link:hover:not(:disabled) {
   background: transparent;
-  text-decoration: underline;
+  text-decoration-thickness: 2px;
 }
 
 .fd-plan-fold {

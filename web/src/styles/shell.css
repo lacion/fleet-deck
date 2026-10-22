@@ -607,18 +607,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   min-width: 0;
 }
 
-.fd-sidebar-new.fd-iconbtn {
-  flex: none;
-  background: var(--raised);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
-
-.fd-sidebar-new.fd-iconbtn:hover:not(:disabled) {
-  background: var(--raised-hi);
-  border-color: var(--border-soft);
-}
-
 /* The phone has no list head: the grouping (Station | Project) sits in the search row. */
 .fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-seg {
   flex: none;

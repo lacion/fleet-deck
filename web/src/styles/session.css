@@ -514,6 +514,13 @@
   margin-top: 0;
   padding: 0 var(--sp-2);
 }
+/* The chat Show menu sits at the right end of the tab row (chat.css): the tabs scroll
+   clear of it, also when it reads "Show (2 hidden)". */
+.fd-pane[data-layout="phone"]:has(.fd-pane-chat > .fd-chat:first-child > .fd-chat-filters)
+.fd-pane-tabs {
+  padding-right: 136px;
+  scroll-padding-inline-end: 136px;
+}
 @media (pointer: coarse) {
   .fd-pane-tabs {
     height: var(--tap-min);

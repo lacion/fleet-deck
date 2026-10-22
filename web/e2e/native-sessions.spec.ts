@@ -102,7 +102,7 @@ test('browse the sessions of a station, preview one, continue it', async ({ page
   const native = deck.nativeSessions('st-alpha', LIST, PREVIEW);
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByText('More options').click();
   await form.getByRole('button', { name: 'Browse sessions on this station' }).click();
@@ -160,7 +160,7 @@ test('a station that does not list its sessions shows the text without a retry',
   }));
   await deck.install(page);
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByText('More options').click();
   await form.getByRole('button', { name: 'Browse sessions on this station' }).click();

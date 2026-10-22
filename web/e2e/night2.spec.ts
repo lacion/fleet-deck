@@ -65,7 +65,7 @@ function deckWithStation(): FakeDeck {
 }
 
 async function chooseApp(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   await form.getByRole('button', { name: 'Open projects' }).click();

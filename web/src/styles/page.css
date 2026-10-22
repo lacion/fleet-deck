@@ -502,6 +502,12 @@
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
 }
+@media (pointer: coarse) {
+  .fd-folder-crumbs button {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-2);
+  }
+}
 .fd-folder-quick {
   display: flex;
   flex-wrap: wrap;

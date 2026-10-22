@@ -1,7 +1,6 @@
 import { type ReactNode, useState } from 'react';
 import type { ModelChoice } from '../gen';
-import { Icon, type LucideIcon } from '../ui/icons';
-import { Sparkles } from './icons';
+import { Icon, type LucideIcon, Sparkles } from '../ui/icons';
 
 const OTHER = '__other__';
 

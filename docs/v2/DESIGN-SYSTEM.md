@@ -243,10 +243,10 @@ Narrow main columns (the fleet home header): under 1100px the search folds to it
 ### 4.5 Session
 
 - Header (56px): a strip header — the holder, the callsign cell (`.fd-callsign` 15px over "Sonnet 5.5 · Claude" in `--dim`), the title (17px weight 640), then chips (station with `server`, branch mono with `git-branch`, folder mono with `folder`, mode). Actions at the right: Interrupt, Terminal (ghost buttons with icons), `folder-open`, the session menu `ellipsis`.
-- Tabs: Chat, Changes (count), Files, Artifacts — 36px, the selected one `--text` with a 2px `--text` underline (not yellow). The chat Show filter is a small floating pill at the top right of the chat column (the "Jump to latest" look), not a row.
+- Tabs: Chat, Changes (count), Files, Artifacts — 36px, the selected one `--text` with a 2px `--text` underline (not yellow). The chat Show filter is a ghost menu (12px, chevron) at the right end of the tab row, over the chat panel; with the Agents switcher it shares the Agents bar. It never floats over the transcript, where tool rows show their results. On a phone the tab row keeps room at its right end for the menu.
 - Chat column `--chat-w`, centered in the space left of the properties panel.
 - **Properties panel** (right, 280px, `--surface`, collapsible with `panel-right`): Status (glyph + text + since), Station (reach + slots), Branch, Folder, Model, Mode, Changes (+/− and the files), Usage (tokens and cost in `--fuel`), Subagents.
-- Transcript: the user message in a `--raised` bubble, right-aligned, max 75 %. Agent prose plain, 14px/1.6. **Tool calls on a flight path**: a 2px `--border` vertical line at the left of the column; each tool call a 30px row with a 10px node (filled `--ok` ok, ring `--act` waiting, `--hazard` failed), tool icon, tool name weight 600, target mono `--dim`, result at the right in `--faint`. Reasoning collapsed ("Thinking · 12 s").
+- Transcript: the user message in a `--raised` bubble, right-aligned, max 75 %. Agent prose plain, 14px/1.6. **Tool calls on a flight path**: a 2px `--border` vertical line at the left of the column; each tool call a 30px row with a 10px node (filled `--ok` ok, ring `--act` waiting, `--hazard` failed; a running call without a request: the working glyph in the chat, an `--ok` ring on the wall; an ended call without a result: a hollow `--faint-decor` ring), tool icon, tool name weight 600, target mono `--dim`, result at the right in `--faint`. Reasoning collapsed ("Thinking · 12 s").
 - Code: `--code`, `--r-panel`, a 28px header (language + copy icon button), mono 12.5px/1.55, token colors: keywords `--focus`, strings `--ok`, comments `--faint`.
 - Tables: no outer border, header 12px weight 600 `--dim`, rows divided by `--border-soft`.
 - **Approval card**: `--raised`, `--r-panel`, holder `--act` at the left, `--act-line` outline, `--act-glow`, `--shadow-pop`. Header: shield icon + "Permission request" (or "Question", "Plan") weight 600, the tool, the age at the right. The command in a `.fd-code` line, the reason in `--dim`, buttons: `.fd-decide` Allow (kbd `a`), Allow for this session (plain), Deny (`.fd-danger`, kbd `d`).
@@ -255,11 +255,11 @@ Narrow main columns (the fleet home header): under 1100px the search folds to it
 
 ### 4.6 New session (a sheet, B's modal look, on its own route)
 
-The `#/new` route keeps its URL and its form. It renders a centered **sheet** (max 720px, `--raised`, `--r-sheet`, `--shadow-pop`, 24px padding) on the dimmed page canvas:
+The `#/new` route keeps its URL and its form. It renders a centered **sheet** (max 720px, `--raised`, `--r-sheet`, `--shadow-pop`, 24px padding) on the page canvas (`--bg`; dim with `--scrim` only when a page is behind the sheet):
 
 1. A title input without a border (18px weight 600, "Session title (optional)").
 2. The task textarea without a border (15px, 6 lines, "What should the agent do?"); the batch hint under it.
-3. Property rows (label 12px `--dim` at the left, 72px): **Agent**: provider `.fd-seg`, model select pill, permission mode select pill (Bypass shows a `--hazard` hint "Runs every tool without asking"); **Station**: station radio pills (name, reach dot, "9 free"); **Where**: workspace `.fd-seg`, directory input (mono) + Browse…
+3. Property rows (label 12px `--dim` at the left, 72px): **Agent**: provider `.fd-seg` (with instance limits, R4.3, the segments stack and the limit sits right-aligned in `--dim` 12px), model select pill and permission mode select pill, each with a leading 14px icon (sparkles: model, shield: mode) (Bypass shows a `--hazard` hint "Runs every tool without asking"); **Station**: station radio pills (name, reach dot, "9 free"); **Where**: workspace `.fd-seg`, directory input (mono) + Browse…
 4. "More options" disclosure.
 5. Footer (top rule): Batch switch, then at the right Cancel (ghost) and **Start session** (`.fd-primary`, kbd ⌘↵).
 
@@ -281,7 +281,7 @@ The wall keeps its own layout (R13) and uses the same tokens and the strip; type
 
 The wall scope (`.fd-wall-root` in `wall.css`) re-declares the size tokens (`--fs-*`, `--sp-*`, `--r-*`, `--ctl-h*`, `--row-h`, `--strip-h`) as multiples of the wall unit `--fd-wall-u` (1px on a 1080p screen at scale 1; `clamp(14px, 100dvh/80, 28px)` × scale / 14). The type is the board scale × 15/13. The fixed-size primitives (`.fd-dot`, `.fd-holder`, `.fd-mark`) zoom by `--fd-wall-k`, which `WallPage` sets. The ambient mode adds `.fd-scope-dark` and stays dark in the light theme.
 
-Tiles fill the tiles area: `tileGrid` picks the columns, and the tile type grows up to 1.5× (`--fd-wall-tile-k`) when there are few tiles; an ultra wall has a unit floor of 16px. Below 640px a portrait wall scrolls, and the needs and activity areas take their content height.
+Tiles fill the tiles area: `tileGrid` picks the columns, and the tile type grows up to 1.25× (`--fd-wall-tile-k`, set on the grid) when there are few tiles; the needs area grows by the same factor, so a request never reads smaller than a tile. The Activity stream runs newest first under its heading; an ultra wall has a unit floor of 16px. Below 640px a portrait wall scrolls, and the needs and activity areas take their content height.
 
 ---
 
@@ -322,3 +322,8 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | dark `--shadow-lift`, `--selected-lift`, `--knob-shadow` are `0 0 0 0 transparent` (not `none`) | `--shadow-lift` dark is a transparent zero shadow, so it can sit in a box-shadow list: with `none` the dark theme dropped every holder, the pressed segment ring and the selection ring of a needs-you card | every strip, card, segment and switch |
 | 2026-10-22 | light `--faint` `#596575`; the `.fd-diff` file header row is at most `100cqi` wide | faint text was 4.3–4.4:1 on `--badge-bg` and the diff line fills; on a phone the header was as wide as the longest line and cut the +/− counts | key hints, neutral badges, diff line numbers; every diff header |
 | 2026-10-22 | `@media (forced-colors: active)` block; input focus keeps a transparent outline | forced colors drop box-shadow and backgrounds: input focus, the glyph shapes, the pressed segment and the switch state were invisible | every input, status glyph, holder, meter, segment, switch, the terminal dock handle |
+| 2026-10-22 | chat Show menu in the tab row | the floating pill covered the result of the tool row under it, and did not read as floating in the dark theme | session chat |
+| 2026-10-22 | wall: `--fd-wall-tile-k` on `.fd-wall-grid`, capped at 1.25, shared by the needs area | the tiles read louder than the needs-you requests | wall mission mode |
+| 2026-10-22 | flight-path node states for a running and an ended call | §4.5 named only ok, waiting and failed; the wall needs a node for every call | wall chat pane |
+| 2026-10-22 | New session: provider segments stack with instance limits; model and mode pills with a leading icon; the sheet on `--bg` on its own route | §4.6 did not say how R4.3 limits show, nor name the pill icons; nothing is behind the sheet on `#/new` | New session sheet |
+| 2026-10-22 | `tools/design-check.sh` fails on a shadow token set to `none` | `none` in a box-shadow list drops the whole declaration (§2.5) | tokens.css, palette.ts |

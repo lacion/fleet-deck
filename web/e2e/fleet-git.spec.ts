@@ -565,7 +565,7 @@ test('a refusal of the placement shows in the form and starts nothing', async ({
     answer: { status: 409, body: { error: 'no_station', message: 'No station matches: gpu.' } },
   });
   await logIn(page);
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('radiogroup', { name: 'Station' }).getByText('Auto').click();
   await form.getByLabel('Directory path').fill('/work/repo');
