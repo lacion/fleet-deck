@@ -522,36 +522,41 @@ export function Sidebar({
             <LivePill chrome={chrome} />
           </div>
         ) : null}
-        {full && !guest ? (
-          <button
-            type="button"
-            className="fd-primary fd-newbtn"
-            onClick={() => onNavigate({ name: 'new' })}
-          >
-            <Icon of={Plus} /> New session{' '}
+        {/* One row (§4.2): New session, then the search. On the desktop the search folds to its
+            icon and "/" until it has the focus or a text; then New session folds to its icon. */}
+        <div className="fd-sidebar-actions" data-query={query === '' ? undefined : 'true'}>
+          {full && !guest ? (
+            <button
+              type="button"
+              className="fd-primary fd-newbtn"
+              onClick={() => onNavigate({ name: 'new' })}
+            >
+              <Icon of={Plus} /> <span className="fd-newbtn-text">New session</span>{' '}
+              <span className="fd-kbd" aria-hidden="true">
+                N
+              </span>
+            </button>
+          ) : null}
+          <div className="fd-field fd-sidebar-search">
+            <Icon of={Search} />
+            <input
+              id="fd-sidebar-search"
+              type="search"
+              aria-label="Search sessions"
+              aria-keyshortcuts="/"
+              placeholder="Search sessions"
+              autoComplete="off"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
             <span className="fd-kbd" aria-hidden="true">
-              N
+              /
             </span>
-          </button>
-        ) : null}
-        <div className="fd-field">
-          <Icon of={Search} />
-          <input
-            id="fd-sidebar-search"
-            type="search"
-            aria-label="Search sessions"
-            placeholder="Search sessions"
-            autoComplete="off"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <span className="fd-kbd" aria-hidden="true">
-            /
-          </span>
+          </div>
+          {/* The phone: the grouping sits in the search row; the list has no head row. */}
+          {full ? null : groupSeg}
+          {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
         </div>
-        {/* The phone: the grouping sits in the search row; the list has no head row. */}
-        {full ? null : groupSeg}
-        {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
       </div>
       {full ? (
         <BoardLinks
@@ -572,7 +577,10 @@ export function Sidebar({
           </div>
         ) : null}
         {empty ? (
-          <p className="fd-empty">No sessions yet.</p>
+          // The phone list names the New of its bottom bar; a guest cannot start a session.
+          <p className="fd-empty">
+            {full || guest ? 'No sessions yet.' : 'No sessions yet. Start one with New.'}
+          </p>
         ) : nothingFound ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : (

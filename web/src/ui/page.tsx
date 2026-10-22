@@ -8,6 +8,11 @@ type PageProps = {
   readonly count?: number | string | undefined;
   /** One or two sentences under the title. */
   readonly description?: ReactNode;
+  /**
+   * The filters of the page (§4.3: `.fd-seg`, chips, selects, a search) in the header row at the
+   * right of the title, before the actions. A narrow column wraps them under the title.
+   */
+  readonly filters?: ReactNode;
   /** The page actions, at the right of the title. */
   readonly actions?: ReactNode;
   /** 1280 px instead of 1040 px (tables, the wall). */
@@ -21,13 +26,14 @@ type PageProps = {
 
 /**
  * The page frame: padding, a left-aligned column, and the page header (DESIGN-SYSTEM §4.3): the
- * title and its count with the description under them at the left, the actions at the right, then
- * a rule.
+ * title and its count with the description under them at the left, the filters and then the
+ * actions at the right, then a rule.
  */
 export function Page({
   title,
   count,
   description,
+  filters,
   actions,
   wide = false,
   label,
@@ -50,6 +56,9 @@ export function Page({
             <p className="fd-page-desc">{description}</p>
           )}
         </div>
+        {filters === undefined || filters === null ? null : (
+          <div className="fd-page-filters">{filters}</div>
+        )}
         {actions === undefined || actions === null ? null : (
           <div className="fd-page-actions">{actions}</div>
         )}

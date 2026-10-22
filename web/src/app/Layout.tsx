@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from 'react';
+import { type ReactNode, type RefObject, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   Ellipsis,
@@ -44,6 +44,38 @@ type Props = {
   readonly chrome?: Chrome | undefined;
   readonly children: ReactNode;
 };
+
+/**
+ * Keeps `--fd-dock-h` on the main column: the height of its terminal dock. Next to the ops panel
+ * of the fleet home the dock lies over the main column (shell.css), and the home leaves this room.
+ */
+function useDockHeight(main: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = main.current;
+    if (el === null || typeof ResizeObserver === 'undefined') return undefined;
+    if (typeof MutationObserver === 'undefined') return undefined;
+    let dock: Element | null = null;
+    const sizes = new ResizeObserver(() => {
+      if (dock === null) return;
+      el.style.setProperty('--fd-dock-h', `${dock.getBoundingClientRect().height}px`);
+    });
+    const find = () => {
+      const next = el.querySelector(':scope > .fd-tdock');
+      if (next === dock) return;
+      if (dock !== null) sizes.unobserve(dock);
+      dock = next;
+      if (dock === null) el.style.removeProperty('--fd-dock-h');
+      else sizes.observe(dock);
+    };
+    find();
+    const children = new MutationObserver(find);
+    children.observe(el, { childList: true });
+    return () => {
+      children.disconnect();
+      sizes.disconnect();
+    };
+  }, [main]);
+}
 
 /** The connection pill (§4.2): a dot and its word (Live, Stale, Offline); never color alone. */
 export function LivePill({ chrome }: { readonly chrome: Chrome | undefined }) {
@@ -336,6 +368,8 @@ export function Layout({
   children,
 }: Props) {
   const showBar = layout === 'phone' && BAR_ROUTES.includes(route.name);
+  const main = useRef<HTMLDivElement>(null);
+  useDockHeight(main);
   // R11.4: a guest of the owner's deck sees the banner and a smaller board.
   const people = usePeople();
   return (
@@ -362,7 +396,7 @@ export function Layout({
           <span className="fd-wordmark">Fleet Deck</span>
         </header>
       ) : null}
-      <div className="fd-main">
+      <div className="fd-main" ref={main}>
         {showBar ? <PhoneBar route={route} chrome={chrome} /> : null}
         {layout === 'phone' && route.name === 'terminals' ? (
           <header className="fd-topbar">

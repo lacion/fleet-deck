@@ -64,12 +64,37 @@
   min-height: var(--header-h);
   margin-left: auto;
 }
+/* The filters of a page (§4.3) sit in the header row at the right of the title, before the
+   actions; a narrow column wraps them under the title. */
+.fd-page-head:has(> .fd-page-filters) {
+  flex-wrap: wrap;
+}
+.fd-page-filters {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: var(--header-h);
+  margin-left: auto;
+}
+.fd-page-filters + .fd-page-actions {
+  margin-left: 0;
+}
 .fd-page-desc {
   max-width: 80ch;
   margin: calc(-1 * var(--sp-2)) 0 0;
   color: var(--dim);
   font-size: var(--fs-ui);
   line-height: 1.45;
+  /* No one-word last line ("sessions."). */
+  text-wrap: pretty;
+}
+/* A wide page (tables, the wall) has room for a longer summary line. */
+.fd-page[data-wide="true"] .fd-page-desc {
+  max-width: 110ch;
 }
 @media (max-width: 640px) {
   .fd-page {
@@ -84,6 +109,7 @@
   .fd-page-titles {
     flex-basis: 100%;
   }
+  .fd-page-filters,
   .fd-page-actions {
     flex-basis: 100%;
     justify-content: flex-start;
@@ -350,6 +376,11 @@
 .fd-table .fd-cell-actions > * + * {
   margin-left: var(--sp-1);
 }
+/* A number column aligns right (§2.3), its header too. */
+.fd-table th.fd-num,
+.fd-table td.fd-num {
+  text-align: right;
+}
 /* A secondary value of a cell (a role, a kind): plain dim text, not a badge. */
 .fd-table .fd-cell-dim {
   color: var(--dim);
@@ -428,6 +459,11 @@
     margin-top: 6px;
     white-space: normal;
     text-align: left;
+  }
+  /* A ghost button has no fill: its words line up with the column names above it, and only its
+     hover fill reaches into the gutter. */
+  .fd-table .fd-cell-actions > :is(.fd-ghost, .fd-danger):first-child {
+    margin-left: calc(-1 * var(--sp-2));
   }
 }
 

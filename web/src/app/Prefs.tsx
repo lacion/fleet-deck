@@ -14,15 +14,18 @@ const THEMES: readonly {
   { choice: 'system', label: 'System theme', icon: Monitor },
 ];
 
-/** The theme choice and the compact cards switch (sidebar footer and the More page). */
+/** The theme choice and the compact cards toggle (sidebar footer and the More page). */
 export function PrefsRow({
   stations = [],
   getPalette,
+  density: withDensity = true,
 }: {
   /** The stations of the snapshot. */
   readonly stations?: readonly StationView[] | undefined;
   /** Set for the owner's login: the row then has the Omarchy select. */
   readonly getPalette?: GetPalette | undefined;
+  /** The compact cards toggle; the More page has a switch row of its own instead. */
+  readonly density?: boolean;
 } = {}) {
   const [theme, setTheme] = useTheme();
   const [density, setDensity] = useDensity();
@@ -44,11 +47,11 @@ export function PrefsRow({
           </button>
         ))}
       </div>
-      {/* The density is a second segmented group, 4px from the theme (its own meaning). */}
-      <div className="fd-seg fd-sidebar-density">
+      {/* The density is a plain icon toggle next to the theme track (its own meaning). */}
+      {withDensity ? (
         <button
           type="button"
-          className="fd-iconbtn fd-sm"
+          className="fd-iconbtn fd-sm fd-sidebar-density"
           aria-pressed={compact}
           aria-label="Compact cards"
           title="Compact cards"
@@ -56,10 +59,32 @@ export function PrefsRow({
         >
           <Icon of={Rows3} size={14} />
         </button>
-      </div>
+      ) : null}
       {getPalette === undefined ? null : (
         <OmarchyThemeSelect stations={stations} getPalette={getPalette} />
       )}
     </div>
+  );
+}
+
+/** The compact cards switch of the phone More page: a row with its name and a switch. */
+export function CompactSwitch() {
+  const [density, setDensity] = useDensity();
+  const compact = density === 'compact';
+  return (
+    <label className="fd-more-row fd-more-switch">
+      <span className="fd-more-rowlabel">
+        <Icon of={Rows3} />
+        Compact cards
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        className="fd-switch"
+        aria-checked={compact}
+        checked={compact}
+        onChange={(e) => setDensity(e.target.checked ? 'compact' : 'cozy')}
+      />
+    </label>
   );
 }
