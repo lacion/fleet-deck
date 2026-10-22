@@ -417,16 +417,19 @@ export function Layout({
       <div className="fd-main" ref={main}>
         {showBar ? <PhoneBar route={route} chrome={chrome} /> : null}
         {layout === 'phone' && route.name === 'terminals' ? (
-          <header className="fd-topbar">
+          // The phone bar of §4.8 (the page has no other heading): Back closes the terminals.
+          <header className="fd-phonebar">
             <button
               type="button"
-              className="fd-iconbtn"
+              className="fd-iconbtn fd-phonebar-back"
               aria-label="Back"
               onClick={onTerminalsBack}
             >
               <Icon of={ChevronLeft} />
             </button>
-            <h1 className="fd-topbar-title">Terminals</h1>
+            <h1 className="fd-phonebar-title fd-wide">Terminals</h1>
+            <LivePill chrome={chrome} />
+            <Avatar />
           </header>
         ) : null}
         {people.member === null ? null : (

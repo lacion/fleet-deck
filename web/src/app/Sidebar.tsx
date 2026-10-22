@@ -77,11 +77,14 @@ function Row({
   route,
   now,
   starred,
+  list,
 }: {
   card: DeckSession;
   route: Route;
   now: number;
   starred: boolean;
+  /** The phone list: line 2 is the "now" line of a strip (§1.3), the callsign first. */
+  list: boolean;
 }) {
   const s = card.summary;
   const open =
@@ -115,23 +118,40 @@ function Row({
           {s.terminal != null ? <span className="fd-badge">In terminal</span> : null}
         </span>
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
-        <FocusLine summary={s} />
-        <span className="fd-srow-meta">
-          <span className="fd-srow-model">{shortModel(s.model)}</span>
-          {s.branch != null && s.branch !== '' ? (
-            <span className="fd-srow-place">
-              <Icon of={GitBranch} size={12} />
-              {s.branch}
-            </span>
-          ) : s.cwd != null ? (
-            <span className="fd-srow-place">
-              <Icon of={Folder} size={12} />
-              {basename(s.cwd)}
-            </span>
-          ) : null}
-        </span>
+        {list ? (
+          <span className="fd-srow-line">
+            {s.callsign ? <span className="fd-srow-call fd-callsign">{s.callsign}</span> : null}
+            <RowNow card={card} />
+          </span>
+        ) : (
+          <RowNow card={card} />
+        )}
       </a>
     </li>
+  );
+}
+
+/** The focus line when the agent set one, and the model + branch (or folder) line. */
+function RowNow({ card }: { card: DeckSession }) {
+  const s = card.summary;
+  return (
+    <>
+      <FocusLine summary={s} />
+      <span className="fd-srow-meta">
+        <span className="fd-srow-model">{shortModel(s.model)}</span>
+        {s.branch != null && s.branch !== '' ? (
+          <span className="fd-srow-place">
+            <Icon of={GitBranch} size={12} />
+            {s.branch}
+          </span>
+        ) : s.cwd != null ? (
+          <span className="fd-srow-place">
+            <Icon of={Folder} size={12} />
+            {basename(s.cwd)}
+          </span>
+        ) : null}
+      </span>
+    </>
   );
 }
 
@@ -140,17 +160,28 @@ function Rows({
   route,
   now,
   starred,
+  list,
 }: {
   cards: readonly DeckSession[];
   route: Route;
   now: number;
   starred: ReadonlySet<string>;
+  list: boolean;
 }) {
   return (
     <ul className="fd-srows">
       {cards.map((card) => {
         const ref = sessionRef(card.station_id, card.summary.session_id);
-        return <Row key={ref} card={card} route={route} now={now} starred={starred.has(ref)} />;
+        return (
+          <Row
+            key={ref}
+            card={card}
+            route={route}
+            now={now}
+            starred={starred.has(ref)}
+            list={list}
+          />
+        );
       })}
     </ul>
   );
@@ -215,6 +246,7 @@ function Groups({
   now,
   withNeeds,
   starred,
+  list,
 }: {
   model: SidebarModel;
   by: SidebarGroup;
@@ -222,6 +254,7 @@ function Groups({
   now: number;
   withNeeds: boolean;
   starred: ReadonlySet<string>;
+  list: boolean;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   // A session that needs you lists once: in "Needs you". The count of a group is its shown rows.
@@ -237,7 +270,7 @@ function Groups({
               {model.needs.length}
             </span>
           </h3>
-          <Rows cards={model.needs} route={route} now={now} starred={starred} />
+          <Rows cards={model.needs} route={route} now={now} starred={starred} list={list} />
         </section>
       ) : null}
       {model.groups.map((group) => {
@@ -274,13 +307,13 @@ function Groups({
                 <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
               )}
             </h3>
-            <Rows cards={live} route={route} now={now} starred={starred} />
+            <Rows cards={live} route={route} now={now} starred={starred} list={list} />
             {group.ended.length > 0 ? (
               <details className="fd-sended">
                 <summary className="fd-label">
                   Ended <span className="fd-count">{group.ended.length}</span>
                 </summary>
-                <Rows cards={group.ended} route={route} now={now} starred={starred} />
+                <Rows cards={group.ended} route={route} now={now} starred={starred} list={list} />
                 <button
                   type="button"
                   className="fd-ghost fd-sm fd-sended-clear"
@@ -311,7 +344,7 @@ function Groups({
             <Icon of={Archive} size={14} /> Archived ({model.archived.length})
           </button>
           {showArchived ? (
-            <Rows cards={model.archived} route={route} now={now} starred={starred} />
+            <Rows cards={model.archived} route={route} now={now} starred={starred} list={list} />
           ) : null}
         </section>
       ) : null}
@@ -617,7 +650,15 @@ export function Sidebar({
         ) : nothingFound ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : (
-          <Groups model={model} by={by} route={route} now={now} withNeeds starred={starred} />
+          <Groups
+            model={model}
+            by={by}
+            route={route}
+            now={now}
+            withNeeds
+            starred={starred}
+            list={!full}
+          />
         )}
       </div>
       {full ? (

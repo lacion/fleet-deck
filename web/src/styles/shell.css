@@ -721,6 +721,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-1);
 }
 
+/* The Ended disclosure starts where the group names start. */
+.fd-sidebar[data-variant="list"] .fd-sended > summary {
+  padding: 0 var(--sp-1);
+}
+
 .fd-sidebar[data-variant="list"] .fd-sgroup-name {
   font-size: var(--fs-heading);
   font-weight: 620;
@@ -764,13 +769,36 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-.fd-sidebar[data-variant="list"] .fd-srow > .fd-focus {
+/* Line 2 of a phone row is the "now" line of a strip (§1.3, §4.1): the callsign, then the agent's
+   focus when it has one, else the model and the branch. */
+.fd-sidebar[data-variant="list"] .fd-srow-line {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.fd-srow-call {
+  flex: none;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow-line > .fd-focus {
+  flex: 1 1 auto;
   font-style: normal;
 }
 
+.fd-sidebar[data-variant="list"] .fd-srow-line > .fd-srow-meta {
+  flex: 1 1 auto;
+}
+
 /* Every phone row is a title and one meta line (the strip rhythm of §4.8): the agent's focus,
-   when it has one, takes the place of the model and branch line. */
-.fd-sidebar[data-variant="list"] .fd-srow:has(> .fd-focus) > .fd-srow-meta {
+   when it has one, takes the place of the model and branch. */
+.fd-sidebar[data-variant="list"] .fd-srow-line > .fd-focus ~ .fd-srow-meta {
   display: none;
 }
 
@@ -781,6 +809,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* Compact density: one line per session, 30px rows. */
 :root[data-density="compact"] .fd-srow-meta,
+:root[data-density="compact"] .fd-srow-line,
 :root[data-density="compact"] .fd-srow > .fd-focus {
   display: none;
 }
@@ -791,7 +820,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding-bottom: var(--sp-1);
 }
 
-/* ---------- Top bar (tablet; phone terminals) ---------- */
+/* ---------- Top bar (tablet) ---------- */
 
 .fd-topbar {
   flex: none;
@@ -802,20 +831,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-3);
   background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
-}
-
-.fd-app[data-layout="phone"] .fd-topbar {
-  height: 52px;
-  padding: 0 var(--sp-2);
-}
-
-.fd-topbar-title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--fs-18);
-  font-stretch: 115%;
-  font-weight: 640;
-  letter-spacing: -0.01em;
 }
 
 /* ---------- Phone top bar (§4.8) ---------- */
@@ -835,6 +850,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-phonebar-title {
   flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -850,8 +866,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: 0;
 }
 
-/* The chevron sits on the gutter: its tap target reaches into the edge. */
-a.fd-phonebar-back {
+/* The chevron sits on the gutter: its tap target reaches into the edge. A link on a page of the
+   More tab; a button on the phone Terminals page (Back closes the terminals). */
+a.fd-phonebar-back,
+button.fd-phonebar-back {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1282,8 +1300,10 @@ a.fd-phonebar-back {
 }
 
 .fd-keys td {
+  /* In a table cell the height is a minimum: a one-line row stays 32px, a wrapped row gets room. */
   height: 32px;
-  padding: 0 var(--sp-2);
+  padding: 6px var(--sp-2);
+  line-height: 1.4;
   border-bottom: 1px solid var(--border-soft);
   font-size: var(--fs-ui);
 }
@@ -1347,10 +1367,10 @@ a.fd-phonebar-back {
   height: 48px;
   padding: 0 var(--sp-4);
   border: 0;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  font-size: max(var(--fs-15), var(--fs-field));
+  font-size: max(var(--fs-sheet-task), var(--fs-field));
 }
 
 /* Focus: a 2px --focus rule under the search line (the edge and an inset shadow). The base
@@ -1437,7 +1457,7 @@ a.fd-phonebar-back {
   gap: var(--sp-4);
   height: 36px;
   padding: 0 var(--sp-4);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
   color: var(--faint);
   font-size: var(--fs-micro);
 }

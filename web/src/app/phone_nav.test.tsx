@@ -52,6 +52,20 @@ describe('the phone bottom bar (more routes)', () => {
   });
 });
 
+describe('the phone Terminals page', () => {
+  test('has the phone bar of §4.8 with a Back button, the title, Live and the avatar', () => {
+    const html = page('phone', { name: 'terminals' });
+    expect(html).toContain('<header class="fd-phonebar">');
+    expect(html).toContain(
+      '<button type="button" class="fd-iconbtn fd-phonebar-back" aria-label="Back">',
+    );
+    expect(html).toContain('<h1 class="fd-phonebar-title fd-wide">Terminals</h1>');
+    expect(html).toContain('class="fd-wspill"');
+    expect(html).toContain('class="fd-avatar"');
+    expect(html).not.toContain('fd-topbar');
+  });
+});
+
 describe('the More page search and help buttons', () => {
   test('each button needs its prop', () => {
     const none = renderToStaticMarkup(<More stationCount={0} terminalCount={0} />);

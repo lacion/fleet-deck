@@ -134,6 +134,43 @@ describe('the sidebar navigation (S1)', () => {
     expect(metas[0]).toContain('feat/x');
     expect(metas[1]).toContain('app');
   });
+  test('a phone row starts line 2 with the callsign, then the focus or the model and branch', () => {
+    const list = (sessions: ReturnType<typeof card>[]) =>
+      renderToStaticMarkup(
+        <Sidebar
+          sessions={sessions}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+          variant="list"
+        />,
+      );
+    const html = list([
+      card('c1', 'working', 'station-a', { callsign: 'otter-n1rr', branch: 'feat/x' }),
+      card('c2', 'working', 'station-a', {
+        callsign: 'heron-k2',
+        ...({ focus: 'Fixing the shim' } as object),
+      }),
+      card('c3', 'working', 'station-a', { callsign: null }),
+    ]);
+    const lines = [...html.matchAll(/<span class="fd-srow-line">(.*?)<\/a>/g)].map((m) => m[1]);
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toStartWith('<span class="fd-srow-call fd-callsign">otter-n1rr</span>');
+    expect(lines[0]).toContain('feat/x');
+    expect(lines[1]).toStartWith('<span class="fd-srow-call fd-callsign">heron-k2</span>');
+    expect(lines[1]).toContain('<span class="fd-focus" title="Fixing the shim">');
+    // A session without a callsign shows no empty callsign.
+    expect(lines[2]).not.toContain('fd-srow-call');
+    // The desktop sidebar keeps its one-line rows: no callsign line.
+    expect(
+      render({ name: 'fleet' }, {}, [
+        card('c1', 'working', 'station-a', { callsign: 'otter-n1rr' }),
+      ]),
+    ).not.toContain('fd-srow-line');
+  });
   test('the Fleet link names its needs-you count', () => {
     const one = render({ name: 'fleet' }, {}, [card('n1', 'needs_you')]);
     expect(one).toContain(
