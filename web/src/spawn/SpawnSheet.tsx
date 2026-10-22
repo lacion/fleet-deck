@@ -3,7 +3,7 @@
 // `SpawnForm.tsx` for the module size rule; the form keeps every state and every handler.
 import { type ReactNode, useEffect, useId, useState } from 'react';
 import type { StationView } from '../gen';
-import { ChevronRight, Icon, Server } from '../ui/icons';
+import { ChevronRight, Icon, Server, Sparkles } from '../ui/icons';
 import { submitKeyHint } from './keyHint';
 import { AUTO, type SpawnOutcome } from './spawn';
 
@@ -68,6 +68,9 @@ export function Seg<T extends string>({
   );
 }
 
+/** The tooltip of the Auto pill: the deck places by the needs, the preferences and the room. */
+const AUTO_TITLE = 'The deck picks the station that fits best';
+
 /** The free slots of a station, or `null` when it has no limit. */
 function freeSlots(station: StationView): number | null {
   const max = station.info?.max_sessions ?? null;
@@ -76,8 +79,10 @@ function freeSlots(station: StationView): number | null {
 }
 
 /**
- * The stations as radio pills (name, reach, "9 free"), and "Auto (best station)" after them when
- * the deck places (FG-6). The chosen pill has the pressed `.fd-seg` look.
+ * The stations as radio pills (name, reach, "9 free"), and "Auto (best station)" first when the
+ * deck places (FG-6): a sparkles icon and a title say that it is no station of its own, and it
+ * never wraps alone onto a new line after the stations. The chosen pill has the pressed `.fd-seg`
+ * look.
  */
 export function StationPills({
   targets,
@@ -91,8 +96,8 @@ export function StationPills({
   readonly onChange: (id: string) => void;
 }) {
   const name = useId();
-  const pill = (id: string, body: ReactNode) => (
-    <label key={id} className="fd-spawn-station">
+  const pill = (id: string, body: ReactNode, title?: string) => (
+    <label key={id} className="fd-spawn-station" title={title}>
       <input
         type="radio"
         name={name}
@@ -105,6 +110,16 @@ export function StationPills({
   );
   return (
     <div className="fd-spawn-stations" role="radiogroup" aria-label="Station">
+      {auto
+        ? pill(
+            AUTO,
+            <>
+              <Icon of={Sparkles} size={14} />
+              Auto<span className="fd-vh"> (best station)</span>
+            </>,
+            AUTO_TITLE,
+          )
+        : null}
       {targets.map((s) => {
         const free = freeSlots(s);
         return pill(
@@ -121,15 +136,50 @@ export function StationPills({
           </>,
         );
       })}
-      {auto
-        ? pill(
-            AUTO,
-            <>
-              Auto<span className="fd-vh"> (best station)</span>
-            </>,
-          )
-        : null}
     </div>
+  );
+}
+
+/**
+ * The dim hint after "More options": what the fold holds, so that the owner finds a field without
+ * opening it (concept A). `batch`: the fold holds the Batch switch (a phone); `setup`: the station
+ * allows a setup command.
+ */
+export function optionsHint({
+  batch,
+  setup,
+}: {
+  readonly batch: boolean;
+  readonly setup: boolean;
+}): string {
+  const text = [batch ? 'batch' : null, setup ? 'setup' : null, 'coordinator', 'import']
+    .filter((part) => part !== null)
+    .join(', ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * The summary of "More options" with its hint; a press toggles the fold through `onToggle` (the
+ * form keeps the fold open while an option holds a value). The hint goes while the fold is open.
+ */
+export function OptionsSummary({
+  hint,
+  onToggle,
+}: {
+  readonly hint: string;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <summary
+      className="fd-label"
+      onClick={(event) => {
+        event.preventDefault();
+        onToggle();
+      }}
+    >
+      <span>More options</span>
+      <span className="fd-spawn-options-hint">{hint}</span>
+    </summary>
   );
 }
 
@@ -228,10 +278,37 @@ function usePageMoreBelow(): boolean {
 }
 
 /**
- * The footer of the sheet, one line: the Batch switch at the left; the outcome, and the missing
- * steps that have no field of their own to show them; Cancel and the primary start button (kbd ⌘↵
- * or Ctrl+↵). On a phone the directory note (`need`) sits here too, in view above the sticky
- * buttons; on the desktop it stays under its field.
+ * The Batch switch: one session per line of the task. The footer holds it on a desktop; a phone
+ * shows it in "More options", so that its sticky footer is one row of buttons.
+ */
+export function BatchSwitch({
+  on,
+  onChange,
+}: {
+  readonly on: boolean;
+  readonly onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="fd-spawn-batch">
+      <input
+        type="checkbox"
+        role="switch"
+        className="fd-switch"
+        checked={on}
+        aria-checked={on}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      Batch: one session per line
+    </label>
+  );
+}
+
+/**
+ * The footer of the sheet, one line: the Batch switch at the left (a desktop); the outcome, and the
+ * missing steps that have no field of their own to show them; Cancel and the primary start button
+ * (kbd ⌘↵ or Ctrl+↵). The directory note stays under its field, also on a phone: there the footer
+ * is one row of buttons above the bottom bar, and grows only for a reason that the sheet shows
+ * nowhere else (the board or the scope, a missing step, the outcome).
  */
 export function SpawnFoot({
   batchShown,
@@ -239,7 +316,6 @@ export function SpawnFoot({
   onBatch,
   missing,
   notes = [],
-  need = null,
   grantProblem = null,
   describedBy,
   outcome,
@@ -247,7 +323,7 @@ export function SpawnFoot({
   disabled,
   label,
 }: {
-  /** A clone is one session: no Batch switch then. */
+  /** A clone is one session, and a phone shows the switch in "More options": no Batch switch then. */
   readonly batchShown: boolean;
   readonly batch: boolean;
   readonly onBatch: (on: boolean) => void;
@@ -258,8 +334,6 @@ export function SpawnFoot({
    * footer (a phone), where the disabled button is in view.
    */
   readonly notes?: readonly { readonly id: string; readonly text: string }[];
-  /** The directory note (`fd-spawn-need`) when the form shows it in the footer (a phone). */
-  readonly need?: string | null;
   /** The first problem of the fleet grant fields: a hidden copy that the button description reads. */
   readonly grantProblem?: string | null;
   /** The ids of the notes that say why the button is off (the directory note, the missing line). */
@@ -273,19 +347,7 @@ export function SpawnFoot({
   const more = usePageMoreBelow();
   return (
     <div className="fd-spawn-foot" data-more={more ? 'true' : undefined}>
-      {batchShown ? (
-        <label className="fd-spawn-batch">
-          <input
-            type="checkbox"
-            role="switch"
-            className="fd-switch"
-            checked={batch}
-            aria-checked={batch}
-            onChange={(event) => onBatch(event.target.checked)}
-          />
-          Batch: one session per line
-        </label>
-      ) : null}
+      {batchShown ? <BatchSwitch on={batch} onChange={onBatch} /> : null}
       {grantProblem === null ? null : (
         <span hidden id="fd-spawn-grant-error">
           {grantProblem}
@@ -297,11 +359,6 @@ export function SpawnFoot({
             {note.text}
           </p>
         ))}
-        {need === null ? null : (
-          <p className="fd-note fd-spawn-need" id="fd-spawn-need">
-            {need}
-          </p>
-        )}
         {missing.length === 0 ? null : (
           <p className="fd-note" id="fd-spawn-missing" data-missing>
             To start: {missing.join('; ')}.

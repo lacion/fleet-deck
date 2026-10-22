@@ -5,7 +5,7 @@ import type { StationInfo, StationProvider } from '../gen';
 import { station } from '../testing/fleet';
 import { submitKeyHint } from './keyHint';
 import { AUTO, limitBadge, providerChoice } from './spawn';
-import { SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
+import { OptionsSummary, optionsHint, SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
 
 const info = (extra: Partial<StationInfo>): StationInfo =>
   ({ max_sessions: 4, live_sessions: 1, ...extra }) as StationInfo;
@@ -38,11 +38,15 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     expect(html).not.toContain('free');
   });
 
-  test('a deck that places adds the Auto pill after the stations', () => {
+  test('a deck that places adds the Auto pill first, with a sparkles icon and a title', () => {
     const html = pills([station('a', { info: info({}) })], AUTO, true);
     expect(html).toMatch(
-      new RegExp(`checked="" value="${AUTO}"/>Auto<span class="fd-vh"> \\(best station\\)</span>`),
+      new RegExp(
+        `^<div class="fd-spawn-stations" role="radiogroup" aria-label="Station"><label class="fd-spawn-station" title="The deck picks the station that fits best"><input type="radio" name="[^"]+" checked="" value="${AUTO}"/><svg[^>]*lucide-sparkles[^>]*>.*?</svg>Auto<span class="fd-vh"> \\(best station\\)</span></label><label class="fd-spawn-station">`,
+      ),
     );
+    // A station pill has no title: its name and its reach are its text.
+    expect(html.match(/ title="/g)).toHaveLength(1);
     expect(pills([station('a', { info: info({}) })], 'a')).not.toContain('Auto');
   });
 
@@ -56,14 +60,13 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
   });
 
   test('the footer keeps one line: no missing line without missing steps, the kbd hint in Start', () => {
-    const foot = (missing: string[], need: string | null = null, grant: string | null = null) =>
+    const foot = (missing: string[], grant: string | null = null, batchShown = true) =>
       renderToStaticMarkup(
         <SpawnFoot
-          batchShown
+          batchShown={batchShown}
           batch={false}
           onBatch={() => {}}
           missing={missing}
-          need={need}
           grantProblem={grant}
           describedBy={missing.length === 0 ? undefined : 'fd-spawn-missing'}
           outcome={null}
@@ -75,16 +78,30 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     expect(foot([])).not.toContain('data-missing');
     expect(foot([])).toContain(`<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span>`);
     expect(foot(['fix the base'])).toContain('data-missing="true">To start: fix the base.</p>');
-    // A phone: the directory note sits first in the status slot, above the sticky buttons.
-    expect(foot([], 'Choose a folder to start.')).toContain(
-      '<div class="fd-spawn-status"><p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p></div>',
-    );
+    // Nothing to say: an empty status slot (a phone hides it), and the directory note is never
+    // here: it stays under its field.
+    expect(foot([])).toContain('<div class="fd-spawn-status"></div>');
     expect(foot([])).not.toContain('fd-spawn-need');
+    // The Batch switch at the left; none for a clone or on a phone (it sits in "More options").
+    expect(foot([])).toContain('<label class="fd-spawn-batch">');
+    expect(foot([], null, false)).not.toContain('Batch');
     // The grant problem: a hidden copy that only the button description reads.
-    expect(foot([], null, 'The session limit is 1 to 50.')).toContain(
+    expect(foot([], 'The session limit is 1 to 50.')).toContain(
       '<span hidden="" id="fd-spawn-grant-error">The session limit is 1 to 50.</span>',
     );
     expect(foot([])).not.toContain('fd-spawn-grant-error');
+  });
+
+  test('"More options" names what it holds in a dim hint', () => {
+    expect(optionsHint({ batch: false, setup: false })).toBe('Coordinator, import');
+    expect(optionsHint({ batch: false, setup: true })).toBe('Setup, coordinator, import');
+    expect(optionsHint({ batch: true, setup: true })).toBe('Batch, setup, coordinator, import');
+    // The name keeps an element of its own (`getByText('More options', { exact: true })`).
+    expect(
+      renderToStaticMarkup(<OptionsSummary hint="Coordinator, import" onToggle={() => {}} />),
+    ).toBe(
+      '<summary class="fd-label"><span>More options</span><span class="fd-spawn-options-hint">Coordinator, import</span></summary>',
+    );
   });
 
   test('the kbd hint names the key of the platform: ⌘↵ on Apple systems, else Ctrl+↵', () => {
@@ -125,15 +142,22 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     });
     expect(limitBadge(limit(100, 'seven_day'), 0)?.text).toBe('100% of weekly window');
     expect(limitBadge(limit(100, 'seven_day_opus'), 0)?.text).toBe('100% of seven day opus');
-    // Each provider choice shows its limit, so the instances compare before a choice.
+    // Each provider choice shows its limit, so the instances compare before a choice. The CLI
+    // version is in the title, not in the name.
     const p = { instance: 'work', provider: 'claude', version: '2.1.5' } as StationProvider;
     expect(providerChoice(p, limit(42), 0, true)).toEqual({
-      label: 'Claude 2.1.5 (work)',
+      label: 'Claude (work)',
       suffix: '42% of 5-hour window, resets in 1 h (most room)',
-      title: '42% of 5-hour window, resets in 1 h',
+      title: 'Claude 2.1.5 · 42% of 5-hour window, resets in 1 h',
     });
     expect(providerChoice(p, null, 0, false)).toEqual({
-      label: 'Claude 2.1.5 (work)',
+      label: 'Claude (work)',
+      suffix: '',
+      title: 'Claude 2.1.5',
+    });
+    // A version that the station did not report is left out: no "version unknown".
+    expect(providerChoice({ ...p, version: null }, null, 0, false)).toEqual({
+      label: 'Claude (work)',
       suffix: '',
       title: undefined,
     });

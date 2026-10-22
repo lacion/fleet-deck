@@ -220,6 +220,14 @@ export function spawnTargets(stations: readonly StationView[]): StationView[] {
   return stations.filter((s) => s.reachable && (s.info?.providers.length ?? 0) > 0);
 }
 
+/**
+ * The placeholder of every field that takes a folder on a station (New session, its Auto
+ * placement, the Files page): a word, and an absolute example, because the form needs an absolute
+ * path (a `~` path is refused). It fits the phone folder field beside Browse… (about 230px at
+ * 16px); the station is named next to each field.
+ */
+export const DIR_PLACEHOLDER = 'Folder, e.g. /home/me/app';
+
 /** The value of the Station (or Home) choice "Auto (best station)" (FG-6, §9.3). */
 export const AUTO = 'auto';
 
@@ -480,17 +488,24 @@ export function moreOptionsOpen(
   );
 }
 
-/** "Claude 2.1.300", plus the instance name in brackets when it is not the provider name. */
+/** The capitalized provider: "Claude", "Codex". */
+const providerName = (p: StationProvider): string =>
+  p.provider.charAt(0).toUpperCase() + p.provider.slice(1);
+
+/**
+ * "Claude", plus the instance name in brackets when it is not the provider name: "Claude (work)".
+ * The CLI version is not part of the name: the choice shows it in its title (`providerChoice`).
+ */
 export function providerLabel(p: StationProvider): string {
-  const name = p.provider.charAt(0).toUpperCase() + p.provider.slice(1);
-  const base = `${name} ${p.version ?? 'version unknown'}`;
-  return p.instance === p.provider ? base : `${base} (${p.instance})`;
+  const name = providerName(p);
+  return p.instance === p.provider ? name : `${name} (${p.instance})`;
 }
 
 /**
  * One provider choice of the Agent row (R4.3): the label, and the limit of the instance as a
  * visible suffix ("42% of 5-hour window, resets in 1 h"), plus "(most room)" for the instance with
- * the lowest use, so the instances compare before a choice. The title is the limit text alone.
+ * the lowest use, so the instances compare before a choice. The title is the CLI version
+ * ("Claude 2.1.300") and the limit text; a version that the station did not report is left out.
  */
 export function providerChoice(
   p: StationProvider,
@@ -501,7 +516,9 @@ export function providerChoice(
   const limitText = limitSuffix(limit, now);
   const room = mostRoom ? '(most room)' : '';
   const suffix = [limitText, room].filter((t) => t !== '').join(' ');
-  return { label: providerLabel(p), suffix, title: limitText === '' ? undefined : limitText };
+  const version = p.version === null ? '' : `${providerName(p)} ${p.version}`;
+  const title = [version, limitText].filter((t) => t !== '').join(' · ');
+  return { label: providerLabel(p), suffix, title: title === '' ? undefined : title };
 }
 
 /**

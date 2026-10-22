@@ -27,13 +27,24 @@ import { KindChoice, PlacementFields, StationChoice, TypedDirectory } from './Pl
 import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
-import { CloneFields, PropRow, Seg, type SegOption, SheetHead, SpawnFoot } from './SpawnSheet';
+import {
+  BatchSwitch,
+  CloneFields,
+  OptionsSummary,
+  optionsHint,
+  PropRow,
+  Seg,
+  type SegOption,
+  SheetHead,
+  SpawnFoot,
+} from './SpawnSheet';
 import {
   AUTO,
   autoOffered,
   baseProblem,
   batchPrompts,
   branchProblem,
+  DIR_PLACEHOLDER,
   importIdProblem,
   knownModels,
   limitBadge,
@@ -231,11 +242,14 @@ export function SpawnForm({
     setImportPin(fill.pin);
   };
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
-  const optionsOpen = moreOptionsOpen(optionsUser, {
-    setup: setupShown ? setupCmd : '',
-    coordinator,
-    importId,
-  });
+  // DL-308: a clone is one session: no Batch switch then. A phone shows the switch in "More
+  // options" (its sticky footer is one row of buttons); the fold stays open while Batch is on.
+  const batchShown = place !== 'clone';
+  const narrow = useNarrow();
+  const batchInOptions = narrow && batchShown;
+  const optionsOpen =
+    moreOptionsOpen(optionsUser, { setup: setupShown ? setupCmd : '', coordinator, importId }) ||
+    (batchInOptions && batch);
   const branchName = branch.trim();
   const branchFields = place === 'worktree' && !batch;
   const refProblem =
@@ -295,16 +309,15 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
-  // A phone shows the directory, board and scope notes in the sticky footer, where the disabled
-  // button is in view (the form scrolls under the footer).
-  const needInFoot = useNarrow();
+  // A phone shows the board and scope notes in the sticky footer, where the disabled button is in
+  // view (the form scrolls under the footer); the directory note stays under its field.
   const scopeNote = actions !== undefined && !canDrive;
   const topNotes = [
     scopeNote ? { id: 'fd-spawn-scope', text: 'Starting sessions needs the drive scope.' } : null,
     live ? null : { id: 'fd-spawn-live', text: 'The form is off until the board is live.' },
   ].filter((note) => note !== null);
   // Without providers there is no form and no footer: the notes stay at the top.
-  const notesInFoot = needInFoot && targets.length > 0;
+  const notesInFoot = narrow && targets.length > 0;
   const missing = (
     busy
       ? []
@@ -334,8 +347,6 @@ export function SpawnForm({
       .join(' ') || undefined;
   const startable = ready && importProblem === null;
 
-  // DL-308: a clone is one session: no Batch switch then.
-  const batchShown = place !== 'clone';
   return (
     <section className="fd-spawn" aria-label="New session">
       <SheetHead station={auto ? undefined : station} />
@@ -625,7 +636,7 @@ export function SpawnForm({
                     list={actions?.list}
                     sessions={sessions}
                     label="Directory path"
-                    placeholder="Folder on the station"
+                    placeholder={DIR_PLACEHOLDER}
                     invalid={cwd !== null && !cwdOk}
                     describedBy={dirNote === null ? undefined : NEED_ID}
                     browseDisabled={!live || !canDrive}
@@ -634,7 +645,7 @@ export function SpawnForm({
                   />
                 </div>
               )}
-              {dirNote === null || needInFoot ? null : (
+              {dirNote === null ? null : (
                 <p className="fd-note fd-spawn-need" id={NEED_ID}>
                   {dirNote}
                 </p>
@@ -668,15 +679,11 @@ export function SpawnForm({
             </PropRow>
           </div>
           <details className="fd-spawn-options" open={optionsOpen}>
-            <summary
-              className="fd-label"
-              onClick={(event) => {
-                event.preventDefault();
-                setOptionsUser(!optionsOpen);
-              }}
-            >
-              More options
-            </summary>
+            <OptionsSummary
+              hint={optionsHint({ batch: batchInOptions, setup: setupShown })}
+              onToggle={() => setOptionsUser(!optionsOpen)}
+            />
+            {batchInOptions ? <BatchSwitch on={batch} onChange={setBatch} /> : null}
             {setupShown ? (
               <SetupField
                 value={setupCmd}
@@ -740,12 +747,11 @@ export function SpawnForm({
             {importProblem === null ? null : <p role="alert">{importProblem}</p>}
           </details>
           <SpawnFoot
-            batchShown={batchShown}
+            batchShown={batchShown && !batchInOptions}
             batch={batch}
             onBatch={setBatch}
             missing={missing}
             notes={notesInFoot ? topNotes : []}
-            need={needInFoot ? dirNote : null}
             grantProblem={fleetBad ? fleetProblem(fleet) : null}
             describedBy={describedBy}
             outcome={outcome}

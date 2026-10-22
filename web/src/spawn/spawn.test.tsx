@@ -8,6 +8,7 @@ import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
+import { modeLabel } from '../ui/format';
 import {
   batchPrompts,
   importIdProblem,
@@ -107,25 +108,20 @@ describe('spawn form (P4-4)', () => {
         version_status: 'unknown',
         capabilities: null,
       }),
-    ).toBe('Codex version unknown');
+    ).toBe('Codex');
   });
 
-  test('the provider label is the capitalized provider and version; the instance shows when it differs', () => {
+  test('the provider label is the capitalized provider; the instance shows when it differs', () => {
     const base = {
       provider: 'claude' as const,
       auth: 'signed_in',
       version_status: 'unknown' as const,
       capabilities: null,
     };
-    expect(providerLabel({ ...base, instance: 'claude', version: '2.1.300' })).toBe(
-      'Claude 2.1.300',
-    );
-    expect(providerLabel({ ...base, instance: 'work', version: '2.1.300' })).toBe(
-      'Claude 2.1.300 (work)',
-    );
-    expect(providerLabel({ ...base, instance: 'work', version: null })).toBe(
-      'Claude version unknown (work)',
-    );
+    // The CLI version is in the title of the choice (providerChoice), not in the name.
+    expect(providerLabel({ ...base, instance: 'claude', version: '2.1.300' })).toBe('Claude');
+    expect(providerLabel({ ...base, instance: 'work', version: '2.1.300' })).toBe('Claude (work)');
+    expect(providerLabel({ ...base, instance: 'work', version: null })).toBe('Claude (work)');
   });
 
   test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
@@ -148,13 +144,16 @@ describe('spawn form (P4-4)', () => {
     expect(html).toMatch(/<span class="fd-badge">.*Alpha<\/span>/);
     expect(html).toMatch(checkedRadio('station-a', 'Alpha'));
     expect(html).toMatch(/role="radiogroup" aria-label="Provider"/);
-    expect(html).toContain('Claude 2.1.999');
+    expect(html).toContain('<label title="Claude 2.1.999">');
     expect(html).toContain('Browse…');
-    expect(html).toContain('<option value="" selected="">Station default</option>');
-    expect(html).toContain('<option value="plan">plan</option>');
+    expect(html).toContain('<option value="" selected="">Default mode</option>');
+    // The modes show their names, as in the session header: never the raw ids.
+    expect(html).toContain('<option value="plan">Plan</option>');
+    expect(html).toContain('<option value="acceptEdits">Accept edits</option>');
     expect(html).toContain('aria-label="Directory path"');
-    // The placeholder is words (sans), not an example path and not a second "choose a folder".
-    expect(html).toContain('placeholder="Folder on the station"');
+    // The placeholder is words (sans) with an absolute example (a `~` path is refused), the same
+    // on every folder field, and not a second "choose a folder".
+    expect(html).toContain('placeholder="Folder, e.g. /home/me/app"');
     // No directory yet: the start button is off and the note under the directory says why.
     expect(html).toContain(
       `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta+Enter Control+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
@@ -227,8 +226,10 @@ describe('spawn form (P4-4)', () => {
     const html = form([
       reported('station-a', { info: info({ providers: [...info().providers].reverse() }) }),
     ]);
-    expect(html).toContain('<option value="untrusted/read-only">untrusted/read-only</option>');
-    expect(html).not.toContain('<option value="plan">plan</option>');
+    expect(html).toContain(
+      `<option value="untrusted/read-only">${modeLabel('untrusted/read-only')}</option>`,
+    );
+    expect(html).not.toContain('<option value="plan">');
   });
 
   test('the picker shows entries, git repositories and truncation', () => {
@@ -469,7 +470,7 @@ describe('spawn form (P4-4)', () => {
     // Agent, Station and Where are one property row each; the options are folded and closed.
     expect(html.match(/class="fd-spawn-prop"/g)).toHaveLength(3);
     expect(html).toContain(
-      '<details class="fd-spawn-options"><summary class="fd-label">More options</summary>',
+      '<details class="fd-spawn-options"><summary class="fd-label"><span>More options</span><span class="fd-spawn-options-hint">Coordinator, import</span></summary>',
     );
     // Batch is a switch in the footer; Cancel goes back to the fleet.
     expect(html).toMatch(/<input type="checkbox" role="switch" class="fd-switch"[^>]*\/>Batch:/);
