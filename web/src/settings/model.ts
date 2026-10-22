@@ -168,6 +168,15 @@ export function badgesOf(meta: FieldMeta, overrides: readonly string[]): Badge[]
   return out;
 }
 
+/** The words of an enum option, by field key and value. The value on the wire stays the same. */
+const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  host: { direct: 'Directly', shim: 'In a shim (survives restarts)' },
+};
+
+/** The text of one option of an enum field: its words, or the value when it has none. */
+export const optionLabel = (key: string, value: string): string =>
+  OPTION_LABELS[key]?.[value] ?? value;
+
 // --- the shapes of the values ---
 
 export type Instance = {

@@ -45,7 +45,7 @@ export const FIELDS: FieldMeta[] = [
     secret: true,
   }),
   meta('trackers', 'Issue trackers from the file', 'trackers', { read_only: true }),
-  meta('model_help.enabled', 'Model help', 'bool'),
+  meta('model_help.enabled', 'Write titles and digests', 'bool'),
   meta('model_help.provider', 'Provider for help', 'enum', { options: ['claude', 'codex'] }),
   meta('zz_future', 'A future key', 'text'),
 ];
