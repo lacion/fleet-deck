@@ -9,7 +9,9 @@ mod common;
 use common::board::board;
 use common::*;
 use fleetdeck_deck::store::{NewMail, NewOutboxItem};
-use fleetdeck_proto::event::{Event, EventBody, ProviderRefs, RunOrigin, ToolKind, ToolStatus};
+use fleetdeck_proto::event::{
+    Event, EventBody, ProviderRefs, RequestKind, ResponseChannel, RunOrigin, ToolKind, ToolStatus,
+};
 use fleetdeck_proto::orchestration::MailDelivery;
 use fleetdeck_proto::session::RepoInfo;
 use fleetdeck_proto::{EventEnvelope, SessionId, SessionSummary};
@@ -285,4 +287,71 @@ async fn the_activity_stream_is_newest_first_with_filters_and_a_limit() {
         assert_eq!(r.status, 400, "{bad}: {}", r.body);
     }
     assert_eq!(c.get("/api/activity", &[]).await.status, 401);
+}
+
+fn request(seq: u64, at: i64, id: &str, kind: RequestKind, title: &str) -> EventEnvelope {
+    env(
+        seq,
+        "s1",
+        at,
+        Event::ApprovalRequested {
+            request_id: id.into(),
+            node_id: None,
+            request_kind: kind,
+            title: title.to_owned(),
+            details: String::new(),
+            input: None,
+            options: Vec::new(),
+            response: ResponseChannel::RpcReply,
+            provider_refs: ProviderRefs::new(),
+        },
+    )
+}
+
+#[tokio::test]
+async fn an_approval_requested_row_carries_its_request_kind() {
+    let f = fixture().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    seed(&f).await;
+    f.store
+        .apply_events(
+            f.station.clone(),
+            f.inc.clone(),
+            vec![
+                request(7, 7_000, "q1", RequestKind::Question, "Pick a database"),
+                request(8, 8_000, "q2", RequestKind::Command, "Run cargo test"),
+            ],
+        )
+        .await
+        .unwrap();
+    let (cookie, _) = c.login().await;
+    let h = [("Cookie", cookie.as_str())];
+    let r = c.get("/api/activity", &h).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let items = r.body["items"].as_array().unwrap();
+    let kind_of = |text: &str| {
+        items
+            .iter()
+            .find(|i| i["text"] == text)
+            .unwrap_or_else(|| panic!("{text} in {}", r.body))
+    };
+    assert_eq!(
+        kind_of("Needs you: Pick a database")["request_kind"],
+        "question"
+    );
+    assert_eq!(
+        kind_of("Needs you: Run cargo test")["request_kind"],
+        "command"
+    );
+    // A message row and a mail row have no such key.
+    for text in ["One more thing", "Mail: please add a changelog"] {
+        assert!(
+            kind_of(text)
+                .as_object()
+                .unwrap()
+                .get("request_kind")
+                .is_none(),
+            "{text}"
+        );
+    }
 }

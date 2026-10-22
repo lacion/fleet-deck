@@ -61,16 +61,19 @@ const KIND_ICON = {
 } as const;
 
 /**
- * A question request has no kind of its own in the stream (`ActivityItem.kind` is `approval`), so
+ * An older deck sends no `request_kind`, and a question request is then an `approval` row that only
  * its text tells: "Question: …", the board's "Needs you: AskUserQuestion" (Claude) and the display
- * stream's "Needs you: Answer a question".
+ * stream's "Needs you: Answer a question". The text is the fallback for such a row only.
  */
 const QUESTION_TEXT = /^(?:Question:|Needs you: (?:AskUserQuestion|Answer a question)\b)/;
 
 /** The icon of a row: a question has the message-square of the fleet strips, the Watch tiles and
- * the wall; a permission keeps the shield. */
-export function rowIcon(item: Pick<ActivityItem, 'kind' | 'text'>): LucideIcon {
-  return item.kind === 'approval' && QUESTION_TEXT.test(item.text)
+ * the wall; a permission keeps the shield. The `request_kind` of the row decides; the text decides
+ * only when the row has no `request_kind` (an older deck). */
+export function rowIcon(item: Pick<ActivityItem, 'kind' | 'text' | 'request_kind'>): LucideIcon {
+  return item.kind === 'approval' &&
+    (item.request_kind === 'question' ||
+      (item.request_kind === undefined && QUESTION_TEXT.test(item.text)))
     ? MessageSquare
     : KIND_ICON[item.kind];
 }

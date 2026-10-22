@@ -177,6 +177,18 @@ describe('the activity page', () => {
     expect(icon('tool', 'Question: in a tool row')).toBe(Wrench);
   });
 
+  test('the request kind of a row decides the icon; the text is the fallback without it', () => {
+    const icon = (request_kind: ActivityItem['request_kind'], text: string) =>
+      rowIcon({ kind: 'approval', text, ...(request_kind === undefined ? {} : { request_kind }) });
+    expect(icon('question', 'Needs you: Pick a database')).toBe(MessageSquare);
+    expect(icon('command', 'Question: Run this?')).toBe(Shield);
+    expect(icon('tool', 'Needs you: AskUserQuestion')).toBe(Shield);
+    expect(icon(undefined, 'Needs you: AskUserQuestion')).toBe(MessageSquare);
+    expect(icon(undefined, 'Needs you: Pick a database')).toBe(Shield);
+    expect(rowIcon({ kind: 'message', text: 'x', request_kind: 'question' })).toBe(MessageSquare);
+    expect(rowIcon({ kind: 'tool', text: 'x', request_kind: 'question' })).toBe(Wrench);
+  });
+
   test('the header has its summary sentence', () => {
     expect(page()).toContain('<p class="fd-page-desc">What the sessions did, newest first.</p>');
   });

@@ -283,6 +283,14 @@ describe('the board calls of the views', () => {
     expect((await views.activity({})).items).toEqual([row as never]);
     expect(activityItem({ ...row, station_seq: null }).station_seq).toBeNull();
     expect(() => activityItem({ ...row, kind: 'nope' })).toThrow('invalid activity row');
+    // The request kind is absent, or a string; a newer deck may send a kind that this board lacks.
+    expect(activityItem(row).request_kind).toBeUndefined();
+    expect(activityItem({ ...row, request_kind: 'question' }).request_kind).toBe('question');
+    expect(activityItem({ ...row, request_kind: 'from_a_newer_deck' }).request_kind).toBe(
+      'from_a_newer_deck' as never,
+    );
+    expect(() => activityItem({ ...row, request_kind: 3 })).toThrow('invalid activity row');
+    expect(() => activityItem({ ...row, request_kind: null })).toThrow('invalid activity row');
     expect(() => activityItem({ ...row, at: 'x' })).toThrow('invalid activity row');
     const bad = viewsActions(
       async () => ({ nope: 1 }),
