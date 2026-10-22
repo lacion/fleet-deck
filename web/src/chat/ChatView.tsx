@@ -7,8 +7,6 @@ import { shownStatus, type TaskState } from '../session/tasks';
 import type { Item, Subagent } from '../session/timeline';
 import {
   ArrowDown,
-  Ban,
-  Check,
   ChevronRight,
   FileText,
   GitCompare,
@@ -22,7 +20,6 @@ import {
   TriangleAlert,
   Workflow,
   Wrench,
-  X,
 } from '../ui/icons';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
@@ -97,21 +94,12 @@ const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
 
 const firstLine = (text: string): string => text.split('\n')[0] ?? '';
 
-/** The mark of a finished tool call; a running call shows a dot instead. */
+/**
+ * The node of a finished tool call on the flight path (DESIGN-SYSTEM §4.5): its shape and color
+ * come from `data-status` (chat.css); a running call shows the working glyph instead.
+ */
 function StatusMark({ status }: { status: Exclude<Tool['status'], 'running'> }) {
-  return (
-    <span className="fd-chat-mark" role="img" aria-label={status} data-status={status}>
-      {status === 'ok' ? (
-        <Icon of={Check} size={14} />
-      ) : status === 'failed' ? (
-        <Icon of={X} size={14} />
-      ) : status === 'denied' ? (
-        <Icon of={Ban} size={14} />
-      ) : (
-        '–'
-      )}
-    </span>
-  );
+  return <span className="fd-chat-mark" role="img" aria-label={status} data-status={status} />;
 }
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
@@ -359,7 +347,9 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
       if (item.status === 'done' && !hasChanges(item.diff)) return null;
       return (
         <div className="fd-chat-turn">
-          {item.status !== 'done' ? <p className="fd-chat-line">{`Turn ${item.status}`}</p> : null}
+          {item.status !== 'done' ? (
+            <p className="fd-chat-line" data-status={item.status}>{`Turn ${item.status}`}</p>
+          ) : null}
           {item.diff && hasChanges(item.diff) ? (
             <div className="fd-chat-diff">
               <Icon of={GitCompare} size={14} />
