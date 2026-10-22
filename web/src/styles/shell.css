@@ -253,11 +253,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   white-space: nowrap;
 }
 
-/* The search of the sidebar sits on the bay: one step up, like a strip. */
-.fd-sidebar-search > input:not(:focus) {
-  border-color: var(--border-soft);
-}
-
 /* A touch screen has no "/" key at hand: the hint goes, and the folded search is a square. */
 @media (pointer: coarse) {
   .fd-sidebar-search > .fd-kbd {
@@ -951,6 +946,28 @@ a.fd-phonebar-back {
   color: var(--text);
 }
 
+.fd-notice > svg.fd-icon {
+  flex: none;
+  color: var(--focus);
+}
+
+.fd-notice[data-tone="error"] > svg.fd-icon {
+  color: var(--hazard);
+}
+
+.fd-notice[data-tone="warn"] > svg.fd-icon {
+  color: var(--act);
+}
+
+/* Forced colors drop the box-shadow holder: a CanvasText edge marks the notice row. The tone stays
+   in the icon (error or info). */
+@media (forced-colors: active) {
+  .fd-notice,
+  .fd-hintnotice {
+    border-left: 3px solid CanvasText;
+  }
+}
+
 .fd-notice-text,
 .fd-hintnotice > span {
   flex: 1;
@@ -1251,6 +1268,7 @@ a.fd-phonebar-back {
 
 .fd-keys {
   border-collapse: collapse;
+  table-layout: fixed;
   width: 100%;
 }
 
@@ -1269,10 +1287,13 @@ a.fd-phonebar-back {
   font-size: var(--fs-ui);
 }
 
-/* The key column: wide enough for the widest keys ("Ctrl+K or ⌘K"), so that the general and
-   the fleet-home tables start their actions at the same place. */
+/* The key column: wide enough for the widest keys ("Ctrl+↵ or ⌘↵"), so that the general and
+   the fleet-home tables start their actions at the same place. The fixed layout takes the column
+   width from the <col> (the first row is the visually hidden header), whatever the content. */
+.fd-keys-key {
+  width: 120px;
+}
 .fd-keys td:first-child {
-  width: 100px;
   padding-left: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
@@ -1331,9 +1352,11 @@ a.fd-phonebar-back {
   font-size: max(var(--fs-15), var(--fs-field));
 }
 
+/* Focus: a 2px --focus rule under the search line (the edge and an inset shadow). The base
+   transparent outline stays, so forced colors still paint a focus ring. */
 .fd-palette > input:focus {
-  border-bottom-color: var(--border);
-  box-shadow: none;
+  border-bottom-color: var(--focus);
+  box-shadow: inset 0 -1px 0 var(--focus);
 }
 
 .fd-palette [role="listbox"] {
@@ -1364,11 +1387,22 @@ a.fd-phonebar-back {
 }
 
 /* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and a
-   2px --focus bar at the left edge, the marker of the sidebar nav. A fill step alone does not
-   show on the --raised dialog. */
+   straight 2px --focus bar at the left edge, the marker of the sidebar nav. A fill step alone does
+   not show on the --raised dialog. */
 .fd-palette [role="option"][aria-selected="true"] {
+  position: relative;
   background: var(--focus-bg);
-  box-shadow: inset 2px 0 0 var(--focus);
+}
+
+.fd-palette [role="option"][aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--focus);
 }
 
 /* Forced colors drop the tint and the bar: a Highlight ring marks the active option. */

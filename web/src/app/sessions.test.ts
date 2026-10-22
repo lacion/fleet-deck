@@ -101,6 +101,13 @@ describe('sidebar model', () => {
     expect(sidebarModel(only, stations, 'w1').groups).toHaveLength(1);
   });
 
+  test('a search whose only match on a station needs you shows no empty station group', () => {
+    const only = [card('n1', 'needs_you', 'station-a', { title: 'Fix the login' })];
+    const model = sidebarModel(only, stations, 'login');
+    expect(model.groups).toEqual([]);
+    expect(ids(model.needs)).toEqual(['n1']);
+  });
+
   test('the j/k order is the live sessions of the groups, each once', () => {
     expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'i1', 'w1']);
   });

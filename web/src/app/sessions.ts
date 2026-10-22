@@ -122,6 +122,10 @@ export function sidebarModel(
     live: own.filter(isLive).sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b)),
     ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
   });
+  // The sidebar lists a needs-you session once, in "Needs you": a group shows only its other rows.
+  // A group without such a row would show an empty header, so a search (or a project) drops it.
+  const showsRows = (g: StationGroup) =>
+    g.ended.length > 0 || g.live.some((c) => c.status !== 'needs_you');
   const ids = stationOrder(
     [...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)],
     stations,
@@ -137,8 +141,10 @@ export function sidebarModel(
               shown.filter((c) => c.station_id === id),
             ),
           )
-          .filter((g) => query.trim() === '' || g.count > 0)
-      : projectGroups(shown, projects).map((g) => group(g.id, g.name, true, g.cards));
+          .filter((g) => query.trim() === '' || showsRows(g))
+      : projectGroups(shown, projects)
+          .map((g) => group(g.id, g.name, true, g.cards))
+          .filter(showsRows);
   return {
     needs: shown
       .filter((c) => c.status === 'needs_you')
