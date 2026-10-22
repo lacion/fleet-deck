@@ -5,7 +5,6 @@ import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
-import type { RateMeter } from '../board/usage';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import {
@@ -17,7 +16,6 @@ import {
   lastParts,
   listingView,
   moreOptionsOpen,
-  providerChoiceLabel,
   providerLabel,
   recentDirs,
   spawnActions,
@@ -27,6 +25,11 @@ import {
   versionWarning,
   workspaceRequest,
 } from './spawn';
+
+const checkedRadio = (id: string, name: string) =>
+  new RegExp(
+    `<input type="radio" name="[^"]+" checked="" value="${id}"/><span class="fd-wide">${name}</span>`,
+  );
 
 const info = (extra: Partial<StationInfo> = {}): StationInfo => ({
   name: 'Alpha',
@@ -127,26 +130,6 @@ describe('spawn form (P4-4)', () => {
     expect(providerLabel({ ...base, instance: 'work', version: null })).toBe(
       'Claude version unknown (work)',
     );
-    const limit: RateMeter = {
-      key: 'k',
-      stationId: 'station-a',
-      instance: 'claude',
-      label: 'Claude',
-      scope: 'five_hour',
-      usedPercent: 42,
-      resetsAt: null,
-    };
-    const choice = providerChoiceLabel(
-      { ...base, instance: 'claude', version: '2.1' },
-      limit,
-      0,
-      true,
-    );
-    expect(choice).toBe('Claude 2.1, 42% of five_hour (most room)');
-    expect(
-      providerChoiceLabel({ ...base, instance: 'claude', version: '2.1' }, null, 0, false),
-    ).toBe('Claude 2.1');
-    expect(choice).not.toContain(' · ');
   });
 
   test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
@@ -166,26 +149,37 @@ describe('spawn form (P4-4)', () => {
   test('the form offers station, provider, mode and the picker', () => {
     const html = form([reported()]);
     expect(html).toContain('<h2>New session</h2>');
-    expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
+    expect(html).toMatch(/<span class="fd-badge">.*Alpha<\/span>/);
+    expect(html).toMatch(checkedRadio('station-a', 'Alpha'));
+    expect(html).toMatch(/role="radiogroup" aria-label="Provider"/);
     expect(html).toContain('Claude 2.1.999');
     expect(html).toContain('Browse…');
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
     expect(html).toContain('aria-label="Directory path"');
-    // No directory yet: the start button is off and the form says why.
+    expect(html).toContain('placeholder="Choose a folder"');
+    // No directory yet: the start button is off and the note under the directory says why.
     expect(html).toMatch(
-      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-missing">Start session<\/button>/,
+      /<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\+Enter Control\+Enter">Start session<span class="fd-kbd" aria-hidden="true">⌘↵<\/span><\/button>/,
     );
     expect(html).toContain(
-      'To start: choose a directory (type an absolute path, or Browse… and Use this folder).',
+      '<p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p>',
     );
+    expect(html).not.toContain('data-missing');
   });
 
-  test('a form that is off lists every missing step', () => {
+  test('a form that is off names every missing step once, and the start button points to each', () => {
     const html = form([reported()], ['read'], 'stale');
     expect(html).toContain(
-      'To start: the board must be live; your login needs the drive scope; choose a directory',
+      '<p class="fd-note" id="fd-spawn-scope">Starting sessions needs the drive scope.</p>',
     );
+    expect(html).toContain(
+      '<p class="fd-note" id="fd-spawn-live">The form is off until the board is live.</p>',
+    );
+    expect(html).toContain('Choose a folder to start.');
+    // The footer does not repeat what the sheet already says.
+    expect(html).not.toContain('data-missing');
+    expect(html).toContain('aria-describedby="fd-spawn-scope fd-spawn-live fd-spawn-need"');
   });
 
   test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
@@ -212,7 +206,7 @@ describe('spawn form (P4-4)', () => {
 
   test('the picker shows entries, git repositories and truncation', () => {
     const html = form([reported()], ['read', 'drive'], 'live', listing);
-    expect(html).toContain('/home/me/projects');
+    expect(html).toContain('<span aria-current="location">projects</span>');
     expect(html).toContain('aria-label="Open app"');
     expect(html).toContain('git repository');
     expect(html).toContain('aria-label="Folder path"');
@@ -425,7 +419,7 @@ describe('spawn form (P4-4)', () => {
 
   test('the form is a sheet: title, task, property rows, options and a footer (DESIGN-SYSTEM §4.6)', () => {
     const html = form([reported()]);
-    for (const head of ['Agent', 'Where']) {
+    for (const head of ['Agent', 'Station', 'Where']) {
       expect(html).toContain(`<h3 class="fd-label">${head}</h3>`);
     }
     // The title, then the task, then the property rows, the options and the footer.
@@ -433,6 +427,7 @@ describe('spawn form (P4-4)', () => {
       'Title (optional)',
       'What should the agent do? (optional)',
       '>Agent<',
+      '>Station<',
       '>Where<',
       'More options',
       'Batch: one session per line',
@@ -444,8 +439,8 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('placeholder="Session title (optional)"');
     expect(html).toContain('<textarea rows="6" placeholder="What should the agent do?"');
     expect(html).not.toContain('First prompt');
-    // Agent and Where are one property row each; the options are folded and closed.
-    expect(html.match(/class="fd-spawn-prop"/g)).toHaveLength(2);
+    // Agent, Station and Where are one property row each; the options are folded and closed.
+    expect(html.match(/class="fd-spawn-prop"/g)).toHaveLength(3);
     expect(html).toContain(
       '<details class="fd-spawn-options"><summary class="fd-label">More options</summary>',
     );
@@ -467,10 +462,10 @@ describe('spawn form (P4-4)', () => {
           initialStation={initialStation}
         />,
       );
-    expect(render('station-b')).toContain('<option value="station-b" selected="">Beta</option>');
-    expect(render('station-a')).toContain('<option value="station-a" selected="">Alpha</option>');
-    expect(render('nowhere')).toContain('<option value="station-a" selected="">Alpha</option>');
-    expect(render()).toContain('<option value="station-a" selected="">Alpha</option>');
+    expect(render('station-b')).toMatch(checkedRadio('station-b', 'Beta'));
+    expect(render('station-a')).toMatch(checkedRadio('station-a', 'Alpha'));
+    expect(render('nowhere')).toMatch(checkedRadio('station-a', 'Alpha'));
+    expect(render()).toMatch(checkedRadio('station-a', 'Alpha'));
   });
 
   test('the clone mode asks for a repository and shows the URL that it clones', () => {
@@ -497,7 +492,8 @@ describe('spawn form (P4-4)', () => {
     expect(bare).toContain(
       '<p class="fd-note">Set a default organization in Settings, or enter owner/name.</p>',
     );
-    expect(bare).toMatch(/data-missing="true">To start: [^<]*enter owner\/name\.</);
+    // The repository says its problem at the field; the footer does not repeat it.
+    expect(bare).not.toMatch(/data-missing="true">[^<]*owner\/name/);
     expect(render('git@gitlab.com:g/sub/tool.git')).toContain(
       '<p class="fd-note">Clones git@gitlab.com:g/sub/tool.git</p>',
     );
@@ -547,24 +543,30 @@ describe('spawn form (P4-4)', () => {
     expect(html).not.toContain('/w/other');
   });
 
-  test('the provider options show the limit of each instance (R4.3)', () => {
+  test('the chosen provider shows its limit as a fuel badge from 80% on (R4.3)', () => {
     const at = 1_000_000 + 60 * 60_000;
     const limit = (instance: string, used: number) =>
       card('s-' + instance, 'working', 'station-a', {
         provider_instance: instance,
         rate_limits: [{ scope: 'five_hour', used_percent: used, resets_at: at }],
       });
-    const html = renderToStaticMarkup(
-      <SpawnForm
-        stations={[reported()]}
-        freshness="live"
-        onOpen={() => {}}
-        sessions={[limit('claude', 42), limit('codex', 90)]}
-        now={1_000_000}
-      />,
+    const render = (claude: number) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          stations={[reported()]}
+          freshness="live"
+          onOpen={() => {}}
+          sessions={[limit('claude', claude), limit('codex', 90)]}
+          now={1_000_000}
+        />,
+      );
+    const tight = render(85);
+    expect(tight).toContain('Claude 2.1.999</label>');
+    expect(tight).toContain(
+      '<span class="fd-badge" data-tone="fuel" title="85% of 5-hour window, resets in 1 h">85% of 5-hour window</span>',
     );
-    expect(html).toContain('Claude 2.1.999, 42% of five_hour, resets in 1 h (most room)');
-    expect(html).toContain('Codex version unknown, 90% of five_hour, resets in 1 h</option>');
+    expect(tight).not.toContain('five_hour');
+    expect(render(42)).not.toContain('data-tone="fuel"');
   });
 
   test('More options is open when the person opened it or an option has a value', () => {
@@ -621,8 +623,8 @@ describe('spawn form (P4-4)', () => {
 
     test('a known list makes the field a select with the default, the models and Other…', () => {
       const html = render([withModels('a', list('opus', 'haiku'), 10)]);
-      expect(html).toContain('<select aria-label="Model (optional)"');
-      expect(html).toContain('<option value="" selected="">Provider default</option>');
+      expect(html).toContain('<select aria-label="Model (optional)" class="fd-sm fd-spawn-pill"');
+      expect(html).toContain('<option value="" selected="">Default model</option>');
       expect(html).toContain('<option value="opus" title="The opus.">OPUS</option>');
       expect(html).toContain('<option value="haiku" title="The haiku.">HAIKU</option>');
       expect(html).toContain('<option value="__other__">Other…</option>');
@@ -632,8 +634,10 @@ describe('spawn form (P4-4)', () => {
 
     test('without a known list the field is the text input', () => {
       const html = render([withModels('a', list('opus'), 10, 'codex')]);
-      expect(html).toContain('Model (optional)<input value=""/>');
-      expect(html).not.toContain('Provider default');
+      expect(html).toMatch(
+        /<input class="[^"]*" aria-label="Model \(optional\)" placeholder="Default model"/,
+      );
+      expect(html).not.toContain('<option value="" selected="">Default model</option>');
       expect(html).not.toContain('From the last session');
     });
   });

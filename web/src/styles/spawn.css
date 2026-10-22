@@ -1,6 +1,24 @@
-/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the page canvas. A borderless title and
-   task, property rows (Agent, Where) with a 72px key column, "More options", and a footer with the
-   Batch switch, Cancel and Start session. Also the native session dialog and the recent folders. */
+/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the dimmed page canvas. A breadcrumb head,
+   a borderless title and task, property rows (Agent, Station, Where) with a 72px key column and no
+   captions (each control carries its name as aria-label), "More options", and a one-line footer
+   with the Batch switch, Cancel and Start session. Also the native session dialog and the recent
+   folders. */
+
+/* ── the route: the sheet in the middle of the dimmed canvas ────── */
+.fd-route:has(> .fd-screen > .fd-spawn) {
+  display: flex;
+  flex-direction: column;
+  background: var(--scrim);
+}
+.fd-screen:has(> .fd-spawn) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: var(--sp-6) var(--sp-5);
+}
 
 /* ── the sheet ──────────────────────────────────────────────────── */
 .fd-spawn {
@@ -9,7 +27,7 @@
   width: 100%;
   max-width: 720px;
   min-width: 0;
-  margin: var(--sp-2) auto 0;
+  margin: auto;
   padding: var(--sp-5);
   background: var(--raised);
   border-radius: var(--r-sheet);
@@ -24,15 +42,24 @@
 .fd-spawn p {
   margin: 0;
 }
+/* The head: a breadcrumb "<station> › New session". */
 .fd-spawn-head {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
   min-height: var(--ctl-h-sm);
+}
+.fd-spawn-head > .fd-badge {
+  min-width: 0;
+}
+.fd-spawn-crumb {
+  display: inline-flex;
+  color: var(--faint);
 }
 .fd-spawn-head > h2 {
   margin: 0;
-  color: var(--dim);
+  color: var(--text);
   font-size: var(--fs-ui);
   font-weight: 600;
   line-height: 1.4;
@@ -41,8 +68,8 @@
   padding: var(--sp-3) 0;
 }
 
-/* ── the fields: a caption above each control ───────────────────── */
-.fd-spawn label {
+/* ── the fields of the options: a caption above each control ────── */
+.fd-spawn label:where(:not(.fd-seg > label, .fd-spawn-station)) {
   display: grid;
   gap: var(--sp-1);
   min-width: 0;
@@ -57,6 +84,12 @@
   width: 100%;
   min-width: 0;
   font-weight: 400;
+}
+/* A placeholder is words, never a path: it must not look like a filled value. */
+.fd-spawn input::placeholder,
+.fd-spawn .fd-folder-row > input::placeholder {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
 }
 .fd-spawn textarea {
   resize: vertical;
@@ -120,6 +153,9 @@
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+.fd-spawn .fd-spawn-title > input::placeholder {
+  font-size: var(--fs-18);
+}
 .fd-spawn .fd-spawn-task > textarea {
   /* Six lines at least; the field grows with the task (where the browser can). */
   min-height: calc(6 * 1.5em + 2 * var(--sp-1));
@@ -157,10 +193,10 @@
   text-overflow: ellipsis;
 }
 
-/* ── property rows ──────────────────────────────────────────────── */
+/* ── property rows: the key at the left, the controls on its line ── */
 .fd-spawn-props {
   display: grid;
-  gap: var(--sp-4);
+  gap: var(--sp-3);
   min-width: 0;
   padding-top: var(--sp-4);
   border-top: 1px solid var(--border-soft);
@@ -172,53 +208,73 @@
   align-items: start;
   min-width: 0;
 }
-/* The key sits on the line of the first control, under the captions. */
 .fd-spawn-prop > h3.fd-label {
-  margin: 20px 0 0;
+  margin: 0;
   line-height: var(--ctl-h);
 }
 .fd-spawn-fields {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--sp-3);
+  align-items: center;
+  gap: var(--sp-2);
   min-width: 0;
 }
 .fd-spawn-fields > * {
-  flex: 1 1 100%;
+  flex: 0 1 auto;
   min-width: 0;
 }
-.fd-spawn-fields > label {
-  flex: 0 1 auto;
-}
-/* A select is as wide as its chosen option (where the browser can), not its longest one. */
-.fd-spawn .fd-spawn-fields select {
-  width: auto;
-  max-width: 100%;
-  field-sizing: content;
-}
-.fd-spawn-fields > label:has(> input) {
-  flex: 1 1 16rem;
+/* A note, a directory field or a group of sub-fields takes its own line. */
+.fd-spawn-fields
+> :is(
+  .fd-note,
+  .fd-fieldwrap,
+  .fd-spawn-dir,
+  .fd-spawn-placement,
+  .fd-spawn-branch,
+  .fd-spawn-clone
+) {
+  flex: 1 1 100%;
 }
 /* A note under a control sits close to it. */
 .fd-spawn-fields > .fd-note {
-  margin-top: calc(-1 * var(--sp-2));
+  margin-top: calc(-1 * var(--sp-1));
 }
 .fd-spawn-fields > .fd-spawn-risk {
   color: var(--hazard);
 }
-/* The directory: the input is mono (a path); it sits next to the workspace when there is room. */
-.fd-spawn-fields > .fd-fieldwrap {
-  flex: 1 1 20rem;
-  gap: var(--sp-1);
+.fd-spawn-fields > .fd-spawn-need {
+  color: var(--faint);
 }
-.fd-spawn-fields > .fd-fieldwrap:has(.fd-folder-panel) {
-  flex-basis: 100%;
+/* A segmented control may wrap on a narrow sheet. */
+.fd-spawn-seg {
+  flex-wrap: wrap;
+  max-width: 100%;
 }
-.fd-spawn .fd-fieldlabel {
-  font-size: var(--fs-meta);
-  line-height: 16px;
+.fd-spawn-fields > .fd-badge {
+  flex: none;
 }
+/* The model and the mode: compact pills, as wide as their value. */
+.fd-spawn-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn .fd-spawn-pill {
+  width: auto;
+  max-width: 100%;
+}
+.fd-spawn select.fd-spawn-pill {
+  field-sizing: content;
+}
+.fd-spawn select.fd-spawn-pill[aria-label="Model (optional)"] {
+  min-width: 160px;
+}
+.fd-spawn input.fd-spawn-model {
+  width: 200px;
+}
+/* The directory: the value is mono (a path). */
 .fd-spawn .fd-folder-row > input,
 .fd-spawn input[aria-label="Directory path"],
 .fd-spawn .fd-spawn-branch input,
@@ -227,33 +283,67 @@
   font-size: var(--fs-data);
 }
 
-/* The reach and the free slots of the chosen station, next to its select. */
-.fd-spawn-reach {
-  flex: 0 0 auto;
+/* The stations: radio pills with the name, the reach and the free slots. The chosen one is
+   --raised-hi with a 1px --focus ring (the selection marker). */
+.fd-spawn-stations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-spawn-station {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 6px;
   height: var(--ctl-h);
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  box-shadow: inset 0 0 0 1px var(--border);
   color: var(--dim);
-  font-size: var(--fs-meta);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--t-fast),
+    color var(--t-fast),
+    box-shadow var(--t-fast);
 }
-.fd-spawn-reach-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--hazard);
+.fd-spawn-station:hover {
+  background: var(--raised-hi);
+  color: var(--text);
 }
-.fd-spawn-reach[data-up="true"] > .fd-spawn-reach-dot {
-  background: var(--ok);
+.fd-spawn-station:has(> input:checked) {
+  background: var(--raised-hi);
+  box-shadow: inset 0 0 0 1px var(--focus);
+  color: var(--text);
 }
-.fd-spawn-reach[data-up="false"] {
-  color: var(--hazard);
+.fd-spawn-station > input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.fd-spawn-station:has(> input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.fd-spawn-station > .fd-wide {
+  font-size: var(--fs-ui);
 }
 .fd-spawn-free {
-  color: var(--text);
-  font-weight: 500;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+.fd-spawn-off {
+  color: var(--hazard);
+  font-size: var(--fs-meta);
+  font-weight: 400;
 }
 
 /* FG-6: the placement fields under "Auto (best station)". */
@@ -387,7 +477,7 @@
   gap: var(--sp-2);
 }
 
-/* ── the footer ─────────────────────────────────────────────────── */
+/* ── the footer: one line, Batch at the left, the actions at the right ── */
 .fd-spawn-foot {
   display: flex;
   flex-wrap: wrap;
@@ -435,8 +525,14 @@
   margin-left: auto;
 }
 
-/* ── a phone: the sheet is the page ─────────────────────────────── */
+/* ── a phone: the sheet is the page; the actions stay above the bottom bar ── */
 @media (max-width: 640px) {
+  .fd-route:has(> .fd-screen > .fd-spawn) {
+    background: none;
+  }
+  .fd-screen:has(> .fd-spawn) {
+    padding: var(--sp-4) var(--sp-4) 0;
+  }
   .fd-spawn {
     margin: 0;
     padding: 0;
@@ -444,37 +540,49 @@
     border-radius: 0;
     box-shadow: none;
   }
+  .fd-spawn .fd-spawn-task > textarea {
+    min-height: calc(4 * 1.5em + 2 * var(--sp-1));
+  }
   .fd-spawn-prop {
     grid-template-columns: minmax(0, 1fr);
     row-gap: var(--sp-2);
   }
   .fd-spawn-prop > h3.fd-label {
-    margin: 0;
     line-height: 16px;
   }
-  .fd-spawn-fields > label,
-  .fd-spawn-fields > .fd-fieldwrap {
-    flex-basis: 100%;
+  /* The model and the mode share one line. */
+  .fd-spawn-fields > .fd-spawn-pills {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
   }
-  .fd-spawn .fd-spawn-fields select {
+  .fd-spawn-pills > * {
+    flex: 1 1 0;
+  }
+  .fd-spawn .fd-spawn-pills > :is(select, input) {
     width: 100%;
-  }
-  .fd-spawn-fields > .fd-spawn-reach {
-    height: auto;
-    margin-top: calc(-1 * var(--sp-1));
+    min-width: 0;
   }
   .fd-spawn-options > :not(summary) {
     margin-left: 0;
   }
   .fd-spawn-foot {
-    margin: 0;
-    padding: var(--sp-3) 0 0;
+    position: sticky;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    z-index: 4;
+    margin: 0 calc(-1 * var(--sp-4));
+    padding: var(--sp-2) var(--sp-4);
+    background: var(--bg);
+    border-top: 0;
+    box-shadow: 0 -1px 0 var(--border-soft);
   }
   .fd-spawn-status {
     flex-basis: 100%;
     order: -1;
     justify-items: start;
     text-align: left;
+  }
+  .fd-spawn-status:empty {
+    display: none;
   }
   .fd-spawn-actions {
     flex: 1 1 auto;

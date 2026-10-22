@@ -1,32 +1,134 @@
-// The presentational parts of the New session sheet (DESIGN-SYSTEM.md §4.6): the reach of the
-// chosen station, the clone fields and the footer. Moved out of `SpawnForm.tsx` for the module
-// size rule; the form keeps every state and every handler.
-import type { ReactNode } from 'react';
+// The presentational parts of the New session sheet (DESIGN-SYSTEM.md §4.6): the breadcrumb head,
+// the segmented radio controls, the station pills, the clone fields and the footer. Moved out of
+// `SpawnForm.tsx` for the module size rule; the form keeps every state and every handler.
+import { type ReactNode, useId } from 'react';
 import type { StationView } from '../gen';
-import type { SpawnOutcome } from './spawn';
+import { ChevronRight, Icon, Server } from '../ui/icons';
+import { AUTO, type SpawnOutcome } from './spawn';
 
-/** The most slot ticks that the sheet draws; a larger station shows the count only. */
-const MAX_TICKS = 16;
-
-/** The reach and the free slots of the chosen station, next to its select. */
-export function StationReach({ station }: { readonly station: StationView | undefined }) {
-  if (station === undefined) return null;
-  const max = station.info?.max_sessions ?? null;
-  const used = Math.min(station.info?.live_sessions ?? 0, max ?? Number.MAX_SAFE_INTEGER);
-  const free = max === null ? null : Math.max(0, max - used);
+/** The head of the sheet: a breadcrumb "<station> › New session" (the station when one is chosen). */
+export function SheetHead({ station }: { readonly station: StationView | undefined }) {
   return (
-    <span className="fd-spawn-reach" data-up={station.reachable}>
-      <span className="fd-spawn-reach-dot" aria-hidden="true" />
-      {station.reachable ? 'online' : 'offline'}
-      {max !== null && max > 0 && max <= MAX_TICKS ? (
-        <span className="fd-slots" aria-hidden="true">
-          {Array.from({ length: max }, (_, i) => (
-            <span key={i} data-slot={i < used ? 'used' : undefined} />
-          ))}
-        </span>
-      ) : null}
-      {free === null ? null : <span className="fd-spawn-free">{free} free</span>}
-    </span>
+    <div className="fd-spawn-head">
+      {station === undefined ? null : (
+        <>
+          <span className="fd-badge">
+            <Icon of={Server} />
+            {station.name}
+          </span>
+          <span className="fd-spawn-crumb" aria-hidden="true">
+            <Icon of={ChevronRight} size={14} />
+          </span>
+        </>
+      )}
+      <h2>New session</h2>
+    </div>
+  );
+}
+
+/** One choice of a segmented control: the value, the short text, and the long text as a tooltip. */
+export type SegOption<T extends string> = {
+  readonly value: T;
+  readonly label: ReactNode;
+  readonly title?: string | undefined;
+};
+
+/**
+ * A segmented control of native radios (`.fd-seg`, DESIGN-SYSTEM §3): one `radiogroup` named by
+ * `label`, the arrow keys move the choice.
+ */
+export function Seg<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  readonly label: string;
+  readonly value: T;
+  readonly options: readonly SegOption<T>[];
+  readonly onChange: (value: T) => void;
+}) {
+  const name = useId();
+  return (
+    <div className="fd-seg fd-spawn-seg" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <label key={o.value} title={o.title}>
+          <input
+            type="radio"
+            name={name}
+            value={o.value}
+            checked={o.value === value}
+            onChange={() => onChange(o.value)}
+          />
+          {o.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** The free slots of a station, or `null` when it has no limit. */
+function freeSlots(station: StationView): number | null {
+  const max = station.info?.max_sessions ?? null;
+  if (max === null) return null;
+  return Math.max(0, max - Math.min(station.info?.live_sessions ?? 0, max));
+}
+
+/**
+ * The stations as radio pills (name, reach, "9 free"), and "Auto (best station)" after them when
+ * the deck places (FG-6). The chosen pill is `--raised-hi` with a `--focus` ring.
+ */
+export function StationPills({
+  targets,
+  value,
+  auto,
+  onChange,
+}: {
+  readonly targets: readonly StationView[];
+  readonly value: string;
+  readonly auto: boolean;
+  readonly onChange: (id: string) => void;
+}) {
+  const name = useId();
+  const pill = (id: string, body: ReactNode) => (
+    <label key={id} className="fd-spawn-station">
+      <input
+        type="radio"
+        name={name}
+        value={id}
+        checked={value === id}
+        onChange={() => onChange(id)}
+      />
+      {body}
+    </label>
+  );
+  return (
+    <div className="fd-spawn-stations" role="radiogroup" aria-label="Station">
+      {targets.map((s) => {
+        const free = freeSlots(s);
+        return pill(
+          s.station_id,
+          <>
+            <span className="fd-wide">{s.name}</span>
+            <span
+              className="fd-dot"
+              data-status={s.reachable ? 'online' : 'unreachable'}
+              aria-hidden="true"
+            />
+            {s.reachable ? null : <span className="fd-spawn-off">offline</span>}
+            {free === null ? null : <span className="fd-spawn-free">{free} free</span>}
+          </>,
+        );
+      })}
+      {auto
+        ? pill(
+            AUTO,
+            <>
+              Auto<span className="fd-vh"> (best station)</span>
+            </>,
+          )
+        : null}
+    </div>
   );
 }
 
@@ -98,15 +200,15 @@ export function CloneFields({
 }
 
 /**
- * The footer of the sheet: the Batch switch, why the start is off (or the outcome), Cancel and the
- * primary start button.
+ * The footer of the sheet, one line: the Batch switch at the left; the outcome, and the missing
+ * steps that have no field of their own to show them; Cancel and the primary start button (kbd ⌘↵).
  */
 export function SpawnFoot({
   batchShown,
   batch,
   onBatch,
   missing,
-  busy,
+  describedBy,
   outcome,
   onOpenNew,
   disabled,
@@ -116,10 +218,10 @@ export function SpawnFoot({
   readonly batchShown: boolean;
   readonly batch: boolean;
   readonly onBatch: (on: boolean) => void;
-  /** The missing steps: the button names them while it is off. */
+  /** The missing steps without a note at their field (empty while a start runs). */
   readonly missing: readonly string[];
-  /** A start runs: the missing steps are not shown. */
-  readonly busy: boolean;
+  /** The ids of the notes that say why the button is off (the directory note, the missing line). */
+  readonly describedBy: string | undefined;
   readonly outcome: SpawnOutcome | null;
   /** "Open the new session", when the outcome has a session to open. */
   readonly onOpenNew: (() => void) | null;
@@ -142,7 +244,7 @@ export function SpawnFoot({
         </label>
       ) : null}
       <div className="fd-spawn-status">
-        {busy || missing.length === 0 ? null : (
+        {missing.length === 0 ? null : (
           <p className="fd-note" id="fd-spawn-missing" data-missing>
             To start: {missing.join('; ')}.
           </p>
@@ -166,9 +268,13 @@ export function SpawnFoot({
           type="submit"
           className="fd-primary"
           disabled={disabled}
-          aria-describedby={missing.length === 0 ? undefined : 'fd-spawn-missing'}
+          aria-describedby={describedBy}
+          aria-keyshortcuts="Meta+Enter Control+Enter"
         >
           {label}
+          <span className="fd-kbd" aria-hidden="true">
+            ⌘↵
+          </span>
         </button>
       </div>
     </div>
