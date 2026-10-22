@@ -3,7 +3,7 @@
 import type { DeckSession, FieldMeta, MonitorInfo } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, X } from '../ui/icons';
-import { asNumber, asPairs, asStrings, asText } from './model';
+import { asNumber, asPairs, asStrings, asText, optionLabel } from './model';
 
 export type EditorProps = {
   readonly meta: FieldMeta;
@@ -388,7 +388,7 @@ export function FieldEditor({
           <option value="">Default</option>
           {meta.options.map((o) => (
             <option key={o} value={o}>
-              {o}
+              {optionLabel(meta.key, o)}
             </option>
           ))}
         </select>
