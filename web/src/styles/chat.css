@@ -834,9 +834,8 @@
 .fd-chat-show .fd-menu-body {
   min-width: 200px;
 }
-/* A filter in the menu reads as a checkbox row (the base checkbox look). */
-.fd-chat-show .fd-chip {
-  position: relative;
+/* A filter in the menu: a label row around a real checkbox (base.css draws the box). */
+.fd-chat-show-item {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -845,48 +844,18 @@
   border-radius: var(--r-ctl);
   color: var(--text);
   font-size: var(--fs-ui);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
 }
-.fd-chat-show .fd-chip:hover:not(:disabled) {
+.fd-chat-show-item:hover {
   background: var(--raised-hi);
 }
-.fd-chat-show .fd-chip::before {
-  content: "";
-  flex: none;
-  width: 14px;
-  height: 14px;
-  background: var(--raised);
-  border: 1px solid var(--ctl-edge);
-  border-radius: 4px;
-}
-.fd-chat-show .fd-chip[aria-pressed="true"] {
-  border-color: transparent;
-  background: transparent;
-  font-weight: 500; /* a checked row is not bold (base.css makes a pressed chip 600) */
-}
-.fd-chat-show .fd-chip[aria-pressed="true"]:hover {
-  background: var(--raised-hi);
-}
-/* A shown kind: the ink box with its check (yellow stays "needs you"). */
-.fd-chat-show .fd-chip[aria-pressed="true"]::before {
-  background: var(--ink-fill);
-  border-color: var(--ink-fill);
-}
-.fd-chat-show .fd-chip[aria-pressed="true"]::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(var(--sp-2) + 2px);
-  width: 10px;
-  height: 10px;
-  margin-top: -5px;
-  background: var(--ink-on);
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-}
-.fd-chat-show .fd-chip:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+@media (pointer: coarse) {
+  .fd-chat-show-item {
+    height: auto;
+    min-height: var(--tap-min);
+  }
 }
 [data-layout="phone"] .fd-chat > .fd-chat-filters {
   padding-inline: var(--sp-3);
@@ -908,7 +877,6 @@
   padding-bottom: var(--sp-4);
   margin-bottom: var(--sp-4);
   border-bottom: 1px solid var(--border-soft);
-  opacity: 0.85;
 }
 .fd-history > * {
   margin: 0;
