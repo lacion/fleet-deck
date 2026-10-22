@@ -169,7 +169,12 @@ export function More({
             <Icon of={Sun} />
             Appearance
           </span>
-          <PrefsRow stations={stations} getPalette={chrome?.getPalette} density={false} />
+          <PrefsRow
+            stations={stations}
+            getPalette={chrome?.getPalette}
+            density={false}
+            iconSize={16}
+          />
         </li>
         <li>
           <CompactSwitch />

@@ -19,6 +19,7 @@ export function PrefsRow({
   stations = [],
   getPalette,
   density: withDensity = true,
+  iconSize = 14,
 }: {
   /** The stations of the snapshot. */
   readonly stations?: readonly StationView[] | undefined;
@@ -26,6 +27,8 @@ export function PrefsRow({
   readonly getPalette?: GetPalette | undefined;
   /** The compact cards toggle; the More page has a switch row of its own instead. */
   readonly density?: boolean;
+  /** The icon size: 14 in the 24px sidebar segments, 16 in the 44px touch rows of More. */
+  readonly iconSize?: number;
 } = {}) {
   const [theme, setTheme] = useTheme();
   const [density, setDensity] = useDensity();
@@ -43,7 +46,7 @@ export function PrefsRow({
             title={t.label}
             onClick={() => setTheme(t.choice)}
           >
-            <Icon of={t.icon} size={14} />
+            <Icon of={t.icon} size={iconSize} />
           </button>
         ))}
       </div>
@@ -57,7 +60,7 @@ export function PrefsRow({
           title="Compact cards"
           onClick={() => setDensity(compact ? 'cozy' : 'compact')}
         >
-          <Icon of={Rows3} size={14} />
+          <Icon of={Rows3} size={iconSize} />
         </button>
       ) : null}
       {getPalette === undefined ? null : (
