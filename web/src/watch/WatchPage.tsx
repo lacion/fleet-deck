@@ -288,44 +288,60 @@ export function WatchPage({
       </select>
     </label>
   );
+  const needs = matching.filter((c) => c.status === 'needs_you').length;
+  // The header sentence (DESIGN-SYSTEM §4.3): the live count, then who needs you in --act.
+  const summary = (
+    <span aria-live="polite">
+      {matching.length === 1 ? '1 live session' : `${matching.length} live sessions`}.{' '}
+      {needs === 0 ? (
+        'All clear.'
+      ) : (
+        <>
+          <span className="fd-watch-needs">
+            {needs === 1 ? '1 needs you' : `${needs} need you`}
+          </span>
+          .
+        </>
+      )}
+    </span>
+  );
+  const filters = (
+    <>
+      {select(
+        'Station',
+        filter.station,
+        'All stations',
+        choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
+        (station) => setFilter({ ...filter, station }),
+      )}
+      {select(
+        'Repository',
+        filter.repo,
+        'All repositories',
+        choices.repos.map((r) => ({ value: r, label: r })),
+        (repo) => setFilter({ ...filter, repo }),
+      )}
+      <button
+        type="button"
+        className="fd-chip"
+        aria-pressed={filter.needsOnly}
+        onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
+      >
+        Needs you only
+      </button>
+      <button
+        type="button"
+        className="fd-chip"
+        aria-pressed={focusOn}
+        title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
+        onClick={() => setFocusOn(!focusOn)}
+      >
+        Focus
+      </button>
+    </>
+  );
   return (
-    <Page title="Watch" className="fd-watch" wide>
-      <div className="fd-wbar">
-        {select(
-          'Station',
-          filter.station,
-          'All stations',
-          choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
-          (station) => setFilter({ ...filter, station }),
-        )}
-        {select(
-          'Repository',
-          filter.repo,
-          'All repositories',
-          choices.repos.map((r) => ({ value: r, label: r })),
-          (repo) => setFilter({ ...filter, repo }),
-        )}
-        <button
-          type="button"
-          className="fd-chip"
-          aria-pressed={filter.needsOnly}
-          onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
-        >
-          Needs you only
-        </button>
-        <button
-          type="button"
-          className="fd-chip"
-          aria-pressed={focusOn}
-          title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
-          onClick={() => setFocusOn(!focusOn)}
-        >
-          Focus
-        </button>
-        <span className="fd-count" aria-live="polite">
-          {matching.length} live
-        </span>
-      </div>
+    <Page title="Watch" className="fd-watch" description={summary} actions={filters} wide>
       {matching.length > MAX_TILES && !focusOn ? (
         <p className="fd-note">
           Showing {MAX_TILES} of {matching.length} sessions. Filter to see the others.

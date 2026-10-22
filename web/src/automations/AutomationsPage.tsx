@@ -251,6 +251,7 @@ export function AutomationsPage({
         </>
       }
       className="fd-auto"
+      wide
     >
       {actions === undefined ? (
         <p className="fd-note">Automations need the owner’s login.</p>
@@ -284,7 +285,7 @@ export function AutomationsPage({
           body="Add one to run a triage, a nightly test fix or a review sweep."
         />
       ) : (
-        <ol className="fd-auto-list">
+        <ol className="fd-panel fd-auto-list">
           {list.map(({ schedule: s, next_run_at: next, last_run: last }) => {
             const linked = stations.find((st) => st.station_id === s.station_id)?.reachable;
             return (
