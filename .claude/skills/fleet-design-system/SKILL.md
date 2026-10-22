@@ -17,7 +17,7 @@ The board has one design system: **`docs/v2/DESIGN-SYSTEM.md`** ("Flight Deck", 
 
 - **Tokens only.** No raw color, font family or font size in an area CSS file or an inline style. Use `--bg/--surface/--raised/--raised-hi/--code`, `--text/--dim/--faint`, the semantic colors, `--fs-*`, `--sp-*`, `--r-*`.
 - **One color, one job.** `--act` (yellow) = needs you and the decision primary only. `--ok` = working/ok/additions. `--hazard` = errors/deny/deletions/offline/conflicts/bypass. `--fuel` (purple) = usage, tokens, cost. `--focus` (blue) = focus ring, selection, links, queued. Models and providers are never colored.
-- **Buttons.** General primary = `.fd-primary` (solid ink). Decision primary = `.fd-decide` (yellow). At most one of each per screen. Everything else is plain, `.fd-ghost` or `.fd-danger`.
+- **Buttons.** General primary = `.fd-primary` (solid ink). Decision primary = `.fd-decide` (yellow). At most one of each per screen (the sidebar New session is chrome and does not count). Everything else is plain, `.fd-ghost` or `.fd-danger`.
 - **Type.** Mona Sans for words. `.fd-callsign` for every callsign, `.fd-wide` for station names and page titles. Mono (`--font-data`) only for paths, branches, commands, code, diffs and ids — never for times, counts, models or labels. Sentence case; no capitals, no letter-spaced labels.
 - **Sessions are strips** (§4.1): holder + fields with rules. Status uses `.fd-dot` (glyph: shape + color) or `.fd-holder`, never a bare colored text.
 - **Depth from fills.** No border around a panel, no box inside a box. Shadows only on floating layers (`--shadow-pop`).
@@ -28,7 +28,8 @@ The board has one design system: **`docs/v2/DESIGN-SYSTEM.md`** ("Flight Deck", 
 - **Pressed toggles** (`aria-pressed=true`) take the look of `base.css` (`.fd-seg`, `.fd-chip`, `.fd-iconbtn`); do not give a toggle a second pressed look in an area file. A state shown only by a fill or a box-shadow needs a forced-colors cue (§6).
 - **Behavior and tests stay.** Keep roles, accessible names, visible texts and the class names that tests use (`rg "\.fd-" web/e2e`). Add classes; do not rename tested ones. If a test asserts a text you must change, change the test in the same commit and say why.
 - **Every state** has a look: hover, focus-visible, pressed/selected, disabled, loading, empty, error — in the dark and the light theme, on desktop and phone.
-- **Motion** only answers a user action, plus the two breathing states (needs-you glow, working glyph). Honor `prefers-reduced-motion`.
+- **Motion** only answers a user action, plus the two breathing states (needs-you glow, working glyph). Honor `prefers-reduced-motion` and the board preference Reduce motion (`:root[data-motion="reduce"]`): `base.css` stops every animation and transition for both, so an area animation needs no rule of its own.
+- **Diffs** sit on `--code` or `--bg`, never on a `--raised` fill (dark: the diff text falls under 4.5:1 there; `tools/design-check.sh` checks it).
 
 ## 3. Check your change (always, before you report done)
 

@@ -129,6 +129,45 @@ done
 report "min-height: 0 on a button or summary without a pointer: coarse rule (touch targets are 44px)" \
     "$(printf '%s' "$tap_out" | sed '/^$/d')"
 
+# 5d. Diff fills (--add-bg, --del-bg) sit on --code or --bg only: on the dark --raised the
+# --faint and --hazard text of a diff line falls under 4.5:1 (tokens.css). An area rule that
+# names `.fd-diff` or `.fd-dl` must not give it a --raised fill. (A diff inside a --raised
+# container is not visible to a script: the comments of --add-bg and --del-bg say it.)
+diff_awk='
+{
+    line = $0
+    out = ""
+    while (line != "") {
+        if (incomment) {
+            k = index(line, "*/")
+            if (k == 0) line = ""
+            else { line = substr(line, k + 2); incomment = 0 }
+        } else {
+            k = index(line, "/*")
+            if (k == 0) { out = out line; line = "" }
+            else { out = out substr(line, 1, k - 1); line = substr(line, k + 2); incomment = 1 }
+        }
+    }
+    line = out
+    if (line ~ /\{/) { pre = line; sub(/\{.*/, "", pre); cur = sel " " pre; sel = ""; inrule = 1; next }
+    if (line ~ /\}/) { inrule = 0; cur = ""; next }
+    if (!inrule) { sel = sel " " line; next }
+    # The diff, every line (.fd-dl) or an add/del line; a file, hunk or meta row is not a fill.
+    lines = (cur ~ /\.fd-diff([^a-z-]|$)/ || cur ~ /\.fd-dl([^a-z[-]|$|\[data-kind="(add|del)"\])/)
+    if (lines && line ~ /background(-color)?: *var\(--raised/) {
+        gsub(/[ \t]+/, " ", cur)
+        print FILENAME ":" FNR ":" cur
+    }
+}
+'
+diff_out=""
+for f in $area; do
+    diff_out="$diff_out$(awk "$diff_awk" "$f")
+"
+done
+report "a diff on a --raised fill (diff fills sit on --code or --bg only)" \
+    "$(printf '%s' "$diff_out" | sed '/^$/d')"
+
 # 6. Components: no raw colors or font sizes in inline styles.
 tsx=$(find web/src -name '*.tsx' ! -name '*.test.tsx' ! -path '*/gen/*')
 report "inline style with a raw color or size (use a class and tokens)" \

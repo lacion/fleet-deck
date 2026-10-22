@@ -21,6 +21,7 @@ export {
   CircleCheck,
   CircleDot,
   CircleHelp,
+  CirclePause,
   CircleStop,
   CircleUser,
   CloudOff,

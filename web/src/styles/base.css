@@ -150,6 +150,17 @@ body {
     transition: none !important;
   }
 }
+/* The board preference "Reduce motion" (`ui/theme.ts`, `<html data-motion="reduce">`): the same
+   stop as the OS setting, so that a user can pause the needs-you glow and the working arc
+   without the OS setting (WCAG 2.2.2; a wall display shows them all day). */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: the motion preference must beat every animation of every area rule */
+  animation: none !important;
+  /* biome-ignore lint/complexity/noImportantStyles: the motion preference must beat every transition of every area rule */
+  transition: none !important;
+}
 
 /* ── type helpers ───────────────────────────────────────────────── */
 /* The width axis carries meaning: condensed = callsign, wide = place (§2.3). */
@@ -628,6 +639,11 @@ summary[data-variant="toggle"]::after {
 }
 details[open] > summary[data-variant="toggle"]::after {
   transform: rotate(180deg);
+}
+/* A toggle summary that is a ghost menu button (the chat Show menu): the chevron takes the text
+   color of the button (--dim; hover and open --text), not --faint. */
+.fd-menu > summary.fd-ghost[data-variant="toggle"]::after {
+  background-color: currentColor;
 }
 
 /* ── key hints and fields ───────────────────────────────────────── */
@@ -1332,6 +1348,30 @@ details[open] > summary[data-variant="toggle"]::after {
   min-height: 28px;
   border-bottom: 1px solid var(--border-soft);
 }
+/* The path text of a file header (chat Diff, wall DiffPane): the folders (`.fd-dl-dir`) give way
+   at their start and keep the trailing slash (`…station/src/shim/reaper.rs`, the same as the
+   Properties file list); the file name (`.fd-dl-base`) never shrinks. The folders sit in a
+   `<bdi>`: the right-to-left box puts the ellipsis at the left, the `<bdi>` keeps the text LTR.
+   Without the `<bdi>` the box stays LTR (an RTL box would move the trailing slash to the left). */
+.fd-dl-path {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.fd-dl-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-dl-dir:has(> bdi) {
+  direction: rtl;
+}
+.fd-dl-base {
+  flex: none;
+}
 /* The path gives up its folders first (an ellipsis); the +/- counts stay at the right edge. */
 .fd-diff > .fd-dl[data-kind="file"] > .fd-dl-path {
   flex: 1 1 auto;
@@ -1507,7 +1547,8 @@ details[open] > summary[data-variant="toggle"]::after {
   }
   /* The summary chevron is a mask on a background color: draw it in the text color. */
   :where(details:not(.fd-menu) > summary:not(:has(svg)))::before,
-  summary[data-variant="toggle"]::after {
+  summary[data-variant="toggle"]::after,
+  .fd-menu > summary.fd-ghost[data-variant="toggle"]::after {
     forced-color-adjust: none;
     background-color: CanvasText;
   }
