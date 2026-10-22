@@ -192,6 +192,11 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
     tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
   const shown = named ? [] : tool.files.slice(0, MAX_FILE_CHIPS);
   const more = named ? 0 : tool.files.length - shown.length;
+  // A file target loses its start, not its end: the end names the file (chat.css `[data-path]`).
+  const isPath =
+    (tool.files.length === 1 && target === tool.files[0]) ||
+    tool.tool_kind === 'read' ||
+    tool.tool_kind === 'edit';
   const failedExit = tool.exit_code !== null && tool.exit_code !== 0;
   const result = failedExit ? undefined : RESULT[tool.status];
   return (
@@ -213,7 +218,11 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
         </span>
         <span className="fd-chat-tool-title">{tool.title}</span>
-        {tool.input ? <span className="fd-chat-tool-arg">{target}</span> : null}
+        {tool.input ? (
+          <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
+            <bdi>{target}</bdi>
+          </span>
+        ) : null}
         {shown.map((path) => (
           <span key={path} className="fd-badge" title={path}>
             {basename(path)}
