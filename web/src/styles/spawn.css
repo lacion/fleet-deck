@@ -136,18 +136,19 @@
 }
 .fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
   display: block;
-  width: calc(100% + 2 * var(--sp-2));
-  margin: 0 calc(-1 * var(--sp-2));
-  padding: var(--sp-1) var(--sp-2);
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-1) 0;
   background-color: transparent;
   border-color: transparent;
   border-radius: 0;
   color: var(--text);
 }
-/* The focus of a borderless field: the 2px blue marker at its left edge, not a box. */
+/* The focus of a borderless field: a 2px blue underline, not a box. The field text starts at the
+   content edge of the sheet, in line with the property rows. */
 .fd-spawn .fd-spawn-compose > label > :is(input, textarea):focus {
   border-color: transparent;
-  box-shadow: inset 2px 0 0 var(--focus);
+  box-shadow: inset 0 -2px 0 var(--focus);
 }
 .fd-spawn .fd-spawn-title > input {
   height: 36px;
@@ -329,8 +330,9 @@
   font-size: var(--fs-data);
 }
 
-/* The stations: radio pills with the name, the reach and the free slots. The chosen one is
-   --raised-hi with a 1px --focus ring (the selection marker). */
+/* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
+   --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
+   The chosen one is --raised-hi with a 1px --focus ring (the selection marker). */
 .fd-spawn-stations {
   display: flex;
   flex-wrap: wrap;
@@ -344,8 +346,9 @@
   gap: 6px;
   height: var(--ctl-h);
   padding: 0 10px;
+  background: var(--surface);
   border-radius: var(--r-ctl);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   color: var(--dim);
   font-size: var(--fs-ui);
   font-weight: 500;
@@ -596,6 +599,17 @@
   .fd-spawn-prop > h3.fd-label {
     line-height: 16px;
   }
+  /* The provider segment fills the line, so that its right edge meets the pills under it. */
+  .fd-spawn-fields > .fd-spawn-seg {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .fd-spawn-seg:not(:has(.fd-spawn-seg-meta)) {
+    display: flex;
+  }
+  .fd-spawn-seg:not(:has(.fd-spawn-seg-meta)) > label {
+    flex: 1 1 0;
+  }
   /* The model and the mode share one line. */
   .fd-spawn-fields > .fd-spawn-pills {
     flex: 1 1 100%;
@@ -608,6 +622,14 @@
   .fd-spawn .fd-spawn-pillwrap > select {
     width: 100%;
     min-width: 0;
+  }
+  /* "Other…": the free-text model takes its own line under the two pills, not a third column. */
+  .fd-spawn-fields > .fd-spawn-pills:has(> .fd-spawn-model) {
+    flex-wrap: wrap;
+  }
+  .fd-spawn-pills > .fd-spawn-model {
+    flex: 1 1 100%;
+    order: 1;
   }
   .fd-spawn-options > :not(summary) {
     margin-left: 0;
@@ -636,6 +658,10 @@
   }
   .fd-spawn-actions > * {
     flex: 1 1 0;
+  }
+  /* A touch screen has no ⌘↵: the key hint goes. */
+  .fd-spawn-foot .fd-kbd {
+    display: none;
   }
 }
 
