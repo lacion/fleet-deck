@@ -61,7 +61,7 @@ describe('the sidebar navigation (S1)', () => {
   test('four main links, then the More fold with the other pages', () => {
     const html = render({ name: 'fleet' }, { terminalCount: 2 });
     const main = labels(html, 'aria-label="Board pages"', '<details class="fd-sidebar-more"');
-    expect(main).toEqual(['Fleet', 'Activity', 'Stations', 'Watch']);
+    expect(main).toEqual(['Fleet', 'Watch', 'Activity', 'Stations']);
     const more = html.slice(
       html.indexOf('<details class="fd-sidebar-more"'),
       html.indexOf('</nav>'),

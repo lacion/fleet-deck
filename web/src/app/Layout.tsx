@@ -3,9 +3,9 @@ import {
   ChevronLeft,
   Ellipsis,
   Icon,
+  Layers,
   LayoutGrid,
   type LucideIcon,
-  MessagesSquare,
   PanelLeft,
   Plus,
   X,
@@ -124,7 +124,7 @@ function BottomBar({ route, guest }: { readonly route: Route; readonly guest: bo
     on: readonly Route['name'][];
     guest?: false;
   }[] = [
-    { href: '#/', label: 'Sessions', icon: MessagesSquare, on: ['home'] },
+    { href: '#/', label: 'Sessions', icon: Layers, on: ['home'] },
     { href: '#/fleet', label: 'Fleet', icon: LayoutGrid, on: ['fleet'] },
     { href: '#/new', label: 'New', icon: Plus, on: ['new'], guest: false },
     {
@@ -152,16 +152,31 @@ function BottomBar({ route, guest }: { readonly route: Route; readonly guest: bo
   const items = guest ? all.filter((item) => item.guest !== false) : all;
   return (
     <nav className="fd-bottombar" aria-label="Board">
-      {items.map((item) => (
-        <a
-          key={item.href}
-          href={item.href}
-          aria-current={item.on.includes(route.name) ? 'page' : undefined}
-        >
-          <Icon of={item.icon} size={20} />
-          <span>{item.label}</span>
-        </a>
-      ))}
+      {items.map((item) =>
+        // §4.8: New is a 44px ink circle in the middle of the bar; its name stays "New".
+        item.href === '#/new' ? (
+          <a
+            key={item.href}
+            href={item.href}
+            className="fd-bottombar-new"
+            aria-current={item.on.includes(route.name) ? 'page' : undefined}
+          >
+            <span className="fd-bottombar-circle">
+              <Icon of={item.icon} size={22} />
+            </span>
+            <span className="fd-vh">{item.label}</span>
+          </a>
+        ) : (
+          <a
+            key={item.href}
+            href={item.href}
+            aria-current={item.on.includes(route.name) ? 'page' : undefined}
+          >
+            <Icon of={item.icon} size={20} />
+            <span>{item.label}</span>
+          </a>
+        ),
+      )}
     </nav>
   );
 }

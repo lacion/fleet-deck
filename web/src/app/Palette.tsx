@@ -3,6 +3,7 @@ import { stationName } from '../board/fleet';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import { useDismiss } from '../ui/dismiss';
+import { Icon, Plus } from '../ui/icons';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
 import { paletteMatches, sessionTitle } from './sessions';
@@ -109,6 +110,7 @@ export function Palette({
                 if (e.key === 'Enter') pick(card);
               }}
             >
+              <span className="fd-dot" data-status={card.status} aria-hidden="true" />
               <span className="fd-palette-title">{sessionTitle(card)}</span>
               <span className="fd-palette-meta">
                 {stationName(card.station_id, stations)} · {statusLabel(card)}
@@ -127,6 +129,9 @@ export function Palette({
                 if (e.key === 'Enter') start();
               }}
             >
+              <span className="fd-palette-start" aria-hidden="true">
+                <Icon of={Plus} size={14} />
+              </span>
               <span className="fd-palette-title">Start a session: “{prompt}”</span>
             </div>
           ) : null}
@@ -134,6 +139,18 @@ export function Palette({
         {matches.length === 0 && !canStart ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : null}
+        <div className="fd-palette-foot" aria-hidden="true">
+          <span>
+            <kbd className="fd-kbd">↑</kbd>
+            <kbd className="fd-kbd">↓</kbd> Move
+          </span>
+          <span>
+            <kbd className="fd-kbd">↵</kbd> Open
+          </span>
+          <span>
+            <kbd className="fd-kbd">Esc</kbd> Close
+          </span>
+        </div>
       </div>
     </div>
   );
