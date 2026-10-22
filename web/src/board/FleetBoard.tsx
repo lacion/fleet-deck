@@ -66,10 +66,10 @@ type Props = {
   /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
   /**
-   * DESIGN-SYSTEM §4.4: the ended and lost strips of each lane fold into a collapsed
-   * "Ended · N" group with their Resume all and Clear; the board-wide offline row then shows
-   * only for unreachable sessions that can resume. Off: the ended strips stay in their lane and
-   * one offline row closes the board (the phone).
+   * DESIGN-SYSTEM §4.4: the ended and lost strips of each lane fold into a collapsed "Ended"
+   * group (the word and a count pill, as in the sidebar) with their Resume all and Clear; the
+   * board-wide offline row then shows only for unreachable sessions that can resume. Off: the
+   * ended strips stay in their lane and one offline row closes the board (the phone).
    */
   readonly foldEnded?: boolean | undefined;
 };
@@ -612,8 +612,7 @@ export function FleetBoard({
             {done.length === 0 ? null : (
               <details className="fd-lane-ended">
                 <summary>
-                  <span className="fd-dot" data-status="ended" aria-hidden="true" />
-                  {`Ended · ${done.length}`}
+                  Ended <span className="fd-count">{done.length}</span>
                 </summary>
                 <ul className="fd-strips">{done.map(strip)}</ul>
                 <OfflineTools

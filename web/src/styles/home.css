@@ -89,6 +89,23 @@
 .fd-home-search {
   width: 200px;
 }
+/* Group by is a quiet select among the ghost controls of the header (concept B's Display menu):
+   no fill and no edge; the edge shows on hover and the focus edge on focus. The chevron is the
+   background image of base.css, so only the background color changes. */
+.fd-home-group {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--dim);
+}
+.fd-home-group:hover:not(:disabled) {
+  border-color: var(--ctl-edge);
+  background-color: var(--raised);
+  color: var(--text);
+}
+.fd-home-group:focus {
+  border-color: var(--focus);
+  color: var(--text);
+}
 @media (max-width: 1439px) {
   .fd-home-search {
     width: 180px;
@@ -893,6 +910,21 @@
 .fd-strip[data-nochanges="true"] > .fd-strip-where {
   grid-column: span 2;
 }
+/* A lane where no strip has changes drops the changes column: the main cell gets its 88px, and
+   the ages of the lane (its ended fold too) stay in one column. The chip line of the where cell
+   then starts 232px from the right edge (where 168 + age 64). */
+@container fleet (min-width: 721px) {
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
+    grid-template-columns: 104px minmax(0, 1fr) auto 168px 64px;
+  }
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
+    grid-column: auto;
+  }
+  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
+    left: calc(100% - 232px + var(--sp-3));
+    max-width: calc(168px - 2 * var(--sp-3));
+  }
+}
 .fd-strip > .fd-strip-changes {
   flex-direction: column;
   align-items: flex-start;
@@ -950,7 +982,8 @@
   padding-top: 4px;
 }
 
-/* The ended and lost strips of a lane: a collapsed "Ended · N" row (as in the sidebar). */
+/* The ended and lost strips of a lane: a collapsed "Ended" row with its count pill (as in the
+   sidebar). */
 .fd-lane-ended {
   margin-top: 6px;
 }
@@ -1042,9 +1075,20 @@
   }
   .fd-strip-meta {
     grid-area: meta;
+    justify-self: end;
   }
   .fd-strip-changes {
     grid-area: changes;
+  }
+  /* No changes: no empty changes column, so the meta icons end under the age. */
+  .fd-strip[data-nochanges="true"] {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title title age"
+      "call now meta";
+  }
+  .fd-strip[data-nochanges="true"] > .fd-strip-changes {
+    display: none;
   }
   .fd-strip-age {
     grid-area: age;
@@ -1055,8 +1099,11 @@
     flex-wrap: wrap;
     padding: 0 var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
   }
+  /* The callsign and the age share the first line with the title (concept A phone). */
   .fd-q-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
+    align-content: center;
+    align-items: first baseline;
   }
   .fd-q-row > * + * {
     border-left: 0;
@@ -1285,6 +1332,10 @@
   flex: 1 1 auto;
   padding: 0 var(--sp-2);
   font-size: var(--fs-meta);
+}
+/* The tab strip scrolls sideways, so it clips an outward ring: the ring goes inside the tab. */
+.fd-homepanel-tabs > button:focus-visible {
+  outline-offset: -2px;
 }
 .fd-homepanel-head > .fd-iconbtn {
   margin-left: auto;
@@ -1857,6 +1908,12 @@
     > .fd-strip-where {
     align-items: center;
     padding-top: 0;
+  }
+  :root[data-density="compact"]
+    .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"])))
+    .fd-stripwrap
+    > .fd-strip-links {
+    left: auto;
   }
 }
 :root[data-density="compact"] .fd-card {
