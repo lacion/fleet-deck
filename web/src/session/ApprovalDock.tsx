@@ -32,6 +32,9 @@ function optionClass(option: ApprovalOption, n: number): string | undefined {
   return option.kind === 'deny' ? 'fd-danger' : undefined;
 }
 
+/** The key hints of the card (§4.5): `a` on the decision primary, `d` on the deny. */
+const KEY_HINT: Readonly<Record<string, string>> = { 'fd-decide': 'a', 'fd-danger': 'd' };
+
 export function ApprovalDock(props: Props) {
   const now = useNow(undefined, 30000);
   if (props.requests.length === 0) return null;
@@ -76,17 +79,26 @@ export function ApprovalDock(props: Props) {
                   {reason === null ? null : <p className="fd-q-dock-reason">{reason}</p>}
                   {props.answerable ? (
                     <div className="fd-options">
-                      {r.options.map((o, n) => (
-                        <button
-                          key={o.option_id}
-                          type="button"
-                          className={optionClass(o, n)}
-                          disabled={!props.enabled || props.busy}
-                          onClick={() => props.onAnswer(r.request_id, o.option_id, null)}
-                        >
-                          {o.label}
-                        </button>
-                      ))}
+                      {r.options.map((o, n) => {
+                        const look = optionClass(o, n);
+                        const key = KEY_HINT[look ?? ''];
+                        return (
+                          <button
+                            key={o.option_id}
+                            type="button"
+                            className={look}
+                            disabled={!props.enabled || props.busy}
+                            onClick={() => props.onAnswer(r.request_id, o.option_id, null)}
+                          >
+                            {o.label}
+                            {key === undefined ? null : (
+                              <span className="fd-kbd fd-q-dock-kbd" aria-hidden="true">
+                                {key}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>

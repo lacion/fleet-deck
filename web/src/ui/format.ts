@@ -70,3 +70,16 @@ const RISKY_MODES: readonly string[] = ['dontAsk', 'bypassPermissions', 'danger-
 
 export const isRiskyMode = (mode: string | null | undefined): boolean =>
   mode !== null && mode !== undefined && RISKY_MODES.includes(mode);
+
+/** The sentence-case names of the permission modes; an unknown mode shows its raw id. */
+const MODE_LABELS: Readonly<Record<string, string>> = {
+  default: 'Default',
+  plan: 'Plan',
+  acceptEdits: 'Accept edits',
+  dontAsk: "Don't ask",
+  auto: 'Auto',
+  bypassPermissions: 'Bypass permissions',
+};
+
+/** `acceptEdits` → `Accept edits`; a mode outside the list stays as it is. */
+export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;

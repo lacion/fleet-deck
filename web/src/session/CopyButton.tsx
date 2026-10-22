@@ -18,6 +18,11 @@ export function shortenMiddle(text: string, max: number): string {
   return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
 }
 
+/** `/home/me/projects/x` → `~/projects/x` (a home folder of Linux or macOS); other paths stay. */
+export function homeShort(path: string): string {
+  return path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~');
+}
+
 /** An icon button that copies `text`; it shows a check for 1.5 s. */
 export function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {
   const [copied, setCopied] = useState(false);

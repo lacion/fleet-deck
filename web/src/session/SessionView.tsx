@@ -56,6 +56,7 @@ import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks'
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
+import { shortModel } from '../ui/format';
 
 export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
@@ -86,6 +87,16 @@ export type SessionViewProps = {
 };
 
 const noop = () => {};
+
+/** The model chip of the composer opens the session menu and focuses its model picker. */
+function openModelPicker(pane: HTMLElement | null): void {
+  const menu = pane?.querySelector('summary[aria-label="Session menu"]')?.parentElement;
+  if (!(menu instanceof HTMLDetailsElement)) return;
+  menu.open = true;
+  requestAnimationFrame(() =>
+    menu.querySelector<HTMLElement>('.fd-model :is(select, input)')?.focus(),
+  );
+}
 const HIGHLIGHT_HOLD_MS = 2500;
 
 const WIDE = '(min-width: 1280px)';
@@ -284,6 +295,7 @@ export function SessionView(props: SessionViewProps) {
   const move = useMove(session, moveOwner);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const paneEl = useRef<HTMLElement>(null);
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
   const order: PaneTab[] = [
     'chat',
@@ -385,7 +397,7 @@ export function SessionView(props: SessionViewProps) {
   );
 
   const pane = (
-    <section className="fd-pane" aria-label="Session" data-layout={layout}>
+    <section className="fd-pane" aria-label="Session" data-layout={layout} ref={paneEl}>
       <SessionHeader
         session={session}
         stations={stations}
@@ -634,6 +646,10 @@ export function SessionView(props: SessionViewProps) {
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
+                      model={shortModel(s.model)}
+                      {...(guest === null && caps?.set_model === true
+                        ? { onModel: () => openModelPicker(paneEl.current) }
+                        : {})}
                     />
                   </>
                 ) : guest?.role === 'viewer' ? (

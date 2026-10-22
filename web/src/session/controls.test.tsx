@@ -439,20 +439,30 @@ describe('session header (DL-140)', () => {
   });
 
   test('the mode fact shows the mode with its tone, and is absent without a mode or for default', () => {
+    // The chip shows the sentence-case name of the mode; the title keeps the raw id.
+    const label: Readonly<Record<string, string>> = {
+      plan: 'Plan',
+      acceptEdits: 'Accept edits',
+      auto: 'Auto',
+      dontAsk: 'Don&#x27;t ask',
+      bypassPermissions: 'Bypass permissions',
+      'danger-full-access': 'danger-full-access',
+    };
     const fact = (mode: string) =>
       new RegExp(
-        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode">(<svg[^>]*>.*?</svg>)?${mode}</span>`,
+        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode: ${mode}">(<svg[^>]*>.*?</svg>)${label[mode]}</span>`,
       );
     const tone = (mode: string) => fact(mode).exec(header(session({ mode })))?.[1];
     expect(tone('plan')).toBe('plan');
     // DL-171: hazard red only for a mode that skips the approvals; the other modes have no tone.
     for (const risky of ['dontAsk', 'bypassPermissions', 'danger-full-access']) {
       expect(tone(risky)).toBe('hazard');
-      // a risky mode has the shield icon
-      expect(fact(risky).exec(header(session({ mode: risky })))?.[2]).toContain('<svg');
+      // a risky mode has the shield-alert icon
+      expect(fact(risky).exec(header(session({ mode: risky })))?.[2]).toContain('shield-alert');
     }
+    // every chip has an icon, like the other place chips; a calm mode has no alert icon
     for (const calm of ['acceptEdits', 'auto', 'plan']) {
-      expect(fact(calm).exec(header(session({ mode: calm })))?.[2]).toBeUndefined();
+      expect(fact(calm).exec(header(session({ mode: calm })))?.[2]).not.toContain('shield-alert');
     }
     for (const calm of ['acceptEdits', 'auto']) {
       expect(fact(calm).test(header(session({ mode: calm })))).toBe(true);
