@@ -27,6 +27,25 @@ export function diffLineKind(line: string): DiffLineKind {
 }
 
 /**
+ * The kind of every line of a patch. In a hunk (from its first `@@` line to the next `diff --git`
+ * line), a line that starts with `-` or `+` is a deletion or an addition, also when it looks like a
+ * file header: a deleted `-- comment` line is `--- comment` in the patch.
+ */
+export function diffLineKinds(lines: readonly string[]): DiffLineKind[] {
+  let inHunk = false;
+  return lines.map((line) => {
+    const kind = diffLineKind(line);
+    if (kind === 'file') inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (inHunk && kind === 'meta') {
+      if (line.startsWith('-')) return 'del';
+      if (line.startsWith('+')) return 'add';
+    }
+    return kind;
+  });
+}
+
+/**
  * The git plumbing of a file section: the view leaves these lines out, because the file header
  * row (path and +/−) says the same. A rename and a binary file stay: they tell something new.
  */
@@ -68,8 +87,9 @@ export function fileHeads(lines: readonly string[]): ReadonlyMap<number, FileHea
   const flush = () => {
     if (at >= 0) heads.set(at, { path, add, del });
   };
+  const kinds = diffLineKinds(lines);
   lines.forEach((line, n) => {
-    const kind = diffLineKind(line);
+    const kind = kinds[n];
     if (kind === 'file') {
       flush();
       at = n;

@@ -71,6 +71,30 @@ describe('Diff', () => {
     expect(html).toContain('@@ -1 +1 @@');
   });
 
+  test('in a hunk, a line that looks like a file header is a content line', () => {
+    // A deleted `-- note` (SQL, Lua) is `--- note` in the patch; an added `++ x` is `+++ x`.
+    const sql = [
+      'diff --git a/q.sql b/q.sql',
+      'index 1..2 100644',
+      '--- a/q.sql',
+      '+++ b/q.sql',
+      '@@ -1,2 +1,2 @@',
+      '--- note',
+      '+++ x',
+      ' select 1;',
+    ].join('\n');
+    const html = renderToStaticMarkup(
+      <Diff patch={sql} truncated={false} id="t1" review={review()} />,
+    );
+    expect(html).not.toContain('--- a/q.sql');
+    expect(html).not.toContain('+++ b/q.sql');
+    expect(html).toContain('<span data-sign="add">+1</span><span data-sign="del">−1</span>');
+    expect(html).toMatch(/<span class="fd-dl" data-kind="del">.*--- note<\/span>/);
+    expect(html).toMatch(/<span class="fd-dl" data-kind="add">.*\+\+\+ x<\/span>/);
+    expect(html).toContain('aria-label="Comment on q.sql line 1 (old side)"');
+    expect(html).toContain('aria-label="Comment on q.sql line 1"');
+  });
+
   test('a file header has the path as a button with onOpenFile', () => {
     const html = renderToStaticMarkup(
       <Diff patch={patch} truncated={false} id="t1" onOpenFile={() => {}} />,
