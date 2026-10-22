@@ -16,6 +16,7 @@ import {
   Settings,
   Smartphone,
   SquareTerminal,
+  Sun,
   Users,
   Workflow,
 } from '../ui/icons';
@@ -131,7 +132,7 @@ export function More({
               <a href="#/terminals">
                 <Icon of={SquareTerminal} />
                 Terminals
-                <span className="fd-count">{terminalCount}</span>
+                {terminalCount > 0 ? <span className="fd-count">{terminalCount}</span> : null}
               </a>
             </li>
           )}
@@ -153,12 +154,24 @@ export function More({
           )}
         </ul>
       </nav>
-      <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
-      {chrome?.addDevice === undefined ? null : (
-        <button type="button" className="fd-ghost fd-sm" onClick={() => setAddingDevice(true)}>
-          <Icon of={Smartphone} size={14} /> Add a device
-        </button>
-      )}
+      {/* The second group: how the board looks, and the devices of this login. */}
+      <ul className="fd-more-links">
+        <li className="fd-more-row">
+          <span className="fd-more-rowlabel">
+            <Icon of={Sun} />
+            Appearance
+          </span>
+          <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
+        </li>
+        {chrome?.addDevice === undefined ? null : (
+          <li>
+            <button type="button" onClick={() => setAddingDevice(true)}>
+              <Icon of={Smartphone} />
+              Add a device
+            </button>
+          </li>
+        )}
+      </ul>
       {addingDevice && chrome?.addDevice !== undefined ? (
         <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
       ) : null}

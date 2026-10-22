@@ -201,10 +201,10 @@ describe('shares page (R11.4)', () => {
         }),
       ],
     });
-    expect(html).toContain('>session<');
+    expect(html).toContain('Session</span>');
     expect(html).toContain('Alpha / Review');
-    expect(html).toContain('>collaborator<');
-    expect(html).toContain('>mob<');
+    expect(html).toContain('>Collaborator<');
+    expect(html).toContain('>Mob<');
     expect(html).toContain('<table class="fd-table" aria-label="Shares">');
     for (const head of ['Role', 'Members', 'Uses left', 'Expires']) expect(html).toContain(head);
     expect(html).toContain('data-label="Members">Ana, Bo</td>');

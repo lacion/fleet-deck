@@ -136,14 +136,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: var(--dim);
 }
 
-.fd-sidebar-brand > .fd-iconbtn {
-  margin-left: auto;
-}
-
-.fd-sidebar-brand > .fd-iconbtn + .fd-wspill {
-  margin-left: 0;
-}
-
 .fd-wspill-dot {
   width: 6px;
   height: 6px;
@@ -175,36 +167,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   border-color: var(--border-soft);
 }
 
-/* "1 needs you": a nav-height row in the needs-you tint; it opens the first request. */
-.fd-needschip {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  height: var(--ctl-h);
-  padding: 0 var(--sp-2);
-  border-radius: var(--r-ctl);
-  background: var(--act-bg);
-  color: var(--act);
-  font-family: var(--font-ui);
-  font-size: var(--fs-ui);
-  font-weight: 600;
-  text-decoration: none;
-  transition: background-color var(--t-fast);
-}
-
-.fd-needschip:hover {
-  text-decoration: none;
-  background: color-mix(in srgb, var(--act-bg) 80%, var(--act));
-}
-
-.fd-sidebar-group {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.fd-sidebar-group > .fd-label {
-  margin-right: var(--sp-1);
+/* A touch screen has no "/" key at hand: the hint goes. */
+@media (pointer: coarse) {
+  .fd-sidebar-top > .fd-field > .fd-kbd {
+    display: none;
+  }
 }
 
 /* The page links: 28px rows, a 16px icon and the label. */
@@ -309,6 +276,31 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-3) var(--sp-3);
 }
 
+/* The head of the list: the "Sessions" label, and the grouping (Station | Project) at the right. */
+.fd-sidebar-listhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: var(--ctl-h);
+  margin-top: var(--sp-1);
+  padding: 0 0 0 var(--sp-2);
+}
+
+.fd-sidebar-listhead > .fd-label {
+  margin: 0;
+}
+
+.fd-sidebar-listhead > .fd-seg > * {
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
+}
+
+/* The bay is --surface: the track steps down to the deck to show. */
+.fd-sidebar[data-variant="full"] .fd-sidebar-listhead > .fd-seg {
+  background: var(--bg);
+}
+
 .fd-sidebar-list > .fd-empty {
   padding: var(--sp-2) 10px;
   font-size: var(--fs-meta);
@@ -318,13 +310,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-top: var(--sp-2);
 }
 
+.fd-sidebar-listhead + .fd-sgroup {
+  margin-top: 0;
+}
+
 .fd-sgroup-title {
   display: flex;
   align-items: center;
   gap: 6px;
   height: var(--ctl-h);
   margin: 0;
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--dim);
@@ -340,12 +336,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-.fd-sgroup[data-group="needs"] .fd-sgroup-name {
-  color: var(--act);
-}
-
 .fd-sgroup-title .fd-count {
   margin-left: auto;
+}
+
+/* "Needs you" first: the name in --text and the yellow count right after it (§4.2). */
+.fd-sgroup[data-group="needs"] .fd-sgroup-name {
+  color: var(--text);
+}
+
+.fd-sgroup[data-group="needs"] .fd-sgroup-title .fd-count {
+  margin-left: 0;
 }
 
 /* Reachability dot: 6px, with a hidden word next to it. */
@@ -369,15 +370,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0;
 }
 
-/* A row: glyph | title | age, one line of --row-h. */
+/* A row: glyph | title | age, one line of --row-h. The glyph column is as wide as a nav icon,
+   so that the titles start where the nav labels start. */
 .fd-srow {
   position: relative;
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
-  column-gap: 10px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--sp-2);
   align-items: center;
   min-height: var(--row-h);
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-ctl);
   color: var(--text);
   text-decoration: none;
@@ -395,6 +397,10 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-srow > .fd-holder {
   display: none;
+}
+
+.fd-srow > .fd-dot {
+  justify-self: center;
 }
 
 .fd-srow-title {
@@ -471,7 +477,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   align-items: center;
   gap: 6px;
   height: var(--ctl-h);
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-ctl);
   color: var(--faint);
   cursor: pointer;
@@ -546,7 +552,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: var(--text);
 }
 
-/* The account: the avatar glyph in a round hover target. */
+/* The account: the avatar in a round hover target. */
 .fd-sidebar-account .fd-menu > summary.fd-iconbtn {
   border-radius: var(--r-pill);
 }
@@ -582,31 +588,39 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--bg);
 }
 
-.fd-sidebar-prefs > .fd-iconbtn[aria-pressed="true"] {
-  background: var(--raised-hi);
-  color: var(--text);
-}
-
 .fd-sidebar-prefs > select {
   max-width: 120px;
 }
 
 /* ---------- Phone session list (the home of the phone, §4.8) ---------- */
 
-/* The top of the phone: mark, name, New and the connection, 52px. */
+/* The phone list has the top bar of the layout above it: the search and New, then the groups. */
 .fd-sidebar[data-variant="list"] .fd-sidebar-top {
-  padding: 0 var(--sp-4) var(--sp-2);
+  display: flex;
+  align-items: center;
+  padding: var(--sp-1) var(--sp-4) var(--sp-2);
 }
 
-.fd-sidebar[data-variant="list"] .fd-sidebar-brand {
-  height: 52px;
-  gap: 10px;
+.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-field {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.fd-sidebar[data-variant="list"] .fd-sidebar-brand > .fd-wordmark {
-  font-size: var(--fs-18);
-  font-weight: 640;
-  letter-spacing: -0.01em;
+.fd-sidebar-new.fd-iconbtn {
+  flex: none;
+  background: var(--raised);
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+
+.fd-sidebar-new.fd-iconbtn:hover:not(:disabled) {
+  background: var(--raised-hi);
+  border-color: var(--border-soft);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sidebar-listhead {
+  justify-content: flex-end;
+  padding: 0;
 }
 
 .fd-sidebar[data-variant="list"] .fd-sidebar-list {
@@ -634,15 +648,8 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-sgroup-name {
-  color: var(--text);
-}
-
 .fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-count {
   margin-left: var(--sp-1);
-  margin-right: auto;
-  background: var(--act-fill);
-  color: var(--act-ink);
 }
 
 .fd-sidebar[data-variant="list"] .fd-srows {
@@ -723,6 +730,89 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-stretch: 115%;
   font-weight: 640;
   letter-spacing: -0.01em;
+}
+
+/* ---------- Phone top bar (§4.8) ---------- */
+
+/* 52px on the deck: the mark (or Back to More), the page name, the connection, the avatar. */
+.fd-phonebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: content-box;
+  height: 52px;
+  padding: env(safe-area-inset-top) var(--sp-4) 0;
+  background: var(--bg);
+}
+
+.fd-phonebar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: var(--fs-18);
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.fd-phonebar > .fd-wspill {
+  margin-left: 0;
+}
+
+/* The chevron sits on the gutter: its tap target reaches into the edge. */
+a.fd-phonebar-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ctl-h);
+  margin-left: calc(-1 * var(--sp-3));
+  margin-right: calc(-1 * var(--sp-1));
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* The bar carries the page name: the heading of the page stays for screen readers only. */
+.fd-app[data-phonebar="true"] .fd-route .fd-page-title,
+.fd-app[data-phonebar="true"] .fd-route .fd-page-titlerow > .fd-count {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The New session sheet names itself in a small caption: the bar says it already. */
+.fd-app[data-phonebar="true"] .fd-spawn-head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fd-app[data-phonebar="true"] .fd-page-titlerow {
+  min-height: 0;
+}
+
+.fd-app[data-phonebar="true"] .fd-page-desc {
+  margin-top: 0;
+}
+
+/* A header with nothing left to show leaves the flow of the page (and its gap). */
+.fd-app[data-phonebar="true"] .fd-page-head:not(:has(.fd-page-desc, .fd-page-actions)) {
+  position: absolute;
+  padding: 0;
+  border-bottom: 0;
 }
 
 /* ---------- Notices (§4.7) ---------- */
@@ -972,10 +1062,31 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: var(--ok);
 }
 
-/* The help: the keys, the concepts and the pages. */
+/* The help: a sticky header with Close, then the keys, the concepts and the pages. */
+.fd-overlay:has(> .fd-help) {
+  padding-bottom: var(--sp-6);
+}
+
 .fd-overlay .fd-help {
   width: min(640px, 100%);
+  max-height: min(100%, calc(100dvh - 2 * var(--sp-6)));
   gap: var(--sp-4);
+  padding-top: 0;
+  padding-bottom: var(--sp-5);
+}
+
+.fd-help-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin: 0 -20px;
+  padding: var(--sp-4) var(--sp-3) var(--sp-3) 20px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .fd-help section {
@@ -1012,9 +1123,14 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-size: var(--fs-ui);
 }
 
+/* The key column: wide enough for the widest keys ("Ctrl+K or ⌘K"), so that the general and
+   the fleet-home tables start their actions at the same place. */
 .fd-keys td:first-child {
-  width: 128px;
+  width: 100px;
   padding-left: 0;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
 }
 
 .fd-keys tbody tr:last-child td {
@@ -1201,8 +1317,8 @@ body:has(.fd-app[data-layout="tablet"]) {
   border-top: 1px solid var(--border-soft);
 }
 
-.fd-more-links a,
-.fd-more-links button {
+.fd-more-links > li > a,
+.fd-more-links > li > button {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -1220,13 +1336,21 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-content: flex-start;
 }
 
-.fd-more-links a:hover,
-.fd-more-links button:hover:not(:disabled) {
-  background: var(--raised);
-  text-decoration: none;
+/* A tap leaves no hover fill behind on a touch screen: hover only where a pointer hovers. */
+@media (hover: hover) {
+  .fd-more-links > li > a:hover,
+  .fd-more-links > li > button:hover:not(:disabled) {
+    background: var(--raised);
+    text-decoration: none;
+  }
 }
 
-.fd-more-links .fd-icon {
+.fd-more-links > li > a:active,
+.fd-more-links > li > button:active:not(:disabled) {
+  background: var(--raised);
+}
+
+.fd-more-links > li > :is(a, button, .fd-more-rowlabel) > .fd-icon {
   color: var(--dim);
 }
 
@@ -1234,8 +1358,33 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: auto;
 }
 
-.fd-more .fd-sidebar-prefs {
-  gap: var(--sp-2);
+/* A setting row: its name at the left, the control at the right. */
+.fd-more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-3);
+  min-height: var(--tap-min);
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-4);
+}
+
+.fd-more-rowlabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-15);
+}
+
+.fd-more-row .fd-sidebar-prefs {
+  justify-content: flex-end;
+}
+
+/* The group is --surface: the tracks step down to the deck to show. */
+.fd-more-links > .fd-more-row .fd-sidebar-prefs > .fd-seg {
+  background: var(--bg);
 }
 
 .fd-more > .fd-ghost {
@@ -1292,8 +1441,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   .fd-sidebar-more > summary,
   .fd-linkbtn,
   .fd-srow,
-  .fd-sended > summary,
-  .fd-needschip {
+  .fd-sended > summary {
     min-height: var(--tap-min);
   }
 }

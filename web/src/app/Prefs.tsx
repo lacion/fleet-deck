@@ -44,16 +44,19 @@ export function PrefsRow({
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        className="fd-iconbtn fd-sm"
-        aria-pressed={compact}
-        aria-label="Compact cards"
-        title="Compact cards"
-        onClick={() => setDensity(compact ? 'cozy' : 'compact')}
-      >
-        <Icon of={Rows3} size={14} />
-      </button>
+      {/* The density is a second segmented group, 4px from the theme (its own meaning). */}
+      <div className="fd-seg fd-sidebar-density">
+        <button
+          type="button"
+          className="fd-iconbtn fd-sm"
+          aria-pressed={compact}
+          aria-label="Compact cards"
+          title="Compact cards"
+          onClick={() => setDensity(compact ? 'cozy' : 'compact')}
+        >
+          <Icon of={Rows3} size={14} />
+        </button>
+      </div>
       {getPalette === undefined ? null : (
         <OmarchyThemeSelect stations={stations} getPalette={getPalette} />
       )}
