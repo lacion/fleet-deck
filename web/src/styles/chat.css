@@ -652,17 +652,6 @@
 /* ── the diff view (chat/Diff.tsx) ────────────────────────────────── */
 /* The header row of a file: icon, path (mono), +/− (sans). It stays at the top while its
    hunks scroll (the diff is the scroll box). The git plumbing lines are not rendered. */
-.fd-diff > .fd-dl[data-kind="file"] {
-  position: sticky;
-  top: 0;
-  left: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-height: 28px;
-  border-bottom: 1px solid var(--border-soft);
-}
 .fd-diff > .fd-dl[data-kind="file"] > .fd-icon {
   color: var(--faint);
 }
@@ -820,12 +809,13 @@
   width: 14px;
   height: 14px;
   background: var(--raised);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctl-edge);
   border-radius: 4px;
 }
 .fd-chat-show .fd-chip[aria-pressed="true"] {
   border-color: transparent;
   background: transparent;
+  font-weight: 500; /* a checked row is not bold (base.css makes a pressed chip 600) */
 }
 .fd-chat-show .fd-chip[aria-pressed="true"]:hover {
   background: var(--raised-hi);

@@ -354,8 +354,10 @@ describe('session header (DL-140)', () => {
   test('a rate limit of 80% or more shows a chip; 100% is a hazard (R4.2)', () => {
     const limited = (used: number) =>
       session({ rate_limits: [{ scope: 'five_hour', used_percent: used, resets_at: null }] });
-    expect(header(limited(85))).toContain('data-tone="act">Limit 85% · five_hour</span>');
-    expect(header(limited(100))).toContain('data-tone="hazard">Limit reached · five_hour</span>');
+    expect(header(limited(85))).toContain('data-tone="act">Limit 85% · 5-hour window</span>');
+    expect(header(limited(100))).toContain(
+      'data-tone="hazard">Limit reached · 5-hour window</span>',
+    );
     expect(header(limited(79))).not.toContain('Limit ');
     expect(header(session())).not.toContain('Limit ');
   });

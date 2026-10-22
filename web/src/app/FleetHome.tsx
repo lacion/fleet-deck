@@ -17,7 +17,6 @@ import {
 import { record } from '../board/activity';
 import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
 import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
-import { ListFilter } from '../board/icons';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { hasGlance, UsageGlance } from '../board/UsageGlance';
 import { limitChip, rateMeters } from '../board/usage';
@@ -29,7 +28,7 @@ import { useProjects } from '../integrations/context';
 import { canShare, usePeople } from '../sharing/context';
 import { openShare } from '../sharing/shareStore';
 import { useDismiss } from '../ui/dismiss';
-import { CircleHelp, Icon, Plus, Search, Users, X } from '../ui/icons';
+import { CircleHelp, Icon, ListFilter, Plus, Search, Users, X } from '../ui/icons';
 import { archived } from '../ui/archive';
 import { sessionRef } from '../ui/localSet';
 

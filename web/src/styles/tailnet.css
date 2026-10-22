@@ -23,12 +23,52 @@
 .fd-tailnet p {
   margin: 0;
 }
+/* A switch field: the field grid of the settings (§4.7): the label (200px), then the switch, and
+   the help and the state lines under the switch. The label keeps the switch inside it (its name);
+   the grid puts the text in the label column. */
 .fd-tailnet label.fd-tailnet-switch {
-  display: flex;
+  display: grid;
+  grid-template-columns: 200px auto;
+  column-gap: var(--sp-5);
+  justify-content: start;
   align-items: center;
-  gap: var(--sp-2);
   min-height: var(--ctl-h);
+  color: var(--text);
+  font-size: var(--fs-ui);
   font-weight: 500;
+  line-height: 1.25;
+}
+.fd-tailnet label.fd-tailnet-switch > .fd-switch {
+  grid-row: 1;
+  grid-column: 2;
+}
+.fd-tailnet-auto > :not(label),
+.fd-tailnet-cert > :not(label, h3) {
+  margin-left: calc(200px + var(--sp-5));
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+}
+/* Narrow screens: the label goes above its switch, like the settings fields. */
+@media (max-width: 720px) {
+  .fd-tailnet label.fd-tailnet-switch {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-tailnet label.fd-tailnet-switch > .fd-switch {
+    grid-row: 2;
+    grid-column: 1;
+  }
+  .fd-tailnet-auto > :not(label),
+  .fd-tailnet-cert > :not(label, h3) {
+    margin-left: 0;
+  }
+}
+/* The host and the addresses are code-like values: mono. */
+.fd-tailnet-addr {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
 }
 .fd-tailnet > button {
   justify-self: start;
@@ -41,20 +81,25 @@
   padding-top: var(--sp-3);
   border-top: 1px solid var(--border-soft);
 }
-/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). */
+/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The columns hug their
+   values, 32px apart; an address never breaks. */
 .fd-tailnet-table {
-  width: 100%;
+  justify-self: start;
+  width: auto;
+  min-width: 480px;
   max-width: 100%;
   border-collapse: collapse;
 }
 .fd-tailnet-table th,
 .fd-tailnet-table td {
   height: 36px;
-  padding: var(--sp-1) var(--sp-4) var(--sp-1) 0;
+  padding: var(--sp-1) var(--sp-6) var(--sp-1) 0;
   text-align: left;
   vertical-align: middle;
-  overflow-wrap: anywhere;
   border-bottom: 1px solid var(--border-soft);
+}
+.fd-tailnet-table :is(th, td):last-child {
+  padding-right: 0;
 }
 .fd-tailnet-table th:first-child {
   width: 120px;
@@ -74,9 +119,57 @@
 .fd-tailnet-table td {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 .fd-tailnet-table tbody tr:last-child > * {
   border-bottom: 0;
+}
+/* A phone: each row stacks: its name, then "Board" and "Link" with their addresses. A list of
+   addresses wraps only between two addresses. */
+@media (max-width: 640px) {
+  .fd-tailnet-table,
+  .fd-tailnet-table tbody {
+    display: block;
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+  }
+  .fd-tailnet-table thead {
+    display: none;
+  }
+  .fd-tailnet-table tr {
+    display: grid;
+    gap: var(--sp-1);
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .fd-tailnet-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .fd-tailnet-table th,
+  .fd-tailnet-table td {
+    display: flex;
+    gap: var(--sp-3);
+    width: auto;
+    height: auto;
+    padding: 0;
+    border: 0;
+  }
+  .fd-tailnet-table th:first-child {
+    width: auto;
+  }
+  .fd-tailnet-table td {
+    white-space: normal;
+  }
+  .fd-tailnet-table td::before {
+    content: attr(data-label);
+    flex: none;
+    width: 40px;
+    color: var(--faint);
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+  }
 }
 .fd-fingerprint {
   font-family: var(--font-data);

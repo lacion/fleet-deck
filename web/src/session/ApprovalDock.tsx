@@ -27,7 +27,7 @@ function reasonOf(request: OpenRequest): string | null {
 }
 
 /** The look of an option: the first is the decision primary, a deny is a danger button. */
-function optionClass(option: ApprovalOption, n: number): string | undefined {
+export function optionClass(option: Pick<ApprovalOption, 'kind'>, n: number): string | undefined {
   if (n === 0) return 'fd-decide';
   return option.kind === 'deny' ? 'fd-danger' : undefined;
 }

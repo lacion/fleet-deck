@@ -81,7 +81,9 @@
   margin-right: var(--sp-2);
 }
 
-.fd-plan-meta > :not(.fd-plan-status) + :not(.fd-plan-status)::before {
+.fd-plan-meta
+  > :not(.fd-plan-status):not(.fd-badge)
+  + :not(.fd-plan-status):not(.fd-badge)::before {
   content: "·";
   padding: 0 6px;
   color: var(--faint);
@@ -177,7 +179,9 @@
     column-gap: var(--sp-3);
   }
 
-  .fd-plan-meta > :not(.fd-plan-status) + :not(.fd-plan-status)::before {
+  .fd-plan-meta
+    > :not(.fd-plan-status):not(.fd-badge)
+    + :not(.fd-plan-status):not(.fd-badge)::before {
     content: none;
   }
 

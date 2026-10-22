@@ -216,7 +216,7 @@ describe('the badges of a field', () => {
       { text: 'Applies after a restart' },
       { text: 'Set by the command line (--listen)' },
       {
-        text: 'needs re-auth',
+        text: 'Needs re-auth',
         tone: 'muted',
         title: 'Saving this asks for your password or an elevation code',
       },

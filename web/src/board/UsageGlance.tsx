@@ -39,9 +39,10 @@ export function UsageGlance({
   readonly now?: number | undefined;
 }) {
   const now = useNow(given, 30000);
-  const meters = rateMeters(sessions, stations)
-    .filter((m) => m.usedPercent !== null)
-    .slice(0, SHOWN);
+  const known = rateMeters(sessions, stations).filter((m) => m.usedPercent !== null);
+  const meters = known.slice(0, SHOWN);
+  // The station name tells two accounts apart only when several stations report limits.
+  const manyStations = new Set(known.map((m) => m.stationId)).size > 1;
   const usage = fleetUsage(sessions);
   const totals = [
     { label: 'input tokens', value: usage.input.known, text: compactCount },
@@ -65,7 +66,8 @@ export function UsageGlance({
             return (
               <li key={m.key} className="fd-glance-meter">
                 <span className="fd-glance-name">
-                  {m.label} <span className="fd-glance-scope">{scopeText(m.scope)}</span>
+                  {m.provider} <span className="fd-glance-scope">{scopeText(m.scope)}</span>
+                  {manyStations ? <span className="fd-glance-station"> · {m.station}</span> : null}
                 </span>
                 <span className="fd-glance-pct">{Math.round(used)}%</span>
                 <span

@@ -400,7 +400,8 @@
     padding: 2px 0;
     border: 0;
   }
-  .fd-table td:empty {
+  .fd-table td:empty,
+  .fd-table td[data-label]:has(> .fd-cellbadges:empty) {
     display: none;
   }
   /* A labelled cell is a two-column row: the column name at the left, the value at the right. */

@@ -51,7 +51,7 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   await logIn(page);
   await openMore(page, 'Stations');
   const card = page.locator('[data-station="st-alpha"]');
-  await expect(card).toContainText('Link up');
+  await expect(card).toContainText('online');
   await expect(card).toContainText('0 of 4 sessions');
   await expect(card.locator('.fd-load-bar')).toBeVisible();
   // The version, the ids and the key sit in the Details fold.

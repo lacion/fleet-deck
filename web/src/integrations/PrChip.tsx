@@ -1,6 +1,7 @@
 // R3.6 (DL-164): the chip of a session that has a pull request (a merge request on GitLab). It
 // links to the pull request on the forge.
 import type { DeckSession, PrSummary } from '../gen';
+import { GitPullRequest, Icon } from '../ui/icons';
 import { usePrs, useProjects } from './context';
 import { prOfSession, webUrl } from './model';
 
@@ -36,6 +37,7 @@ export function PrChip({ card }: { readonly card: DeckSession }) {
       target="_blank"
       rel="noopener noreferrer"
     >
+      <Icon of={GitPullRequest} size={12} />
       {mark}
       {pr.number} {prStateText(pr)}
     </a>

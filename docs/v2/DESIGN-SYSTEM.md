@@ -46,6 +46,8 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--pressed-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of a pressed `.fd-seg` segment (light: a white segment with `--shadow-lift` on the track) |
 | `--switch-knob` *(new)* | `var(--text)` (`#E9EEF4`) | `var(--raised)` (`#FFFFFF`) | knob of an off `.fd-switch` (the on knob is `--ink-on`) |
 | `--knob-shadow` *(new)* | `none` | `0 1px 2px rgba(17,24,33,.25)` | shadow of the switch knob |
+| `--selected-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of the selected nav row, sidebar session row or activity channel (`--raised-hi` does not show on the light `--bg` and `--surface`) |
+| `--selected-lift` *(new)* | `none` | `var(--shadow-lift)` | lift of a selected row (light only) |
 
 `.fd-scope-dark` *(new)*: a part that stays dark in every theme (the wall ambient mode). `tokens.css` gives it the dark color block (`:root, .fd-scope-dark`).
 
@@ -169,9 +171,10 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px. `.fd-menu > summary.fd-ghost` *(new)*: a summary that looks like a ghost button (transparent, `--dim`; hover and open `--raised` + `--text`) |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
-| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600 |
+| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600, a sticky 28px header row (icon, mono path, +/− counts; the git plumbing lines are not drawn) with a `--border-soft` rule; with review, two number gutters (old, new; only new on a phone) |
 | `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
-| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free `--border`. Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
+| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free a hollow 1px `--ctl-edge` outline (shape, not color alone). Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
+| `.fd-avatar` *(new)* | the account avatar: 24px circle, `--badge-bg` fill with a 1px inset `--btn-edge` ring, `--text` 11px weight 600 initials |
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
@@ -196,7 +199,7 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 - Title 14px weight 600; the "now" text (current tool icon + name + mono target, or focus line) in `--dim` on the same line after the title, truncated with an ellipsis.
 - Changes: `+142` `--ok`, `−37` `--hazard`, 12px; files count `--faint`.
 - Chips (PR, subagents, project, issue, batch): `.fd-badge` with a Lucide icon.
-- Hover `--raised-hi`. Selected (the open session): `--raised-hi` + 1px `--focus` outline.
+- Hover `--raised-hi`. Selected (the open session): `--raised-hi` + 1px `--focus` outline. A selected needs-you card shows its selection as a 2px inset `--focus` ring inside the `--act-line` outline (fine pointer only, never on the phone), with no tint.
 - **Needs you**: holder `--act`, 1px `--act-line` outline, `--act-glow` glow (breathing), the request text in `--act`, inline action buttons (`.fd-decide` Allow with kbd `a`, Deny ghost danger with kbd `d`, or the question's options).
 - **Ended/lost**: text `--faint`, holder hollow.
 - Below 900px the strip becomes two lines (title line, meta line) and drops the field rules.
@@ -215,6 +218,8 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 
 48px bar (`--header-h`), `--bg`, bottom 1px `--border-soft`: page title (`--fs-page` `.fd-wide`) + one summary sentence in `--dim` (`7 sessions on 3 stations. 2 need you.` with "2 need you" in `--act`), filters as `.fd-seg` at the right, then view options. No boxed toolbars.
 
+Narrow main columns (the fleet home header): under 1100px the search folds to its icon until it has focus or text, and Share board shows its icon only (the text stays as the accessible name); between 841 and 960px the sentence drops "on N stations"; under 840px the controls take a second header row.
+
 ### 4.4 Fleet home
 
 ```
@@ -231,13 +236,13 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 
 - The needs-you requests move from the right rail into a **Needs you panel** at the top of main (`--surface` panel, `--r-panel`, header "Needs you" + count + key hints `[` `]` `a` `d`), each request a needs-you strip with its inline actions. With no request the panel is absent and the header sentence says "All clear."
 - Station groups: a group header (station `.fd-wide` 15px weight 620, platform `--dim`, reach dot + "online"/"offline", `.fd-slots` + "3 of 12" at the right), then strips with 6px gaps. Collapsible.
-- The **ops panel** (right, `--rail-w`, `--surface`) replaces the bottom tab bar: sections Usage (`.fd-meter` per rate limit with percent and reset time, totals in `--fuel`), Conflict radar (file in mono, the sessions), Mail & tasks, and the secondary pages (Activity, Assign) as ghost buttons that open them. Under 1280px the ops panel folds under main.
+- The **ops panel** (right, `--rail-w`, `--surface`) replaces the bottom tab bar: sections Usage (`.fd-meter` per rate limit with percent and reset time, totals in `--fuel`), Conflict radar (file in mono, the sessions), Mail & tasks (the waiting rows; the new-mail form folds under "New mail or task"), and the secondary pages (Activity, Assign) as ghost buttons in a sticky foot that open them. Under 1280px the ops panel folds under main.
 - The conflict radar never says "Conflict radar unavailable" in a banner: an unavailable radar shows a quiet `--faint` line inside its ops section.
 
 ### 4.5 Session
 
 - Header (56px): a strip header — the holder, the callsign cell (`.fd-callsign` 15px over "Sonnet 5.5 · Claude" in `--dim`), the title (17px weight 640), then chips (station with `server`, branch mono with `git-branch`, folder mono with `folder`, mode). Actions at the right: Interrupt, Terminal (ghost buttons with icons), `folder-open`, the session menu `ellipsis`.
-- Tabs: Chat, Changes (count), Files, Artifacts — 36px, the selected one `--text` with a 2px `--text` underline (not yellow).
+- Tabs: Chat, Changes (count), Files, Artifacts — 36px, the selected one `--text` with a 2px `--text` underline (not yellow). The chat Show filter is a small floating pill at the top right of the chat column (the "Jump to latest" look), not a row.
 - Chat column `--chat-w`, centered in the space left of the properties panel.
 - **Properties panel** (right, 280px, `--surface`, collapsible with `panel-right`): Status (glyph + text + since), Station (reach + slots), Branch, Folder, Model, Mode, Changes (+/− and the files), Usage (tokens and cost in `--fuel`), Subagents.
 - Transcript: the user message in a `--raised` bubble, right-aligned, max 75 %. Agent prose plain, 14px/1.6. **Tool calls on a flight path**: a 2px `--border` vertical line at the left of the column; each tool call a 30px row with a 10px node (filled `--ok` ok, ring `--act` waiting, `--hazard` failed), tool icon, tool name weight 600, target mono `--dim`, result at the right in `--faint`. Reasoning collapsed ("Thinking · 12 s").
@@ -245,7 +250,7 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 - Tables: no outer border, header 12px weight 600 `--dim`, rows divided by `--border-soft`.
 - **Approval card**: `--raised`, `--r-panel`, holder `--act` at the left, `--act-line` outline, `--act-glow`, `--shadow-pop`. Header: shield icon + "Permission request" (or "Question", "Plan") weight 600, the tool, the age at the right. The command in a `.fd-code` line, the reason in `--dim`, buttons: `.fd-decide` Allow (kbd `a`), Allow for this session (plain), Deny (`.fd-danger`, kbd `d`).
 - **Composer**: a `--raised` dock, `--r-sheet`, `--shadow-pop`, textarea 2 lines min, toolbar: attach (`paperclip`), the model chip, at the right **Steer now** (ghost, kbd ⌘↵) and **Queue follow-up** (`.fd-primary`, kbd ↵).
-- Terminal dock: `--surface` bar 32px, tabs like the session tabs, the terminal on `--code`.
+- Terminal dock: `--surface` bar 32px, tabs like the session tabs, the terminal on `--code`. With the Properties panel open, the dock stops at the panel and the panel's `--surface` column goes on to the window bottom.
 
 ### 4.6 New session (a sheet, B's modal look, on its own route)
 
@@ -267,13 +272,15 @@ The `#/new` route keeps its URL and its form. It renders a centered **sheet** (m
 
 ### 4.8 Phone (< 640px)
 
-From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar); needs-you cards first (strip + full-width 44px buttons); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
+From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar) on every page with the bottom bar; the page h1 and the New session caption stay only for screen readers, and a page under More shows a "Back to More" chevron in place of the mark; needs-you cards first (strip + full-width 44px buttons); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
 
 ### 4.9 Wall display (`/display`)
 
 The wall keeps its own layout (R13) and uses the same tokens and the strip; type one step larger (`--fs-ui` 15px) for distance reading.
 
 The wall scope (`.fd-wall-root` in `wall.css`) re-declares the size tokens (`--fs-*`, `--sp-*`, `--r-*`, `--ctl-h*`, `--row-h`, `--strip-h`) as multiples of the wall unit `--fd-wall-u` (1px on a 1080p screen at scale 1; `clamp(14px, 100dvh/80, 28px)` × scale / 14). The type is the board scale × 15/13. The fixed-size primitives (`.fd-dot`, `.fd-holder`, `.fd-mark`) zoom by `--fd-wall-k`, which `WallPage` sets. The ambient mode adds `.fd-scope-dark` and stays dark in the light theme.
+
+Tiles fill the tiles area: `tileGrid` picks the columns, and the tile type grows up to 1.5× (`--fd-wall-tile-k`) when there are few tiles; an ultra wall has a unit floor of 16px. Below 640px a portrait wall scrolls, and the needs and activity areas take their content height.
 
 ---
 
@@ -307,4 +314,7 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | `--switch-knob`, `--knob-shadow`; on knob `--ink-on` | the light knob was near-black (`--text`), and the dark on knob was 1.5:1 on `--ok` | every switch |
 | 2026-10-22 | light `--ok` `#0A7048`, `--hazard` `#B52A22`, `--act-line` `#A67C00`; dark `--fuel-bg` `#2A2348` | diff text on its line tint was under 4.5:1; the needs-you outline was under 3:1; the dark meter track did not show on `--surface` | diffs, needs-you strips and cards, usage meters |
 | 2026-10-22 | no `tabular-nums` on the `body` (§2.3) | the tabular figures of Mona Sans draw a slashed zero: prose numbers looked like code | everywhere |
+| 2026-10-22 | `.fd-avatar` | §4.2 and §4.8 ask for a 24px initials avatar and no primitive had it; `--badge-bg` + `--btn-edge` so it shows on the light `--surface` and `--bg` | sidebar footer (account menu), phone top bar |
+| 2026-10-22 | `--selected-bg`, `--selected-lift` | the selected nav or channel row (`--raised-hi`) vanished on the light `--bg` and `--surface`; replaces a `[data-theme=light]` override in views.css | sidebar nav and session rows, activity channels |
+| 2026-10-22 | free `.fd-slots` tick is a hollow `--ctl-edge` outline; the `.fd-diff` file header row moved from chat.css to base.css | used and free slots differed by color alone (WCAG 1.4.1); every diff (chat, review, wall) has the same file header | slot meters (fleet, session properties, stations); every diff |
 | 2026-10-22 | `.fd-diff` grid column; prose links underlined; input focus 2px blue edge; needs-you dot `--act` edge; ended dot `--faint`; muted badge without edge; coarse chips and `.fd-tap` 44px, checkbox and radio 24px | accessibility review: state by fill alone, link by color alone, 16px and 36px targets, glyphs under 3:1 | every diff, prose link, input, status glyph and touch control |

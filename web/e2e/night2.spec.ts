@@ -87,7 +87,7 @@ test('a worktree start sends the branch, the base and the setup command', async 
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByLabel('Workspace').selectOption('worktree');
+  await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('New worktree').click();
   await expect(form.getByRole('textbox', { name: 'Base', exact: true })).toHaveCount(0);
   await form.getByRole('textbox', { name: 'Branch', exact: true }).fill('a..b');
   await expect(form).toContainText('The branch name is not valid.');
@@ -127,7 +127,7 @@ test('the access check of a clone URL shows the hint and what Git said', async (
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByLabel('Workspace').selectOption('clone');
+  await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('Clone repository').click();
   await form.getByLabel('Repository', { exact: true }).fill('git@github.com:me/private.git');
   await form.getByRole('button', { name: 'Check access' }).click();
   await expect(form).toContainText("The station's SSH key has no access.");

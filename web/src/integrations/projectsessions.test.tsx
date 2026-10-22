@@ -195,8 +195,8 @@ describe('grouping by project', () => {
         />,
         projects,
       );
-    expect(home([atlas])).toContain('>Project<');
-    expect(home([])).not.toContain('>Project<');
+    expect(home([atlas])).toContain('>Group: Project<');
+    expect(home([])).not.toContain('>Group: Project<');
   });
 });
 

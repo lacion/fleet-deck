@@ -22,6 +22,10 @@ type Props = {
   /** Browse is off (the board is not live, no drive scope): the page says why. */
   readonly browseDisabled?: boolean;
   readonly placeholder?: string | undefined;
+  /** The path is wrong (for example relative): the input is marked invalid. */
+  readonly invalid?: boolean | undefined;
+  /** The id of the note that says what the path needs. */
+  readonly describedBy?: string | undefined;
   /** The panel is open at the first render (tests). */
   readonly initialOpen?: boolean;
   /** The listing at the first render (tests). */
@@ -47,6 +51,8 @@ export function FolderPicker({
   sessions = [],
   browseDisabled = false,
   placeholder = '/home/me/projects/app',
+  invalid,
+  describedBy,
   initialOpen = false,
   initialListing = null,
 }: Props) {
@@ -120,6 +126,8 @@ export function FolderPicker({
         <input
           type="text"
           aria-label={label}
+          aria-invalid={invalid ? true : undefined}
+          aria-describedby={describedBy}
           value={value}
           spellCheck={false}
           autoComplete="off"

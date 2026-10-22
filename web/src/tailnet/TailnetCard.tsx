@@ -166,7 +166,8 @@ function CardBody({
     <>
       {view.self === undefined ? null : (
         <p>
-          This deck on the tailnet: {view.self.dns_name} ({list(view.self.ips)})
+          This deck on the tailnet: <code className="fd-tailnet-addr">{view.self.dns_name}</code> (
+          <code className="fd-tailnet-addr">{list(view.self.ips)}</code>)
         </p>
       )}
       <table className="fd-tailnet-table">
@@ -180,14 +181,14 @@ function CardBody({
         <tbody>
           <tr>
             <th scope="row">{changes ? 'Now' : 'Listens on'}</th>
-            <td>{list(view.current.listen)}</td>
-            <td>{list(view.current.link_listen)}</td>
+            <td data-label="Board">{list(view.current.listen)}</td>
+            <td data-label="Link">{list(view.current.link_listen)}</td>
           </tr>
           {changes ? (
             <tr>
               <th scope="row">With tailnet</th>
-              <td>{list(view.managed.listen)}</td>
-              <td>{list(view.managed.link_listen)}</td>
+              <td data-label="Board">{list(view.managed.listen)}</td>
+              <td data-label="Link">{list(view.managed.link_listen)}</td>
             </tr>
           ) : null}
         </tbody>

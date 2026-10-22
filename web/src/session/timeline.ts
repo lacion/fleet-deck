@@ -58,6 +58,8 @@ export type Item =
       type: 'approval';
       key: string;
       request_id: string;
+      /** The node of the call that asks (chat pairs the request with its tool row); `null` when unknown. */
+      node_id: string | null;
       title: string;
       details: string | null;
       options: readonly ApprovalOption[];
@@ -344,6 +346,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           type: 'approval' as const,
           key,
           request_id: e.request_id,
+          node_id: e.node_id ?? null,
           title: e.title,
           details: e.details,
           options: e.options,

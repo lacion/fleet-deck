@@ -80,6 +80,8 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
       stationId: 'station-a',
       instance: 'claude',
       label: 'Claude',
+      provider: 'Claude',
+      station: 'Alpha',
       scope,
       usedPercent,
       resetsAt: 60 * 60_000,
@@ -90,6 +92,7 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
       text: '84% of 5-hour window',
       title: '84% of 5-hour window, resets in 1 h',
     });
-    expect(limitBadge(limit(100, 'seven_day'), 0)?.text).toBe('100% of seven day');
+    expect(limitBadge(limit(100, 'seven_day'), 0)?.text).toBe('100% of weekly window');
+    expect(limitBadge(limit(100, 'seven_day_opus'), 0)?.text).toBe('100% of seven day opus');
   });
 });

@@ -162,7 +162,10 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
   ]);
   await mode.selectOption('plan');
   // Another provider resets the mode and offers its own native modes.
-  await form.getByLabel('Provider').selectOption('work');
+  await form
+    .getByRole('radiogroup', { name: 'Provider' })
+    .getByText(/\(work\)/)
+    .click();
   await expect(mode).toHaveValue('');
   await expect(mode.locator('option')).toHaveText(['Station default', ...codexCaps().modes]);
   await mode.selectOption('untrusted/read-only');
@@ -281,7 +284,7 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByLabel('Workspace').selectOption('clone');
+  await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('Clone repository').click();
   await form.getByLabel('Repository', { exact: true }).fill('https://github.com/acme/app.git');
   await form.getByLabel('New directory name').fill('app-copy');
   await form.getByRole('button', { name: 'Start session' }).click();
@@ -378,7 +381,7 @@ test('a batch lists its prompts and counts the sessions on the button', async ({
   await expect(form.getByRole('button', { name: 'Start 2 sessions' })).toBeEnabled();
   expect(await fitsWidth(page)).toBe(true);
   // a clone ignores the batch: the preview and the count go away
-  await form.getByLabel('Workspace').selectOption('clone');
+  await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('Clone repository').click();
   await expect(preview).toHaveCount(0);
   await expect(form.getByRole('button', { name: 'Start session' })).toBeVisible();
 });

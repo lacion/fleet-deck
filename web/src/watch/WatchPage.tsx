@@ -5,8 +5,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename } from '../app/sessions';
 import { repoName, stationName } from '../board/fleet';
-import type { DeckSession, SessionKey, StationView } from '../gen';
+import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
+import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
 import { Eye, Icon, TriangleAlert } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
@@ -43,10 +44,9 @@ type Props = {
   readonly initialFilter?: WatchFilter;
 };
 
-/** The look of an answer (the ApprovalDock rule): the first is the decision primary, a deny is
- * a danger button, the others are plain. */
-const optionClass = (kind: string | undefined, n: number) =>
-  n === 0 ? 'fd-decide fd-sm' : kind === 'deny' ? 'fd-danger fd-sm' : 'fd-sm';
+/** The look of an answer: the ApprovalDock rule, at the small size. */
+const answerClass = (option: ApprovalOption, n: number) =>
+  [approvalClass(option, n), 'fd-sm'].filter(Boolean).join(' ');
 
 const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | undefined =>
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
@@ -185,7 +185,7 @@ export function Tile({
                 <button
                   key={o.option_id}
                   type="button"
-                  className={optionClass(o.kind, n)}
+                  className={answerClass(o, n)}
                   disabled={busy}
                   aria-label={`${o.label}: ${ask.request.title} in ${s.title ?? s.session_id}`}
                   onClick={() => answer(ask.request.request_id, o.option_id)}

@@ -4,7 +4,7 @@ import { type ReactNode, useSyncExternalStore } from 'react';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
-import { costText, rateMeters, WARN_PERCENT } from '../board/usage';
+import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
 import { Icon, ShieldAlert } from '../ui/icons';
@@ -45,13 +45,6 @@ export function compactCount(n: number): string {
   if (n < 1_000_000) return `${Math.round(n / 1000)} k`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')} M`;
 }
-
-/** The window names that the providers report, in the words of the board (digits for numbers). */
-const SCOPE_TEXT: Readonly<Record<string, string>> = {
-  five_hour: '5-hour window',
-  seven_day: 'weekly window',
-  weekly: 'weekly window',
-};
 
 /** `five_hour` → `Claude 5-hour window`, `weekly` → `Claude weekly window`; no provider: `Weekly window`. */
 export function scopeLabel(scope: string, provider: string | null): string {

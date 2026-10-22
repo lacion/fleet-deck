@@ -14,8 +14,7 @@ export type Waiting = {
 };
 
 /** The node id of the call that a request belongs to, when the timeline gives it. */
-const nodeOf = (request: Approval): string | null =>
-  'node_id' in request && typeof request.node_id === 'string' ? request.node_id : null;
+const nodeOf = (request: Approval): string | null => request.node_id;
 
 /** The request belongs to the call: the same node, else the same tool name. */
 function sameCall(tool: Tool, request: Approval): boolean {

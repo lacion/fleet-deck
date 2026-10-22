@@ -1,9 +1,10 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { sessionTitle } from '../app/sessions';
+import { relativeAge, sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
 import { FileText, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { EmptyState, Page } from '../ui/page';
+import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import { liveProposer, type PlanActions, planTitle, proposerNote, STATUS_LABEL } from './plans';
 
@@ -12,6 +13,12 @@ type Assign = (
   target: { stationId: string; sessionId: string },
   text: string,
 ) => Promise<{ ok: boolean; text: string }>;
+
+/** "3 h ago" (DESIGN-SYSTEM §5), "now" under a minute. */
+const ago = (ms: number, now: number) => {
+  const age = relativeAge(ms, now);
+  return age === 'now' ? age : `${age} ago`;
+};
 
 const isLiveSession = (card: DeckSession) =>
   card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
@@ -56,6 +63,7 @@ export function PlanLibrary({
   initial = null,
 }: Props) {
   const [plans, setPlans] = useState<readonly DeckPlan[] | null>(initial);
+  const now = useNow(undefined, 30_000);
   const [archived, setArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -176,8 +184,11 @@ export function PlanLibrary({
                       {STATUS_LABEL[p.status]}
                     </span>
                     <span>{stationName(p.station_id, stations)}</span>
-                    <time dateTime={new Date(p.proposed_at).toISOString()}>
-                      {new Date(p.proposed_at).toLocaleString()}
+                    <time
+                      dateTime={new Date(p.proposed_at).toISOString()}
+                      title={new Date(p.proposed_at).toLocaleString()}
+                    >
+                      {ago(p.proposed_at, now)}
                     </time>
                     <button
                       type="button"

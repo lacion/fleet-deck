@@ -28,6 +28,8 @@
   --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
   --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
   --knob-shadow: none; /* shadow of the switch knob (the light theme only) */
+  --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
+  --selected-lift: none; /* lift of the selected row (the light theme only) */
 
   /* semantic colors: the jersey colors (§2.2) */
   --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
@@ -80,6 +82,8 @@
   --pressed-bg: var(--raised); /* a white segment, lifted, on the --surface track */
   --switch-knob: var(--raised); /* a white knob (#ffffff) */
   --knob-shadow: 0 1px 2px rgba(17, 24, 33, 0.25);
+  --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
+  --selected-lift: var(--shadow-lift);
 
   --act: #8a6400;
   --act-fill: #ffd43b;

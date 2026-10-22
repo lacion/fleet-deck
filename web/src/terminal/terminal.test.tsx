@@ -161,15 +161,18 @@ describe('KeyBar', () => {
         onPaste={() => undefined}
       />,
     );
-    const labels = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    // A key's name: its aria-label (the arrows are icons), else its text.
+    const labels = [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map(
+      (m) => /aria-label="([^"]*)"/.exec(m[1] ?? '')?.[1] ?? m[2],
+    );
     expect(labels).toEqual([
       'Esc',
       'Tab',
       'Ctrl',
-      '↑',
-      '↓',
-      '←',
-      '→',
+      'Up',
+      'Down',
+      'Left',
+      'Right',
       'PgUp',
       'PgDn',
       'Home',

@@ -107,26 +107,33 @@
   display: flex;
   flex-wrap: nowrap;
   gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2) calc(var(--sp-1) + env(safe-area-inset-bottom));
+  /* the right padding lets the last key scroll clear of the edge fade */
+  padding: var(--sp-1) var(--sp-5) calc(var(--sp-1) + env(safe-area-inset-bottom)) var(--sp-2);
   background: var(--surface);
   border-top: 1px solid var(--border-soft);
   overflow-x: auto;
   scrollbar-width: none;
+  /* the keys go on past the right edge: a 24px fade says so (the mask reads only the alpha) */
+  mask-image: linear-gradient(to right, var(--text) calc(100% - var(--sp-5)), transparent);
 }
 .fd-keybar::-webkit-scrollbar {
   display: none;
 }
 .fd-keybar-key {
   flex: 1 0 auto;
-  min-width: 40px;
-  height: 36px;
-  min-height: 36px;
+  min-width: var(--tap-min);
+  height: var(--tap-min);
+  min-height: var(--tap-min);
   padding: 0 var(--sp-3);
   background: var(--raised);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
   font-weight: 500;
+}
+.fd-keybar-key > .fd-icon {
+  width: 16px;
+  height: 16px;
 }
 /* Ctrl is armed: the selected look (a fill step and the blue edge). */
 .fd-keybar-key[aria-pressed="true"],

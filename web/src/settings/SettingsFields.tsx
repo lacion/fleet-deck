@@ -4,6 +4,7 @@
 // of a field ("Applies after a restart") end its hint line, so they add no line of their own.
 import type { DeckSession, MonitorInfo, SettingsView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
+import { Icon, Lock } from '../ui/icons';
 import { Field } from '../ui/page';
 import { FieldEditor, GROUP_KINDS, MONITOR_KEY } from './FieldEditor';
 import { InstancesEditor } from './InstancesEditor';
@@ -32,6 +33,8 @@ function Badges({ items }: { readonly items: ReturnType<typeof badgesOf> }) {
     <span className="fd-set-badges">
       {items.map((b) => (
         <span key={b.text} className="fd-badge" data-tone={b.tone} title={b.title}>
+          {/* the muted badge is the re-auth badge: a lock, then the words */}
+          {b.tone === 'muted' ? <Icon of={Lock} size={12} /> : null}
           {b.text}
         </span>
       ))}

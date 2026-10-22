@@ -591,12 +591,7 @@ export function SpawnForm({
                   describedBy={dirNote === null ? undefined : NEED_ID}
                 />
               ) : (
-                <div
-                  className="fd-fieldwrap"
-                  role="group"
-                  aria-label="Directory"
-                  aria-describedby={dirNote === null ? undefined : NEED_ID}
-                >
+                <div className="fd-fieldwrap" role="group" aria-label="Directory">
                   <FolderPicker
                     stationId={stationId}
                     value={cwdText ?? ''}
@@ -608,6 +603,8 @@ export function SpawnForm({
                     sessions={sessions}
                     label="Directory path"
                     placeholder="Choose a folder"
+                    invalid={cwd !== null && !cwdOk}
+                    describedBy={dirNote === null ? undefined : NEED_ID}
                     browseDisabled={!live || !canDrive}
                     initialOpen={initialListing !== null}
                     initialListing={initialListing}

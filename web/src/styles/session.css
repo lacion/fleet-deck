@@ -552,6 +552,15 @@
   overflow-y: auto;
   background: var(--surface);
 }
+/* With the Properties panel open, the terminal dock stops at the panel, and the panel's --surface
+   column goes on down to the window bottom (§4.5). CSS only: the dock stays where Layout mounts
+   it, so its terminals are never mounted again. */
+.fd-main:has(> .fd-route .fd-pane-split > .fd-props) {
+  background: linear-gradient(to left, var(--surface) 280px, transparent 280px);
+}
+.fd-main:has(> .fd-route .fd-pane-split > .fd-props) > .fd-tdock {
+  margin-right: 280px;
+}
 .fd-props-title {
   margin: 0 0 var(--sp-2);
   font-size: var(--fs-ui);
@@ -1465,6 +1474,15 @@ span.fd-dl-n {
 .fd-turns li .fd-diff {
   max-height: 70vh;
 }
+/* The phone diff bleeds to the edges of its turn row, so its scroll edge is the row edge. The
+   row is a wrapping flex row: the width stays explicit (an auto width would be the max-content
+   width of the diff grid). */
+[data-layout="phone"] .fd-turns li > .fd-diff,
+[data-layout="phone"] .fd-turns li > .fd-diffwrap {
+  width: calc(100% + var(--sp-4) + var(--sp-2));
+  margin-inline: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-2));
+  border-radius: 0;
+}
 .fd-thread-list {
   display: flex;
   flex-direction: column;
@@ -1551,6 +1569,11 @@ span.fd-dl-n {
   font-family: var(--font-ui);
   font-size: var(--fs-ui);
   white-space: normal;
+}
+.fd-diff > .fd-thread,
+.fd-diff > .fd-cedit {
+  /* base.css caps a thread at the visible diff width (100cqi); the margins stay inside it */
+  max-width: calc(100cqi - 3.5em - 12px);
 }
 .fd-thread .fd-cedit {
   margin: 6px 0 0;
@@ -1706,6 +1729,7 @@ button.fd-cchip:hover:not(:disabled) {
 @media (max-width: 600px) {
   .fd-diff > .fd-thread,
   .fd-diff > .fd-cedit {
+    max-width: calc(100cqi - 12px);
     margin-left: 0;
   }
   .fd-cedit-text {

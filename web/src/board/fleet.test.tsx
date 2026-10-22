@@ -167,7 +167,7 @@ describe('station projections', () => {
       '127.0.0.1:443',
       'fingerprint',
       '1970-01-01T00:00:00.000Z',
-      'Unreachable',
+      'offline',
       'Not stored, the station dials this deck',
       'Last seen —',
       '0 sessions',
@@ -185,10 +185,10 @@ describe('station projections', () => {
       />,
     );
     expect(html).toContain(
-      '<span class="fd-station-health fd-health" data-health="up"><span class="fd-dot" data-status="online" aria-hidden="true"></span>Link up</span>',
+      '<span class="fd-station-health fd-health" data-health="up"><span class="fd-dot" data-status="online" aria-hidden="true"></span>online</span>',
     );
     expect(html).toContain(
-      '<span class="fd-station-health fd-health" data-health="down"><span class="fd-dot" data-status="unreachable" aria-hidden="true"></span>Unreachable</span>',
+      '<span class="fd-station-health fd-health" data-health="down"><span class="fd-dot" data-status="unreachable" aria-hidden="true"></span>offline</span>',
     );
     expect(html).toContain('<h3 class="fd-station-name">Alpha</h3>');
     expect(html).not.toContain('fd-badge');
@@ -243,7 +243,7 @@ describe('station projections', () => {
       <StationsPanel stations={[station()]} sessions={[]} freshness="stale" />,
     );
     expect(html).toContain('Stale link status');
-    expect(html).toContain('Last reported: link up.');
+    expect(html).toContain('Last reported: online.');
     expect(html).not.toContain('data-health="up"');
   });
   test('observed providers are scoped, deduplicated and retain different instances and versions', () => {

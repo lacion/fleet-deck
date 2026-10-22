@@ -963,6 +963,11 @@ a.fd-btn {
 .fd-slots > [data-slot="needs_you"] {
   background: var(--act);
 }
+/* A free slot is a hollow outline, so used and free differ by shape, not by color alone (1.4.1). */
+.fd-slots > :not([data-slot]) {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ctl-edge);
+}
 
 /* ── small text ─────────────────────────────────────────────────── */
 .fd-label {
@@ -1175,6 +1180,18 @@ a.fd-btn {
   background: var(--surface);
   color: var(--text);
   font-weight: 600;
+}
+/* The file of a diff is a sticky header row: an icon, the path, the +/- counts. */
+.fd-diff > .fd-dl[data-kind="file"] {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 28px;
+  border-bottom: 1px solid var(--border-soft);
 }
 .fd-dl[data-kind="meta"] {
   color: var(--faint);

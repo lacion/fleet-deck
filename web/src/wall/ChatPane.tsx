@@ -120,7 +120,9 @@ export function ChatPane({
       {unavailable ? (
         <p className="fd-wall-note">Unavailable</p>
       ) : lines.length === 0 ? (
-        <p className="fd-wall-note">{ready ? 'No chat yet.' : 'Loading…'}</p>
+        ready ? null : (
+          <p className="fd-wall-note">Loading…</p>
+        )
       ) : (
         <div className="fd-wall-chatlines">
           {lines.map((l) => (

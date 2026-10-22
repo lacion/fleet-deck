@@ -222,10 +222,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   text-decoration: none;
 }
 
-/* The open page: a --raised-hi fill and a 2px --focus bar at the left edge. */
+/* The open page: the --selected-bg fill (lifted in light) and a 2px --focus bar at the left edge. */
 .fd-sidebar-links a[aria-current="page"],
 .fd-srow[aria-current="page"] {
-  background: var(--raised-hi);
+  background: var(--selected-bg);
+  box-shadow: var(--selected-lift);
   color: var(--text);
 }
 
@@ -392,7 +393,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-srow[aria-current="page"]:hover {
-  background: var(--raised-hi);
+  background: var(--selected-bg);
 }
 
 .fd-srow > .fd-holder {

@@ -125,8 +125,11 @@ describe('usage meters (DL-303)', () => {
       );
     expect(limitChip(meters(79))).toBeNull();
     expect(limitChip(meters(null))).toBeNull();
-    expect(limitChip(meters(85))).toEqual({ tone: 'act', text: 'Limit 85% · five_hour' });
-    expect(limitChip(meters(100))).toEqual({ tone: 'hazard', text: 'Limit reached · five_hour' });
+    expect(limitChip(meters(85))).toEqual({ tone: 'act', text: 'Limit 85% · 5-hour window' });
+    expect(limitChip(meters(100))).toEqual({
+      tone: 'hazard',
+      text: 'Limit reached · 5-hour window',
+    });
   });
 
   test('the fleet home and the session header show the chip (R4.2)', () => {
@@ -137,7 +140,7 @@ describe('usage meters (DL-303)', () => {
     const html = renderToStaticMarkup(
       <App sessions={[hot]} stations={[station()]} freshness="live" />,
     );
-    expect(html).toContain('data-tone="act">Limit 85% · five_hour</span>');
+    expect(html).toContain('data-tone="act">Limit 85% · 5-hour window</span>');
     const cold = card('b', 'working', 'station-a', { rate_limits: [window5h(10)] });
     const calm = renderToStaticMarkup(
       <App sessions={[cold]} stations={[station()]} freshness="live" />,
@@ -159,7 +162,7 @@ describe('usage meters (DL-303)', () => {
     ];
     const meters = rateMeters(sessions, [station()]);
     const work = instanceLimit(meters, 'station-a', 'work');
-    expect(limitSuffix(work, NOW)).toBe('42% of five_hour, resets in 1 h');
+    expect(limitSuffix(work, NOW)).toBe('42% of 5-hour window, resets in 1 h');
     expect(limitSuffix(null, NOW)).toBe('');
     const limits = new Map([
       ['work', work],

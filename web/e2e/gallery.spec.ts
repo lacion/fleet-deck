@@ -44,6 +44,8 @@ async function setUp(page: Page, options: { needsYou?: boolean } = {}) {
 /** The board as the person sees it: fonts loaded, nothing moving, the viewport only. */
 async function shot(page: Page, nn: string, name: string, theme: string) {
   await page.evaluate(() => document.fonts.ready);
+  // No hover from the last click: a hovered row or button would look selected.
+  await page.mouse.move(0, 0);
   await page.screenshot({
     path: `test-results/gallery/${test.info().project.name}-${nn}-${name}-${theme}.png`,
     fullPage: false,

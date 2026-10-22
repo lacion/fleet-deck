@@ -53,8 +53,7 @@ export const NEED_LABEL: Readonly<Record<RequestKind, string>> = {
 
 /** The usage line of the wall: "Claude 5-hour window · 62%" (no raw scope key). */
 export function usageLine(meter: RateMeter): string {
-  const who = meter.instance.charAt(0).toUpperCase() + meter.instance.slice(1);
-  return `${who} ${scopeText(meter.scope)} · ${Math.round(meter.usedPercent ?? 0)}%`;
+  return `${meter.provider} ${scopeText(meter.scope)} · ${Math.round(meter.usedPercent ?? 0)}%`;
 }
 
 /** The requests as the auto-focus function reads them. */

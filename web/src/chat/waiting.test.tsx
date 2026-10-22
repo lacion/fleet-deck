@@ -24,6 +24,7 @@ const request = (state: 'open' | 'answered' = 'open', title = 'Bash'): Item => (
   type: 'approval',
   key: 'a1',
   request_id: 'req-1',
+  node_id: null,
   title,
   details: 'cargo nextest run',
   options: [],

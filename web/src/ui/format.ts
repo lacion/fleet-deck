@@ -15,6 +15,12 @@ export function modelFamily(model: string | null): ModelFamily | null {
  */
 export function shortModel(model: string | null): string {
   if (model === null || model === '') return 'default';
+  // An OpenAI id: "gpt-6.1-codex" → "GPT-6.1 Codex", "gpt-6" → "GPT-6".
+  const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-(\w+))?/i.exec(model);
+  if (gpt) {
+    const tail = gpt[2];
+    return tail ? `GPT-${gpt[1]} ${tail.charAt(0).toUpperCase()}${tail.slice(1)}` : `GPT-${gpt[1]}`;
+  }
   const family = modelFamily(model);
   if (family === null) return model;
   // A `[1m]` suffix is not part of the version (it hid the minor version).

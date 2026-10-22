@@ -1130,7 +1130,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fd-glance-scope {
+.fd-glance-scope,
+.fd-glance-station {
   color: var(--dim);
   font-size: var(--fs-meta);
 }
