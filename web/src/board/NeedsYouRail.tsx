@@ -1,14 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { shouldIgnore } from '../app/keys';
 import { formatHash } from '../app/routes';
-import { relativeAge } from '../app/sessions';
+import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
 import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
 import { shortModel } from '../ui/format';
-import { Bell, BellOff, ChevronRight, Icon, MessageSquare, Shield } from '../ui/icons';
+import {
+  Bell,
+  BellOff,
+  ChevronRight,
+  Folder,
+  GitBranch,
+  Icon,
+  MessageSquare,
+  Shield,
+} from '../ui/icons';
 import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import {
@@ -29,7 +39,21 @@ type Props = {
   readonly variant: 'side' | 'strip';
   readonly freshness: Freshness;
   readonly now?: number | undefined;
+  /**
+   * The header slot of the fleet home: with no request, the side variant puts its notification
+   * switch there (the last item of the page header). `null`: the slot is not mounted yet.
+   * Absent: the switch renders in place.
+   */
+  readonly bellSlot?: HTMLElement | null | undefined;
 };
+
+/** Where a request's session works: its branch, else its folder. */
+function placeOf(card: DeckSession): { readonly text: string; readonly branch: boolean } | null {
+  const s = card.summary;
+  if (s.branch !== null && s.branch !== '') return { text: s.branch, branch: true };
+  if (s.cwd !== null && s.cwd !== '') return { text: basename(s.cwd), branch: false };
+  return null;
+}
 
 /** Open approvals of every session, the oldest first (PLAN §12 needs-you rail). */
 export function NeedsYouRail({
@@ -40,6 +64,7 @@ export function NeedsYouRail({
   variant,
   freshness,
   now: given,
+  bellSlot,
 }: Props) {
   const now = useNow(given, 30000);
   const waiting = sessions
@@ -128,13 +153,16 @@ export function NeedsYouRail({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
   // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
-  // the side variant keeps only the notification switch in the corner.
+  // the side variant keeps only the notification switch, as the last item of the page header.
   if (waiting.length === 0) {
-    return variant === 'side' ? (
+    if (variant !== 'side') return null;
+    const mini = (
       <div className="fd-rail-mini">
         <NotifyToggle on={notify} onChange={setNotify} />
       </div>
-    ) : null;
+    );
+    if (bellSlot === undefined) return mini;
+    return bellSlot === null ? null : createPortal(mini, bellSlot);
   }
   return (
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
@@ -161,6 +189,7 @@ export function NeedsYouRail({
           const busy = pending.has(r.request_id);
           const error = errors[r.request_id];
           const question = r.request_kind === 'question';
+          const place = placeOf(w.card);
           return (
             <article
               key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
@@ -194,7 +223,18 @@ export function NeedsYouRail({
                     {question ? 'Question' : `Permission · ${r.title}`}
                   </span>
                 </span>
-                <span className="fd-q-where">{stationName(w.key.station_id, stations)}</span>
+                <span className="fd-q-where">
+                  {place === null ? null : (
+                    <span
+                      className="fd-q-place"
+                      title={`${place.branch ? 'Branch' : 'Folder'}: ${place.text}`}
+                    >
+                      <Icon of={place.branch ? GitBranch : Folder} size={12} />
+                      <span className="fd-q-path">{place.text}</span>
+                    </span>
+                  )}
+                  <span className="fd-q-station">{stationName(w.key.station_id, stations)}</span>
+                </span>
                 <span className="fd-q-age">{relativeAge(r.requested_at, now)}</span>
               </div>
               <div className="fd-q-body">

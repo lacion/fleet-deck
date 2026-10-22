@@ -16,9 +16,10 @@ import {
 } from '../board/fleet';
 import { record } from '../board/activity';
 import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
-import { HomePanel, type PanelTab } from '../board/HomePanel';
+import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
+import { ListFilter } from '../board/icons';
 import { NeedsYouRail } from '../board/NeedsYouRail';
-import { UsageGlance } from '../board/UsageGlance';
+import { hasGlance, UsageGlance } from '../board/UsageGlance';
 import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
@@ -120,6 +121,25 @@ const PROVIDER_NAME: Record<string, string> = {
   unknown: 'Unknown',
 };
 
+/** The status filter of the page header (DESIGN-SYSTEM §4.3); not stored. */
+export type StatusFilter = 'all' | 'working' | 'idle' | 'needs_you';
+
+const STATUS_FILTERS: readonly { readonly id: StatusFilter; readonly label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'working', label: 'Working' },
+  { id: 'idle', label: 'Idle' },
+  { id: 'needs_you', label: 'Needs you' },
+];
+
+/** True when `s` passes the status filter: Working holds a running, checking or queued
+ * session; Needs you holds a session with an open request. */
+export function statusMatches(s: DeckSession, status: StatusFilter): boolean {
+  if (status === 'all') return true;
+  if (status === 'needs_you') return s.status === 'needs_you' || s.summary.open_requests.length > 0;
+  if (status === 'idle') return s.status === 'idle';
+  return s.status === 'working' || s.status === 'verifying' || s.status === 'queued';
+}
+
 /** One active filter, as the removable chip under the toolbar shows it. */
 export type ActiveFilter = {
   readonly key: 'station' | 'provider' | 'repo' | 'archived';
@@ -174,7 +194,10 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
       onKeyDown={onKeyDown}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="fd-ghost fd-sm">{active > 0 ? `Filters (${active})` : 'Filters'}</summary>
+      <summary className="fd-ghost fd-sm">
+        <Icon of={ListFilter} size={14} />
+        {active > 0 ? `Filters (${active})` : 'Filters'}
+      </summary>
       <div className="fd-menu-body fd-filters" role="group" aria-label="Fleet filters">
         {children}
       </div>
@@ -211,6 +234,8 @@ export function FleetHome({
     setActivity((n) => n + 1);
   }, [sessions]);
   const [filter, setFilter] = useState<FleetFilter>(emptyFilter);
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [bellSlot, setBellSlot] = useState<HTMLElement | null>(null);
   const [picked, setGroup] = useState<Group>(readGroup);
   // DL-176: the grouping "Project" needs the project list of the owner's login.
   const hasProjects = useProjects().length > 0;
@@ -220,10 +245,13 @@ export function FleetHome({
   const { list, problem } = useConflicts(conflicts, fleetVersion(sessions));
   const [openTab, setOpenTab] = useState<PanelTab | null>(null);
   const phone = layout === 'phone';
+  const wide = useWideOps() && !phone;
   const archivedCount = sessions.filter((s) => archivedHidden(s, cleared)).length;
   const showArchived = archivedOn && archivedCount > 0;
   const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
-  const visible = filterFleet(shown, stations, filter);
+  const visible = filterFleet(shown, stations, filter).filter((s) =>
+    statusMatches(s, phone ? 'all' : status),
+  );
   const repos = repoNames(shown);
   const contested = contestedBy(list ?? []);
   const conflictCount = list?.length ?? 0;
@@ -239,6 +267,7 @@ export function FleetHome({
     (s) => s.summary.provider === null || s.summary.provider === 'unknown',
   );
   const filtered =
+    (!phone && status !== 'all') ||
     filter.station !== ALL ||
     filter.provider !== ALL ||
     filter.repo !== ALL ||
@@ -350,8 +379,12 @@ export function FleetHome({
       <div className="fd-home-titles">
         <h1 className="fd-page-title">Fleet</h1>
         <p className="fd-home-counts">
-          <span>{sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}</span> on{' '}
-          <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>.{' '}
+          <span>{sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}</span>
+          <span className="fd-home-on">
+            {' '}
+            on <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>
+          </span>
+          .{' '}
           {needsYou === 0 ? (
             <span className="fd-home-needs" data-clear="true">
               All clear
@@ -381,6 +414,20 @@ export function FleetHome({
           )}
         </p>
       </div>
+      {phone ? null : (
+        <div className="fd-seg fd-home-status" role="group" aria-label="Status">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={status === f.id}
+              onClick={() => setStatus(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="fd-field fd-home-search">
         <Icon of={Search} />
         <input
@@ -399,22 +446,24 @@ export function FleetHome({
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >
-          <option value="station">Station</option>
-          <option value="repo">Repo</option>
-          {hasProjects ? <option value="project">Project</option> : null}
+          <option value="station">Group: Station</option>
+          <option value="repo">Group: Repo</option>
+          {hasProjects ? <option value="project">Group: Project</option> : null}
         </select>
       )}
       {canShare(people) ? (
         <button
           type="button"
-          className="fd-ghost fd-sm"
+          className="fd-ghost fd-sm fd-home-share"
+          title="Share board…"
           onClick={() =>
             openShare({ kind: 'board', target: '', label: 'Every session of the deck' })
           }
         >
-          <Icon of={Users} size={14} /> Share board…
+          <Icon of={Users} size={14} /> <span className="fd-home-share-text">Share board…</span>
         </button>
       ) : null}
+      {phone ? null : <span className="fd-home-bell" ref={setBellSlot} />}
     </header>
   );
   const radar =
@@ -453,6 +502,7 @@ export function FleetHome({
       sessionActions={sessionActions}
       variant={variant}
       freshness={freshness}
+      bellSlot={variant === 'side' ? bellSlot : undefined}
     />
   );
   const empty =
@@ -479,6 +529,19 @@ export function FleetHome({
         </div>
       </div>
     ) : null;
+  // The waiting mail rows of the wide Mail & tasks section (from the card extras).
+  const waitingMail = sessions.flatMap((s) => {
+    const count = cardExtras?.get(sessionRef(s.station_id, s.summary.session_id))?.mail_pending;
+    return count === undefined || count === 0
+      ? []
+      : [
+          {
+            key: sessionRef(s.station_id, s.summary.session_id),
+            name: s.summary.callsign ?? s.summary.title ?? s.summary.session_id,
+            count,
+          },
+        ];
+  });
   const panel = (
     <HomePanel
       hasAssign={assign !== undefined}
@@ -497,10 +560,14 @@ export function FleetHome({
       }
       request={panelRequest}
       onState={setOpenTab}
+      wide={wide}
+      usageShown={wide && hasGlance(visible, stations)}
+      waiting={waitingMail}
     />
   );
-  // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then the tabs. The usage
-  // glance steps aside while the Usage tab is open.
+  // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
+  // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
+  // is open.
   const ops = (
     <div className="fd-ops" data-tab={openTab ?? undefined}>
       {phone || openTab === 'usage' ? null : <UsageGlance sessions={visible} stations={stations} />}
@@ -546,6 +613,7 @@ export function FleetHome({
             contested={contested}
             sessionActions={sessionActions}
             extras={cardExtras}
+            foldEnded
           />
           {empty}
         </div>

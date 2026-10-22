@@ -407,7 +407,7 @@ describe('station projections', () => {
     expect(html).toContain('<span class="fd-strip-place">fd/feature-1</span>');
     // a session without a branch and a directory has no place title and an empty title cell
     expect(html).toMatch(
-      /<span class="fd-strip-title"><span class="fd-strip-text"><\/span><\/span>/,
+      /<span class="fd-strip-title"><span class="fd-dot" data-status="working" aria-hidden="true"><\/span><span class="fd-strip-text"><\/span><\/span>/,
     );
   });
   test('an empty panel reports no paired stations', () => {
