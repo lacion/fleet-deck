@@ -79,7 +79,7 @@
 /* ── a tab ──────────────────────────────────────────────────────── */
 .fd-set-tab {
   display: grid;
-  gap: 20px;
+  gap: var(--sp-5);
   min-width: 0;
   /* room for the save bar so that it never covers the last field */
   padding-bottom: 72px;
@@ -94,7 +94,7 @@
 
 .fd-settings [role="tabpanel"] {
   display: grid;
-  gap: 20px;
+  gap: var(--sp-5);
   min-width: 0;
 }
 .fd-settings [role="tabpanel"] > * {
@@ -109,7 +109,7 @@
   min-width: 0;
 }
 .fd-set-sec ~ .fd-set-sec {
-  padding-top: 20px;
+  padding-top: var(--sp-5);
   border-top: 1px solid var(--border-soft);
 }
 .fd-set-sechead,
@@ -170,9 +170,23 @@ input[data-mono="true"] {
 .fd-set-row > .fd-folder .fd-folder-row {
   align-items: center;
 }
-@media (max-width: 640px) {
-  /* A phone: the path takes line 1; the pin, Browse… and the remove button take line 2, side by
-     side at the left. The picker's boxes give their items to this row. */
+/* A plain button of a folder row (Browse…) sits on the page --bg: it keeps the --btn-edge
+   hairline of the light theme, like Browse… in the New session sheet. */
+.fd-set-grid .fd-folder-row > button:not(.fd-iconbtn) {
+  border-color: var(--btn-edge);
+}
+@media (min-width: 721px) {
+  /* The path input of a folder ends at the 360px edge of the other one-value fields; the pin,
+     Browse… (and in a list the remove button) follow it. */
+  .fd-set-grid .fd-folder-row > input {
+    flex: 0 1 360px;
+    max-width: 360px;
+  }
+}
+@media (max-width: 640px), (min-width: 721px) {
+  /* A folder in a list: the picker's boxes give their items to the row, so that the remove
+     button follows Browse… and the well (when open) takes a line of its own at the full width
+     of the list. */
   .fd-set-row:has(> .fd-folder) {
     flex-wrap: wrap;
     align-items: center;
@@ -181,15 +195,24 @@ input[data-mono="true"] {
   .fd-set-row > .fd-folder > .fd-folder-row {
     display: contents;
   }
-  .fd-set-row > .fd-folder > .fd-folder-row > input {
-    flex: 1 0 100%;
-  }
   .fd-set-row > .fd-folder > :not(.fd-folder-row) {
     flex: 1 0 100%;
     order: 1;
   }
+}
+@media (max-width: 640px) {
+  /* A phone: the path takes line 1; the pin, Browse… and the remove button take line 2, side by
+     side at the left. */
+  .fd-set-row > .fd-folder > .fd-folder-row > input {
+    flex: 1 0 100%;
+  }
   .fd-set-row:has(> .fd-folder) > .fd-set-remove {
     margin-left: 0;
+  }
+  /* The first icon button of line 2 (the pin) gives back the inset of its centered 16px glyph,
+     so that the glyph lines up with the left edge of the path input. */
+  .fd-set-row:has(> .fd-folder) .fd-folder-row > .fd-iconbtn:first-of-type {
+    margin-left: calc((16px - var(--ctl-h)) / 2);
   }
   /* A pair: the first value takes line 1; the second value and the remove button line 2. */
   .fd-set-pair {
