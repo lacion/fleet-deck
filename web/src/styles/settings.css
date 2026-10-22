@@ -54,6 +54,27 @@
     height: var(--tap-min);
   }
 }
+/* A phone: the row scrolls. A fade at the right edge shows that more tabs follow, and a 16px
+   tail (with the gap: 32px, the fade width) lets the last tab scroll clear of the fade. The
+   selected tab scrolls into view (SettingsTabs). */
+@media (max-width: 640px) {
+  .fd-set-tabs {
+    gap: var(--sp-4);
+    /* a mask uses only the alpha: any opaque token works */
+    mask-image: linear-gradient(to right, var(--text) calc(100% - 32px), transparent);
+  }
+  .fd-set-tabs::after {
+    content: "";
+    flex: none;
+    width: var(--sp-4);
+  }
+}
+/* The tab row closes the page header: the header has no rule of its own, so that one rule (the
+   tab row's) separates the head of the page from its panel. */
+.fd-settings > .fd-page-head {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
 
 /* ── a tab ──────────────────────────────────────────────────────── */
 .fd-set-tab {
@@ -144,22 +165,41 @@ input[data-mono="true"] {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+/* A folder row: the picker's own row (path, pin, Browse…) and the remove button share one line
+   and one center line. */
+.fd-set-row > .fd-folder .fd-folder-row {
+  align-items: center;
+}
 @media (max-width: 640px) {
+  /* A phone: the path takes line 1; the pin, Browse… and the remove button take line 2, and the
+     remove button keeps to the right end. The picker's boxes give their items to this row. */
   .fd-set-row:has(> .fd-folder) {
     flex-wrap: wrap;
-    gap: var(--sp-1);
+    align-items: center;
   }
-  .fd-set-row > .fd-folder {
-    flex: 1 1 100%;
+  .fd-set-row > .fd-folder,
+  .fd-set-row > .fd-folder > .fd-folder-row {
+    display: contents;
   }
-  .fd-set-row:has(> .fd-folder) > button {
-    margin-left: -8px;
+  .fd-set-row > .fd-folder > .fd-folder-row > input {
+    flex: 1 0 100%;
   }
+  .fd-set-row > .fd-folder > :not(.fd-folder-row) {
+    flex: 1 0 100%;
+    order: 1;
+  }
+  .fd-set-row:has(> .fd-folder) > .fd-set-remove {
+    margin-left: auto;
+  }
+  /* A pair: the first value takes line 1; the second value and the remove button line 2. */
   .fd-set-pair {
     flex-wrap: wrap;
   }
-  .fd-set-pair > input {
+  .fd-set-pair > input:first-child {
     flex: 1 1 100%;
+  }
+  .fd-set-pair > input:nth-child(2) {
+    flex: 1 1 0;
   }
 }
 
@@ -226,11 +266,18 @@ input[data-mono="true"] {
   font-size: var(--fs-meta);
   line-height: 1.45;
 }
-.fd-set-badges {
+/* The badges end the hint line, 8px after the help text (no line of their own). When the help
+   fills the line, they start the next line at the left edge. */
+.fd-set-grid .fd-fieldhint:has(> .fd-set-badges) {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+}
+.fd-set-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
   gap: var(--sp-1);
-  margin-top: var(--sp-1);
 }
 .fd-set-tab .fd-fieldwrap {
   position: relative;

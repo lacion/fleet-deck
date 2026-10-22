@@ -1,6 +1,7 @@
 // DL-172: the sections and fields of a settings view. It shows the values it is given; the tab
 // keeps the edits and the state. DESIGN-SYSTEM §4.7: each group is a section with a heading and no
-// box; its fields sit in a two-column grid (the label, then the control and its hint).
+// box; its fields sit in a two-column grid (the label, then the control and its hint). The badges
+// of a field ("Applies after a restart") end its hint line, so they add no line of their own.
 import type { DeckSession, MonitorInfo, SettingsView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Field } from '../ui/page';
@@ -25,6 +26,7 @@ export type FieldsProps = {
   readonly onSecret: (instanceId: string, name: string | null) => void;
 };
 
+/** The badges of a field, at the end of its hint. */
 function Badges({ items }: { readonly items: ReturnType<typeof badgesOf> }) {
   return items.length === 0 ? null : (
     <span className="fd-set-badges">
