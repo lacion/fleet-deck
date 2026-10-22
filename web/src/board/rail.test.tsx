@@ -81,6 +81,30 @@ describe('needs-you rail', () => {
     expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
     expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
     expect(html).toMatch(/Deny<span class="fd-kbd">d<\/span>/);
+    // The legend names the number key of the middle option.
+    expect(html).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span> Option</span>',
+    );
+  });
+
+  test('the number legend shows only with more than two options, and names the range', () => {
+    expect(rail(request())).not.toContain('data-keys="number"');
+    const four = rail(
+      request({
+        options: ['a', 'b', 'c', 'd'].map((id) => ({ option_id: id, label: id.toUpperCase() })),
+      }),
+    );
+    expect(four).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span>–<span class="fd-kbd">3</span> Option</span>',
+    );
+    // An unanswerable request has no key hint, so no legend.
+    const open = rail(
+      request({
+        options: ['a', 'b', 'c'].map((id) => ({ option_id: id, label: id })),
+      }),
+      null,
+    );
+    expect(open).not.toContain('fd-rail-keys');
   });
 
   test('a single option is hinted with a, and only the first of two requests is selected', () => {
@@ -230,6 +254,18 @@ describe('needs-you rail', () => {
       />,
     );
     expect(strip).toBe('');
+    // With the header slot of the phone, the strip variant keeps the switch there too.
+    const phone = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="strip"
+        freshness="live"
+        onOpen={() => {}}
+        bellSlot={null}
+      />,
+    );
+    expect(phone).toBe('');
   });
 
   test('the where cell shows the branch over the station, and the bell goes to the header slot', () => {

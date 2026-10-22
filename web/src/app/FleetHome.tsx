@@ -481,7 +481,8 @@ export function FleetHome({
           <Icon of={Users} size={14} /> <span className="fd-home-share-text">Share board…</span>
         </button>
       ) : null}
-      {phone ? null : <span className="fd-home-bell" ref={setBellSlot} />}
+      {/* With no request the Needs you panel is absent: its notification switch moves here. */}
+      <span className="fd-home-bell" ref={setBellSlot} />
     </header>
   );
   const radar =
@@ -520,7 +521,7 @@ export function FleetHome({
       sessionActions={sessionActions}
       variant={variant}
       freshness={freshness}
-      bellSlot={variant === 'side' ? bellSlot : undefined}
+      bellSlot={bellSlot}
     />
   );
   const empty =
@@ -584,11 +585,11 @@ export function FleetHome({
   );
   // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
   // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
-  // is open.
+  // is open. The phone shows the radar under its header instead, above the lanes.
   const ops = (
     <div className="fd-ops" data-tab={openTab ?? undefined}>
       {phone || openTab === 'usage' ? null : <UsageGlance sessions={scoped} stations={stations} />}
-      {radar}
+      {phone ? null : radar}
       {panel}
     </div>
   );
@@ -598,6 +599,7 @@ export function FleetHome({
     return (
       <div className="fd-home" data-layout="phone">
         {header}
+        {radar}
         {activeRow}
         {rail('strip')}
         {empty ?? (
@@ -609,6 +611,7 @@ export function FleetHome({
             contested={contested}
             sessionActions={sessionActions}
             extras={cardExtras}
+            foldEnded
           />
         )}
         {ops}

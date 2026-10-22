@@ -43,6 +43,18 @@ export function basename(path: string): string {
 }
 
 const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
+
+/** When a session started to wait: its oldest open request, else its last update. */
+const waitingSince = (card: DeckSession): number =>
+  card.summary.open_requests.reduce(
+    (oldest, r) => Math.min(oldest, r.requested_at),
+    card.summary.open_requests[0]?.requested_at ?? card.summary.updated_at,
+  );
+
+/** The order of the needs-you sessions: the longest wait first, as the Needs you panel of the
+ * fleet home lists its requests (NeedsYouRail). */
+const byLongestWait = (a: DeckSession, b: DeckSession) =>
+  waitingSince(a) - waitingSince(b) || byNewest(a, b);
 const rank = (card: DeckSession) => {
   const at = LIVE_ORDER.indexOf(card.status);
   return at < 0 ? LIVE_ORDER.length : at;
@@ -148,7 +160,7 @@ export function sidebarModel(
   return {
     needs: shown
       .filter((c) => c.status === 'needs_you')
-      .sort((a, b) => starFirst(a, b) || byNewest(a, b)),
+      .sort((a, b) => starFirst(a, b) || byLongestWait(a, b)),
     groups,
     archived: matching.filter((c) => isHidden(c, sets.archived)).sort(byNewest),
   };
@@ -164,17 +176,20 @@ export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
   ];
 }
 
-/** Sessions for the palette: needs you first, then the newest; at most `max`. */
+/** Sessions for the palette: needs you first (the longest wait first, as the Needs you panel),
+ * then the newest; at most `max`. */
 export function paletteMatches(
   sessions: readonly DeckSession[],
   query: string,
   max = 12,
 ): readonly DeckSession[] {
+  const needs = (c: DeckSession) => c.status === 'needs_you';
   return sessions
     .filter((c) => matchesQuery(c, query))
     .sort(
       (a, b) =>
-        Number(b.status === 'needs_you') - Number(a.status === 'needs_you') || byNewest(a, b),
+        Number(needs(b)) - Number(needs(a)) ||
+        (needs(a) && needs(b) ? byLongestWait(a, b) : byNewest(a, b)),
     )
     .slice(0, max);
 }

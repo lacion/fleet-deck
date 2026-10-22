@@ -40,8 +40,10 @@ type Props = {
   /** Section layout: each new value opens the "New mail or task" fold and focuses its text. */
   readonly composeSeq?: number | undefined;
   /**
-   * Each new value loads the tasks and the grants again. The section stays mounted while the home
-   * is open, so it follows the fleet (`fleetVersion`) to show the new task and grant states.
+   * A new value loads the tasks and the grants again, at most once in `LIST_MS` (a trailing load
+   * takes the last change). The section stays mounted while the home is open, so it follows the
+   * fleet (`fleetVersion`, which changes with every event of a session) to show the new task and
+   * grant states.
    */
   readonly version?: unknown;
 };
@@ -82,6 +84,53 @@ export function loadLists(
   });
   return () => {
     current = false;
+  };
+}
+
+/** The shortest time between two loads of the lists for a `version` change. */
+export const LIST_MS = 10_000;
+
+/** The clock of a `throttle`; tests give a fake one. */
+export type ThrottleClock = {
+  readonly now: () => number;
+  readonly later: (run: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  readonly cancel: (timer: ReturnType<typeof setTimeout>) => void;
+};
+
+const realClock: ThrottleClock = {
+  now: () => Date.now(),
+  later: (run, ms) => setTimeout(run, ms),
+  cancel: (timer) => clearTimeout(timer),
+};
+
+/**
+ * Runs `run` at most once in `ms`: a `poke` runs it at once when `ms` passed since the last run,
+ * else it schedules one trailing run at the end of the wait (more pokes in the wait add nothing).
+ * `stop` drops a scheduled run.
+ */
+export function throttle(
+  run: () => void,
+  ms: number,
+  clock: ThrottleClock = realClock,
+): { readonly poke: () => void; readonly stop: () => void } {
+  let last = Number.NEGATIVE_INFINITY;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const fire = () => {
+    timer = undefined;
+    last = clock.now();
+    run();
+  };
+  return {
+    poke: () => {
+      if (timer !== undefined) return;
+      const wait = last + ms - clock.now();
+      if (wait <= 0) fire();
+      else timer = clock.later(fire, wait);
+    },
+    stop: () => {
+      if (timer !== undefined) clock.cancel(timer);
+      timer = undefined;
+    },
   };
 }
 
@@ -128,10 +177,29 @@ export function FleetPanel({
     composeFocus.current = false;
     textRef.current?.focus();
   }, [composeOpen, composeSeq]);
-  useEffect(
-    () => (actions === undefined ? undefined : loadLists(actions, setTasks, setGrants)),
-    [actions, version],
-  );
+  // The lists load at mount (and for new actions), then again for a new `version`, throttled.
+  const lists = useRef<{ readonly poke: () => void } | null>(null);
+  const listsVersion = useRef(version);
+  useEffect(() => {
+    if (actions === undefined) return undefined;
+    let drop = () => {};
+    const gate = throttle(() => {
+      drop();
+      drop = loadLists(actions, setTasks, setGrants);
+    }, LIST_MS);
+    lists.current = gate;
+    gate.poke();
+    return () => {
+      gate.stop();
+      drop();
+      lists.current = null;
+    };
+  }, [actions]);
+  useEffect(() => {
+    if (Object.is(version, listsVersion.current)) return;
+    listsVersion.current = version;
+    lists.current?.poke();
+  }, [version]);
   if (actions === undefined) return null;
   const chosen = live.find((s) => keyOf(s) === target) ?? live[0];
   const reachable = sessions.filter((s) => !NOT_LIVE.includes(s.status));

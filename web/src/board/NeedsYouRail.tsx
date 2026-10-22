@@ -40,9 +40,10 @@ type Props = {
   readonly freshness: Freshness;
   readonly now?: number | undefined;
   /**
-   * The header slot of the fleet home: with no request, the side variant puts its notification
-   * switch there (the last item of the page header). `null`: the slot is not mounted yet.
-   * Absent: the switch renders in place.
+   * The header slot of the fleet home: with no request, the rail puts its notification switch
+   * there (the last item of the page header, on the desktop and the phone). `null`: the slot is
+   * not mounted yet. Absent: the side variant renders the switch in place, the strip variant
+   * renders nothing.
    */
   readonly bellSlot?: HTMLElement | null | undefined;
 };
@@ -118,6 +119,15 @@ export function NeedsYouRail({
     );
   };
   const anyAnswerable = selected >= 0;
+  // The number keys of the middle options (`hint`): the legend names them while an answerable
+  // request has more than two options.
+  const numberTop = Math.min(
+    9,
+    Math.max(
+      0,
+      ...waiting.filter((_, i) => answerable[i]).map((w) => w.request.options.length - 1),
+    ),
+  );
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     // Help, the palette and the drawer are modal: the rail keys do nothing behind them.
@@ -145,9 +155,9 @@ export function NeedsYouRail({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
   // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
-  // the side variant keeps only the notification switch, as the last item of the page header.
+  // the rail keeps only the notification switch, as the last item of the page header.
   if (waiting.length === 0) {
-    if (variant !== 'side') return null;
+    if (variant !== 'side' && bellSlot === undefined) return null;
     const mini = (
       <div className="fd-rail-mini">
         <NotifyToggle on={notify} onChange={setNotify} />
@@ -170,6 +180,17 @@ export function NeedsYouRail({
             <span className="fd-kbd">[</span>
             <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> First{' '}
             <span className="fd-kbd">d</span> Last
+          </span>
+        ) : null}
+        {anyAnswerable && numberTop >= 2 ? (
+          <span className="fd-rail-keys" data-keys="number">
+            <span className="fd-kbd">2</span>
+            {numberTop > 2 ? (
+              <>
+                –<span className="fd-kbd">{numberTop}</span>
+              </>
+            ) : null}{' '}
+            Option
           </span>
         ) : null}
         <NotifyToggle on={notify} onChange={setNotify} />

@@ -118,6 +118,16 @@ export function FleetStrip({
   const mail = extra?.mail_pending ?? 0;
   const title = s.title ?? '';
   const changed = total !== undefined && hasChanges(total) ? total : null;
+  // A lane by repo or project names the station of each strip: the second line of the where
+  // cell, under the branch (as the Needs you panel), with the link chips after it.
+  const station = showStation ? stationName(card.station_id, stations) : null;
+  const branchLine =
+    place === null ? null : (
+      <>
+        <Icon of={place.branch ? GitBranch : Folder} size={12} />
+        <span className="fd-strip-path">{place.text}</span>
+      </>
+    );
   const links: ReactNode[] = [
     <CompareChip key="compare" card={card} count={batchCount} />,
     <IssueChip key="issue" summary={s} projects={projects} station={card.station_id} />,
@@ -140,6 +150,7 @@ export function FleetStrip({
         data-contested={contested === undefined ? undefined : 'true'}
         data-archived={cleared ? 'true' : undefined}
         data-nochanges={changed === null ? 'true' : undefined}
+        data-showstation={station === null ? undefined : 'true'}
       >
         <span className="fd-holder" data-status={card.status} aria-hidden="true" />
         <span className="fd-strip-id">
@@ -156,9 +167,6 @@ export function FleetStrip({
             title={digest === null ? undefined : `Summary: ${digest}`}
           >
             <span className="fd-dot" data-status={card.status} aria-hidden="true" />
-            {showStation ? (
-              <span className="fd-strip-station">{stationName(card.station_id, stations)}</span>
-            ) : null}
             <span className="fd-strip-text">
               {title !== '' ? (
                 title
@@ -233,14 +241,16 @@ export function FleetStrip({
           {cleared ? <Ico kind="archived" icon={Archive} title="Archived" /> : null}
           {freshness === 'stale' ? <Ico kind="stale" icon={CloudOff} title="Stale" /> : null}
         </span>
-        <span className="fd-strip-where" title={place?.title}>
-          {place === null ? null : (
-            <>
-              <Icon of={place.branch ? GitBranch : Folder} size={12} />
-              <span className="fd-strip-path">{place.text}</span>
-            </>
-          )}
-        </span>
+        {station === null ? (
+          <span className="fd-strip-where" title={place?.title}>
+            {branchLine}
+          </span>
+        ) : (
+          <span className="fd-strip-where" title={place?.title} data-station="true">
+            {place === null ? null : <span className="fd-strip-wline">{branchLine}</span>}
+            <span className="fd-strip-station">{station}</span>
+          </span>
+        )}
         {changed === null ? null : (
           <span className="fd-strip-changes">
             <span className="fd-strip-diff" title="Changed since the session started">
@@ -256,7 +266,16 @@ export function FleetStrip({
           {relativeAge(s.updated_at, now)}
         </span>
       </a>
-      <span className="fd-strip-links">{links}</span>
+      <span className="fd-strip-links">
+        {station === null ? null : (
+          // The chips start after the station name of the where cell: an invisible copy of the
+          // name keeps its width (the visible name is in the link, for its accessible name).
+          <span className="fd-strip-spacer" aria-hidden="true">
+            {station}
+          </span>
+        )}
+        {links}
+      </span>
     </li>
   );
 }
