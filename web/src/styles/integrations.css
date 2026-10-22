@@ -13,6 +13,12 @@
   margin: 0;
 }
 
+/* The projects table: the cells share one baseline (the 12px mono folder sits on the line of
+   the 13px name and station). */
+.fd-int-projects td {
+  vertical-align: baseline;
+}
+
 /* The projects table: the name is the row's title, not a blue link. */
 .fd-int-projects .fd-cell-name a {
   color: var(--text);
