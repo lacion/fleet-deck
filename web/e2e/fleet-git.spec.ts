@@ -397,8 +397,8 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   const alpha = page.locator('[data-station="st-alpha"]');
   const bravo = page.locator('[data-station="st-bravo"]');
   const old = page.locator('[data-station="st-old"]');
-  await expect(page.getByText('Config reference: Alpha')).toBeVisible();
-  await expect(alpha.getByText('Linux · x86_64 · gpu, always_on')).toBeVisible();
+  await expect(page.getByText('Configs vs Alpha')).toBeVisible();
+  await expect(alpha.getByText('Linux · x86_64 · gpu · always_on')).toBeVisible();
   await expect(bravo.getByText('macOS · aarch64 · on battery')).toBeVisible();
   await expect(alpha.getByText('Config: Reference')).toBeVisible();
   await expect(bravo.getByText('Config: Differs: agents, skills')).toBeVisible();
@@ -418,7 +418,7 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   // "Use as config reference" in the menu of another station.
   await bravo.getByLabel('Station actions').click();
   await bravo.getByRole('button', { name: 'Use as config reference' }).click();
-  await expect(page.getByText('Config reference: Bravo')).toBeVisible();
+  await expect(page.getByText('Configs vs Bravo')).toBeVisible();
   expect(prefs.references).toEqual([{ station: 'st-bravo' }]);
   await expect(bravo.getByText('Config: Reference')).toBeVisible();
   await expect(alpha.getByText('Config: Differs: agents, skills')).toBeVisible();
@@ -431,7 +431,7 @@ test('the Stations page asks for a config reference when the deck has none', asy
   await installFleetGitPlacement(page, deck);
   await logIn(page);
   await openMore(page, 'Stations');
-  await expect(page.getByText('Config reference…')).toBeVisible();
+  await expect(page.getByText('Compare configs')).toBeVisible();
 });
 
 test('the Stations page shows the error when the deck refuses a config reference', async ({
@@ -457,7 +457,7 @@ test('the Stations page shows the error when the deck refuses a config reference
   await bravo.getByLabel('Station actions').click();
   await bravo.getByRole('button', { name: 'Use as config reference' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'Unknown station.' })).toBeVisible();
-  await expect(page.getByText('Config reference: Alpha')).toBeVisible();
+  await expect(page.getByText('Configs vs Alpha')).toBeVisible();
 });
 
 test('the session Artifacts link opens the folder, or shows the address', async ({ page }) => {

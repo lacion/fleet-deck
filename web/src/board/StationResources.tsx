@@ -2,8 +2,6 @@ import { formatHash } from '../app/routes';
 import type { DeckSession, StationResources as Resources } from '../gen';
 import {
   cpuBusy,
-  gb,
-  memorySize,
   isLow,
   LOW_DISK_BYTES,
   LOW_MEMORY_BYTES,
@@ -11,19 +9,44 @@ import {
   usedShare,
 } from './resources';
 
+/** `46.80` → `46.8`, `2.00` → `2`: a number with at most `digits` decimals, no trailing zeros. */
+const trimmed = (n: number, digits: number): string => String(Number(n.toFixed(digits)));
+
+/**
+ * A size in decimal units for a station card: whole MB under 1 GB (`340 MB`), one decimal GB under
+ * 100 GB (`46.8 GB`, `6 GB`), whole GB under 1 TB (`864 GB`), then TB with up to two decimals
+ * (`1.08 TB`, `2 TB`). The limits sit where the rounding would reach the next step.
+ */
+export function bytesText(bytes: number): string {
+  if (bytes < 999.5e6) return `${Math.round(bytes / 1e6)} MB`;
+  if (bytes < 99.95e9) return `${trimmed(bytes / 1e9, 1)} GB`;
+  if (bytes < 999.5e9) return `${Math.round(bytes / 1e9)} GB`;
+  return `${trimmed(bytes / 1e12, 2)} TB`;
+}
+
+/**
+ * One resource row: the label, a bar of the used share, the used amount of the total in the text
+ * color, then the quiet aside (what is free, the cores). The aside never breaks inside; a narrow
+ * card puts it on a line of its own without the separator (stations.css).
+ */
 function Row({
+  label,
   share,
   low,
   title,
-  children,
+  value,
+  aside,
 }: {
+  readonly label: string;
   readonly share: number;
   readonly low: boolean;
   readonly title?: string | undefined;
-  readonly children: string;
+  readonly value: string;
+  readonly aside: string;
 }) {
   return (
     <li data-low={low ? '' : undefined} title={title}>
+      <span className="fd-station-res-label">{label}</span>
       <span
         className="fd-meter"
         data-tone="neutral"
@@ -32,42 +55,54 @@ function Row({
       >
         <span style={{ width: `${Math.round(share * 100)}%` }} />
       </span>
-      <span>{children}</span>
+      <span className="fd-station-res-value">
+        {/* The space is outside the aside: the line may break there, never inside the aside. */}
+        {`${value} `}
+        <span className="fd-station-res-aside">
+          <span className="fd-station-res-sep">· </span>
+          {aside}
+        </span>
+      </span>
     </li>
   );
 }
 
-/**
- * One rule for every resource row: the bar draws the used share, and the text names the used
- * amount first, then the total and what is free.
- */
-const usedText = (label: string, free: number, total: number): string =>
-  `${label}: ${gb(Math.max(0, total - free))} used of ${gb(total)} · ${gb(free)} free`;
+/** The used part of a total, then the total: `864 GB of 1.08 TB`. */
+const usedOf = (free: number, total: number): string =>
+  `${bytesText(Math.max(0, total - free))} of ${bytesText(total)}`;
 
 /** The most sessions in the busiest list (R13 §10). */
 const BUSIEST = 5;
 
-/** The busiest sessions of a station, as the station sorted them (R13 §10). */
-function Busiest({
+/**
+ * The busiest sessions of a station, as the station sorted them (R13 §10): a property of its own
+ * on the card. The name is the callsign (`.fd-callsign`, §2.3), else the title, else 8 characters
+ * of the id; the CPU and the memory carry their unit.
+ */
+export function StationBusiest({
   resources,
   station,
   sessions,
 }: {
-  readonly resources: Resources;
+  readonly resources: Resources | undefined;
+  /** The station id, for the links. */
   readonly station: string;
+  /** The station's own session cards, for the names. */
   readonly sessions: readonly DeckSession[];
 }) {
-  if (resources.sessions.length === 0) return null;
+  if (resources === undefined || resources.sessions.length === 0) return null;
   return (
-    <>
-      <p className="fd-note fd-station-res-head">Busiest sessions</p>
-      <ul className="fd-station-res fd-station-busy" aria-label="Busiest sessions">
+    <div className="fd-station-prop" data-prop="busiest">
+      <h4 className="fd-station-prop-label">Busiest sessions</h4>
+      <ul className="fd-station-busy" aria-label="Busiest sessions">
         {resources.sessions.slice(0, BUSIEST).map((load) => {
           const summary = sessions.find((c) => c.summary.session_id === load.session_id)?.summary;
-          const name = summary?.callsign ?? summary?.title ?? load.session_id.slice(0, 8);
+          const callsign = summary?.callsign ?? null;
+          const name = callsign ?? summary?.title ?? load.session_id.slice(0, 8);
           return (
             <li key={load.session_id} data-session={load.session_id}>
               <a
+                className={callsign === null ? undefined : 'fd-callsign'}
                 href={formatHash({
                   name: 'session',
                   station,
@@ -77,61 +112,56 @@ function Busiest({
               >
                 {name}
               </a>
-              <span>{load.cpu_pct === null ? '—' : `${load.cpu_pct}%`}</span>
-              <span>{load.rss_bytes === null ? '—' : memorySize(load.rss_bytes)}</span>
+              <span>{load.cpu_pct === null ? '—' : `${load.cpu_pct}% CPU`}</span>
+              <span>{load.rss_bytes === null ? '—' : bytesText(load.rss_bytes)}</span>
             </li>
           );
         })}
       </ul>
-    </>
+    </div>
   );
 }
 
 /** The disk, memory and CPU that a station reports, with a note when one is low (DL-193). */
-export function StationResources({
-  resources,
-  station = '',
-  sessions = [],
-}: {
-  readonly resources: Resources | undefined;
-  /** The station id, for the links of the busiest sessions. */
-  readonly station?: string | undefined;
-  /** The station's own session cards, for the names of the busiest sessions. */
-  readonly sessions?: readonly DeckSession[] | undefined;
-}) {
+export function StationResources({ resources }: { readonly resources: Resources | undefined }) {
   if (resources === undefined) return null;
   const { disks, memory, cpu } = resources;
   const warned = resourceWarnings(resources).length > 0;
   return (
-    <div className="fd-station-prop">
+    <div className="fd-station-prop" data-prop="resources">
       <h4 className="fd-station-prop-label">Resources</h4>
       <div className="fd-station-prop-body">
         <ul className="fd-station-res" aria-label="Resources">
           {disks.map((d) => (
             <Row
               key={`${d.label}\n${d.path}`}
+              label={d.label}
               share={usedShare(d.total_bytes - d.free_bytes, d.total_bytes)}
               low={isLow(d.free_bytes, d.total_bytes, LOW_DISK_BYTES)}
               title={d.path}
-            >
-              {usedText(d.label, d.free_bytes, d.total_bytes)}
-            </Row>
+              value={usedOf(d.free_bytes, d.total_bytes)}
+              aside={`${bytesText(d.free_bytes)} free`}
+            />
           ))}
           {memory === null ? null : (
             <Row
+              label="Memory"
               share={usedShare(memory.total_bytes - memory.available_bytes, memory.total_bytes)}
               low={isLow(memory.available_bytes, memory.total_bytes, LOW_MEMORY_BYTES)}
-            >
-              {usedText('Memory', memory.available_bytes, memory.total_bytes)}
-            </Row>
+              value={usedOf(memory.available_bytes, memory.total_bytes)}
+              aside={`${bytesText(memory.available_bytes)} free`}
+            />
           )}
           {cpu === null ? null : (
-            <Row share={usedShare(cpu.load5_x100, cpu.cores * 100)} low={cpuBusy(cpu)}>
-              {`CPU: load ${(cpu.load5_x100 / 100).toFixed(1)} on ${cpu.cores} cores`}
-            </Row>
+            <Row
+              label="CPU"
+              share={usedShare(cpu.load5_x100, cpu.cores * 100)}
+              low={cpuBusy(cpu)}
+              value={`load ${(cpu.load5_x100 / 100).toFixed(1)}`}
+              aside={cpu.cores === 1 ? '1 core' : `${cpu.cores} cores`}
+            />
           )}
         </ul>
-        <Busiest resources={resources} station={station} sessions={sessions} />
         {warned ? (
           <p className="fd-note fd-res-warn" role="status">
             Low resources. New sessions can be slow or fail here.

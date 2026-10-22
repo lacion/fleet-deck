@@ -1,5 +1,6 @@
 // FG-12 (design §15.7): the Taildrive part of a station card: the shares, the warning of an exposed
-// share, and the notes of a share that is missing, ambiguous or not fully checked.
+// share, and the notes of a share that is missing, ambiguous or not fully checked; and the
+// Taildrive fact of the Details fold when there is no share list.
 import type { Exposure, StationInfo, TaildriveShare } from '../gen';
 
 /** What an exposure kind names in the warning (design §15.7). */
@@ -52,26 +53,46 @@ export function shareNotes(share: TaildriveShare): { text: string; warn: boolean
   return notes;
 }
 
-/** The Taildrive section; an older station sends no `taildrive`: nothing. */
-export function StationTaildrive({ taildrive }: { readonly taildrive: StationInfo['taildrive'] }) {
+/**
+ * The Taildrive fact of the Details fold when the card body has no share list: a share list that
+ * cannot be read, no Taildrive on the station, or no share. The station's own reason (a tool
+ * error such as "tailscale drive list failed (exit 1)") is only the tooltip. An older station
+ * sends no `taildrive`, and a station with shares lists them in the body: no fact.
+ */
+export function taildriveFact(
+  taildrive: StationInfo['taildrive'],
+): { readonly text: string; readonly reason?: string | undefined } | null {
   if (taildrive === undefined) return null;
+  if (taildrive.state === 'unavailable') return { text: 'Not available', reason: taildrive.reason };
   if (taildrive.state === 'unknown') {
-    return (
-      <p className="fd-note fd-station-prop-note">
-        Taildrive: Fleet Deck cannot read the share list.
-      </p>
-    );
+    return { text: 'Share list not readable', reason: taildrive.reason };
   }
-  if (taildrive.state === 'unavailable') {
-    return (
-      <p className="fd-note fd-station-prop-note">
-        Taildrive is not available{taildrive.reason === undefined ? '' : `: ${taildrive.reason}`}.
-      </p>
-    );
-  }
-  if (taildrive.state !== 'ok') return null;
-  if (taildrive.shares.length === 0) {
-    return <p className="fd-note fd-station-prop-note">No Taildrive shares.</p>;
+  if (taildrive.state === 'ok' && taildrive.shares.length === 0) return { text: 'No shares' };
+  return null;
+}
+
+/** The Taildrive row of the Details facts (`<dt>` + `<dd>`), or nothing. */
+export function TaildriveFact({ taildrive }: { readonly taildrive: StationInfo['taildrive'] }) {
+  const fact = taildriveFact(taildrive);
+  if (fact === null) return null;
+  return (
+    <>
+      <dt>Taildrive</dt>
+      <dd className="fd-facts-text" title={fact.reason}>
+        {fact.text}
+      </dd>
+    </>
+  );
+}
+
+/**
+ * The Taildrive shares of a station card, with the warning of an exposed share. Only a report
+ * with shares has a part in the card body: a station without Taildrive, or without a share, has
+ * nothing to show there (principle 7; the Details fold says why, `TaildriveFact`).
+ */
+export function StationTaildrive({ taildrive }: { readonly taildrive: StationInfo['taildrive'] }) {
+  if (taildrive === undefined || taildrive.state !== 'ok' || taildrive.shares.length === 0) {
+    return null;
   }
   return (
     <div
