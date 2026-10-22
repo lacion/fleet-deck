@@ -1,5 +1,6 @@
-/* The page frame (DL-141, UI-DESIGN §3): sidebar, top bar, bottom bar, drawer, notices, dialogs,
-   screens, login (plans and stations: stations.css). The visual primitives come from base.css. */
+/* The page frame ("Flight Deck" v3, DESIGN-SYSTEM.md §4.2, §4.7, §4.8): sidebar, top bar,
+   bottom bar, drawer, notices, dialogs, the palette and the help, screens, login. The visual
+   primitives come from base.css, the values from tokens.css. */
 
 /* ---------- Frame ---------- */
 
@@ -81,15 +82,15 @@ body:has(.fd-app[data-layout="tablet"]) {
   flex-direction: column;
 }
 
-/* ---------- Sidebar ---------- */
+/* ---------- Sidebar (§4.2) ---------- */
 
+/* The bay: a --surface column; the fill step separates it from the deck (no edge). */
 .fd-sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--surface);
-  border-right: 1px solid var(--border-soft);
 }
 
 .fd-app[data-layout="desktop"] .fd-sidebar {
@@ -97,43 +98,42 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-sidebar[data-variant="list"] {
-  border-right: 0;
   background: transparent;
 }
 
-/* The brand block and the footer stay; the list scrolls. */
+/* The brand row, New session and the search stay; the list scrolls. */
 .fd-sidebar-top {
   flex: none;
   display: grid;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3) var(--sp-3);
+  padding: 0 var(--sp-3) var(--sp-2);
 }
 
 .fd-sidebar-brand {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 48px;
+  height: var(--header-h);
 }
 
-.fd-sidebar-brand > .fd-icon,
-.fd-topbar > .fd-icon {
-  color: var(--act);
+.fd-sidebar-brand > .fd-wordmark {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* The connection pill. Color is never the only signal: the text says LIVE, STALE or OFFLINE. */
+/* The connection pill: a status dot and its word (Live, Stale, Offline); never color alone. */
 .fd-wspill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  padding: 2px 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-pill);
+  padding: 0 var(--sp-1);
   font-family: var(--font-ui);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-meta);
+  font-weight: 500;
   white-space: nowrap;
-  color: var(--hazard);
+  color: var(--dim);
 }
 
 .fd-sidebar-brand > .fd-iconbtn {
@@ -144,203 +144,70 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: 0;
 }
 
-.fd-wspill[data-freshness="live"] {
-  color: var(--ok);
-}
-
-.fd-wspill[data-freshness="stale"] {
-  color: var(--act);
-}
-
 .fd-wspill-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: currentColor;
-}
-
-.fd-wspill[data-freshness="live"] .fd-wspill-dot {
-  animation: fd-pulse var(--pulse-working) ease-in-out infinite;
-}
-
-/* The sidebar's "New session" is a quiet raised button, not an amber one: amber is for decisions. */
-.fd-newbtn {
-  width: 100%;
-  justify-content: flex-start;
-  background: var(--raised);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.fd-newbtn:hover:not(:disabled) {
-  border-color: var(--dim);
-}
-
-.fd-newbtn .fd-kbd {
-  margin-left: auto;
-}
-
-.fd-needschip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  padding: 3px 10px;
-  border: 1px solid var(--act);
-  border-radius: var(--r-pill);
-  background: var(--act-bg);
-  color: var(--act);
-  font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.fd-sidebar-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--sp-2) var(--sp-2) var(--sp-3);
-  border-top: 1px solid var(--border-soft);
-}
-
-.fd-sidebar-list > .fd-empty {
-  padding: var(--sp-2);
-}
-
-.fd-sgroup {
-  margin-bottom: var(--sp-2);
-}
-
-.fd-sgroup-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 10px 10px 4px;
-}
-
-.fd-sgroup[data-group="needs"] .fd-sgroup-title {
-  color: var(--act);
-}
-
-.fd-sgroup-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-sgroup-title .fd-count {
-  margin-left: auto;
-}
-
-/* Reachability dot: 6 px, with a hidden text next to it. */
-.fd-rdot {
-  flex: none;
   width: 6px;
   height: 6px;
   border-radius: var(--r-pill);
   background: var(--hazard);
 }
 
-.fd-rdot[data-reachable="true"] {
+.fd-wspill[data-freshness="live"] .fd-wspill-dot {
   background: var(--ok);
 }
 
-.fd-srows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.fd-wspill[data-freshness="stale"] .fd-wspill-dot {
+  background: var(--act);
 }
 
-/* Row: dot | title | age on line 1; the meta sits under the title. */
-.fd-srow {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  column-gap: var(--sp-2);
+/* New session: the general primary of the board (solid ink), its key hint at the right. */
+.fd-newbtn {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 0 6px 0 var(--sp-2);
+}
+
+.fd-newbtn .fd-kbd {
+  margin-left: auto;
+}
+
+/* The search of the sidebar sits on the bay: one step up, like a strip. */
+.fd-sidebar-top > .fd-field > input:not(:focus) {
+  border-color: var(--border-soft);
+}
+
+/* "1 needs you": a nav-height row in the needs-you tint; it opens the first request. */
+.fd-needschip {
+  display: flex;
   align-items: center;
-  padding: 6px 10px;
-  border-radius: 7px;
-  color: var(--text);
-  text-decoration: none;
-  transition: background var(--t-fast);
-}
-
-.fd-srow:hover {
-  background: var(--raised);
-}
-
-.fd-srow[aria-current="page"] {
-  background: var(--raised);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.fd-srow-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: var(--sp-2);
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-ctl);
+  background: var(--act-bg);
+  color: var(--act);
+  font-family: var(--font-ui);
   font-size: var(--fs-ui);
-  font-weight: 500;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color var(--t-fast);
 }
 
-.fd-srow-title .fd-badge {
-  margin-left: 6px;
+.fd-needschip:hover {
+  text-decoration: none;
+  background: color-mix(in srgb, var(--act-bg) 80%, var(--act));
 }
 
-.fd-srow-age {
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  color: var(--faint);
-}
-
-.fd-srow-meta {
-  grid-column: 2 / -1;
+.fd-sidebar-group {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-family: var(--font-data);
-  font-size: 11px;
-  color: var(--faint);
+  gap: var(--sp-1);
 }
 
-.fd-srow-model {
-  flex: none;
+.fd-sidebar-group > .fd-label {
+  margin-right: var(--sp-1);
 }
 
-.fd-srow-place {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.fd-srow-place .fd-icon {
-  flex: none;
-  margin-right: 3px;
-}
-
-.fd-sended {
-  margin-top: var(--sp-1);
-}
-
-.fd-sended summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-.fd-sended[open] summary {
-  margin-bottom: var(--sp-1);
-}
-
+/* The page links: 28px rows, a 16px icon and the label. */
 .fd-sidebar-links {
   flex: none;
   display: grid;
@@ -350,9 +217,8 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-sidebar-links a,
 .fd-sidebar-more > summary,
-.fd-more-links a,
-.fd-more-links button,
 .fd-linkbtn {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -360,12 +226,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-2);
   border-radius: var(--r-ctl);
   color: var(--dim);
+  font-family: var(--font-ui);
   font-size: var(--fs-ui);
+  font-weight: 500;
   text-decoration: none;
+  transition:
+    background-color var(--t-fast),
+    color var(--t-fast);
 }
 
-.fd-sidebar-links .fd-count,
-.fd-more-links .fd-count {
+.fd-sidebar-links .fd-count {
   margin-left: auto;
 }
 
@@ -374,7 +244,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-content: flex-start;
   border-color: transparent;
   background: transparent;
-  font-weight: 400;
 }
 
 .fd-sidebar-links a:hover,
@@ -383,14 +252,29 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--raised);
   border-color: transparent;
   color: var(--text);
+  text-decoration: none;
 }
 
-.fd-sidebar-links a[aria-current="page"] {
+/* The open page: a --raised-hi fill and a 2px --focus bar at the left edge. */
+.fd-sidebar-links a[aria-current="page"],
+.fd-srow[aria-current="page"] {
+  background: var(--raised-hi);
   color: var(--text);
-  background: var(--raised);
 }
 
-/* The "More" fold: a link row with a chevron; the pages inside it are an inline list. */
+.fd-sidebar-links a[aria-current="page"]::before,
+.fd-srow[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--focus);
+}
+
+/* The "More" fold: a link row with a chevron at the icon place; its pages are rows below. */
 .fd-sidebar-more {
   display: grid;
   gap: 2px;
@@ -407,15 +291,229 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-sidebar-more > summary .fd-icon {
-  margin-left: auto;
+  order: -1;
+  width: 16px;
+  transform: rotate(-90deg);
   transition: transform var(--t-fast);
 }
 
 .fd-sidebar-more[open] > summary .fd-icon {
-  transform: rotate(180deg);
+  transform: none;
 }
 
-/* The footer: theme and density on the left; Settings and the account menu on the right. */
+/* The session list: groups of one-line rows (§4.2). */
+.fd-sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+
+.fd-sidebar-list > .fd-empty {
+  padding: var(--sp-2) 10px;
+  font-size: var(--fs-meta);
+}
+
+.fd-sgroup {
+  margin-top: var(--sp-2);
+}
+
+.fd-sgroup-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  margin: 0;
+  padding: 0 10px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.fd-sgroup-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.fd-sgroup[data-group="needs"] .fd-sgroup-name {
+  color: var(--act);
+}
+
+.fd-sgroup-title .fd-count {
+  margin-left: auto;
+}
+
+/* Reachability dot: 6px, with a hidden word next to it. */
+.fd-rdot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--hazard);
+}
+
+.fd-rdot[data-reachable="true"] {
+  background: var(--ok);
+}
+
+.fd-srows {
+  display: grid;
+  gap: 1px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* A row: glyph | title | age, one line of --row-h. */
+.fd-srow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: center;
+  min-height: var(--row-h);
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--t-fast);
+}
+
+.fd-srow:hover {
+  background: var(--raised);
+  text-decoration: none;
+}
+
+.fd-srow[aria-current="page"]:hover {
+  background: var(--raised-hi);
+}
+
+.fd-srow > .fd-holder {
+  display: none;
+}
+
+.fd-srow-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  font-weight: 450;
+}
+
+.fd-srow-title .fd-badge {
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: var(--fs-micro);
+}
+
+.fd-srow[data-status="ended"] .fd-srow-title,
+.fd-srow[data-status="lost"] .fd-srow-title {
+  color: var(--faint);
+}
+
+.fd-srow-age {
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  color: var(--faint);
+}
+
+.fd-srow-meta {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  color: var(--faint);
+}
+
+.fd-srow-model {
+  flex: none;
+}
+
+.fd-srow-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-srow-place .fd-icon {
+  flex: none;
+}
+
+/* The desktop sidebar (and the tablet drawer) keeps one line per session. */
+.fd-sidebar[data-variant="full"] .fd-srow-meta,
+.fd-sidebar[data-variant="full"] .fd-srow > .fd-focus {
+  display: none;
+}
+
+.fd-sended {
+  margin-top: 2px;
+}
+
+.fd-sended > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.fd-sended > summary:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.fd-sended > summary::before {
+  margin-right: 0;
+}
+
+.fd-sended[open] > summary {
+  margin-bottom: 2px;
+}
+
+/* A starred row shows a filled star after its title (the only star of the board: a mark). */
+.fd-srow-star {
+  display: inline-flex;
+  margin-left: 6px;
+  color: var(--dim);
+}
+
+.fd-srow-star .fd-icon {
+  fill: currentColor;
+}
+
+.fd-sidebar-archived,
+.fd-sended-clear {
+  margin: var(--sp-1) 0 0 6px;
+}
+
+/* "Archived" is a quiet link at the end of the list. */
+.fd-sidebar-archived {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+}
+
+/* The footer (44px): theme and density at the left; Settings and the account at the right. */
 .fd-sidebar-foot {
   flex: none;
   display: flex;
@@ -423,15 +521,15 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--sp-1) var(--sp-2);
-  min-height: 40px;
-  padding: var(--sp-1) var(--sp-3);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border-soft);
 }
 
 .fd-sidebar-account {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 
 .fd-sidebar-account a.fd-iconbtn {
@@ -444,82 +542,160 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-sidebar-account a.fd-iconbtn[aria-current="page"] {
-  background: var(--raised);
+  background: var(--raised-hi);
   color: var(--text);
+}
+
+/* The account: the avatar glyph in a round hover target. */
+.fd-sidebar-account .fd-menu > summary.fd-iconbtn {
+  border-radius: var(--r-pill);
 }
 
 /* The account menu opens upward: the footer is at the bottom of the screen. */
 .fd-sidebar-account .fd-menu-body {
   top: auto;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + 6px);
 }
 
 .fd-sidebar-version {
   margin: 0;
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
   color: var(--faint);
 }
 
-.fd-more .fd-sidebar-version {
-  margin-top: var(--sp-3);
-}
-
-/* Theme choice and compact cards, above Log out. */
+/* The theme segments, the compact switch and the Omarchy select. */
 .fd-sidebar-prefs {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  min-width: 0;
 }
 
-.fd-segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
+.fd-sidebar-prefs > .fd-seg > button {
+  width: 28px;
+  padding: 0;
 }
 
-.fd-sidebar-prefs .fd-iconbtn[aria-pressed="true"] {
-  background: var(--border-soft);
+.fd-sidebar[data-variant="full"] .fd-sidebar-prefs > .fd-seg {
+  background: var(--bg);
+}
+
+.fd-sidebar-prefs > .fd-iconbtn[aria-pressed="true"] {
+  background: var(--raised-hi);
   color: var(--text);
 }
 
-.fd-more .fd-sidebar-prefs {
-  margin-bottom: var(--sp-3);
+.fd-sidebar-prefs > select {
+  max-width: 120px;
 }
 
-/* A starred row shows a filled star after its title. */
-.fd-srow-star {
-  display: inline-flex;
-  margin-left: 6px;
-  vertical-align: -1px;
-  color: var(--act);
+/* ---------- Phone session list (the home of the phone, §4.8) ---------- */
+
+/* The top of the phone: mark, name, New and the connection, 52px. */
+.fd-sidebar[data-variant="list"] .fd-sidebar-top {
+  padding: 0 var(--sp-4) var(--sp-2);
 }
 
-.fd-srow-star .fd-icon {
-  fill: currentColor;
+.fd-sidebar[data-variant="list"] .fd-sidebar-brand {
+  height: 52px;
+  gap: 10px;
 }
 
-.fd-sidebar-archived,
-.fd-sended-clear {
-  margin: var(--sp-1) 0 0 var(--sp-2);
+.fd-sidebar[data-variant="list"] .fd-sidebar-brand > .fd-wordmark {
+  font-size: var(--fs-18);
+  font-weight: 640;
+  letter-spacing: -0.01em;
 }
 
-/* "Archived" is a quiet link at the end of the list. */
-.fd-sidebar-archived {
-  border: 0;
-  background: transparent;
-  color: var(--dim);
+.fd-sidebar[data-variant="list"] .fd-sidebar-list {
+  overflow: visible;
+  padding: 0 var(--sp-4) var(--sp-5);
 }
 
-/* Compact density: one line per session. */
-:root[data-density="compact"] .fd-srow {
-  padding: 4px 10px;
+.fd-sidebar[data-variant="list"] .fd-sgroup {
+  margin-top: var(--sp-3);
 }
 
-:root[data-density="compact"] .fd-srow-meta {
+.fd-sidebar[data-variant="list"] .fd-sgroup-title {
+  height: 32px;
+  padding: 0 var(--sp-1);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup-name {
+  font-size: var(--fs-heading);
+  font-weight: 620;
+  color: var(--text);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-sgroup-name {
+  font-stretch: 100%;
+  font-weight: 600;
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-sgroup-name {
+  color: var(--text);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-count {
+  margin-left: var(--sp-1);
+  margin-right: auto;
+  background: var(--act-fill);
+  color: var(--act-ink);
+}
+
+.fd-sidebar[data-variant="list"] .fd-srows {
+  gap: 6px;
+}
+
+/* Each session is a two-line strip: the holder, glyph + title + age, then the meta line. */
+.fd-sidebar[data-variant="list"] .fd-srow {
+  overflow: hidden;
+  row-gap: 2px;
+  min-height: 56px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) 15px;
+  border-radius: var(--r-card);
+  background: var(--raised);
+  box-shadow: var(--shadow-lift);
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow > .fd-holder {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow[data-status="needs_you"] {
+  background: var(--act-bg);
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow > .fd-focus {
+  font-style: normal;
+}
+
+.fd-sidebar[data-variant="list"] .fd-sidebar-list > .fd-empty {
+  padding: var(--sp-4) var(--sp-1);
+  font-size: var(--fs-ui);
+}
+
+/* Compact density: one line per session, 30px rows. */
+:root[data-density="compact"] .fd-srow-meta,
+:root[data-density="compact"] .fd-srow > .fd-focus {
   display: none;
+}
+
+:root[data-density="compact"] .fd-sidebar[data-variant="list"] .fd-srow {
+  min-height: 44px;
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
 }
 
 /* ---------- Top bar (tablet; phone terminals) ---------- */
@@ -529,51 +705,67 @@ body:has(.fd-app[data-layout="tablet"]) {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 48px;
+  height: var(--header-h);
   padding: 0 var(--sp-3);
-  background: var(--surface);
+  background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-app[data-layout="phone"] .fd-topbar {
+  height: 52px;
+  padding: 0 var(--sp-2);
 }
 
 .fd-topbar-title {
   margin: 0;
-  font-size: var(--fs-heading);
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: var(--fs-18);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
 }
 
-/* ---------- Notices ---------- */
+/* ---------- Notices (§4.7) ---------- */
 
 .fd-notices {
   display: grid;
 }
 
-.fd-notice {
-  margin: 0;
-  padding: 6px var(--sp-4);
-  background: var(--raised);
-  color: var(--dim);
-  font-size: var(--fs-body);
-}
-
-.fd-notice[data-tone="error"] {
-  color: var(--hazard);
-  background: var(--hazard-bg);
-  border-bottom: 1px solid var(--hazard);
-}
-
-.fd-notice-row {
+/* A 36px row on the bay with a 3px tone holder at the left. */
+.fd-notice,
+.fd-hintnotice {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  min-height: 36px;
+  margin: 0;
+  padding: 6px var(--sp-4) 6px 19px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  box-shadow: inset 3px 0 0 var(--focus);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  line-height: 1.4;
 }
 
-.fd-notice-text {
+.fd-notice[data-tone="error"] {
+  box-shadow: inset 3px 0 0 var(--hazard);
+  color: var(--text);
+}
+
+.fd-notice[data-tone="warn"] {
+  box-shadow: inset 3px 0 0 var(--act);
+  color: var(--text);
+}
+
+.fd-notice-text,
+.fd-hintnotice > span {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-/* ---------- Bottom bar (phone) ---------- */
+/* ---------- Bottom bar (phone, §4.8) ---------- */
 
 .fd-bottombar {
   position: sticky;
@@ -581,10 +773,14 @@ body:has(.fd-app[data-layout="tablet"]) {
   z-index: 5;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  height: calc(56px + env(safe-area-inset-bottom));
+  height: calc(60px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);
   border-top: 1px solid var(--border-soft);
+}
+
+.fd-bottombar:has(> :nth-child(3):last-child) {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .fd-bottombar a {
@@ -592,14 +788,38 @@ body:has(.fd-app[data-layout="tablet"]) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
+  min-height: var(--tap-min);
   color: var(--faint);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-weight: 500;
   text-decoration: none;
+  transition: color var(--t-fast);
 }
 
 .fd-bottombar a[aria-current="page"] {
-  color: var(--act);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* New: a 44px ink circle in the middle of the bar. */
+.fd-bottombar-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-pill);
+  background: var(--ink-fill);
+  color: var(--ink-on);
+  box-shadow: var(--shadow-lift);
+  transition: background-color var(--t-fast);
+}
+
+.fd-bottombar a.fd-bottombar-new:hover .fd-bottombar-circle,
+.fd-bottombar a.fd-bottombar-new[aria-current="page"] .fd-bottombar-circle {
+  background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
 }
 
 /* ---------- Drawer (tablet) ---------- */
@@ -620,7 +840,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim, rgba(6, 10, 15, 0.6)); /* ds-exception: pending token --scrim */
+}
+
+[data-theme="light"] .fd-app .fd-drawer-backdrop {
+  background: var(--scrim, rgba(17, 24, 33, 0.28)); /* ds-exception: pending token --scrim */
 }
 
 .fd-drawer {
@@ -629,16 +853,14 @@ body:has(.fd-app[data-layout="tablet"]) {
   bottom: 0;
   left: 0;
   display: flex;
-  width: min(300px, 85vw);
+  width: min(var(--rail-w), 85vw);
   background: var(--surface);
-  border-right: 1px solid var(--border);
   box-shadow: var(--shadow-pop);
 }
 
 .fd-drawer .fd-sidebar {
   flex: 1 1 auto;
   height: 100%;
-  border-right: 0;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -658,7 +880,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   }
 }
 
-/* ---------- Dialogs: shortcuts and the session palette ---------- */
+/* ---------- Dialogs (§4.7): help, palette, add a device ---------- */
 
 .fd-overlay {
   position: fixed;
@@ -668,32 +890,37 @@ body:has(.fd-app[data-layout="tablet"]) {
   align-items: flex-start;
   justify-content: center;
   padding: 12dvh var(--sp-3) var(--sp-3);
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim, rgba(6, 10, 15, 0.6)); /* ds-exception: pending token --scrim */
 }
 
-/* The pairing dialog also uses .fd-dialog, inline; the modal look is for the overlay only. */
+[data-theme="light"] .fd-overlay {
+  background: var(--scrim, rgba(17, 24, 33, 0.28)); /* ds-exception: pending token --scrim */
+}
+
+/* A dialog: a --raised card. The pairing dialog also uses .fd-dialog inline; the float and
+   the shadow are for the overlay only. */
 .fd-dialog {
   display: grid;
   gap: var(--sp-3);
-  padding: var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  padding: 20px;
+  background: var(--raised);
+  border: 0;
   border-radius: var(--r-panel);
 }
 
 .fd-overlay .fd-dialog {
-  width: min(560px, 92vw);
+  width: min(560px, 100%);
   max-height: 100%;
   overflow: auto;
-  border-radius: 12px;
   box-shadow: var(--shadow-pop);
 }
 
 .fd-dialog h2 {
-  margin: 0 0 12px;
+  margin: 0;
   font-family: var(--font-ui);
-  font-size: var(--fs-18);
-  font-weight: 600;
+  font-size: var(--fs-heading);
+  font-weight: 640;
+  line-height: 1.15;
 }
 
 .fd-overlay .fd-dialog > button {
@@ -705,21 +932,26 @@ body:has(.fd-app[data-layout="tablet"]) {
   justify-items: start;
 }
 
+.fd-devlink > .fd-note {
+  max-width: 60ch;
+}
+
 .fd-overlay .fd-devlink > button {
   justify-self: start;
 }
 
 .fd-overlay .fd-devlink > .fd-devlink-close {
   justify-self: end;
+  margin-top: var(--sp-1);
 }
 
 .fd-devlink-qr {
   display: block;
-  width: 240px;
+  width: 216px;
   max-width: 100%;
   height: auto;
   aspect-ratio: 1;
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-card);
 }
 
 .fd-devlink-url {
@@ -741,8 +973,31 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-devlink-left {
-  font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
+}
+
+.fd-devlink-trusted {
+  color: var(--ok);
+}
+
+/* The help: the keys, the concepts and the pages. */
+.fd-overlay .fd-help {
+  width: min(640px, 100%);
+  gap: var(--sp-4);
+}
+
+.fd-help section {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-help h3,
+.fd-help h4 {
+  margin: 0;
+}
+
+.fd-help h4 {
+  margin-top: var(--sp-2);
 }
 
 .fd-keys {
@@ -750,82 +1005,84 @@ body:has(.fd-app[data-layout="tablet"]) {
   width: 100%;
 }
 
-.fd-keys th {
-  text-align: left;
-  font-family: var(--font-ui);
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  color: var(--faint);
+.fd-keys thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
-.fd-keys th,
 .fd-keys td {
-  height: 34px;
+  height: 32px;
   padding: 0 var(--sp-2);
   border-bottom: 1px solid var(--border-soft);
+  font-size: var(--fs-ui);
+}
+
+.fd-keys td:first-child {
+  width: 128px;
+  padding-left: 0;
 }
 
 .fd-keys tbody tr:last-child td {
   border-bottom: 0;
 }
 
-.fd-keys .fd-kbd {
-  font-size: var(--fs-micro);
-  padding: 1px 6px;
-  color: var(--dim);
-  background: var(--raised);
-}
-
-.fd-help h3,
-.fd-help h4 {
-  margin: var(--sp-3) 0 var(--sp-1);
-}
-
-.fd-help section > h3:first-child {
-  margin-top: 0;
-}
-
 .fd-help-terms {
   display: grid;
-  gap: var(--sp-2);
+  grid-template-columns: 1fr;
+  gap: var(--sp-2) var(--sp-5);
   margin: 0;
+}
+
+@media (min-width: 640px) {
+  .fd-help-terms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .fd-help-terms dt {
+  font-size: var(--fs-ui);
   font-weight: 600;
-  font-size: var(--fs-body);
 }
 
 .fd-help-terms dd {
-  margin: 0;
+  margin: 2px 0 0;
   color: var(--dim);
-  font-size: var(--fs-body);
+  font-size: var(--fs-meta);
+  line-height: 1.45;
 }
 
+/* The session palette (⌘K): a search line, the rows, the key hints. */
 .fd-overlay .fd-palette {
+  width: min(600px, 100%);
   gap: 0;
   padding: 0;
   overflow: hidden;
 }
 
 .fd-palette > input {
-  height: 40px;
+  height: 48px;
   padding: 0 var(--sp-4);
   border: 0;
   border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
   background: transparent;
-  font-size: 15px;
+  font-size: var(--fs-15);
 }
 
 .fd-palette > input:focus {
-  border-bottom-color: var(--act);
+  border-bottom-color: var(--border);
+  box-shadow: none;
 }
 
 .fd-palette [role="listbox"] {
+  display: grid;
+  gap: 1px;
   max-height: 50dvh;
   overflow-y: auto;
-  padding: var(--sp-1);
+  padding: 6px;
 }
 
 .fd-palette [role="listbox"]:empty {
@@ -833,18 +1090,28 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-palette [role="option"] {
-  display: flex;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-  height: 34px;
+  gap: 10px;
+  height: var(--row-h);
   padding: 0 10px;
   border-radius: var(--r-ctl);
   cursor: pointer;
 }
 
 .fd-palette [role="option"][aria-selected="true"] {
-  background: var(--raised);
+  background: var(--raised-hi);
+}
+
+.fd-palette [role="option"] > .fd-dot {
+  justify-self: center;
+}
+
+.fd-palette-start {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--dim);
 }
 
 .fd-palette-title {
@@ -852,20 +1119,48 @@ body:has(.fd-app[data-layout="tablet"]) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .fd-palette-meta {
-  flex: none;
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-meta);
   color: var(--faint);
+  white-space: nowrap;
 }
 
 .fd-palette > .fd-empty {
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-4);
+  font-size: var(--fs-ui);
 }
 
-/* ---------- Screens: New session, Plans, Stations, More ---------- */
+.fd-palette-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 36px;
+  padding: 0 var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+  color: var(--faint);
+  font-size: var(--fs-micro);
+}
+
+.fd-palette-foot > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+@media (pointer: coarse) {
+  .fd-palette-foot {
+    display: none;
+  }
+
+  .fd-palette [role="option"] {
+    height: var(--tap-min);
+  }
+}
+
+/* ---------- Screens: New session, Plans, Stations ---------- */
 
 .fd-screen {
   max-width: 880px;
@@ -878,35 +1173,89 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-plans > h2,
 .fd-stations > h2 {
   margin: 0 0 var(--sp-1);
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-page);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
   text-transform: none;
   color: var(--text);
 }
 
+@media (max-width: 640px) {
+  .fd-screen {
+    padding: var(--sp-4) var(--sp-4) var(--sp-6);
+  }
+}
+
+/* ---------- The phone More page ---------- */
+
+.fd-more {
+  gap: var(--sp-4);
+}
+
+/* One grouped list on the bay: 44px rows divided by the faintest rule. */
 .fd-more-links {
-  list-style: none;
-  margin: var(--sp-3) 0;
-  padding: 0;
   display: grid;
-  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  background: var(--surface);
+  border-radius: var(--r-panel);
+}
+
+.fd-more-links > li + li {
+  border-top: 1px solid var(--border-soft);
 }
 
 .fd-more-links a,
 .fd-more-links button {
-  height: 44px;
-  padding: 0 var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: var(--tap-min);
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-15);
+  font-weight: 400;
+  text-decoration: none;
+  justify-content: flex-start;
 }
 
-.fd-more-links button {
-  width: 100%;
-  justify-content: flex-start;
-  font-weight: 400;
+.fd-more-links a:hover,
+.fd-more-links button:hover:not(:disabled) {
+  background: var(--raised);
+  text-decoration: none;
 }
+
+.fd-more-links .fd-icon {
+  color: var(--dim);
+}
+
+.fd-more-links .fd-count {
+  margin-left: auto;
+}
+
+.fd-more .fd-sidebar-prefs {
+  gap: var(--sp-2);
+}
+
+.fd-more > .fd-ghost {
+  justify-self: start;
+}
+
+.fd-more .fd-sidebar-version {
+  margin-top: var(--sp-2);
+}
+
+/* ---------- Load bar (stations) ---------- */
 
 .fd-load-bar {
   display: inline-block;
@@ -938,8 +1287,13 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-app a:focus-visible,
 .fd-app summary:focus-visible,
 .fd-app [role="option"]:focus-visible {
-  outline: 2px solid var(--act);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.fd-sidebar a:focus-visible,
+.fd-sidebar summary:focus-visible {
+  outline-offset: -2px;
 }
 
 @media (pointer: coarse) {
@@ -947,28 +1301,80 @@ body:has(.fd-app[data-layout="tablet"]) {
   .fd-sidebar-more > summary,
   .fd-linkbtn,
   .fd-srow,
-  .fd-sended summary {
+  .fd-sended > summary,
+  .fd-needschip {
     min-height: var(--tap-min);
   }
 }
 
-/* ---------- Owner login ---------- */
+/* ---------- Owner login and join (a card on the deck) ---------- */
 
 .fd-login {
-  max-width: 440px;
-  margin: 8vh auto;
-  padding: var(--sp-4);
+  display: grid;
+  gap: var(--sp-3);
+  box-sizing: border-box;
+  width: min(400px, calc(100% - 2 * var(--sp-4)));
+  margin: 12vh auto var(--sp-5);
+  padding: var(--sp-5);
+  background: var(--surface);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
+}
+
+.fd-login > .fd-mark {
+  margin-bottom: var(--sp-1);
 }
 
 .fd-login h1 {
+  margin: 0;
   font-family: var(--font-ui);
-  font-size: var(--fs-heading);
+  font-size: var(--fs-page);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.fd-login > p {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+
+.fd-login > .fd-note {
+  font-size: var(--fs-meta);
+}
+
+.fd-login > p[role="alert"] {
+  padding: 6px var(--sp-3) 6px 15px;
+  border-radius: var(--r-ctl);
+  background: var(--hazard-bg);
+  box-shadow: inset 3px 0 0 var(--hazard);
+  color: var(--text);
+}
+
+.fd-login > p[role="status"] {
+  color: var(--faint);
 }
 
 .fd-login form {
   display: grid;
   gap: var(--sp-2);
-  margin: var(--sp-4) 0;
+  margin: var(--sp-1) 0;
+}
+
+.fd-login label {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+
+.fd-login input {
+  width: 100%;
+}
+
+.fd-login button[type="submit"] {
+  margin-top: var(--sp-1);
 }
 
 .fd-login button:disabled {

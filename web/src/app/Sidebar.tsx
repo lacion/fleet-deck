@@ -101,6 +101,7 @@ function Row({
         data-status={card.status}
         aria-current={open ? 'page' : undefined}
       >
+        <span className="fd-holder" data-status={card.status} aria-hidden="true" />
         <span className="fd-dot" data-status={card.status} aria-hidden="true" />
         <span className="fd-srow-title">
           <span className="fd-vh">{statusLabel(card)}: </span>
@@ -112,11 +113,7 @@ function Row({
               <Icon of={Star} size={12} />
             </span>
           ) : null}
-          {s.terminal != null ? (
-            <span className="fd-badge" data-tone="act">
-              In terminal
-            </span>
-          ) : null}
+          {s.terminal != null ? <span className="fd-badge">In terminal</span> : null}
         </span>
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
         <FocusLine summary={s} />
@@ -233,7 +230,7 @@ function Groups({
       {withNeeds && model.needs.length > 0 ? (
         <section className="fd-sgroup" data-group="needs" aria-label="Needs you">
           <h3 className="fd-sgroup-title">
-            <span className="fd-sgroup-name fd-label">Needs you</span>
+            <span className="fd-sgroup-name">Needs you</span>
             <span className="fd-count">{model.needs.length}</span>
           </h3>
           <Rows cards={model.needs} route={route} now={now} starred={starred} />
@@ -248,6 +245,7 @@ function Groups({
           aria-label={`${by === 'project' ? 'Project' : 'Station'} ${group.name}`}
         >
           <h3 className="fd-sgroup-title">
+            <span className="fd-sgroup-name fd-wide">{group.name}</span>
             {by === 'project' ? null : (
               <span
                 className="fd-rdot"
@@ -255,7 +253,6 @@ function Groups({
                 aria-hidden="true"
               />
             )}
-            <span className="fd-sgroup-name fd-label">{group.name}</span>
             {by === 'project' ? null : (
               <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
             )}
@@ -338,6 +335,10 @@ function BoardLinks({
         <Icon of={LayoutGrid} />
         Fleet
       </a>
+      <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
+        <Icon of={Eye} />
+        Watch
+      </a>
       {guest ? null : (
         <>
           <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
@@ -351,10 +352,6 @@ function BoardLinks({
           </a>
         </>
       )}
-      <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
-        <Icon of={Eye} />
-        Watch
-      </a>
       {guest && !shares ? null : (
         <details
           className="fd-sidebar-more"
@@ -598,7 +595,11 @@ export function Sidebar({
               </a>
             ) : null}
             {chrome === undefined ? null : (
-              <Menu summary={<Icon of={CircleUser} />} summaryClass="fd-iconbtn" label="Account">
+              <Menu
+                summary={<Icon of={CircleUser} size={18} />}
+                summaryClass="fd-iconbtn"
+                label="Account"
+              >
                 {(close) => (
                   <>
                     {chrome.addDevice === undefined ? null : (

@@ -29,7 +29,7 @@ export function PrefsRow({
   const compact = density === 'compact';
   return (
     <div className="fd-sidebar-prefs">
-      <div className="fd-segmented" role="group" aria-label="Theme">
+      <div className="fd-seg" role="group" aria-label="Theme">
         {THEMES.map((t) => (
           <button
             key={t.choice}
