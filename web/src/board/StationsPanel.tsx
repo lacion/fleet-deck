@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DesktopPanel } from '../desktop/DesktopPanel';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
@@ -554,15 +554,15 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                       : 'offline'}
                 </span>
                 <span className="fd-station-load">
-                  {info?.max_sessions == null ? null : (
-                    <span
-                      className="fd-load-bar"
-                      aria-hidden="true"
-                      data-slots={
-                        info.max_sessions > 0 && info.max_sessions <= MAX_TICKS ? '' : undefined
-                      }
-                      style={{ '--slots': info.max_sessions } as CSSProperties}
-                    >
+                  {info?.max_sessions == null ? null : info.max_sessions > 0 &&
+                    info.max_sessions <= MAX_TICKS ? (
+                    <span className="fd-slots" aria-hidden="true">
+                      {Array.from({ length: info.max_sessions }, (_, i) => (
+                        <span key={i} data-slot={i < active ? 'used' : undefined} />
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="fd-load-bar" aria-hidden="true">
                       <span
                         style={{ width: loadWidth(active, info.max_sessions) }}
                         data-high={
