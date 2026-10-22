@@ -125,8 +125,15 @@ body {
   width: 8px;
   height: 8px;
 }
+/* The thumb is an operable control: --ctl-edge keeps 3:1 on --bg and --surface (WCAG 1.4.11).
+   Firefox only: Chromium ignores every ::-webkit-scrollbar rule where scrollbar-color is set. */
+@supports (-moz-appearance: none) {
+  :root {
+    scrollbar-color: var(--ctl-edge) transparent;
+  }
+}
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--ctl-edge);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-track {
@@ -322,6 +329,16 @@ a.fd-btn {
 .fd-iconbtn.fd-sm {
   width: var(--ctl-h-sm);
 }
+/* A pressed icon toggle (a panel toggle, compact cards) looks like a pressed segment of .fd-seg:
+   a fill step alone (--raised-hi on --raised) was 1.1:1 and did not show the state. */
+.fd-iconbtn[aria-pressed="true"],
+.fd-iconbtn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pressed-bg);
+  color: var(--text);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
+}
 /* A key hint inside a button sits on the button fill. */
 :where(button, a.fd-btn) > .fd-kbd {
   margin-left: 2px;
@@ -344,7 +361,7 @@ a.fd-btn {
   border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
   transition:
     border-color var(--t-fast),
     box-shadow var(--t-fast);
@@ -357,7 +374,7 @@ a.fd-btn {
   border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
   line-height: 1.4;
   transition:
     border-color var(--t-fast),
@@ -1252,6 +1269,10 @@ a.fd-btn {
   .fd-iconbtn {
     min-width: var(--tap-min);
   }
+  /* .fd-sm sets 12px: a field keeps 16px on a touch screen (no iOS zoom on focus). */
+  :is(input, select, textarea).fd-sm {
+    font-size: var(--fs-field);
+  }
   /* After the rule above, so that it wins at the same specificity. */
   .fd-chip {
     min-height: var(--tap-min);
@@ -1308,15 +1329,27 @@ a.fd-btn {
      current nav row or session row) gets a Highlight ring; the focus ring stays outside it. */
   .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
   .fd-chip:is([aria-pressed="true"], [aria-selected="true"]),
+  .fd-iconbtn[aria-pressed="true"]:not(:focus-visible),
   [role="tab"][aria-selected="true"]:not(:focus-visible),
   :is(a, button)[aria-current="page"]:not(:focus-visible) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
-  /* A key hint, a badge and a count lose their fill: a thin edge keeps their shape. */
+  /* A pressed toggle (.fd-iconbtn, the terminal Ctrl key, the session Mode buttons), the selected
+     option of a list box (palette, composer slash menu), the current subagent row and the
+     needs-you keyboard cursor: their state is a fill or a box-shadow only. */
+  :is(button, [role="button"])[aria-pressed="true"]:not(:focus-visible),
+  [role="option"][aria-selected="true"],
+  [aria-current="true"]:not(:focus-visible),
+  .fd-q[data-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  /* A key hint, a badge, a count and the avatar lose their fill: a thin edge keeps their shape. */
   .fd-kbd,
   .fd-badge:not([data-tone="muted"]),
-  .fd-count {
+  .fd-count,
+  .fd-avatar {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
   }
