@@ -242,7 +242,8 @@ function Groups({
       ) : null}
       {model.groups.map((group) => {
         const live = needsApart ? group.live.filter((c) => c.status !== 'needs_you') : group.live;
-        // The station total (with its needs-you and ended sessions) goes in the title only.
+        // The station total (with its needs-you and ended sessions): a title for the pointer, and
+        // the same words in a visually hidden text for a screen reader and a touch screen.
         const total =
           group.count === live.length
             ? undefined
@@ -261,6 +262,7 @@ function Groups({
               <span className="fd-count" title={total}>
                 {live.length}
               </span>
+              {total === undefined ? null : <span className="fd-vh">{`, ${total}`}</span>}
               {by === 'project' ? null : (
                 <span
                   className="fd-rdot"

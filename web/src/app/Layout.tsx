@@ -1,3 +1,6 @@
+// `ui/icons.tsx` is the one icon set of the board; it does not export the two notice tone icons
+// yet, so this module takes them from the same package (the integrations module does the same).
+import { Info, OctagonAlert } from 'lucide-react';
 import { type ReactNode, type RefObject, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
@@ -124,6 +127,8 @@ export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
           data-tone={n.tone}
           role={n.tone === 'error' ? 'alert' : 'status'}
         >
+          {/* The tone is also a shape (WCAG 1.4.1): an octagon for an error, an "i" for info. */}
+          <Icon of={n.tone === 'error' ? OctagonAlert : Info} size={14} />
           {n.text}
         </p>
       ))}
@@ -146,6 +151,7 @@ function StartFailures({
     <div className="fd-notices">
       {failures.map((f) => (
         <div key={f.ref} className="fd-notice fd-notice-row" data-tone="error" role="alert">
+          <Icon of={OctagonAlert} size={14} />
           <span className="fd-notice-text">{failureText(f)}</span>
           <button type="button" className="fd-ghost fd-sm" onClick={() => onOpen?.(f)}>
             Open

@@ -81,6 +81,11 @@ function Keys({ keys }: { readonly keys: string }) {
 function KeyTable({ rows, label }: { readonly rows: readonly Row[]; readonly label: string }) {
   return (
     <table className="fd-keys" aria-label={label}>
+      {/* The key column has one width in every key table (the fixed layout takes it from here). */}
+      <colgroup>
+        <col className="fd-keys-key" />
+        <col />
+      </colgroup>
       <thead>
         <tr>
           <th scope="col">Key</th>

@@ -164,14 +164,14 @@ describe('App', () => {
     expect(alpha).toBeGreaterThan(-1);
     expect(alpha).toBeLessThan(beta);
     // the sidebar lists the needs-you session once, in "Needs you"; the count of its station is
-    // the rows shown under it, and the station total moves to the title
+    // the rows shown under it, and the station total moves to the title and a hidden text
     const sidebar = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
     expect(sidebar.match(/Needs me/g)?.length).toBe(1);
     expect(html.slice(beta, html.indexOf('</h3>', beta))).toContain(
-      '<span class="fd-count" title="1 session on Beta">0</span>',
+      '<span class="fd-count" title="1 session on Beta">0</span><span class="fd-vh">, 1 session on Beta</span>',
     );
     expect(html.slice(alpha, html.indexOf('</h3>', alpha))).toContain(
-      '<span class="fd-count" title="2 sessions on Alpha">1</span>',
+      '<span class="fd-count" title="2 sessions on Alpha">1</span><span class="fd-vh">, 2 sessions on Alpha</span>',
     );
   });
 
