@@ -24,6 +24,9 @@
   --ink-on: #111821; /* text on --ink-fill */
   --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
   --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
+  /* edge of a plain button on a --raised surface (a dialog, a strip): the button has the same
+     fill there (#3a4556, 1.6:1; it follows an Omarchy palette through --ctl-edge and --border) */
+  --btn-edge-raised: color-mix(in srgb, var(--ctl-edge) 25%, var(--border));
   --ctl-edge: #6b778a; /* edge of a form control (input, select, checkbox, radio, off switch): 3:1 */
   --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
   --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
@@ -81,6 +84,7 @@
   --ink-on: #ffffff;
   --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
   --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
+  --btn-edge-raised: var(--border); /* a white button on a white --raised surface */
   --ctl-edge: #788496;
   --pressed-bg: var(--raised); /* a white segment, lifted, on the --surface track */
   --switch-knob: var(--raised); /* a white knob (#ffffff) */
@@ -182,6 +186,7 @@
   --ctl-h: 28px; /* control height, fine pointer */
   --ctl-h-sm: 24px;
   --row-h: 36px; /* one-line list row, sidebar session row */
+  --row-h-touch: 44px; /* a list row on a touch screen (pointer: coarse): the row is the tap target */
   --strip-h: 44px; /* a fleet strip */
   --header-h: 48px; /* page header bar */
   --sidebar-w: 248px;

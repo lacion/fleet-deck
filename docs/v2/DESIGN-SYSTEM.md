@@ -42,6 +42,7 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--ink-on` *(new)* | `#111821` | `#FFFFFF` | text on `--ink-fill` |
 | `--badge-bg` *(new)* | `var(--raised-hi)` | `var(--border-soft)` | fill of a neutral `.fd-badge` and `.fd-count` (`--raised-hi` does not show on the light `--bg`) |
 | `--btn-edge` *(new)* | `transparent` | `var(--border)` | edge of a plain button in a panel (a white button on the light `--surface` needs a hairline) |
+| `--btn-edge-raised` *(new)* | `color-mix(in srgb, var(--ctl-edge) 25%, var(--border))` (`#3A4556`, 1.6:1 on `--raised`) | `var(--border)` | edge of a plain button on a `--raised` surface (a dialog, a strip, a card), where the button has the same fill. It follows an Omarchy palette through `--ctl-edge` and `--border` |
 | `--ctl-edge` *(new)* | `#6B778A` | `#788496` | edge of a form control (input, select, textarea, checkbox, radio, the off switch track) and the ring of a pressed segment or chip: ≥ 3:1 on `--bg`, `--surface`, `--raised`, `--raised-hi` (WCAG 1.4.11) |
 | `--pressed-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of a pressed `.fd-seg` segment (light: a white segment with `--shadow-lift` on the track) |
 | `--switch-knob` *(new)* | `var(--text)` (`#E9EEF4`) | `var(--raised)` (`#FFFFFF`) | knob of an off `.fd-switch` (the on knob is `--ink-on`) |
@@ -126,6 +127,7 @@ Weights: 400 body, 500 UI emphasis, 600 titles, 640–680 page titles and callsi
 | `--r-pill` | 999px |
 | `--ctl-h` / `--ctl-h-sm` | 28px / 24px (desktop); 44px with `pointer: coarse` |
 | `--row-h` *(new)* | 36px: one-line list row and sidebar session row (30px in compact density) |
+| `--row-h-touch` *(new)* | 44px: a list row on a touch screen (`@media (pointer: coarse)`), where the row is the tap target (the Files rows, list rows) |
 | `--strip-h` *(new)* | 44px: a fleet strip (one line + meta line on narrow widths) |
 | `--header-h` | 48px: page header bar |
 | `--sidebar-w` | 248px |
@@ -150,7 +152,7 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 
 | Primitive | Look |
 | --- | --- |
-| `button` (bare) | `--ctl-h`, padding 0 10px, `--raised` fill, no border, `--r-ctl`, 13px weight 500, `--text`; hover `--raised-hi`; focus-visible 2px `--focus` outline offset 2px; disabled opacity .45. A plain button (no class, or only `.fd-sm`) in a `.fd-panel` has a `--btn-edge` edge; in a dialog (`.fd-dialog`, `[role=dialog]`, a `--raised` layer) a `--border` edge |
+| `button` (bare) | `--ctl-h`, padding 0 10px, `--raised` fill, no border, `--r-ctl`, 13px weight 500, `--text`; hover `--raised-hi`; focus-visible 2px `--focus` outline offset 2px; disabled opacity .45. A plain button (no class, or only `.fd-sm`) in a `.fd-panel` has a `--btn-edge` edge; in a dialog (`.fd-dialog`, `[role=dialog]`, a `--raised` layer) a `--btn-edge-raised` edge. An area rule gives a plain button on another `--raised` surface (a strip, a card) the `--btn-edge-raised` edge |
 | `.fd-primary` | **general primary**: `--ink-fill`, `--ink-on` text, weight 600 |
 | `.fd-decide` *(new)* | **decision primary**: `--act-fill`, `--act-ink`, weight 600 |
 | `.fd-ghost` | transparent, `--dim`; hover `--raised` + `--text` |
@@ -164,23 +166,23 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-chip` | filter toggle: 24px pill (44px with `pointer: coarse`), transparent, `--dim`; pressed `--badge-bg` + 1px `--ctl-edge` edge + `--text` weight 600 |
 | `.fd-badge` | 20px, padding 0 7px, `--r-chip`, `--raised-hi` fill, `--dim`, 12px weight 500, sans (not mono). `data-tone`: `act` (`--act-bg`/`--act`), `hazard`, `ok`, `info` (`--focus-bg`/`--focus`), `fuel`, `muted` (a quiet text badge: no fill, no edge, no side padding, `--faint`). `data-family`/`data-provider`: neutral (no hue) |
 | `.fd-count` *(restyled)* | 18px pill, `--raised-hi`, 11px weight 600; `data-tone="act"`: `--act-fill`/`--act-ink` |
-| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with an `--act` edge and a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint`; `lost`, `unreachable` `--hazard` ring with a slash; `online` *(new)* a small (8px) still filled `--ok` dot — a station link or a provider sign-in (a link is not work: it never turns) |
+| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus` and a 4px `--focus` center dot (the working glyph has none: the two differ by shape, not by hue alone, also with reduced motion); `needs_you` filled `--act-fill` circle with an `--act` edge and a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint`; `lost`, `unreachable` `--hazard` ring with a slash; `online` *(new)* a small (8px) still filled `--ok` dot — a station link or a provider sign-in (a link is not work: it never turns) |
 | `.fd-holder` *(new)* | the 3px status bar at the left edge of a strip, `data-status` colors: needs_you `--act`, working `--ok`, verifying/queued `--focus`, idle `--faint-decor`, ended transparent with a 1px `--faint-decor` edge, lost/unreachable `--hazard` |
 | `.fd-glow` *(new)* | the needs-you outline and glow of a strip or card: 1px `--act-line` outline, a 3px `--act-glow` ring that breathes (`--pulse-needs`) on `::after`. The element must be positioned |
 | `.fd-label` | section label: 12px weight 600 `--dim`, sentence case (no capitals, no tracking) |
-| `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--badge-bg`, 11px `--faint`, sans |
+| `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--badge-bg`, 11px `--dim`, sans (`--faint` was under 4.5:1 on the light `--badge-bg`). In the help table (`.fd-keys`) the keys are the content: 20px, 12px (`--fs-meta`) |
 | `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px. `.fd-menu > summary.fd-ghost` *(new)*: a summary that looks like a ghost button (transparent, `--dim`; hover and open `--raised` + `--text`) |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
 | `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600, a sticky 28px header row (icon, mono path, +/− counts; the git plumbing lines are not drawn) with a `--border-soft` rule, at most the visible width (`100cqi`): the folders of the path ellipsize and the counts stay at the right edge; with review, two number gutters (old, new; only new on a phone) |
 | `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
-| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free a hollow 1px `--ctl-edge` outline (shape, not color alone). Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
+| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used a filled `--ok` bar, needs-you an `--act` "!" (a 7px bar, a 2px gap, a 3px dot: the sign of the needs-you `.fd-dot`), free a hollow 1px `--ctl-edge` outline (shape, not color alone). Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
 | `.fd-avatar` *(new)* | the account avatar: 24px circle, `--badge-bg` fill with a 1px inset `--btn-edge` ring, `--text` 11px weight 600 initials |
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
-| `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments, chips, `.fd-tap`: min-height 44px (`--tap-min`); `.fd-iconbtn` 44px; checkbox and radio 24px |
-| links | `--focus`, no underline; underline on hover and focus. A link without a class inside prose (`.fd-note`, `.fd-md`, `p`) is always underlined (1px, offset 2px): color alone does not mark it (WCAG 1.4.1) |
+| `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments, chips, `.fd-tap`: min-height 44px (`--tap-min`); `.fd-iconbtn` 44px; checkbox and radio 24px. The rule has zero specificity (`:where()`): an area rule that sets `min-height: 0` on a button, a summary or a button class must give the target back in a `@media (pointer: coarse)` rule of the same file for the same selector (`tools/design-check.sh` fails otherwise; inline controls in a line of text are on its allowlist) |
+| links | `--focus`, no underline; underline on hover and focus. A link without a class, or with only `.fd-tap`, inside prose (`.fd-note`, `.fd-md`, `p`) is always underlined (1px, offset 2px): color alone does not mark it (WCAG 1.4.1) |
 
 ---
 
@@ -291,7 +293,7 @@ Sentence case; plain verbs; one name per action across a flow (Allow → "Allowe
 
 ## 6. Accessibility floor
 
-Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette; focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`), gives the pressed segment a `Highlight` outline and draws the switch in system colors.
+Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette; focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`); gives a `Highlight` ring to the pressed segment and chip, the selected tab (`[role=tab][aria-selected=true]`) and the current nav or session row (`[aria-current=page]`); draws the switch and a checked checkbox or radio in `Highlight`/`HighlightText`; draws the summary chevron in `CanvasText` and the select chevron as an `url()` image; and gives key hints, badges and counts a 1px `CanvasText` edge. An area part whose edge or selection is only a `box-shadow` or a fill adds its own `@media (forced-colors: active)` rule. Check it with Playwright `page.emulateMedia({ forcedColors: "active" })`.
 
 ## 7. Expansion log
 
@@ -327,3 +329,8 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | flight-path node states for a running and an ended call | §4.5 named only ok, waiting and failed; the wall needs a node for every call | wall chat pane |
 | 2026-10-22 | New session: provider segments stack with instance limits; model and mode pills with a leading icon; the sheet on `--bg` on its own route | §4.6 did not say how R4.3 limits show, nor name the pill icons; nothing is behind the sheet on `#/new` | New session sheet |
 | 2026-10-22 | `tools/design-check.sh` fails on a shadow token set to `none` | `none` in a box-shadow list drops the whole declaration (§2.5) | tokens.css, palette.ts |
+| 2026-10-22 | `--row-h-touch` (44px) | touch list rows used `--tap-min` (a control size) in local media rules; a row height has its own token | the Files rows and other list rows on touch screens |
+| 2026-10-22 | `--btn-edge-raised` | in the dark theme a plain button on a `--raised` strip or card had no edge (`--btn-edge` is transparent, and the button has the strip's fill); the dialog rule used `--border` (1.25:1) | plain buttons in dialogs (base.css); the turn strip buttons (session.css) |
+| 2026-10-22 | `.fd-kbd` text `--dim`; needs-you `.fd-slots` tick is an "!"; verifying `.fd-dot` has a center dot; a prose link with `.fd-tap` is underlined | review: the light key hints were 4.44:1; needs-you and used slots, and the verifying and working glyphs, differed by hue alone (1.14–1.24:1); the Spaces link was marked by color alone | key hints, slot meters, status glyphs, page descriptions |
+| 2026-10-22 | `tools/design-check.sh` fails on `min-height: 0` on a button or summary without a `pointer: coarse` rule | the coarse tap-size rule has zero specificity, so an area reset silently dropped the 44px target | every area style sheet |
+| 2026-10-22 | forced colors: `Highlight` ring for a pressed chip, the selected tab and the `aria-current=page` row; checked checkbox and radio in `Highlight`; summary and select chevrons; key hint, badge and count edges | a Playwright forced-colors run of the home, the session, settings and New session: checked and unchecked boxes looked the same, the selected tab and nav row and the pressed chip had no cue, and both chevrons vanished | every checkbox, radio, chip, tab, nav row, details summary, select, key hint and badge |

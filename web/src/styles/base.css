@@ -39,7 +39,8 @@ body {
 /* ── links ──────────────────────────────────────────────────────── */
 /* A link is the focus blue, with no underline; the underline shows on hover and on focus.
    A link inside prose (a note, chat markdown, a paragraph) is always underlined: color alone
-   does not mark it (WCAG 1.4.1). Navigation links, rows and cards have a class and no underline.
+   does not mark it (WCAG 1.4.1). A prose link with only `.fd-tap` (the touch size) is still a
+   prose link. Navigation links, rows and cards have a class and no underline.
    `:where()` keeps the rules at zero specificity: a class of a card, a row or a nav item
    still sets its own look. */
 :where(a, a:visited, .fd-note a, .fd-note a:visited) {
@@ -49,7 +50,7 @@ body {
 :where(a:hover, a:focus-visible) {
   text-decoration: underline;
 }
-:where(.fd-note, .fd-md, p) :where(a:not([class])) {
+:where(.fd-note, .fd-md, p) :where(a:not([class]), a.fd-tap) {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -136,7 +137,9 @@ body {
   *,
   *::before,
   *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must beat every animation of every area rule */
     animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must beat every transition of every area rule */
     transition: none !important;
   }
 }
@@ -232,8 +235,8 @@ a.fd-btn {
 }
 /* A plain button keeps an edge where its fill would match the layer under it: in a panel the edge
    is --btn-edge (transparent on the dark deck, a hairline in the light theme); in a --raised
-   dialog it is --border in both themes. Variants (.fd-primary, .fd-ghost, …), tabs and area
-   classes keep no edge. */
+   dialog it is --btn-edge-raised (the button has the dialog's fill) in both themes. Variants
+   (.fd-primary, .fd-ghost, …), tabs and area classes keep no edge. */
 :where(.fd-panel)
 :where(
   button:not([class]):not([role]),
@@ -246,7 +249,7 @@ a.fd-btn {
     button:not([class]):not([role]),
     :is(button, a.fd-btn).fd-sm:not(.fd-primary, .fd-decide, .fd-ghost, .fd-danger, .fd-iconbtn)
   ) {
-  border-color: var(--border);
+  border-color: var(--btn-edge-raised);
 }
 :where(button, a.fd-btn):where(:hover:not(:disabled)) {
   background: var(--raised-hi);
@@ -560,7 +563,7 @@ a.fd-btn {
   height: 18px;
   padding: 0 5px;
   background: var(--badge-bg);
-  color: var(--faint);
+  color: var(--dim); /* --faint was 4.44:1 on the light --badge-bg */
   border-radius: var(--r-chip);
   font-family: var(--font-ui);
   font-size: var(--fs-micro);
@@ -819,6 +822,14 @@ a.fd-btn {
 .fd-dot[data-status="verifying"]::before {
   background: conic-gradient(var(--focus) 0 180deg, transparent 0);
 }
+/* A center dot: the working glyph has none, so verifying differs by shape, not by hue alone
+   (--ok and --focus are near the same luminance), also when reduced motion stops the arc. */
+.fd-dot[data-status="verifying"]::after {
+  content: "";
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--focus);
+}
 /* needs you: a filled yellow circle with a dark "!". The edge is --act, so that the circle keeps
    its shape on a light fill. */
 .fd-dot[data-status="needs_you"] {
@@ -962,8 +973,10 @@ a.fd-btn {
 .fd-slots > [data-slot="used"] {
   background: var(--ok);
 }
+/* needs you: a bar, a gap and a dot (an "!", the sign of the needs-you .fd-dot), so that it
+   differs from a used slot by shape, not by color alone (1.4.1). */
 .fd-slots > [data-slot="needs_you"] {
-  background: var(--act);
+  background: linear-gradient(var(--act) 0 7px, transparent 7px 9px, var(--act) 9px);
 }
 /* A free slot is a hollow outline, so used and free differ by shape, not by color alone (1.4.1). */
 .fd-slots > :not([data-slot]) {
@@ -1291,9 +1304,47 @@ a.fd-btn {
   .fd-meter > * {
     forced-color-adjust: none;
   }
-  .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)) {
+  /* A selection drawn by a fill or a box-shadow (a pressed segment or chip, the selected tab, the
+     current nav row or session row) gets a Highlight ring; the focus ring stays outside it. */
+  .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
+  .fd-chip:is([aria-pressed="true"], [aria-selected="true"]),
+  [role="tab"][aria-selected="true"]:not(:focus-visible),
+  :is(a, button)[aria-current="page"]:not(:focus-visible) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
+  }
+  /* A key hint, a badge and a count lose their fill: a thin edge keeps their shape. */
+  .fd-kbd,
+  .fd-badge:not([data-tone="muted"]),
+  .fd-count {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  /* A checked checkbox or radio: forced colors drop the ink fill, and the mark (a mask on a
+     background color) would take the Canvas color. Draw both in Highlight / HighlightText. */
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]):is(
+    :checked,
+    :indeterminate
+  ) {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+  }
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"])::before {
+    forced-color-adjust: none;
+    background-color: HighlightText;
+  }
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]):is(
+    :checked,
+    :indeterminate
+  ):disabled {
+    background: GrayText;
+    border-color: GrayText;
+  }
+  /* The summary chevron is a mask on a background color: draw it in the text color. */
+  :where(details:not(.fd-menu) > summary:not(:has(svg)))::before {
+    forced-color-adjust: none;
+    background-color: CanvasText;
   }
   .fd-switch {
     forced-color-adjust: none;
@@ -1311,5 +1362,19 @@ a.fd-btn {
   }
   .fd-tdock-handle:focus-visible {
     outline: 2px solid Highlight;
+  }
+}
+/* The select chevron is two gradients, and forced colors drop gradients (an url() image stays):
+   draw Lucide's chevron-down as an image in the ink of the high-contrast scheme. */
+@media (forced-colors: active) {
+  :where(select:not([multiple]):not([size])) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); /* ds-exception: forced colors keep only an url() image; black is the ink of a light high-contrast scheme */
+    background-position: right 8px center;
+    background-size: 14px 14px;
+  }
+}
+@media (forced-colors: active) and (prefers-color-scheme: dark) {
+  :where(select:not([multiple]):not([size])) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); /* ds-exception: forced colors keep only an url() image; white is the ink of a dark high-contrast scheme */
   }
 }
