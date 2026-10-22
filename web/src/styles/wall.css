@@ -305,7 +305,8 @@
 .fd-wall-root[data-shape="standard"] .fd-wall-needs,
 .fd-wall-root[data-shape="portrait"] .fd-wall-needs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 340), 1fr));
+  /* auto-fit: the empty tracks collapse, and the cards share the full width of the band */
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--fd-wall-u) * 340), 1fr));
 }
 
 .fd-wall-need {
@@ -803,9 +804,9 @@
 .fd-wall-stream {
   display: flex;
   flex: 1 1 auto;
-  /* the list runs oldest first: drawn from the bottom up, the newest row is at the top */
-  flex-direction: column-reverse;
-  justify-content: flex-end;
+  /* the list runs newest first, from the top down (the DOM order is the reading order) */
+  flex-direction: column;
+  justify-content: flex-start;
   min-height: 0;
   overflow: hidden;
   margin: 0;
@@ -826,7 +827,7 @@
 }
 
 .fd-wall-stream li + li {
-  border-bottom: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border-soft);
 }
 
 /* The times have one column: the names start at the same place on every row. */

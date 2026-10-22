@@ -37,7 +37,7 @@ export function AmbientPane({
       </dl>
       {meter === null || meter.usedPercent === null ? null : (
         <p className="fd-wall-ambient-line">
-          {usageLine(meter)}
+          {usageLine(meter)} · {meter.station}
           {meter.resetsAt === null ? '' : `, ${resetsText(meter.resetsAt, now)}`}
         </p>
       )}
