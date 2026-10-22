@@ -2,6 +2,7 @@
 // composer, no filters and no control. The agent text goes through the chat Markdown in its
 // read-only form (no copy button); the tool calls run on a flight path (DESIGN-SYSTEM §4.5).
 import { Markdown } from '../chat/Markdown';
+import { pairWaiting } from '../chat/waiting';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { displayChatLines } from './displayLines';
@@ -18,9 +19,12 @@ type Line = {
   readonly target?: string | undefined;
   /** How a tool line ended when it did not go well: "failed", "denied". */
   readonly mark?: string | undefined;
+  /** The node of a tool call that is not done (DESIGN-SYSTEM §4.5): it runs, it waits for your
+   * answer, or it ended without a result. A done call has none (a filled ok node). */
+  readonly state?: 'running' | 'waiting' | 'ended' | undefined;
 };
 
-function lineOf(item: Item): Line | null {
+function lineOf(item: Item, waiting: ReadonlyMap<string, string>): Line | null {
   switch (item.type) {
     case 'run':
       return { key: item.key, kind: 'prompt', text: item.text ?? item.input };
@@ -29,12 +33,21 @@ function lineOf(item: Item): Line | null {
     case 'tool': {
       const target = item.input.split('\n')[0] ?? '';
       const mark = item.status === 'failed' || item.status === 'denied' ? item.status : undefined;
+      const state =
+        item.status === 'running'
+          ? waiting.has(item.key)
+            ? 'waiting'
+            : 'running'
+          : item.status === 'ended'
+            ? 'ended'
+            : undefined;
       return {
         key: item.key,
         kind: 'tool',
         text: item.title,
         target: target === '' ? undefined : target,
         mark,
+        state,
       };
     }
     case 'subagent':
@@ -61,8 +74,11 @@ function lineOf(item: Item): Line | null {
 
 /** The lines of the chat, oldest first, at most `max`. */
 export function chatLines(events: readonly EventEnvelope[], max: number = CHAT_ITEMS): Line[] {
-  return buildTimeline(events)
-    .items.map(lineOf)
+  const { items } = buildTimeline(events);
+  // A running call with an open request waits for your answer; the request keeps its own line.
+  const waiting = pairWaiting(items).tools;
+  return items
+    .map((item) => lineOf(item, waiting))
     .filter((l): l is Line => l !== null)
     .slice(-max);
 }
@@ -77,7 +93,12 @@ function ChatLine({ line }: { readonly line: Line }) {
   }
   if (line.kind === 'tool') {
     return (
-      <p className="fd-wall-chatline" data-kind="tool" data-mark={line.mark}>
+      <p
+        className="fd-wall-chatline"
+        data-kind="tool"
+        data-mark={line.mark}
+        data-state={line.state}
+      >
         <span className="fd-wall-tool-name">{line.text}</span>
         {line.target === undefined ? null : (
           <>

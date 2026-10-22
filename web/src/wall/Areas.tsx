@@ -107,7 +107,8 @@ export function TilesArea({
   readonly freshness: Freshness;
   readonly failed: ReadonlySet<string>;
   readonly areaRef: RefObject<HTMLElement | null>;
-  /** The columns of the tiles and the growth of their type (`tileGrid`); `null` before a measure. */
+  /** The columns of the tiles (`tileGrid`); `null` before a measure. The growth of the type,
+   * `--fd-wall-tile-k`, is set on the grid: the needs area grows with the tiles. */
   readonly grid?: { readonly columns: number; readonly k: number } | null;
 }) {
   const style: CSSProperties | undefined =
@@ -115,10 +116,7 @@ export function TilesArea({
       ? { display: 'none' }
       : grid === null
         ? undefined
-        : ({
-            '--fd-wall-tile-cols': grid.columns,
-            '--fd-wall-tile-k': grid.k.toFixed(3),
-          } as CSSProperties);
+        : ({ '--fd-wall-tile-cols': grid.columns } as CSSProperties);
   return (
     <section className="fd-wall-area" data-area="tiles" aria-label="Sessions" ref={areaRef}>
       {cards.length === 0 ? <p className="fd-wall-note">No live session.</p> : null}
@@ -291,7 +289,8 @@ export function StreamArea({
     // `filterStations` stands for `filter.stations`.
     [sessions, filterStations, filter.repo],
   );
-  // The deck sends the newest first; the wall shows the newest at the bottom.
+  // The deck sends the newest first. The list runs oldest first, and `.fd-wall-stream` draws it
+  // from the bottom up: the newest row sits under the heading, the oldest are cut at the bottom.
   const rows = (items ?? [])
     .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
     .slice(0, STREAM_ITEMS)

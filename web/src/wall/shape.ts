@@ -36,8 +36,9 @@ export function tileLimit(
 export const baseRemPx = (heightPx: number, shape?: WallShape): number =>
   Math.min(28, Math.max(shape === 'ultra' ? 16 : 14, heightPx / 80));
 
-/** The most that the tile type grows when there are few tiles. */
-export const TILE_GROW_MAX = 1.5;
+/** The most that the tile type grows when there are few tiles. The needs area grows by the same
+ * factor (`--fd-wall-tile-k` on the grid), so a tile never reads louder than a request. */
+export const TILE_GROW_MAX = 1.25;
 
 /**
  * How `n` tiles fill an area: the column count that gives the largest tiles, and `k`, how much the
