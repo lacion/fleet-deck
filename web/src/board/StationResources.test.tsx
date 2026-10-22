@@ -23,9 +23,9 @@ describe('station resources (DL-193)', () => {
     const out = html(full);
     expect(out).toContain('aria-label="Resources"');
     expect(out.match(/<li/g)?.length).toBe(4);
-    expect(out).toContain('Data: 200.0 GB free of 500.0 GB');
-    expect(out).toContain('/work: 600.0 GB free of 1000.0 GB');
-    expect(out).toContain('Memory: 8.0 GB free of 16.0 GB');
+    expect(out).toContain('Data: 300.0 GB used of 500.0 GB · 200.0 GB free');
+    expect(out).toContain('/work: 400.0 GB used of 1000.0 GB · 600.0 GB free');
+    expect(out).toContain('Memory: 8.0 GB used of 16.0 GB · 8.0 GB free');
     expect(out).toContain('CPU: load 2.0 on 4 cores');
     expect(out).toContain('title="/var/data"');
     expect(out.indexOf('Data:')).toBeLessThan(out.indexOf('Memory:'));

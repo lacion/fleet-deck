@@ -169,10 +169,11 @@ describe('station projections', () => {
       '1970-01-01T00:00:00.000Z',
       'offline',
       'Not stored, the station dials this deck',
-      'Last seen —',
       '0 sessions',
     ])
       expect(html).toContain(text);
+    // A station that was never seen shows no "Last seen" (principle 7).
+    expect(html.match(/Last seen/g)?.length).toBe(1);
     expect(html).not.toContain('Dial-only');
     expect(html).not.toContain('Not reported');
   });

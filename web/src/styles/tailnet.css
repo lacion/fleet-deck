@@ -301,14 +301,15 @@
   height: auto;
   min-height: 56px;
   padding: 10px var(--sp-3);
-  background: var(--raised-hi);
+  /* A neutral fill: the light --raised-hi is near the --focus-bg tint and read as selected. */
+  background: var(--badge-bg);
   border-radius: var(--r-card);
   color: var(--text);
   text-align: left;
   line-height: 1.35;
 }
 .fd-add-choice:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--raised-hi) 92%, var(--text));
+  background: color-mix(in srgb, var(--badge-bg) 92%, var(--text));
 }
 .fd-add-choice > .fd-icon {
   color: var(--faint);
@@ -344,7 +345,7 @@
   background: transparent;
 }
 .fd-add-choice[data-dim="true"]:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
 .fd-add-choice[data-dim="true"] .fd-add-choice-title {
   color: var(--dim);
