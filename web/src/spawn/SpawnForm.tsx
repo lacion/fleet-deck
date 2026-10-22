@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { instanceLimit, rateMeters } from '../board/usage';
+import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
 import type { Prefer, ProviderKind, TranscriptPin } from '../gen';
 import { useProjects } from '../integrations/context';
@@ -112,7 +112,12 @@ export function SpawnForm({
   const provider = providers.find((p) => p.instance === instance);
   const now = useNow(givenNow, 30000);
   const meters = rateMeters(sessions, stations);
-  // R4.3: the tightest limit of the chosen instance, as a fuel badge from WARN_PERCENT on.
+  // R4.3: the tightest limit of each instance and the one with the most room, on the provider
+  // choices; the limit of the chosen instance also as a fuel badge from WARN_PERCENT on.
+  const limits = new Map(
+    providers.map((p) => [p.instance, instanceLimit(meters, stationId, p.instance)]),
+  );
+  const roomiest = mostRoom(limits);
   const badge = limitBadge(instanceLimit(meters, stationId, instance), now);
   // The directory as typed or picked; `cwd` is the trimmed text, or `null` when it is empty.
   const [cwdText, setCwd] = useState<string | null>(initialCwd ?? null);
@@ -520,6 +525,9 @@ export function SpawnForm({
                     setMode('');
                     setModel('');
                   }}
+                  limits={limits}
+                  roomiest={roomiest}
+                  now={now}
                   badge={badge}
                   fieldKey={`${stationId}/${instance}`}
                   model={model}

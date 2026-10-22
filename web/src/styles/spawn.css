@@ -1,14 +1,16 @@
-/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the dimmed page canvas. A breadcrumb head,
+/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the page canvas. A breadcrumb head,
    a borderless title and task, property rows (Agent, Station, Where) with a 72px key column and no
    captions (each control carries its name as aria-label), "More options", and a one-line footer
    with the Batch switch, Cancel and Start session. Also the native session dialog and the recent
    folders. */
 
-/* ── the route: the sheet in the middle of the dimmed canvas ────── */
+/* ── the route: the sheet in the middle of the canvas ───────────── */
+/* Nothing is behind the sheet on its own route, so the canvas is not dimmed: --scrim on an empty
+   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. */
 .fd-route:has(> .fd-screen > .fd-spawn) {
   display: flex;
   flex-direction: column;
-  background: var(--scrim);
+  background: var(--bg);
 }
 .fd-screen:has(> .fd-spawn) {
   flex: 1 0 auto;
@@ -253,13 +255,57 @@
 .fd-spawn-fields > .fd-badge {
   flex: none;
 }
-/* The model and the mode: compact pills, as wide as their value. */
+/* With the limits of its instances (R4.3) the provider choice is a stacked list: one row per
+   instance, all rows as wide as the widest, the limit at the right so the instances compare. */
+.fd-spawn-seg:has(.fd-spawn-seg-meta) {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.fd-spawn-seg:has(.fd-spawn-seg-meta) > label {
+  justify-content: space-between;
+  gap: var(--sp-3);
+  height: auto;
+  min-height: var(--ctl-h-sm);
+  padding-block: 2px;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+}
+/* The name keeps one line; the limit after it wraps on a narrow sheet, quieter than the name. */
+.fd-spawn-seg-name {
+  flex: none;
+  max-width: 100%;
+}
+.fd-spawn-seg-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-align: right;
+}
+/* The model and the mode: one pill look (concept B), as wide as their value, a leading icon
+   (sparkles, shield) inside the pill. */
 .fd-spawn-pills {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
+}
+.fd-spawn-pillwrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.fd-spawn-pillwrap > .fd-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--sp-2);
+  transform: translateY(-50%);
+  color: var(--dim);
+  pointer-events: none;
 }
 .fd-spawn .fd-spawn-pill {
   width: auto;
@@ -268,8 +314,8 @@
 .fd-spawn select.fd-spawn-pill {
   field-sizing: content;
 }
-.fd-spawn select.fd-spawn-pill[aria-label="Model (optional)"] {
-  min-width: 160px;
+.fd-spawn .fd-spawn-pillwrap > select.fd-spawn-pill {
+  padding-left: 26px;
 }
 .fd-spawn input.fd-spawn-model {
   width: 200px;
@@ -558,7 +604,8 @@
   .fd-spawn-pills > * {
     flex: 1 1 0;
   }
-  .fd-spawn .fd-spawn-pills > :is(select, input) {
+  .fd-spawn .fd-spawn-pills > input,
+  .fd-spawn .fd-spawn-pillwrap > select {
     width: 100%;
     min-width: 0;
   }
