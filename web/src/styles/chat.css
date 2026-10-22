@@ -252,6 +252,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A file target stays on one line; a long one loses its start (the end names the file), the
+   same as the Properties Folder row (`.fd-props-mono[data-path]`). `<bdi>` keeps the text LTR. */
+.fd-chat-tool-arg[data-path] {
+  direction: rtl;
+  text-align: left;
+}
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
 }
@@ -430,6 +436,8 @@
   align-items: center;
   gap: var(--sp-2);
   min-height: var(--chat-row);
+  /* The icon column of the tool rows above: their summary starts at --sp-2. */
+  padding: 0 var(--sp-2);
   color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
@@ -546,9 +554,11 @@
 .fd-md-code {
   margin: var(--sp-3) 0;
   overflow: hidden;
-  background: var(--code);
+  /* --code-chat: --code in the dark theme, --raised in the light one, where --code is about
+     1.02:1 on --bg and the block looked like an empty outline (§2.1). */
+  background: var(--code-chat, var(--code));
   border-radius: var(--r-panel);
-  box-shadow: inset 0 0 0 1px var(--border-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .fd-md-code-head {
   display: flex;
