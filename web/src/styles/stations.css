@@ -240,15 +240,15 @@
   margin: 0;
 }
 
-/* ── the header: name, platform, reach; the slots and the menu at the right; the meta line
-   (last seen, config) under them ── */
+/* ── the header: one line on a desktop: name, platform, reach and the meta (last seen,
+   config); the slots and the menu at the right. A narrow card wraps the meta. ── */
 .fd-station-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 var(--sp-3);
+  gap: var(--sp-1) var(--sp-3);
   min-height: var(--ctl-h);
-  padding: var(--sp-2) var(--sp-2) var(--sp-3) var(--sp-4);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
 }
 
 /* A station name is a place: the wide width (§2.3, the same values as .fd-wide). */
@@ -288,11 +288,13 @@
   content: none;
 }
 
-/* The session slots: "3 of 12 sessions" with a slot meter. */
+/* The session slots: "3 of 12 sessions" with the .fd-slots meter (base.css); a station with
+   more than 24 slots shows a plain bar. */
 .fd-station-load {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  order: 2;
   margin-left: auto;
   color: var(--dim);
   font-size: var(--fs-meta);
@@ -311,28 +313,18 @@
   background: var(--ok);
 }
 
-/* Up to 24 slots draw as the ticks of .fd-slots (6×12 px, 2 px apart): a mask cuts the bar
-   into ticks, so the used share fills whole ticks. */
-.fd-station-load .fd-load-bar[data-slots] {
-  width: calc(var(--slots) * 8px - 2px);
-  height: 12px;
-  border-radius: 0;
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12'%3E%3Crect width='6' height='12' rx='1.5'/%3E%3C/svg%3E")
-    0 0 / 8px 12px repeat-x;
-}
-
 .fd-station-menu {
   display: flex;
+  order: 3;
 }
 
-/* ── the meta line: last seen, config, the stale note ─────────────── */
+/* ── the meta: last seen, config, the stale note (after the reach, before the slots) ── */
 .fd-station-live {
   display: flex;
-  flex: 1 0 100%;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  order: 10;
+  order: 1;
   min-height: 20px;
   color: var(--faint);
   font-size: var(--fs-meta);
@@ -349,7 +341,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
   gap: var(--sp-2) var(--sp-5);
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
   border-top: 1px solid var(--border-soft);
 }
 
@@ -387,20 +379,24 @@
   grid-column: 1 / -1;
 }
 
-/* Providers: name and version, the sign-in state as a glyph and words. */
+/* Providers: name and version, the sign-in state as a glyph and words. Two content-sized
+   columns at the left (not spread across the panel), so a state sits next to its provider;
+   the rows share the columns (subgrid), so the states line up. */
 .fd-station-providers {
   display: grid;
+  grid-template-columns: minmax(0, max-content) max-content;
+  justify-content: start;
+  column-gap: var(--sp-5);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .fd-station-providers > li {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  justify-content: space-between;
-  gap: 0 var(--sp-3);
   min-height: 28px;
   font-weight: 500;
 }
@@ -560,10 +556,33 @@
 .fd-station-folds > details > summary {
   display: flex;
   align-items: center;
+  gap: var(--sp-1);
   min-height: var(--row-h);
   color: var(--dim);
   font-size: var(--fs-meta);
   font-weight: 500;
+}
+
+/* A toggle, not a path: no leading chevron-right (base.css), a trailing chevron-down that
+   turns over when the fold opens. */
+.fd-station-folds > details > summary::before {
+  content: none;
+}
+
+.fd-station-folds > details > summary::after {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background-color: var(--faint);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  transition: transform var(--t-move);
+}
+
+.fd-station-folds > details[open] > summary::after {
+  transform: rotate(180deg);
 }
 
 .fd-station-folds > details > summary:hover,
@@ -579,7 +598,7 @@
   .fd-station-folds {
     grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
     grid-template-rows: minmax(var(--row-h), auto) repeat(4, auto);
-    column-gap: 2px;
+    column-gap: var(--sp-2);
     padding: 0 var(--sp-2);
   }
 
@@ -935,7 +954,9 @@
     margin-left: 0;
   }
 
+  /* The menu stays on the name line; the slots and the meta take the second line. */
   .fd-station-menu {
+    order: 0;
     margin-left: auto;
   }
 

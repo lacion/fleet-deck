@@ -273,6 +273,13 @@
   border-color: transparent;
   text-decoration: underline;
 }
+/* On touch the text button keeps the 44px target of every control (§6). */
+@media (pointer: coarse) {
+  .fd-add-text-btn {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-1);
+  }
+}
 
 /* ── the start screen: the question and the ways to add a station ── */
 .fd-add-question {
