@@ -4,7 +4,7 @@ import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { FileText, Folder, Icon, Upload } from '../ui/icons';
+import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
 import { type ChangedFiles, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
@@ -123,6 +123,12 @@ export function ChangedFilesList({
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
 
+/** The last name of a folder path (`~/projects/fleet-deck` → `fleet-deck`, `/` → `/`). */
+export function folderName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  return trimmed.split(/[\\/]/).pop() || path;
+}
+
 /**
  * The files below the session's directory (`files.v1`, DL-088), read only.
  * The station refuses paths outside the root, symlinks, hidden credential
@@ -225,15 +231,22 @@ export function FilesPanel({
           <label htmlFor="fd-file-query" className="fd-vh">
             Search
           </label>
-          <input
-            id="fd-file-query"
-            className="fd-sm"
-            placeholder="Search files"
-            value={query}
-            minLength={2}
-            maxLength={256}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+          {/* The search icon in the field is the submit button (Enter submits too). */}
+          <div className="fd-field fd-files-query">
+            <input
+              id="fd-file-query"
+              className="fd-sm"
+              placeholder="Search files"
+              value={query}
+              minLength={2}
+              maxLength={256}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <button type="submit" className="fd-files-go" disabled={query.trim().length < 2}>
+              <Icon of={Search} />
+              <span className="fd-vh">Search</span>
+            </button>
+          </div>
           <select
             className="fd-sm"
             aria-label="Search in"
@@ -243,15 +256,20 @@ export function FilesPanel({
             <option value="name">Names</option>
             <option value="content">Content</option>
           </select>
-          <button type="submit" className="fd-sm" disabled={query.trim().length < 2}>
-            Search
-          </button>
         </form>
       </div>
       {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
-        <button type="button" className="fd-files-crumb" onClick={() => open('')}>
-          <Icon of={Folder} size={14} /> root
+        <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
+          <Icon of={Folder} size={14} />
+          {root ? (
+            <>
+              {folderName(root)}
+              <span className="fd-vh">, root folder</span>
+            </>
+          ) : (
+            'Root folder'
+          )}
         </button>
         {segments.map((segment, n) => {
           const path = segments.slice(0, n + 1).join('/');

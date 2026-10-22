@@ -1245,6 +1245,9 @@ button.fd-composer-model > .fd-icon {
   min-width: 0;
   margin-bottom: var(--sp-5);
 }
+.fd-files {
+  gap: var(--sp-2);
+}
 .fd-revert h3,
 .fd-turns h3,
 .fd-files h3,
@@ -1460,13 +1463,18 @@ span.fd-dl-n {
   gap: var(--sp-2);
   min-width: 0;
 }
+/* The diff is the body of its turn strip: it bleeds to the strip edges (no frame of strip fill
+   around it, no box in a box), and its bottom corners are the strip's. The row is a wrapping flex
+   row: the width stays explicit (an auto width would be the max-content width of the diff grid). */
 .fd-turns li > .fd-diff,
 .fd-turns li > .fd-diffwrap {
   flex: none;
-  width: calc(100% + var(--sp-2));
+  width: calc(100% + var(--sp-4) + var(--sp-2));
   min-width: 0;
   max-height: 70vh;
-  margin-left: calc(var(--sp-2) * -1);
+  margin-inline: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-2));
+  margin-bottom: calc(-1 * var(--sp-2));
+  border-radius: 0 0 var(--r-card) var(--r-card);
 }
 .fd-turns li > .fd-diffwrap {
   max-height: none;
@@ -1474,14 +1482,18 @@ span.fd-dl-n {
 .fd-turns li .fd-diff {
   max-height: 70vh;
 }
-/* The phone diff bleeds to the edges of its turn row, so its scroll edge is the row edge. The
-   row is a wrapping flex row: the width stays explicit (an auto width would be the max-content
-   width of the diff grid). */
-[data-layout="phone"] .fd-turns li > .fd-diff,
-[data-layout="phone"] .fd-turns li > .fd-diffwrap {
-  width: calc(100% + var(--sp-4) + var(--sp-2));
-  margin-inline: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-2));
-  border-radius: 0;
+.fd-turns li > .fd-diffwrap > .fd-diff {
+  border-radius: 0 0 var(--r-card) var(--r-card);
+}
+/* The review threads above the diff keep the strip's text inset. */
+.fd-turns li > .fd-diffwrap > :not(.fd-diff) {
+  margin-inline: var(--sp-4) var(--sp-2);
+}
+/* The turn strip is not a panel: its plain buttons keep the hairline edge that a panel gives
+   them (a white button on the white light strip). */
+.fd-turns li > button.fd-sm:not(.fd-danger),
+.fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger) {
+  border-color: var(--btn-edge);
 }
 .fd-thread-list {
   display: flex;
@@ -1767,10 +1779,14 @@ button.fd-cchip:hover:not(:disabled) {
 /* ── the files of the workspace ─────────────────────────────────── */
 .fd-files ul {
   display: grid;
-  gap: 1px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/* 36px rows divided by --border-soft, the same as the artifact list (§4.7). */
+.fd-files ul > li {
+  border-bottom: 1px solid var(--border-soft);
 }
 .fd-files-row {
   display: flex;
@@ -1780,11 +1796,11 @@ button.fd-cchip:hover:not(:disabled) {
   width: 100%;
   height: auto;
   min-width: 0;
-  min-height: var(--ctl-h);
+  min-height: var(--row-h);
   padding: 0 var(--sp-2);
   background: none;
   border: 0;
-  border-radius: var(--r-ctl);
+  border-radius: 0;
   color: var(--text);
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -1795,6 +1811,9 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files-row:hover:not(:disabled) {
   background: var(--raised);
   border-color: transparent;
+}
+.fd-files-row:focus-visible {
+  outline-offset: -2px;
 }
 .fd-files-row > .fd-icon {
   flex: none;
@@ -1820,6 +1839,7 @@ button.fd-cchip:hover:not(:disabled) {
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
+/* The crumbs: the root icon on the column of the row icons. */
 .fd-files-crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -1827,6 +1847,7 @@ button.fd-cchip:hover:not(:disabled) {
   gap: 4px;
   min-width: 0;
   min-height: var(--ctl-h-sm);
+  padding: 0 var(--sp-2);
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
@@ -1850,6 +1871,16 @@ button.fd-cchip:hover:not(:disabled) {
   background: none;
   border-color: transparent;
   color: var(--text);
+}
+/* The root crumb is the folder's name: a word, so sans; only the path segments are mono. */
+.fd-files-crumb.fd-files-root {
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+.fd-files-root > .fd-icon {
+  color: var(--dim);
 }
 .fd-files-sep {
   color: var(--faint);
@@ -1904,16 +1935,60 @@ button.fd-cchip:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
 }
+/* The search field: the search icon at the left is the submit button (Enter submits too). */
+.fd-files-query {
+  flex: 1;
+  min-width: 0;
+}
+.fd-files-go {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  justify-content: center;
+  width: 30px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--dim);
+}
+.fd-files-go:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+.fd-files-go:focus-visible {
+  outline-offset: -2px;
+}
+.fd-files-go:disabled {
+  opacity: 1;
+  color: var(--faint);
+  font-size: inherit;
+  cursor: default;
+}
+@media (pointer: coarse) {
+  .fd-files-row {
+    min-height: var(--tap-min);
+  }
+  .fd-files-go {
+    width: var(--tap-min);
+  }
+  .fd-files-query > .fd-sm {
+    padding-left: var(--tap-min);
+  }
+}
 .fd-pane-side .fd-files {
   margin-bottom: 0;
 }
 /* The search hits: a path link and the matching line. */
 .fd-files [data-search] li {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-2);
   min-width: 0;
-  padding: 3px var(--sp-2);
+  min-height: var(--row-h);
+  padding: 0 var(--sp-2);
   font-size: var(--fs-data);
 }
 .fd-files [data-search] .fd-link {
