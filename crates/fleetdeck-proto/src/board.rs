@@ -6,7 +6,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::command::{DeckCommandState, Receipt, SessionCommand};
-use crate::event::EventEnvelope;
+use crate::event::{EventEnvelope, RequestKind};
 use crate::ids::{CommandId, IncarnationId, SessionId, StationId};
 use crate::link::StationInfo;
 use crate::session::{CardStatus, SessionSummary};
@@ -142,6 +142,11 @@ pub struct ActivityItem {
     /// The repository of the session: its origin, else its root.
     pub repo: Option<String>,
     pub kind: ActivityKind,
+    /// The kind of the request of a "Needs you" row (`approval.requested`); absent on every
+    /// other row and from an older deck.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub request_kind: Option<RequestKind>,
     /// A one-line text, at most [`ACTIVITY_TEXT_CHARS`] characters.
     pub text: String,
     /// Unix ms.
@@ -570,6 +575,34 @@ mod tests {
         assert!(c.validate().is_err());
         c.changes = vec![item("st", &"s".repeat(256))];
         assert_eq!(c.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_activity_item_without_request_kind_round_trips() {
+        let item = ActivityItem {
+            station_id: "st".into(),
+            session_id: "s1".into(),
+            session_title: None,
+            repo: None,
+            kind: ActivityKind::Message,
+            request_kind: None,
+            text: "Fixed it".to_owned(),
+            at: 1,
+            station_seq: Some(1),
+        };
+        let json = serde_json::to_value(&item).unwrap();
+        assert!(json.as_object().unwrap().get("request_kind").is_none());
+        let back: ActivityItem = serde_json::from_value(json).unwrap();
+        assert_eq!(back.request_kind, None);
+        assert_eq!(back, item);
+        let asked = ActivityItem {
+            kind: ActivityKind::Approval,
+            request_kind: Some(RequestKind::Question),
+            ..item
+        };
+        let json = serde_json::to_value(&asked).unwrap();
+        assert_eq!(json["request_kind"], "question");
+        assert_eq!(serde_json::from_value::<ActivityItem>(json).unwrap(), asked);
     }
 
     #[test]

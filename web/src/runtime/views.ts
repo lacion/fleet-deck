@@ -34,6 +34,8 @@ export function activityItem(v: unknown): ActivityItem {
     !(v['session_title'] === null || typeof v['session_title'] === 'string') ||
     !(v['repo'] === null || typeof v['repo'] === 'string') ||
     !KINDS.includes(v['kind'] as ActivityKind) ||
+    // Absent, or any string: a newer deck may add a kind of request.
+    !(v['request_kind'] === undefined || typeof v['request_kind'] === 'string') ||
     typeof v['text'] !== 'string' ||
     typeof v['at'] !== 'number' ||
     !(v['station_seq'] === null || typeof v['station_seq'] === 'number')

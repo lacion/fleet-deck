@@ -16,7 +16,7 @@ use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
 use rusqlite::params;
 
 use super::display_timeline::{safe_tool_name, tool_name_db};
-use super::{KINDS_DISPLAY, one_line, status_word};
+use super::{KINDS_DISPLAY, one_line, request_kind_of, status_word};
 use crate::http::display_view::{last_component, request_label};
 use crate::store::display_directives::EffectiveScope;
 use crate::store::{DeckStore, Result, call, to_u64};
@@ -165,6 +165,7 @@ impl DeckStore {
                     session_title: meta.and_then(|a| a.title.clone()),
                     repo: meta.and_then(|a| a.repo.clone()),
                     kind,
+                    request_kind: request_kind_of(event),
                     text,
                     at,
                     station_seq: Some(to_u64(seq)?),

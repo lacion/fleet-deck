@@ -6,7 +6,7 @@
 //! back as far as those do.
 
 use fleetdeck_proto::board::{ACTIVITY_TEXT_CHARS, ActivityItem, ActivityKind, ActivityList};
-use fleetdeck_proto::event::{Event, ToolStatus};
+use fleetdeck_proto::event::{Event, RequestKind, ToolStatus};
 use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
 use rusqlite::{Connection, params};
 
@@ -92,6 +92,15 @@ fn describe(event: &Event) -> Option<(ActivityKind, String)> {
         ),
         _ => return None,
     })
+}
+
+/// The kind of the request of an `approval.requested` event; `None` for every
+/// other event.
+fn request_kind_of(event: &Event) -> Option<RequestKind> {
+    match event {
+        Event::ApprovalRequested { request_kind, .. } => Some(*request_kind),
+        _ => None,
+    }
 }
 
 /// The title of the tool call `node_id` of a session, from its
@@ -180,6 +189,7 @@ impl DeckStore {
                     session_title: title,
                     repo,
                     kind,
+                    request_kind: env.event.known().and_then(request_kind_of),
                     text,
                     at,
                     station_seq: Some(to_u64(seq)?),
@@ -217,6 +227,7 @@ impl DeckStore {
                     session_title: title,
                     repo,
                     kind: ActivityKind::Mail,
+                    request_kind: None,
                     text: one_line(&format!("Mail: {text}")),
                     at,
                     station_seq: None,

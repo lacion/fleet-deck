@@ -293,6 +293,14 @@ async fn a_display_gets_fixed_labels_and_no_mail_plan_or_input() {
         .iter()
         .find(|i| i["session_id"] == "s1")
         .unwrap();
+    // The request kind of a "Needs you" row is there; the other rows have none.
+    for i in res.body["items"].as_array().unwrap() {
+        if i["text"] == "Needs you: Approve a command" {
+            assert_eq!(i["request_kind"], "command", "{i}");
+        } else {
+            assert!(i.get("request_kind").is_none(), "{i}");
+        }
+    }
     assert_eq!(s1["repo"], "alpha");
     assert_eq!(s1["session_title"], "Title of s1");
     // The owner still sees the mail row and the plan.
