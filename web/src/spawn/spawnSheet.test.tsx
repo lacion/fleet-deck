@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { RateMeter } from '../board/usage';
-import type { StationInfo } from '../gen';
+import type { StationInfo, StationProvider } from '../gen';
 import { station } from '../testing/fleet';
-import { AUTO, limitBadge } from './spawn';
+import { AUTO, limitBadge, providerChoice } from './spawn';
 import { SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
 
 const info = (extra: Partial<StationInfo>): StationInfo =>
@@ -94,5 +94,17 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     });
     expect(limitBadge(limit(100, 'seven_day'), 0)?.text).toBe('100% of weekly window');
     expect(limitBadge(limit(100, 'seven_day_opus'), 0)?.text).toBe('100% of seven day opus');
+    // Each provider choice shows its limit, so the instances compare before a choice.
+    const p = { instance: 'work', provider: 'claude', version: '2.1.5' } as StationProvider;
+    expect(providerChoice(p, limit(42), 0, true)).toEqual({
+      label: 'Claude 2.1.5 (work)',
+      suffix: '42% of 5-hour window, resets in 1 h (most room)',
+      title: '42% of 5-hour window, resets in 1 h',
+    });
+    expect(providerChoice(p, null, 0, false)).toEqual({
+      label: 'Claude 2.1.5 (work)',
+      suffix: '',
+      title: undefined,
+    });
   });
 });

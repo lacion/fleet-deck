@@ -561,7 +561,7 @@ describe('spawn form (P4-4)', () => {
         />,
       );
     const tight = render(85);
-    expect(tight).toContain('Claude 2.1.999</label>');
+    expect(tight).toContain('1 h (most room)</span></label>');
     expect(tight).toContain(
       '<span class="fd-badge" data-tone="fuel" title="85% of 5-hour window, resets in 1 h">85% of 5-hour window</span>',
     );
@@ -632,13 +632,13 @@ describe('spawn form (P4-4)', () => {
       expect(html).not.toContain('Model id or alias');
     });
 
-    test('without a known list the field is the text input', () => {
+    test('without a known list the field is the same select pill with the default and Other…', () => {
       const html = render([withModels('a', list('opus'), 10, 'codex')]);
-      expect(html).toMatch(
-        /<input class="[^"]*" aria-label="Model \(optional\)" placeholder="Default model"/,
-      );
-      expect(html).not.toContain('<option value="" selected="">Default model</option>');
+      expect(html).toContain('<select aria-label="Model (optional)" class="fd-sm fd-spawn-pill"');
+      const other = '<option value="__other__">Other…</option></select>';
+      expect(html).toContain(`<option value="" selected="">Default model</option>${other}`);
       expect(html).not.toContain('From the last session');
+      expect(html).not.toContain('Model id or alias'); // the input shows only after "Other…"
     });
   });
 

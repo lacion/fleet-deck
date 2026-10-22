@@ -22,7 +22,7 @@ import type {
   WorkspaceListing,
   WorkspaceRequest,
 } from '../gen';
-import { type RateMeter, resetsText, scopeText, WARN_PERCENT } from '../board/usage';
+import { limitSuffix, type RateMeter, resetsText, scopeText, WARN_PERCENT } from '../board/usage';
 import type { PlacementBody } from '../integrations/actions';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 import { nativeActions, type NativeActions } from './nativeSessions';
@@ -485,6 +485,23 @@ export function providerLabel(p: StationProvider): string {
   const name = p.provider.charAt(0).toUpperCase() + p.provider.slice(1);
   const base = `${name} ${p.version ?? 'version unknown'}`;
   return p.instance === p.provider ? base : `${base} (${p.instance})`;
+}
+
+/**
+ * One provider choice of the Agent row (R4.3): the label, and the limit of the instance as a
+ * visible suffix ("42% of 5-hour window, resets in 1 h"), plus "(most room)" for the instance with
+ * the lowest use, so the instances compare before a choice. The title is the limit text alone.
+ */
+export function providerChoice(
+  p: StationProvider,
+  limit: RateMeter | null,
+  now: number,
+  mostRoom: boolean,
+): { readonly label: string; readonly suffix: string; readonly title: string | undefined } {
+  const limitText = limitSuffix(limit, now);
+  const room = mostRoom ? '(most room)' : '';
+  const suffix = [limitText, room].filter((t) => t !== '').join(' ');
+  return { label: providerLabel(p), suffix, title: limitText === '' ? undefined : limitText };
 }
 
 /**
