@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { sessionTitle } from '../app/sessions';
 import type { ArtifactKind, DeckArtifact, DeckSession, StationView } from '../gen';
-import { Paperclip } from '../ui/icons';
+import { Icon, Paperclip, Search } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
@@ -174,8 +174,9 @@ function Loaded({
         aria-label="Filter the artifacts"
         onSubmit={(e) => e.preventDefault()}
       >
-        <label className="fd-art-search">
+        <label className="fd-field fd-art-search">
           <span className="fd-vh">Search by title</span>
+          <Icon of={Search} size={14} />
           <input
             type="search"
             aria-label="Search by title"
@@ -186,7 +187,7 @@ function Loaded({
           />
         </label>
         <label>
-          Kind
+          <span className="fd-vh">Kind</span>
           <select
             value={filters.kind}
             onChange={(e) => setFilters({ ...filters, kind: e.target.value as Filters['kind'] })}
@@ -200,7 +201,7 @@ function Loaded({
           </select>
         </label>
         <label>
-          Station
+          <span className="fd-vh">Station</span>
           <select
             value={filters.station}
             onChange={(e) => setFilters({ ...filters, station: e.target.value, session: '' })}
@@ -214,7 +215,7 @@ function Loaded({
           </select>
         </label>
         <label>
-          Session
+          <span className="fd-vh">Session</span>
           <select
             value={filters.session}
             onChange={(e) => setFilters({ ...filters, session: e.target.value })}
