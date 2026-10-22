@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { canGoBack, noteNavigation, resetBackNav, startBackNav } from './backNav';
-import { Layout } from './Layout';
+import { Layout, PhoneBar, usePhoneTitle } from './Layout';
 import { More } from './More';
 import type { Route } from './routes';
 import type { Layout as LayoutName } from './viewport';
@@ -16,7 +16,7 @@ const ROUTES: readonly Route[] = [
   { name: 'compare', batch: 'b1' },
 ];
 
-function page(layout: LayoutName, route: Route): string {
+function page(layout: LayoutName, route: Route, terminalsOpen = false): string {
   return renderToStaticMarkup(
     <Layout
       layout={layout}
@@ -28,6 +28,7 @@ function page(layout: LayoutName, route: Route): string {
       dock={null}
       onTerminalsBack={() => {}}
       overlays={null}
+      terminalsOpen={terminalsOpen}
     >
       <p>page</p>
     </Layout>,
@@ -44,17 +45,28 @@ describe('the phone bottom bar (more routes)', () => {
     });
   }
 
-  test('the session and terminals routes keep no bar; the desktop never has one', () => {
+  test('the session route and an open terminal keep no bar; the desktop never has one', () => {
     const session: Route = { name: 'session', station: 'st', session: 's1', tab: 'chat' };
     expect(page('phone', session)).not.toContain('aria-label="Board"');
-    expect(page('phone', { name: 'terminals' })).not.toContain('aria-label="Board"');
+    expect(page('phone', { name: 'terminals' }, true)).not.toContain('aria-label="Board"');
     expect(page('desktop', ROUTES[0] as Route)).not.toContain('aria-label="Board"');
+  });
+
+  test('Terminals without a terminal is a page of the More tab: both bars, Back to More', () => {
+    const html = page('phone', { name: 'terminals' });
+    expect(html).toContain('aria-label="Board"');
+    expect(html).toMatch(/<a href="#\/more" aria-current="page">/);
+    expect(html).toContain('aria-label="Back to More"');
+    expect(html).toContain(
+      '<span class="fd-phonebar-title fd-wide" aria-hidden="true">Terminals</span>',
+    );
+    expect(html).not.toContain('aria-label="Back"');
   });
 });
 
 describe('the phone Terminals page', () => {
   test('has the phone bar of §4.8 with a Back button, the title, Live and the avatar', () => {
-    const html = page('phone', { name: 'terminals' });
+    const html = page('phone', { name: 'terminals' }, true);
     expect(html).toContain('<header class="fd-phonebar">');
     expect(html).toContain(
       '<button type="button" class="fd-iconbtn fd-phonebar-back" aria-label="Back">',
@@ -68,17 +80,15 @@ describe('the phone Terminals page', () => {
 
 describe('the More page search and help buttons', () => {
   test('each button needs its prop', () => {
-    const none = renderToStaticMarkup(<More stationCount={0} terminalCount={0} />);
+    const none = renderToStaticMarkup(<More terminalCount={0} />);
     expect(none).not.toContain('Search sessions');
     expect(none).not.toContain('>Help<');
     const both = renderToStaticMarkup(
-      <More stationCount={0} terminalCount={0} onPalette={() => {}} onHelp={() => {}} />,
+      <More terminalCount={0} onPalette={() => {}} onHelp={() => {}} />,
     );
     expect(both).toContain('Search sessions');
     expect(both).toContain('Help');
-    const onlyHelp = renderToStaticMarkup(
-      <More stationCount={0} terminalCount={0} onHelp={() => {}} />,
-    );
+    const onlyHelp = renderToStaticMarkup(<More terminalCount={0} onHelp={() => {}} />);
     expect(onlyHelp).not.toContain('Search sessions');
     expect(onlyHelp).toContain('Help');
   });
@@ -164,5 +174,42 @@ describe('back navigation position', () => {
     expect(canGoBack(h)).toBe(false);
     h.replaceState('text', '');
     expect(canGoBack(h)).toBe(false);
+  });
+});
+
+describe('the phone top bar title of a detail page', () => {
+  function Named({ name }: { readonly name: string | undefined }) {
+    usePhoneTitle(name);
+    return <p>page</p>;
+  }
+
+  test('the bar shows the page name by default and a given title in its place', () => {
+    const bar = (title: string | null) =>
+      renderToStaticMarkup(
+        <PhoneBar route={{ name: 'project', id: 'p1' }} chrome={undefined} title={title} />,
+      );
+    expect(bar(null)).toContain('aria-hidden="true">Project</span>');
+    expect(bar('Journzy')).toContain('aria-hidden="true">Journzy</span>');
+  });
+
+  test('a page that names itself renders inside the layout (the name shows after mount)', () => {
+    const html = renderToStaticMarkup(
+      <Layout
+        layout="phone"
+        route={{ name: 'project', id: 'p1' }}
+        sidebar={null}
+        drawerOpen={false}
+        onDrawer={() => {}}
+        notices={[]}
+        dock={null}
+        onTerminalsBack={() => {}}
+        overlays={null}
+      >
+        <Named name="Journzy" />
+      </Layout>,
+    );
+    // The effect sets the title on the client; the server markup keeps the fallback.
+    expect(html).toContain('aria-hidden="true">Project</span>');
+    expect(html).toContain('<p>page</p>');
   });
 });

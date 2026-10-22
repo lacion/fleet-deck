@@ -38,7 +38,7 @@ import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
 import { noteNavigation, startBackNav } from './app/backNav';
 import { Layout } from './app/Layout';
-import { More } from './app/More';
+import { More, TerminalsEmpty } from './app/More';
 import { Palette } from './app/Palette';
 import { formatHash, type Navigate, parseHash, type Route, useRoute } from './app/routes';
 import { SessionRoute } from './app/SessionRoute';
@@ -126,6 +126,11 @@ type Props = {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
 
+const NO_TERMINALS: Notice = {
+  text: 'No terminals open. Open one from a session with Terminal.',
+  tone: 'info',
+};
+
 const noSubscribe = () => () => {};
 
 /** How many terminal tabs the dock has. */
@@ -207,13 +212,20 @@ export function App({
   const routeKey = formatHash(route);
   const tabCount = useTabCount(terminals);
 
+  // '#/terminals' on a desktop opens the dock; without a terminal the dock does not show, so the
+  // home says why nothing opened (until the owner leaves the home or a terminal opens).
+  const [noTerminals, setNoTerminals] = useState(false);
   useEffect(() => {
     // The dock body is hidden while the store is closed: the terminals screen opens it.
     if (urlRoute.name === 'terminals') terminals?.setOpen(true);
     if (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) {
       navigate({ name: 'home' }, { replace: true });
+      if (urlRoute.name === 'terminals' && tabCount === 0) setNoTerminals(true);
     }
-  }, [phone, urlRoute.name, terminals, navigate]);
+  }, [phone, urlRoute.name, terminals, navigate, tabCount]);
+  useEffect(() => {
+    if (route.name !== 'home' || tabCount > 0) setNoTerminals(false);
+  }, [route.name, tabCount]);
 
   // The open session; a new route object with the same ids must not reopen the timeline.
   const openStation = route.name === 'session' ? route.station : null;
@@ -289,6 +301,7 @@ export function App({
   const notices = [
     ...(chrome?.notices ?? []),
     ...(local !== null && local.at === routeKey ? [local.notice] : []),
+    ...(noTerminals && route.name === 'home' ? [NO_TERMINALS] : []),
   ];
 
   // R7.1: a session that ended before it started gets a banner until the owner dismisses it.
@@ -422,6 +435,7 @@ export function App({
         {...(newShell === undefined ? {} : { onNewShell: newShell })}
       />
     ) : null;
+  const terminalsOpen = tabCount > 0 && dock !== null;
 
   const sidebar = (variant: 'full' | 'list') => (
     <Sidebar
@@ -646,7 +660,6 @@ export function App({
       case 'more':
         return (
           <More
-            stationCount={stations.length}
             stations={stations}
             terminalCount={tabCount}
             chrome={chrome}
@@ -655,11 +668,7 @@ export function App({
           />
         );
       case 'terminals':
-        return tabCount > 0 && dock !== null ? (
-          dock
-        ) : (
-          <p className="fd-empty fd-screen">No terminals open.</p>
-        );
+        return terminalsOpen ? dock : <TerminalsEmpty />;
       case 'session': {
         if (selected === undefined) {
           return (
@@ -721,6 +730,7 @@ export function App({
         onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
         dock={dock}
         chrome={chrome}
+        terminalsOpen={terminalsOpen}
         onTerminalsBack={() => {
           if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
           else navigate({ name: 'home' });

@@ -15,7 +15,11 @@ type PageProps = {
   readonly filters?: ReactNode;
   /** The page actions, at the right of the title. */
   readonly actions?: ReactNode;
-  /** 1280 px instead of 1040 px (tables, the wall). */
+  /**
+   * The body fills the main column, as the fleet home (tables, lists, grids, dashboards). Without
+   * it the body keeps a 1040 px measure (forms, prose). The header runs the full column on every
+   * page, so that its rule has one length (§4.3).
+   */
   readonly wide?: boolean;
   /** The accessible name of the section; the title by default. */
   readonly label?: string | undefined;

@@ -1,4 +1,14 @@
-import { type ReactNode, type RefObject, useEffect, useRef } from 'react';
+// The person glyph of the owner's avatar; `ui/icons.tsx` does not export it yet.
+import { User } from 'lucide-react';
+import {
+  createContext,
+  type ReactNode,
+  type RefObject,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   ChevronLeft,
   Ellipsis,
@@ -13,7 +23,7 @@ import {
   X,
 } from '../ui/icons';
 import { Mark } from '../ui/Mark';
-import { usePeople } from '../sharing/context';
+import { type PeopleEnv, usePeople } from '../sharing/context';
 import { MemberBanner } from '../sharing/MemberBanner';
 import type { Chrome, Notice } from './chrome';
 import { failureText, type StartFailure } from './failures';
@@ -44,6 +54,11 @@ type Props = {
   readonly overlays: ReactNode;
   /** The connection of the board: the Live pill of the phone top bar. */
   readonly chrome?: Chrome | undefined;
+  /**
+   * The phone Terminals route has an open terminal: the screen is the full terminal with its own
+   * bar. Without one it is a page of the More tab (the top and the bottom bar, an empty state).
+   */
+  readonly terminalsOpen?: boolean;
   readonly children: ReactNode;
 };
 
@@ -105,14 +120,46 @@ export function initials(actor: string): string {
   return letters === '' ? '?' : letters.toUpperCase();
 }
 
-/** The account avatar (§4.2, §4.8): a 24px circle with the initials of this login. */
+/** The name of this login in words: "owner", a member's display name, or a token's name. */
+export function accountName(people: Pick<PeopleEnv, 'self' | 'member'>): string {
+  if (people.member !== null) return people.member.name;
+  const at = people.self.indexOf(':');
+  return at < 0 ? people.self : people.self.slice(at + 1);
+}
+
+/**
+ * The account avatar (§4.2, §4.8): a 24px circle with the initials of this login. The deck knows
+ * no name for its owner, so the owner's avatar is a person glyph (the "O" of the actor word
+ * "owner" is nobody's initial).
+ */
 export function Avatar() {
-  const self = usePeople().self;
+  const people = usePeople();
   return (
     <span className="fd-avatar" aria-hidden="true">
-      {initials(self)}
+      {people.self === 'owner' && people.member === null ? (
+        <Icon of={User} size={14} />
+      ) : (
+        initials(accountName(people))
+      )}
     </span>
   );
+}
+
+/**
+ * The phone top bar names the page; a detail page names its thing (the project, the artifact)
+ * with `usePhoneTitle`. The bar keeps the route's page name while the data loads.
+ */
+const PhoneTitle = createContext<((title: string | null) => void) | null>(null);
+
+/** Sets the phone top bar title while the calling page shows (null or undefined: the page name). */
+export function usePhoneTitle(title: string | null | undefined): void {
+  const set = useContext(PhoneTitle);
+  const name = title === undefined || title === null || title.trim() === '' ? null : title;
+  useEffect(() => {
+    if (set === null || name === null) return undefined;
+    set(name);
+    return () => set(null);
+  }, [set, name]);
 }
 
 export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
@@ -194,6 +241,7 @@ const BAR_ROUTES: readonly Route['name'][] = [
 /** The routes that the More tab of the phone owns (they open from the More page). */
 const MORE_TAB: readonly Route['name'][] = [
   'more',
+  'terminals',
   'plans',
   'stations',
   'files',
@@ -230,6 +278,7 @@ const PHONE_TITLES: Partial<Record<Route['name'], string>> = {
   projects: 'Projects',
   project: 'Project',
   compare: 'Compare',
+  terminals: 'Terminals',
 };
 
 /** The parent of a detail page of the More tab: Back goes to its list (or the fleet), not More. */
@@ -249,9 +298,12 @@ const BACK_TO_MORE = { href: '#/more', label: 'Back to More' };
 export function PhoneBar({
   route,
   chrome,
+  title,
 }: {
   readonly route: Route;
   readonly chrome: Chrome | undefined;
+  /** The name that a detail page set (`usePhoneTitle`); else the page name of the route. */
+  readonly title?: string | null | undefined;
 }) {
   const back =
     route.name !== 'more' && MORE_TAB.includes(route.name)
@@ -267,7 +319,7 @@ export function PhoneBar({
         <Mark />
       )}
       <span className="fd-phonebar-title fd-wide" aria-hidden="true">
-        {PHONE_TITLES[route.name]}
+        {title ?? PHONE_TITLES[route.name]}
       </span>
       <LivePill chrome={chrome} />
       <Avatar />
@@ -366,7 +418,8 @@ function Drawer({
 
 /**
  * The page frame (DL-140 §4): desktop = pinned sidebar + route + dock; tablet = top bar with a
- * sessions drawer; phone = one column with a bottom bar (not on the session and terminals routes).
+ * sessions drawer; phone = one column with a bottom bar (not on the session route, nor on the
+ * terminals route while a terminal is open).
  */
 export function Layout({
   layout,
@@ -383,9 +436,15 @@ export function Layout({
   onTerminalsBack,
   overlays,
   chrome,
+  terminalsOpen = false,
   children,
 }: Props) {
-  const showBar = layout === 'phone' && BAR_ROUTES.includes(route.name);
+  const phone = layout === 'phone';
+  // The phone Terminals route: the full terminal screen while one is open, else a More page.
+  const terminalScreen = phone && route.name === 'terminals' && terminalsOpen;
+  const showBar =
+    phone && (BAR_ROUTES.includes(route.name) || (route.name === 'terminals' && !terminalsOpen));
+  const [phoneTitle, setPhoneTitle] = useState<string | null>(null);
   const main = useRef<HTMLDivElement>(null);
   useDockHeight(main);
   // R11.4: a guest of the owner's deck sees the banner and a smaller board.
@@ -415,8 +474,8 @@ export function Layout({
         </header>
       ) : null}
       <div className="fd-main" ref={main}>
-        {showBar ? <PhoneBar route={route} chrome={chrome} /> : null}
-        {layout === 'phone' && route.name === 'terminals' ? (
+        {showBar ? <PhoneBar route={route} chrome={chrome} title={phoneTitle} /> : null}
+        {terminalScreen ? (
           // The phone bar of §4.8 (the page has no other heading): Back closes the terminals.
           <header className="fd-phonebar">
             <button
@@ -438,7 +497,9 @@ export function Layout({
         <Notices notices={notices} />
         {banner}
         <StartFailures failures={failures} onOpen={onOpenFailure} onDismiss={onDismissFailure} />
-        <div className="fd-route">{children}</div>
+        <div className="fd-route">
+          <PhoneTitle.Provider value={setPhoneTitle}>{children}</PhoneTitle.Provider>
+        </div>
         {layout === 'phone' ? null : dock}
       </div>
       {showBar ? <BottomBar route={route} guest={people.member !== null} /> : null}

@@ -5,19 +5,18 @@ import {
   Activity,
   Archive,
   ChevronDown,
+  ChevronRight,
   Eye,
   Folder,
   GitBranch,
   Paperclip,
   Icon,
   LayoutGrid,
-  LogOut,
   FileText,
   Plus,
   Search,
   Server,
   Settings,
-  Smartphone,
   SquareTerminal,
   Star,
   Users,
@@ -28,7 +27,6 @@ import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
 import { Mark } from '../ui/Mark';
-import { Menu } from '../ui/Menu';
 import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
@@ -36,11 +34,17 @@ import { canShare, usePeople } from '../sharing/context';
 import { isHibernated } from '../views/hibernate';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import type { Chrome } from './chrome';
-import { DeviceLinkDialog } from './DeviceLinkDialog';
-import { Avatar, LivePill } from './Layout';
-import { PrefsRow } from './Prefs';
+import { LivePill } from './Layout';
+import { AccountMenu, PrefsRow } from './Prefs';
 import { formatHash, type Route } from './routes';
-import { basename, relativeAge, type SidebarModel, sessionTitle, sidebarModel } from './sessions';
+import {
+  basename,
+  relativeAge,
+  type SidebarModel,
+  type StationGroup,
+  sessionTitle,
+  sidebarModel,
+} from './sessions';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -83,7 +87,7 @@ function Row({
   route: Route;
   now: number;
   starred: boolean;
-  /** The phone list: line 2 is the "now" line of a strip (§1.3), the callsign first. */
+  /** The phone list (concept B): line 2 is the "now" line, the focus or the model and branch. */
   list: boolean;
 }) {
   const s = card.summary;
@@ -120,7 +124,6 @@ function Row({
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
         {list ? (
           <span className="fd-srow-line">
-            {s.callsign ? <span className="fd-srow-call fd-callsign">{s.callsign}</span> : null}
             <RowNow card={card} />
           </span>
         ) : (
@@ -154,6 +157,17 @@ function RowNow({ card }: { card: DeckSession }) {
     </>
   );
 }
+
+/** True when the rows hold the session that the route opens. */
+const holdsOpen = (cards: readonly DeckSession[], route: Route): boolean =>
+  route.name === 'session' &&
+  cards.some((c) => c.station_id === route.station && c.summary.session_id === route.session);
+
+/** The phone list order of a station's rows: starred first, then the last activity first. */
+const byActivity = (starred: ReadonlySet<string>) => (a: DeckSession, b: DeckSession) =>
+  Number(starred.has(sessionRef(b.station_id, b.summary.session_id))) -
+    Number(starred.has(sessionRef(a.station_id, a.summary.session_id))) ||
+  b.summary.updated_at - a.summary.updated_at;
 
 function Rows({
   cards,
@@ -256,7 +270,12 @@ function Groups({
   starred: ReadonlySet<string>;
   list: boolean;
 }) {
-  const [showArchived, setShowArchived] = useState(false);
+  // The Archived fold opens while it holds the open session, as an Ended fold does.
+  const currentArchived = holdsOpen(model.archived, route);
+  const [showArchived, setShowArchived] = useState(currentArchived);
+  useEffect(() => {
+    if (currentArchived) setShowArchived(true);
+  }, [currentArchived]);
   // A session that needs you lists once: in "Needs you". The count of a group is its shown rows.
   const needsApart = withNeeds && model.needs.length > 0;
   const placeWord = by === 'project' ? 'in' : 'on';
@@ -274,7 +293,10 @@ function Groups({
         </section>
       ) : null}
       {model.groups.map((group) => {
-        const live = needsApart ? group.live.filter((c) => c.status !== 'needs_you') : group.live;
+        const own = needsApart ? group.live.filter((c) => c.status !== 'needs_you') : group.live;
+        // The phone list (concept B) orders a station's rows by their last activity; the desktop
+        // keeps the status order of the j/k keys.
+        const live = list ? [...own].sort(byActivity(starred)) : own;
         // The station total (with its needs-you and ended sessions): a title for the pointer, and
         // the same words in a visually hidden text for a screen reader and a touch screen.
         const total =
@@ -291,10 +313,13 @@ function Groups({
           >
             <h3 className="fd-sgroup-title">
               <span className="fd-sgroup-name fd-wide">{group.name}</span>
-              {/* The count right after the name, as in the Needs you group and the fleet lanes. */}
-              <span className="fd-count" title={total}>
-                {live.length}
-              </span>
+              {/* The count right after the name, as in the Needs you group and the fleet lanes.
+                  A group of ended sessions only has no live count: a "0" pill is noise. */}
+              {live.length > 0 ? (
+                <span className="fd-count" title={total}>
+                  {live.length}
+                </span>
+              ) : null}
               {total === undefined ? null : <span className="fd-vh">{`, ${total}`}</span>}
               {by === 'project' ? null : (
                 <span
@@ -307,41 +332,30 @@ function Groups({
                 <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
               )}
             </h3>
-            <Rows cards={live} route={route} now={now} starred={starred} list={list} />
+            {live.length > 0 ? (
+              <Rows cards={live} route={route} now={now} starred={starred} list={list} />
+            ) : null}
             {group.ended.length > 0 ? (
-              <details className="fd-sended">
-                <summary className="fd-label">
-                  Ended <span className="fd-count">{group.ended.length}</span>
-                </summary>
-                <Rows cards={group.ended} route={route} now={now} starred={starred} list={list} />
-                <button
-                  type="button"
-                  className="fd-ghost fd-sm fd-sended-clear"
-                  aria-label={`Archive the ended sessions of ${group.name}`}
-                  onClick={() =>
-                    archivedSet.add(
-                      group.ended
-                        .filter((c) => c.status === 'ended' || c.status === 'lost')
-                        .map((c) => sessionRef(c.station_id, c.summary.session_id)),
-                    )
-                  }
-                >
-                  <Icon of={Archive} size={14} /> Clear
-                </button>
-              </details>
+              <EndedFold group={group} route={route} now={now} starred={starred} list={list} />
             ) : null}
           </section>
         );
       })}
       {model.archived.length > 0 ? (
         <section className="fd-sgroup" data-group="archived" aria-label="Archived">
+          {/* The same disclosure row as "Ended" (chevron, name, count pill); a button, so that it
+              keeps its aria-expanded and renders its rows only when it opens. */}
           <button
             type="button"
-            className="fd-ghost fd-sm fd-sidebar-archived"
+            className="fd-sidebar-archived"
             aria-expanded={showArchived}
             onClick={() => setShowArchived(!showArchived)}
           >
-            <Icon of={Archive} size={14} /> Archived ({model.archived.length})
+            <span className="fd-sidebar-chev">
+              <Icon of={ChevronRight} size={14} />
+            </span>
+            <Icon of={Archive} size={14} />
+            Archived <span className="fd-count">{model.archived.length}</span>
           </button>
           {showArchived ? (
             <Rows cards={model.archived} route={route} now={now} starred={starred} list={list} />
@@ -349,6 +363,56 @@ function Groups({
         </section>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The "Ended" fold of a station: closed by default, open while it holds the open session, so
+ * that the selected row and its bar show. The owner can still close it there.
+ */
+function EndedFold({
+  group,
+  route,
+  now,
+  starred,
+  list,
+}: {
+  group: StationGroup;
+  route: Route;
+  now: number;
+  starred: ReadonlySet<string>;
+  list: boolean;
+}) {
+  const current = holdsOpen(group.ended, route);
+  const [open, setOpen] = useState(current);
+  useEffect(() => {
+    if (current) setOpen(true);
+  }, [current]);
+  return (
+    <details
+      className="fd-sended"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="fd-label">
+        Ended <span className="fd-count">{group.ended.length}</span>
+      </summary>
+      <Rows cards={group.ended} route={route} now={now} starred={starred} list={list} />
+      <button
+        type="button"
+        className="fd-ghost fd-sm fd-sended-clear"
+        aria-label={`Archive the ended sessions of ${group.name}`}
+        onClick={() =>
+          archivedSet.add(
+            group.ended
+              .filter((c) => c.status === 'ended' || c.status === 'lost')
+              .map((c) => sessionRef(c.station_id, c.summary.session_id)),
+          )
+        }
+      >
+        <Icon of={Archive} size={14} /> Clear
+      </button>
+    </details>
   );
 }
 
@@ -377,6 +441,7 @@ function BoardLinks({
   const people = usePeople();
   const shares = canShare(people);
   const inMore = MORE_ROUTES.has(route.name);
+  const offline = stations.filter((station) => !station.reachable).length;
   const [more, setMore] = useState(() => inMore || readMore());
   // A page inside the fold opens it. The owner can still close it there.
   useEffect(() => {
@@ -421,6 +486,8 @@ function BoardLinks({
             <Icon of={Activity} />
             Activity
           </a>
+          {/* No total of machines (nothing to act on; the page header says it): only the stations
+              that do not answer, as a hazard badge with its word, while there are any. */}
           <a
             href="#/stations"
             aria-current={route.name === 'stations' ? 'page' : undefined}
@@ -428,7 +495,11 @@ function BoardLinks({
           >
             <Icon of={Server} />
             Stations
-            <span className="fd-count">{stations.length}</span>
+            {offline > 0 ? (
+              <span className="fd-badge" data-tone="hazard">
+                {offline} offline
+              </span>
+            ) : null}
           </a>
         </>
       )}
@@ -534,7 +605,6 @@ export function Sidebar({
   now: givenNow,
 }: Props) {
   const [query, setQuery] = useState('');
-  const [addingDevice, setAddingDevice] = useState(false);
   const now = useNow(givenNow, 30000);
   const starred = priority.use();
   const archived = archivedSet.use();
@@ -665,7 +735,8 @@ export function Sidebar({
       </div>
       {full ? (
         <div className="fd-sidebar-foot">
-          {/* §4.2 item 5: settings, the theme segments, the compact toggle, then the avatar. */}
+          {/* §4.2 item 5: settings, the theme segments, then the avatar. The named switches
+              (Compact cards, Reduce motion) are in the account menu. */}
           {settingsLink && !guest ? (
             <a
               href="#/settings"
@@ -677,39 +748,7 @@ export function Sidebar({
             </a>
           ) : null}
           <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
-          <div className="fd-sidebar-account">
-            {chrome === undefined ? null : (
-              <Menu summary={<Avatar />} summaryClass="fd-iconbtn" label="Account">
-                {(close) => (
-                  <>
-                    {chrome.addDevice === undefined ? null : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          close();
-                          setAddingDevice(true);
-                        }}
-                      >
-                        <Icon of={Smartphone} size={14} /> Add a device
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        close();
-                        chrome.onLogout();
-                      }}
-                    >
-                      <Icon of={LogOut} size={14} /> Log out
-                    </button>
-                  </>
-                )}
-              </Menu>
-            )}
-          </div>
-          {addingDevice && chrome?.addDevice !== undefined ? (
-            <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
-          ) : null}
+          {chrome === undefined ? null : <AccountMenu chrome={chrome} />}
         </div>
       ) : null}
     </aside>

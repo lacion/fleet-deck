@@ -135,7 +135,8 @@ export function sidebarModel(
     ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
   });
   // The sidebar lists a needs-you session once, in "Needs you": a group shows only its other rows.
-  // A group without such a row would show an empty header, so a search (or a project) drops it.
+  // A group without such a row would show an empty header, so the list drops it (a station with
+  // no session, or a search without a match there). The Stations page still lists every station.
   const showsRows = (g: StationGroup) =>
     g.ended.length > 0 || g.live.some((c) => c.status !== 'needs_you');
   const ids = stationOrder(
@@ -153,7 +154,7 @@ export function sidebarModel(
               shown.filter((c) => c.station_id === id),
             ),
           )
-          .filter((g) => query.trim() === '' || showsRows(g))
+          .filter(showsRows)
       : projectGroups(shown, projects)
           .map((g) => group(g.id, g.name, true, g.cards))
           .filter(showsRows);
@@ -176,20 +177,47 @@ export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
   ];
 }
 
-/** Sessions for the palette: needs you first (the longest wait first, as the Needs you panel),
- * then the newest; at most `max`. */
+/** The two groups of the palette: the live sessions, then the ended and lost ones. */
+export type PaletteGroups = {
+  readonly live: readonly DeckSession[];
+  readonly ended: readonly DeckSession[];
+};
+
+/**
+ * The palette order: needs you (the longest wait first, as the Needs you panel), then the running
+ * ones (working, verifying, queued), then idle and hibernated, then ended and lost.
+ */
+const paletteRank = (card: DeckSession): number => {
+  if (card.status === 'needs_you') return 0;
+  if (card.status === 'working' || card.status === 'verifying' || card.status === 'queued') {
+    return 1;
+  }
+  return isLive(card) ? 2 : 3;
+};
+
+/**
+ * Sessions for the palette ("Go to session"), in two groups: live, then ended. Inside a rank the
+ * newest first; an archived session (`archived`, the cleared set) shows only when the query
+ * matches it, after the other ended ones. At most `max` sessions in all.
+ */
 export function paletteMatches(
   sessions: readonly DeckSession[],
   query: string,
-  max = 12,
-): readonly DeckSession[] {
-  const needs = (c: DeckSession) => c.status === 'needs_you';
-  return sessions
-    .filter((c) => matchesQuery(c, query))
+  archived: ReadonlySet<string> = NO_SETS.archived,
+  max = 50,
+): PaletteGroups {
+  const searching = query.trim() !== '';
+  const hidden = (c: DeckSession) => isHidden(c, archived);
+  const top = sessions
+    .filter((c) => matchesQuery(c, query) && (searching || !hidden(c)))
     .sort(
       (a, b) =>
-        Number(needs(b)) - Number(needs(a)) ||
-        (needs(a) && needs(b) ? byLongestWait(a, b) : byNewest(a, b)),
+        paletteRank(a) - paletteRank(b) ||
+        Number(hidden(a)) - Number(hidden(b)) ||
+        (a.status === 'needs_you' && b.status === 'needs_you'
+          ? byLongestWait(a, b)
+          : byNewest(a, b)),
     )
     .slice(0, max);
+  return { live: top.filter(isLive), ended: top.filter((c) => !isLive(c)) };
 }

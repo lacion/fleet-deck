@@ -4,6 +4,10 @@
    tokens.css. */
 
 /* ── the page frame ─────────────────────────────────────────────── */
+/* Every page fills the main column on the same 24px gutter, as the fleet home does (§4.3): the
+   header rule and the tabs under it have one length on every page. A wide page (tables, lists,
+   grids) gives its body the whole column too; a form or prose page keeps a 1040px measure for its
+   body (`--page-w`), left-aligned under the header. */
 .fd-page {
   --page-w: 1040px;
   --page-pad: var(--sp-5);
@@ -13,14 +17,12 @@
   align-content: start;
   gap: 20px;
   width: 100%;
-  max-width: calc(var(--page-w) + 2 * var(--page-pad));
   min-width: 0;
-  /* Left-aligned: every page starts at the same gutter; only the max width changes. */
   margin: 0;
   padding: var(--sp-2) var(--page-pad) 48px;
 }
-.fd-page[data-wide="true"] {
-  --page-w: 1280px;
+.fd-page:not([data-wide="true"]) > :not(.fd-page-head, [role="tablist"]) {
+  max-width: var(--page-w);
 }
 .fd-page > * {
   min-width: 0;

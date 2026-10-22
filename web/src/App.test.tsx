@@ -114,7 +114,8 @@ describe('App', () => {
     );
     expect(html).toContain('aria-label="More"');
     expect(html).toContain('Plans');
-    expect(html).toMatch(/Stations<span class="fd-count">1<\/span>/);
+    // No total of machines on the Stations row (nothing to act on); it opens a page: a chevron.
+    expect(html).toMatch(/Stations<span class="fd-more-chev">/);
     expect(html).toMatch(/aria-current="page">(<svg[\s\S]*?<\/svg>)?<span>More<\/span>/);
   });
 
@@ -159,17 +160,14 @@ describe('App', () => {
     expect(needs).toBeGreaterThan(-1);
     expect(html).toContain('Ended <span class="fd-count">1</span>');
     const alpha = html.indexOf('aria-label="Station Alpha"');
-    const beta = html.indexOf('aria-label="Station Beta"');
     expect(needs).toBeLessThan(alpha);
     expect(alpha).toBeGreaterThan(-1);
-    expect(alpha).toBeLessThan(beta);
-    // the sidebar lists the needs-you session once, in "Needs you"; the count of its station is
-    // the rows shown under it, and the station total moves to the title and a hidden text
+    // the sidebar lists the needs-you session once, in "Needs you"; a station with no other row
+    // has no group (no empty header with a 0 count); the count of a station is the rows shown
+    // under it, and the station total moves to the title and a hidden text
     const sidebar = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
     expect(sidebar.match(/Needs me/g)?.length).toBe(1);
-    expect(html.slice(beta, html.indexOf('</h3>', beta))).toContain(
-      '<span class="fd-count" title="1 session on Beta">0</span><span class="fd-vh">, 1 session on Beta</span>',
-    );
+    expect(sidebar).not.toContain('aria-label="Station Beta"');
     expect(html.slice(alpha, html.indexOf('</h3>', alpha))).toContain(
       '<span class="fd-count" title="2 sessions on Alpha">1</span><span class="fd-vh">, 2 sessions on Alpha</span>',
     );
