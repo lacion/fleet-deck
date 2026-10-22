@@ -12,7 +12,9 @@ import {
   ChangedList,
   compactCount,
   PROPS_FILES_MAX,
+  PropertiesPanel,
   scopeLabel,
+  sinceText,
   usePropsOpen,
 } from './PropertiesPanel';
 import { openPicker } from './SessionSettings';
@@ -77,6 +79,45 @@ describe('properties panel numbers (§4.5)', () => {
   test('scopeLabel names the window with its provider', () => {
     expect(scopeLabel('five_hour', 'Claude')).toBe('Claude 5-hour window');
     expect(scopeLabel('weekly', null)).toBe('Weekly window');
+  });
+});
+
+describe('properties panel facts (§4.5)', () => {
+  const panel = (freshness: 'live' | 'stale', reachable = true) =>
+    renderToStaticMarkup(
+      <PropertiesPanel
+        session={session()}
+        stations={[station('station-a', { reachable })]}
+        turns={[]}
+        subagents={0}
+        onOpenChange={() => {}}
+        freshness={freshness}
+      />,
+    );
+
+  test('the status says since when: "since 2 min", or "just now"', () => {
+    expect(sinceText('2 min')).toBe('since 2 min');
+    expect(sinceText('3 h')).toBe('since 3 h');
+    expect(sinceText('now')).toBe('just now');
+    expect(panel('live')).toMatch(
+      /<span class="fd-props-aside">(since \d+ (min|h|d)|just now)<\/span>/,
+    );
+  });
+
+  test('a live board says that a reachable station is online', () => {
+    const html = panel('live');
+    expect(html).toContain('data-up="true"');
+    expect(html).toContain('data-status="online"');
+    expect(html).toContain('online</span>');
+  });
+
+  test('a stale board does not say that the station is online (the same as the fleet lane)', () => {
+    const html = panel('stale');
+    expect(html).toContain('data-up="false"');
+    expect(html).toContain('data-status="unreachable"');
+    expect(html).toContain('offline</span>');
+    expect(html).not.toContain('online</span>');
+    expect(panel('live', false)).toContain('offline</span>');
   });
 });
 

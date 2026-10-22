@@ -134,7 +134,7 @@ describe('the changed files section', () => {
     expect(out).toContain('<section class="fd-files-changed" aria-label="Changed files">');
     expect(out).toContain('>Changed since the session started<');
     expect(out).toContain('<span class="fd-files-name">a.ts</span>');
-    expect(out).toContain('<span class="fd-files-dir">src</span>');
+    expect(out).toContain('<span class="fd-files-dir"><bdi>src</bdi></span>');
     expect(out).toContain('<span class="fd-files-name">README.md</span>');
     expect(out.match(/<button/g)).toHaveLength(3);
   });

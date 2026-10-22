@@ -494,6 +494,14 @@
 .fd-pane-tabs [role="tab"]:focus-visible {
   outline-offset: -2px;
 }
+/* Forced colors paint the transparent underline of an unselected tab: only the selected tab keeps
+   its underline (and the Highlight ring of base.css); 2px of padding keep the label in place. */
+@media (forced-colors: active) {
+  .fd-pane-tabs [role="tab"]:not([aria-selected="true"]) {
+    border-bottom-style: none;
+    padding-bottom: 2px;
+  }
+}
 .fd-pane[data-layout="phone"] .fd-pane-tabs {
   margin-top: 0;
   padding: 0 max(var(--sp-2), var(--fd-tab-reserve, 0px)) 0 var(--sp-2);
@@ -562,16 +570,22 @@
 .fd-props-list:empty {
   display: none;
 }
+/* One fixed line box for every fact (an 18px line, 28px with the padding): a 12px mono value and a
+   13px word sit on the same rhythm; a row grows only by a second line (the station slots). */
 .fd-props-row {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: baseline;
   gap: var(--sp-2);
+  min-height: 28px;
   padding: 5px 0;
+  line-height: 18px;
 }
+/* The 12px label on a 16px line: on the baseline of an 18px value, it adds no height to the row. */
 .fd-props-row dt {
   color: var(--faint);
   font-size: var(--fs-meta);
+  line-height: 16px;
 }
 .fd-props-row dd {
   display: flex;
@@ -1914,6 +1928,31 @@ button.fd-cchip:hover:not(:disabled) {
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
+/* ── the Files panel: the files changed since the session started ── */
+.fd-files-changed {
+  display: grid;
+  gap: 4px;
+}
+.fd-files-changed h4 {
+  margin: 0;
+}
+.fd-files-changed .fd-files-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+/* The folder of a changed file keeps its end in view (the end says where the file is): a long one
+   loses its start, the same as the paths of the Properties panel. */
+.fd-files-changed .fd-files-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  color: var(--dim);
+  font-size: var(--fs-data);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* "Changed since the session started": one column as wide as the panel, so that a long folder
    ellipsizes and the change at the right of the row stays in view (a phone). */
 .fd-files .fd-files-changed,
@@ -2062,7 +2101,6 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files-bar form {
   flex: 1;
   flex-wrap: nowrap;
-  max-width: 560px;
 }
 .fd-files-bar input {
   flex: 1;

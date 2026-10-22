@@ -5,6 +5,7 @@ import { artifactHref, publishable } from '../artifacts/kinds';
 import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
+import { sizeText } from '../spawn/nativeSessions';
 import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
 import { type ChangedFiles, type ChangeKind, type FileChange, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
@@ -23,14 +24,6 @@ type View =
   | { readonly kind: 'listing'; readonly listing: FileListing }
   | { readonly kind: 'file'; readonly file: FileContent }
   | { readonly kind: 'search'; readonly search: FileSearch };
-
-/** `812` → `812 B`, `3200` → `3.1 KB`, `1250000` → `1.2 MB` (one decimal from a kilobyte on). */
-export function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 /** A Markdown file shows rendered or raw; a path copy is always there. */
 export function FileView({
@@ -150,7 +143,11 @@ export function ChangedFilesList({
               <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
                 <Icon of={FileText} size={14} />
                 <span className="fd-files-name">{path.split('/').pop()}</span>
-                {dir === '' ? null : <span className="fd-files-dir">{dir}</span>}
+                {dir === '' ? null : (
+                  <span className="fd-files-dir">
+                    <bdi>{dir}</bdi>
+                  </span>
+                )}
                 {change === undefined ? null : <ChangeStat change={change} />}
               </button>
             </li>
