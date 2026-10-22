@@ -56,7 +56,9 @@ describe('Files page (DL-141)', () => {
     expect(html.indexOf('>Up<')).toBeLessThan(html.indexOf('>Down<'));
     expect(html).toContain('Station');
     expect(html).toContain('Folder');
-    expect(html).toContain('placeholder="/absolute/path/inside/an/allowed/root"');
+    expect(html).toContain('placeholder="Folder path on Up"');
+    expect(html).toContain('Open a folder');
+    expect(html).toContain('Type the path of a folder on this station, then press Open.');
     expect(html).toContain('Open</button>');
     expect(html).not.toContain('Pinned and recent');
     expect(html).not.toContain('aria-label="Files"><h3');
@@ -91,6 +93,22 @@ describe('Files page (DL-141)', () => {
       html.indexOf('title="/home/me/new"'),
     );
     expect(html.indexOf('title="/home/me/new"')).toBeLessThan(html.indexOf('title="/home/me/old"'));
+    expect(html).toContain(
+      'Pick a recent folder above, or type the path of a folder on this station.',
+    );
+  });
+
+  test('without a pinned folder the chip row says Recent', () => {
+    store({});
+    const html = renderToStaticMarkup(
+      <FilesPage
+        stations={[station()]}
+        sessions={[card('s1', 'working', 'station-a', { cwd: '/home/me/app', updated_at: 1 })]}
+        filesFor={() => files}
+      />,
+    );
+    expect(html).toMatch(/<span class="fd-files-label" id="[^"]+">Recent<\/span>/);
+    expect(html).not.toContain('Pinned and recent');
   });
 
   test('the last opened folder is opened on mount', () => {

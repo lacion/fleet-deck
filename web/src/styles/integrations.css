@@ -19,10 +19,34 @@
   vertical-align: baseline;
 }
 
-/* The projects table: the name is the row's title, not a blue link. */
+/* The whole row opens the project: the name link covers it (::after); the row menu sits above the
+   cover. The name is the row's title, not a blue link: the row hover and the pointer say it opens. */
+.fd-int-projects tbody tr {
+  position: relative;
+}
 .fd-int-projects .fd-cell-name a {
   color: var(--text);
   font-weight: 600;
+}
+.fd-int-projects .fd-cell-name a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.fd-int-projects .fd-cell-name a:focus-visible {
+  outline: none;
+}
+.fd-int-projects tbody tr:has(.fd-cell-name a:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.fd-int-projects .fd-cell-actions {
+  width: 1%;
+  vertical-align: middle;
+}
+.fd-int-projects .fd-cell-actions > :is(.fd-menu, span, button) {
+  position: relative;
+  z-index: 1;
 }
 .fd-int-projects .fd-cell-actions > span {
   margin-right: var(--sp-1);
@@ -30,31 +54,29 @@
   font-size: var(--fs-meta);
 }
 
-/* A hovered row has the --raised fill of a plain button: its plain buttons step up one more. */
-.fd-int-projects tbody tr:hover .fd-cell-actions > button:not(.fd-ghost):not(.fd-danger) {
-  background: var(--raised-hi);
-}
-.fd-int-projects
-  tbody
-  tr:hover
-  .fd-cell-actions
-  > button:not(.fd-ghost):not(.fd-danger):hover:not(:disabled) {
-  background: color-mix(in srgb, var(--raised-hi) 60%, var(--border));
+/* The folder: one mono line that keeps its end (`PathTail` drops whole leading folders). */
+.fd-int-projects .fd-int-path {
+  display: block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A phone: each project is a compact card without column labels (each value says what it is):
-   the name, one meta line "Lighting · /home/me/projects/fleet-deck", the forge and tracker
-   badges, then the actions. An empty cell is absent (page.css hides a td:empty). */
+   the name with the row menu at its right, one meta line "Lighting · …/projects/fleet-deck" (the
+   folder gives way), then the forge and tracker badges. An empty cell is absent (page.css hides a
+   td:empty). */
 @media (max-width: 640px) {
-  .fd-int-projects tr {
+  .fd-int-projects tbody tr {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--sp-1) var(--sp-2);
+    /* No box around the table: the card text starts on the page gutter. */
+    padding-inline: 0;
   }
-  .fd-int-projects td,
-  .fd-tablepanel .fd-int-projects td:first-child,
-  .fd-tablepanel .fd-int-projects td:last-child {
+  .fd-int-projects td {
     padding: 0;
   }
   /* page.css makes every labelled cell a 28px flex row with padding: here the cells sit on
@@ -67,24 +89,49 @@
   .fd-int-projects td[data-label]::before {
     content: none;
   }
-  .fd-int-projects td.fd-cell-name,
-  .fd-int-projects td.fd-cell-actions,
-  .fd-int-projects td[colspan] {
-    flex: 1 1 100%;
+  .fd-int-projects td.fd-cell-name {
+    flex: 1 1 0;
+    min-width: 0;
+    order: 1;
+  }
+  .fd-int-projects td.fd-cell-actions {
+    flex: none;
+    width: auto;
+    margin: 0;
+    order: 2;
+  }
+  /* The 44px menu button of a touch screen reaches into the card padding instead of pushing the
+     meta line down. */
+  @media (pointer: coarse) {
+    .fd-int-projects td.fd-cell-actions {
+      margin-block: calc((var(--tap-min) - 1lh) / -2);
+    }
+  }
+  /* A line break after the name row, and one after the meta line. */
+  .fd-int-projects tbody tr::before,
+  .fd-int-projects tbody tr::after {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+  }
+  .fd-int-projects tbody tr::before {
+    order: 3;
   }
   .fd-int-projects td[data-label="Station"] {
     flex: none;
+    order: 4;
     color: var(--dim);
     font-size: var(--fs-meta);
   }
+  /* The folder takes the rest of the station line and gives way there (never a line of its own
+     that starts with the dot). */
   .fd-int-projects td[data-label="Folder"] {
-    flex: 0 1 auto;
+    flex: 1 1 0;
     min-width: 0;
+    order: 5;
   }
   .fd-int-projects .fd-int-path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: none;
   }
   .fd-int-projects td[data-label="Station"] + td[data-label="Folder"]::before {
     content: "·";
@@ -97,33 +144,19 @@
     font-size: var(--fs-meta);
     font-weight: 400;
   }
-  /* A line break after the meta line: the badges start a line of their own. */
-  .fd-int-projects tr::after {
-    content: "";
-    flex-basis: 100%;
-    height: 0;
-    order: 2;
+  .fd-int-projects tbody tr::after {
+    order: 6;
   }
   .fd-int-projects td[data-label="Forge"],
   .fd-int-projects td[data-label="Trackers"] {
     flex: none;
     max-width: 100%;
-    order: 3;
+    order: 7;
   }
-  .fd-int-projects td.fd-cell-actions,
   .fd-int-projects td[colspan] {
-    order: 4;
+    flex: 1 1 100%;
+    order: 8;
     margin-top: var(--sp-1);
-  }
-}
-
-/* A phone card on touch: the name keeps its 44px target (.fd-tap), but the target reaches into
-   the card padding and the meta line instead of adding space above the name. */
-@media (max-width: 640px) and (pointer: coarse) {
-  .fd-int-projects .fd-cell-name > .fd-tap {
-    position: relative;
-    z-index: 1;
-    margin-block: calc((var(--tap-min) - 1lh) / -2);
   }
 }
 
@@ -162,38 +195,139 @@
 
 /* ---------- the project page: header line, panels, tabs ---------- */
 
-/* The station and the folder under the title. */
-.fd-int-project > .fd-plan-meta {
-  margin: -12px 0 0;
-  color: var(--dim);
-  font-size: var(--fs-ui);
+/* The summary under the title (§4.3): the station, a dot and the folder in mono. The folder keeps
+   its end (`PathTail` drops whole leading folders) and never breaks in a word. */
+.fd-int-where {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.fd-int-where > span {
+  flex: none;
+}
+.fd-int-sep {
+  color: var(--faint);
+}
+/* The folder takes the rest of the line (width 0 + grow: its full length never widens the header,
+   so `PathTail` sees the room it has); the start ellipsis is the fallback. */
+.fd-int-where > .fd-int-path {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-data);
+  direction: rtl;
+  text-align: left;
 }
 .fd-int-list > li > code {
   color: var(--dim);
   font-size: var(--fs-data);
 }
-.fd-int-project > .fd-plan-meta code {
-  font-size: var(--fs-data);
-}
-.fd-int-project > .fd-int-chips {
-  margin-top: -8px;
-}
-/* A section of the project with its own actions: a --surface panel. */
-.fd-int-project > .fd-panel {
+/* A section of the project with its own actions: a --surface panel (the Setup tab). */
+.fd-int-setup > .fd-panel {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
 }
-.fd-int-project > .fd-panel > :is(h2, h3, h4, p) {
+.fd-int-setup > .fd-panel > :is(h2, h3, h4, p) {
   margin: 0;
 }
-.fd-int-project > .fd-panel > h3.fd-label {
+.fd-int-setup > .fd-panel > h3.fd-label {
   color: var(--text);
   font-size: var(--fs-title);
 }
 .fd-int-project > .fd-pane-tabs {
   padding: 0;
+}
+
+/* A home: the station (600), the folder (mono --dim; it takes the room and keeps its end), the
+   status glyph and its word; the reason of a state that is not ready on a line under it. Retry
+   and Remove stand in one column at the right of every row. */
+.fd-int-homes .fd-int-list > li {
+  flex-wrap: nowrap;
+  /* The buttons sit on the first line of a home that has a reason under it. */
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-2);
+}
+.fd-int-homes .fd-int-list > li > button {
+  flex: none;
+}
+.fd-int-homes .fd-int-list > li > button:first-of-type {
+  margin-left: auto;
+}
+.fd-int-home {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--sp-2);
+  min-width: 0;
+}
+.fd-int-home-station {
+  flex: none;
+  font-weight: 600;
+}
+.fd-int-home > .fd-int-path {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--fs-data);
+  direction: rtl;
+  text-align: left;
+}
+.fd-int-home-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-int-home-state[data-state="ready"] {
+  color: var(--ok);
+}
+.fd-int-home-state[data-state="failed"] {
+  color: var(--hazard);
+}
+.fd-int-home-reason {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+/* "Add home" is a ghost button: its icon lines up with the text of the rows above it. */
+.fd-int-homes > .fd-pane-row > .fd-ghost:first-child {
+  margin-left: calc(-1 * var(--sp-2));
+}
+
+/* The paths of the secret files: the field and its hint. */
+.fd-int-secret-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+/* A cell of the secret files table: the state glyph, then its word in the tone of the state. */
+.fd-int-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fd-int-cell[data-tone="ok"] {
+  color: var(--ok);
+}
+.fd-int-cell[data-tone="faint"] {
+  color: var(--faint);
+}
+.fd-int-cell[data-tone="hazard"] {
+  color: var(--hazard);
 }
 .fd-int-tab {
   display: grid;
@@ -525,10 +659,6 @@ a.fd-int-prchip:hover {
   color: var(--text);
   text-decoration: none;
 }
-/* On the card, the chip sits under the card link beside the issue chip. */
-.fd-cardwrap > .fd-int-prchip {
-  margin: 4px 0 0 12px;
-}
 
 /* ---------- the project of a session (DL-176) ---------- */
 
@@ -540,10 +670,8 @@ a.fd-int-projectchip:hover {
   color: var(--text);
   text-decoration: none;
 }
-.fd-cardwrap > .fd-int-projectchip {
-  margin: 4px 0 0 12px;
-}
-/* The sessions of a project are strips: one column, 6px apart (§4.1). */
+/* The sessions of a project are strips: one column, 6px apart (§4.1). The list is the `fleet`
+   container of the strip rules (home.css): a narrow list gives two-line strips, as on the board. */
 .fd-int-sessions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -551,6 +679,14 @@ a.fd-int-projectchip:hover {
   margin: 0;
   padding: 0;
   list-style: none;
+  container: fleet / inline-size;
+}
+/* The ended strips fold under the fleet lane's Ended row (home.css .fd-lane-ended). */
+.fd-int-ended {
+  margin: 0;
+}
+.fd-int-ended > .fd-int-sessions {
+  margin-top: var(--sp-1);
 }
 
 /* ---------- Fleet Sync: same repository, secret files, advanced remote ---------- */

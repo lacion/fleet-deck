@@ -141,6 +141,17 @@ describe('the body of the section', () => {
     expect(html).not.toContain('role="alert"');
   });
 
+  test('the field says what to type; Save is a plain button, on only when the list changed', () => {
+    const html = body();
+    expect(html).toContain('placeholder=".env\nconfig/local.toml"');
+    expect(html).toContain(
+      '<span id="fd-int-secret-hint" class="fd-fieldhint">One path per line, relative to the project folder.</span>',
+    );
+    expect(html).toContain('<button type="button" disabled="">Save</button>');
+    expect(body({}, { draft: '.env\na.key' })).toContain('<button type="button">Save</button>');
+    expect(html).toMatch(/<button type="button" class="fd-ghost"[^>]*>Sync now<\/button>/);
+  });
+
   test('Sync now is off with no saved path, with fewer than two ready homes and while busy', () => {
     const off = /<button[^>]*disabled=""[^>]*>Sync now<\/button>/;
     expect(body()).not.toMatch(off);
@@ -215,8 +226,12 @@ describe('the body of the section', () => {
     expect(html).toContain('<th scope="col">Alpha</th>');
     expect(html).toContain('<th scope="col">Beta</th>');
     expect(html).toContain('<code>.env</code>');
-    expect(html).toContain('<td>Copied</td>');
-    expect(html).toContain('<td>Not ignored by Git</td>');
+    expect(html).toContain(
+      '<td data-state="written"><span class="fd-int-cell" data-tone="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>Copied</span></td>',
+    );
+    expect(html).toMatch(
+      /<td data-state="refused"><span class="fd-int-cell" data-tone="hazard"><svg[^>]*lucide-triangle-alert[\s\S]*?<\/svg>Not ignored by Git<\/span><\/td>/,
+    );
     expect(html).toContain('<td>—</td>');
     expect(html).toContain('Last sync');
     expect(html).toContain('Not synced yet.');

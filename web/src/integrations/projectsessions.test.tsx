@@ -57,7 +57,7 @@ describe('the Sessions tab of a project', () => {
   test('it is the first tab and the page opens on it', () => {
     const html = page([]);
     const tabs = html.match(/role="tab"[^>]*>[^<]*</g)?.map((t) => t.replace(/.*>(.*)</, '$1'));
-    expect(tabs).toEqual(['Sessions', 'Issues', 'Pull requests']);
+    expect(tabs).toEqual(['Sessions', 'Issues', 'Pull requests', 'Setup']);
     expect(html).toContain('id="fd-int-tab-sessions" aria-selected="true"');
   });
 
@@ -78,9 +78,19 @@ describe('the Sessions tab of a project', () => {
     expect(html).toContain('data-session="gone-1"');
     expect(html).not.toContain('data-session="other"');
     expect(html).not.toContain('data-session="none"');
-    expect(html).toContain('Live · 1');
-    expect(html).toContain('Ended · 1');
+    expect(html).toContain('Live <span class="fd-count">1</span>');
+    expect(html).toContain(
+      '<details class="fd-lane-ended fd-int-ended"><summary>Ended <span class="fd-count">1</span></summary>',
+    );
     expect(html).not.toContain('No sessions in this project yet.');
+  });
+
+  test('the sessions are strips that name their station, without the chip of this project', () => {
+    const html = page([inProject('live-1', 'p1')]);
+    expect(html).toContain('class="fd-strip"');
+    expect(html).toContain('data-showstation="true"');
+    expect(html).not.toContain('class="fd-card"');
+    expect(html).not.toContain('fd-int-projectchip');
   });
 
   test('without the drive scope there is no button', () => {

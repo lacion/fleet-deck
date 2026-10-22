@@ -4,8 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { FleetActions } from '../fleet/fleet';
 import type { ActivityItem } from '../gen';
 import type { ViewsActions } from '../runtime/views';
+import { NO_REPO } from '../board/fleet';
 import { card, station } from '../testing/fleet';
-import { MessageSquare, Shield, Wrench } from '../ui/icons';
+import { FileText, MessageSquare, Pencil, Plug, Shield, SquareTerminal, Wrench } from '../ui/icons';
 import { ActivityPage, rowIcon } from './ActivityPage';
 import { ALL_CHANNEL, channelList, channelQuery, inChannel, mailTargets } from './channels';
 
@@ -39,7 +40,35 @@ describe('channels', () => {
       ['acme/docs', 1],
       ['acme/web', 3],
     ]);
-    expect(list.sessions.map((s) => s.label)).toEqual(['Login', 'Cache', 'Docs', 'Old']);
+    expect(list.live.map((s) => s.label)).toEqual(['Login', 'Cache', 'Docs']);
+    expect(list.ended.map((s) => s.label)).toEqual(['Old']);
+    expect(list.live.map((s) => s.status)).toEqual(['working', 'idle', 'idle']);
+  });
+
+  test('the sessions outside a repository come after every repository', () => {
+    const list = channelList([
+      card('n', 'idle', 'station-a', { title: 'Loose' }),
+      ...sessions,
+      card('z', 'idle', 'station-a', { repo: { root: '/w/zeta', origin: null } }),
+    ]);
+    expect(list.repos.map((r) => r.label)).toEqual(['acme/docs', 'acme/web', 'zeta', NO_REPO]);
+  });
+
+  test('an untitled session is its callsign; a namesake is told apart by station or age', () => {
+    const list = channelList([
+      card('u', 'idle', 'station-a', { callsign: 'falcon-2d9s', updated_at: 9 }),
+      card('g1', 'idle', 'station-a', { title: 'Greeting', updated_at: 8 }),
+      card('g2', 'idle', 'station-a', { title: 'Greeting', updated_at: 7 }),
+      card('f1', 'idle', 'station-a', { title: 'Fleet check', updated_at: 6 }),
+      card('f2', 'idle', 'station-b', { title: 'Fleet check', updated_at: 5 }),
+    ]);
+    expect(list.live.map((e) => [e.label, e.callsign, e.namesake])).toEqual([
+      ['falcon-2d9s', true, null],
+      ['Greeting', false, 'age'],
+      ['Greeting', false, 'age'],
+      ['Fleet check', false, 'station'],
+      ['Fleet check', false, 'station'],
+    ]);
   });
 
   test('the deck filter: a session by id, a repository by origin, All by nothing', () => {
@@ -148,7 +177,7 @@ describe('the activity page', () => {
     expect(none).toContain('Nothing happened here yet');
   });
 
-  test('a tool or approval row of a known tool shows its target in mono; other texts stay plain', () => {
+  test('a tool or approval row of a known tool shows the tool in 600 and its target; other texts stay plain', () => {
     const html = page({
       initialItems: [
         item({ kind: 'approval', text: 'Permission: Bash cargo nextest run -p x', station_seq: 1 }),
@@ -158,11 +187,73 @@ describe('the activity page', () => {
       ],
     });
     expect(html).toContain(
-      'Permission: Bash <code class="fd-arow-target">cargo nextest run -p x</code>',
+      '<span class="fd-arow-lead">Permission:</span><b class="fd-arow-tool">Bash</b><code class="fd-arow-target">cargo nextest run -p x</code>',
     );
-    expect(html).toContain('Edit <code class="fd-arow-target">src/checkout/cart.ts</code>');
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Edit</b><code class="fd-arow-target" data-path=""><bdi>src/checkout/cart.ts</bdi></code>',
+    );
     expect(html).toContain('<span class="fd-arow-text">Question: Which port should it use?</span>');
     expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
+  });
+
+  test('a finished call loses its "(ok)" and its JSON; a failed call ends in a hazard badge', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'Read: /home/ana/briefs/a.png (ok)', station_seq: 1 }),
+        item({ kind: 'tool', text: 'TaskStop: {"task_id":"bv93ogg6d"} (ok)', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Bash: head -40 (failed)', station_seq: 3 }),
+        item({ kind: 'tool', text: 'mcp__fleetdeck__publish_artifact (ok)', station_seq: 4 }),
+      ],
+    });
+    expect(html).not.toContain('(ok)');
+    expect(html).not.toContain('task_id');
+    expect(html).toContain('<bdi>~/briefs/a.png</bdi>');
+    expect(html).toContain(
+      '<b class="fd-arow-tool">TaskStop</b><code class="fd-arow-target">bv93ogg6d</code>',
+    );
+    expect(html).toContain('<span class="fd-badge" data-tone="hazard">Failed</span>');
+    expect(html).toContain('data-outcome="failed"');
+    expect(html).toContain('<b class="fd-arow-tool">Publish artifact · fleetdeck</b>');
+  });
+
+  test('a run of one session names it on its first row only; every row opens the session', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 3 }),
+        item({ text: 'Two', station_seq: 2 }),
+        item({ session_id: 'b', session_title: 'Cache', text: 'Three', station_seq: 1 }),
+      ],
+    });
+    expect(html.match(/data-run="start"/g)).toHaveLength(2);
+    expect(html).toContain('<a class="fd-arow-session" href="#/s/station-a/a">Login</a>');
+    expect(html).toContain(
+      '<a class="fd-arow-session" href="#/s/station-a/a"><span class="fd-vh">Login</span></a>',
+    );
+    expect(html.match(/class="fd-arow-repo"/g)).toHaveLength(2);
+  });
+
+  test('a session channel has its glyph; ended sessions fold under Ended with a count', () => {
+    const html = page({ initialItems: [] });
+    expect(html).toContain('Live <span class="fd-count">3</span>');
+    expect(html).toContain('<span class="fd-dot" data-status="working" aria-hidden="true"></span>');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('Ended <span class="fd-count">1</span>');
+    expect(html).not.toContain('>Old<');
+    const chosen = page({
+      initialItems: [],
+      initialChannel: { kind: 'session', station: 'station-a', session: 'c' },
+    });
+    expect(chosen).toContain('aria-expanded="true"');
+    expect(chosen).toContain('>Old<');
+  });
+
+  test('a tool row has the icon of its tool', () => {
+    const icon = (text: string) => rowIcon({ kind: 'tool', text });
+    expect(icon('Read: /a (ok)')).toBe(FileText);
+    expect(icon('Bash: ls (ok)')).toBe(SquareTerminal);
+    expect(icon('Write: /a (ok)')).toBe(Pencil);
+    expect(icon('mcp__fleetdeck__fleet_view (ok)')).toBe(Plug);
+    expect(icon('TaskStop (ok)')).toBe(Wrench);
   });
 
   test('a question row has the message-square of the fleet strips; a permission keeps the shield', () => {

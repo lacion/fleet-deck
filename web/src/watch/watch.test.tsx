@@ -1,7 +1,8 @@
 // R6.2 (DL-169): the watch page model and a server render of the wall.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckSession, Event, OpenRequest } from '../gen';
+import { NO_REPO } from '../board/fleet';
+import type { DeckSession, Event, OpenRequest, ToolKind } from '../gen';
 import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
@@ -19,11 +20,11 @@ import {
 import { Tile, WatchPage } from './WatchPage';
 
 const refs = {};
-const started = (id: string, title: string, input: string): Event => ({
+const started = (id: string, title: string, input: string, tool = 'shell' as ToolKind): Event => ({
   kind: 'tool.started',
   node_id: id,
   parent_node_id: null,
-  tool_kind: 'shell',
+  tool_kind: tool,
   title,
   input_summary: input,
   files: [],
@@ -96,7 +97,24 @@ describe('tile lines', () => {
     expect(lines[0]?.text).toHaveLength(LINE_CHARS);
     expect(lines[0]?.text.endsWith('…')).toBe(true);
     expect(lines[1]?.text).toBe('Bash: false (failed)');
-    expect(lines[1]).toMatchObject({ name: 'Bash', target: 'false', note: '(failed)' });
+    expect(lines[1]).toMatchObject({ name: 'Bash', target: 'false', outcome: 'failed' });
+  });
+
+  test("a tool line has the owner's words: no MCP id, no JSON, a path keeps its file name", () => {
+    const lines = tileLines(
+      envelopes('s1', [
+        started('n1', 'mcp__fleetdeck__publish_artifact', '/Users/ana/report.html'),
+        started('n2', 'Workflow', '{"script":"export const meta = {\\n name'),
+        started('n3', 'Agent', '{"description":"Review the diff","prompt":"Read it all"}'),
+        started('n4', 'Read', '/home/ana/briefs/a.png', 'read'),
+      ]),
+    );
+    expect(lines.map((l) => [l.name, l.target, l.form])).toEqual([
+      ['Publish artifact · fleetdeck', '/Users/ana/report.html', 'path'],
+      ['Workflow', '', 'words'],
+      ['Agent', 'Review the diff', 'words'],
+      ['Read', '/home/ana/briefs/a.png', 'path'],
+    ]);
   });
 
   test('chat lines are plain text: no emphasis, code ticks or heading marks (DL-171)', () => {
@@ -210,10 +228,10 @@ describe('the watch page', () => {
     expect(html).toContain('<span class="fd-wtile-line" data-kind="message">Fixed the test</span>');
     // The tool name in sans weight 600, only the target in mono (DESIGN-SYSTEM §4.1, §4.5).
     expect(html).toContain(
-      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
+      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
     );
     expect(html).toContain(
-      '<span class="fd-wtile-tool" title="Running now"><b class="fd-wtile-toolname">Bash</b> <code>cargo test</code></span>',
+      '<span class="fd-wtile-tool" title="Running now"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
     );
     expect(html).toContain('class="fd-focus" title="repairing the login test"');
     expect(html).toContain('href="#/s/station-a/busy"');
@@ -257,6 +275,44 @@ describe('the watch page', () => {
     expect(second).not.toContain('data-session="a"');
     const none = page([card('c', 'working')], { initialFocus: true });
     expect(none).toContain('Nothing needs you right now');
+  });
+
+  test('a tile names the station and the repository, never "no repository", then the branch', () => {
+    const html = page([
+      card('busy', 'working', 'station-a', { title: 'Loose', cwd: '/w/reggio' }),
+      card('b2', 'working', 'station-a', {
+        title: 'In a repo',
+        branch: 'v2',
+        repo: { root: '/w/web', origin: 'github.com/acme/web' },
+      }),
+    ]);
+    expect(html).not.toContain(`Alpha · ${NO_REPO}`);
+    expect(html).toContain('<span class="fd-wtile-place">Alpha</span>');
+    expect(html).toContain('<span class="fd-wtile-place">Alpha · acme/web</span>');
+    expect(html).toContain('title="Folder: reggio"');
+    expect(html).toContain('lucide-folder');
+    expect(html).toContain('title="Branch: v2"');
+    expect(html).toContain('lucide-git-branch');
+  });
+
+  test('the header filters are ghost controls; a chosen filter and a pressed toggle say so', () => {
+    const html = page([card('a', 'working')], {
+      initialFilter: { station: 'station-a', repo: '', needsOnly: true },
+    });
+    expect(html).toMatch(
+      /<select class="fd-ghost fd-sm" data-active="true"[^>]*aria-label="Station"/,
+    );
+    expect(html).toMatch(/<select class="fd-ghost fd-sm" aria-label="Repository"/);
+    expect(html).toContain('<button type="button" class="fd-ghost fd-sm" aria-pressed="true">');
+    expect(html).toContain('lucide-list-filter');
+    expect(html).toContain('lucide-circle-dot');
+    expect(html).not.toContain('fd-chip');
+  });
+
+  test('the calm state is green, as on the fleet header', () => {
+    expect(page([card('a', 'working')])).toContain(
+      '<span class="fd-watch-clear">All clear.</span>',
+    );
   });
 
   test('the page counts the live sessions and states an empty board', () => {

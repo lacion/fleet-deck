@@ -302,16 +302,20 @@ describe('automations page', () => {
     expect(html).toMatch(/disabled="" title="The station is not linked.">Run now/);
   });
 
-  test('an empty list says what an automation is for', () => {
-    expect(page({ initial: [] })).toContain('No automations yet');
+  test('an empty list says what an automation is for and holds the one primary', () => {
+    const html = page({ initial: [] });
+    expect(html).toContain('No automations yet');
+    expect(html).toContain('Run a triage, a nightly test fix or a review sweep on a schedule.');
+    expect(html.match(/New automation/g)).toHaveLength(1);
+    expect(html.indexOf('New automation')).toBeGreaterThan(html.indexOf('fd-emptystate'));
   });
 
-  test('the skip rule stays above the list once an automation exists', () => {
-    const rule = 'A check on the station can run first; a non-zero exit skips the run.';
+  test('the list sits on the canvas, no note floats over it, and Refresh is an icon', () => {
     const html = page({ initial: [view()] });
-    expect(html).toContain(`<p class="fd-note">${rule}</p>`);
-    expect(html.indexOf(rule)).toBeLessThan(html.indexOf('fd-auto-list'));
-    expect(page({ initial: [] })).not.toContain(`<p class="fd-note">${rule}</p>`);
+    expect(html).not.toContain('non-zero');
+    expect(html).toContain('<ol class="fd-auto-list">');
+    expect(html).toMatch(/<button type="button" class="fd-iconbtn" aria-label="Refresh"/);
+    expect(html.match(/New automation/g)).toHaveLength(1);
   });
 
   test('the board has an Automations screen and links to it', () => {
@@ -350,7 +354,8 @@ describe('automation form', () => {
       'Time zone',
       'Grace period',
       'Reuse the session of the last run',
-      'Run first (optional shell check on the station; a non-zero exit skips the run)',
+      'Check first (optional)',
+      'The run is skipped when this check fails.',
     ]) {
       expect(html).toContain(text);
     }
@@ -376,6 +381,6 @@ describe('automation form', () => {
     const html = form(emptyDraft('station-a', 'claude'), off);
     expect(html).toContain('allow_setup_cmd = false');
     expect(html).toMatch(/<textarea[^>]*disabled=""[^>]*><\/textarea>/);
-    expect(form()).toContain('Runs with /bin/sh on the station');
+    expect(form()).toContain('A shell command that runs on the station in the folder');
   });
 });

@@ -1,7 +1,17 @@
 import { useState } from 'react';
 import { Markdown } from '../chat/Markdown';
 import type { DeckArtifactDetail } from '../gen';
-import { ArrowDown, ChevronLeft, Icon, Link as LinkIcon } from '../ui/icons';
+import { useSettings } from '../settings/context';
+import {
+  ArrowDown,
+  ChevronLeft,
+  Ellipsis,
+  Icon,
+  Link as LinkIcon,
+  Share2,
+  Trash2,
+} from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { type ArtifactActions, rawPath } from './actions';
 import {
   CONFIRM_TEXT,
@@ -11,7 +21,7 @@ import {
   useDeletion,
 } from './DeleteArtifact';
 import { fileName, KIND_LABEL } from './kinds';
-import { SendToWall } from '../wall/SendToWall';
+import { SendToWall, type WallTarget } from '../wall/SendToWall';
 import { ShareDialog } from './ShareDialog';
 import { provenanceLine } from './video';
 import { VideoView } from './VideoView';
@@ -129,6 +139,86 @@ function DeletionNotes({ deletion }: { readonly deletion: DeletionView }) {
   return null;
 }
 
+/** Starts the download of a file, the same as a click on an `<a download>` link. */
+function download(url: string, name: string) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+}
+
+/**
+ * The trailing "More actions" menu of the viewer bar: Send to wall… and Delete artifact (last, in
+ * the danger style). A narrow viewer (a phone, the session panel) moves Download and Share… into
+ * it too (`.fd-art-narrow`, artifacts.css); a wide one shows them in the bar. Without a row for the
+ * wide bar, the menu shows only on a narrow viewer (`data-wide="none"`).
+ */
+function MoreActions({
+  wall,
+  target,
+  download: file,
+  onShare,
+  onDelete,
+}: {
+  /** The owner's settings are there, so Send to wall… renders. */
+  readonly wall: boolean;
+  readonly target: WallTarget;
+  readonly download: { readonly url: string; readonly name: string } | null;
+  readonly onShare: (() => void) | null;
+  readonly onDelete: (() => void) | null;
+}) {
+  const wide = wall || onDelete !== null;
+  if (!wide && file === null && onShare === null) return null;
+  return (
+    <span className="fd-art-more" data-wide={wide ? undefined : 'none'}>
+      <Menu summary={<Icon of={Ellipsis} />} summaryClass="fd-iconbtn fd-sm" label="More actions">
+        {(close) => (
+          <>
+            {file === null ? null : (
+              <button
+                type="button"
+                className="fd-art-narrow"
+                onClick={() => {
+                  close();
+                  download(file.url, file.name);
+                }}
+              >
+                <Icon of={ArrowDown} /> Download
+              </button>
+            )}
+            {onShare === null ? null : (
+              <button
+                type="button"
+                className="fd-art-narrow"
+                onClick={() => {
+                  close();
+                  onShare();
+                }}
+              >
+                <Icon of={Share2} /> Share…
+              </button>
+            )}
+            <SendToWall target={target} onOpen={close} />
+            {wall && onDelete !== null ? <div className="fd-menu-sep" /> : null}
+            {onDelete === null ? null : (
+              <button
+                type="button"
+                className="fd-danger"
+                onClick={() => {
+                  close();
+                  onDelete();
+                }}
+              >
+                <Icon of={Trash2} /> {DELETE_LABEL}
+              </button>
+            )}
+          </>
+        )}
+      </Menu>
+    </span>
+  );
+}
+
 /** The viewer without data calls: the toolbar and the body of one state. */
 export function ArtifactViewerView({
   data,
@@ -139,6 +229,7 @@ export function ArtifactViewerView({
   onShare,
   deletion,
 }: ViewProps) {
+  const wall = useSettings() !== undefined;
   const back =
     variant === 'page' ? (
       <a className="fd-btn fd-ghost fd-sm fd-art-back" href="#/artifacts">
@@ -165,11 +256,21 @@ export function ArtifactViewerView({
   const { artifact, versions } = ready.detail;
   const main = mainFile(ready.detail, ready.version);
   const viewUrl = ready.link.kind === 'ok' ? ready.link.value : null;
+  const rawUrl =
+    main === undefined
+      ? null
+      : rawPath(artifact.station_id, artifact.artifact_id, ready.version, main);
+  const canDelete =
+    deletion !== undefined && (deletion.phase.kind === 'idle' || deletion.phase.kind === 'error');
+  // The page title is the h1 of the page (`--fs-page`, wide); the panel keeps a 15px h2.
+  const Title = variant === 'page' ? 'h1' : 'h2';
   return (
     <section className="fd-art fd-art-viewer" aria-label="Artifact" data-variant={variant}>
       <div className="fd-art-bar">
         {back}
-        <h2 className="fd-art-name">{artifact.title}</h2>
+        <Title className={variant === 'page' ? 'fd-art-name fd-wide' : 'fd-art-name'}>
+          {artifact.title}
+        </Title>
         <span className="fd-badge" data-kind={artifact.kind}>
           {KIND_LABEL[artifact.kind]}
         </span>
@@ -197,35 +298,38 @@ export function ArtifactViewerView({
             <Icon of={LinkIcon} size={14} /> Open in a new tab
           </a>
         )}
-        {main === undefined ? null : (
+        {main === undefined || rawUrl === null ? null : (
           <a
-            className="fd-btn fd-ghost fd-sm fd-art-action"
-            href={rawPath(artifact.station_id, artifact.artifact_id, ready.version, main)}
+            className="fd-btn fd-ghost fd-sm fd-art-action fd-art-wide"
+            href={rawUrl}
             download={fileName(main)}
           >
             <Icon of={ArrowDown} size={14} /> Download
           </a>
         )}
-        <SendToWall
-          className="fd-ghost fd-sm fd-art-action"
+        {canShare ? (
+          <button
+            type="button"
+            className="fd-ghost fd-sm fd-art-action fd-art-wide"
+            onClick={onShare}
+          >
+            <Icon of={Share2} size={14} /> Share…
+          </button>
+        ) : null}
+        <MoreActions
+          wall={wall}
           target={{
             kind: 'artifact',
             station_id: artifact.station_id,
             artifact_id: artifact.artifact_id,
             version: ready.version,
           }}
+          download={
+            main === undefined || rawUrl === null ? null : { url: rawUrl, name: fileName(main) }
+          }
+          onShare={canShare ? onShare : null}
+          onDelete={canDelete ? (deletion?.onBegin ?? null) : null}
         />
-        {canShare ? (
-          <button type="button" className="fd-ghost fd-sm fd-art-action" onClick={onShare}>
-            Share…
-          </button>
-        ) : null}
-        {deletion === undefined ||
-        (deletion.phase.kind !== 'idle' && deletion.phase.kind !== 'error') ? null : (
-          <button type="button" className="fd-ghost fd-sm fd-art-action" onClick={deletion.onBegin}>
-            {DELETE_LABEL}
-          </button>
-        )}
       </div>
       {deletion === undefined ? null : <DeletionNotes deletion={deletion} />}
       <div className="fd-art-body" data-kind={artifact.kind}>

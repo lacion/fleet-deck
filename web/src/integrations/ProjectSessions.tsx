@@ -1,10 +1,11 @@
 // DL-176: the Sessions tab of a project: the live and the ended sessions that belong to it, as the
-// cards of the fleet board, and "New session in this project".
+// strips of the fleet board (DESIGN-SYSTEM §4.1), and "New session in this project".
 import { isLive } from '../app/sessions';
-import { FleetCard } from '../board/FleetBoard';
+import { FleetStrip } from '../board/FleetStrip';
 import type { DeckSession, Project, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Icon, Plus } from '../ui/icons';
+import { OwnProject } from './ProjectChip';
 
 type Props = {
   readonly project: Project;
@@ -19,7 +20,9 @@ type Props = {
 
 const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
 
-function Cards({
+/** The strips of some sessions. A project has homes on several stations: each strip names its
+ * station. The project chip is absent: the page is the project. */
+function Strips({
   cards,
   stations,
   freshness,
@@ -28,13 +31,13 @@ function Cards({
   return (
     <ul className="fd-int-sessions">
       {cards.map((card) => (
-        <FleetCard
+        <FleetStrip
           key={`${card.station_id}/${card.summary.session_id}`}
           card={card}
           stations={stations}
           freshness={freshness}
           now={now}
-          showStation={false}
+          showStation
         />
       ))}
     </ul>
@@ -54,36 +57,45 @@ export function ProjectSessions({
   const live = own.filter(isLive).sort(byNewest);
   const ended = own.filter((s) => !isLive(s)).sort(byNewest);
   return (
-    <div className="fd-int-tab" data-tab="sessions">
-      {canDrive ? (
-        <div className="fd-pane-row">
-          <button
-            type="button"
-            className="fd-primary"
-            onClick={() => onNewSession(project.station_id, project.path)}
-          >
-            <Icon of={Plus} /> New session in this project
-          </button>
-        </div>
-      ) : null}
-      {own.length === 0 ? (
-        <p className="fd-empty">No sessions in this project yet.</p>
-      ) : (
-        <>
-          {live.length === 0 ? null : (
-            <section aria-label="Live sessions">
-              <h3 className="fd-label">Live · {live.length}</h3>
-              <Cards cards={live} stations={stations} freshness={freshness} now={now} />
-            </section>
-          )}
-          {ended.length === 0 ? null : (
-            <section aria-label="Ended sessions">
-              <h3 className="fd-label">Ended · {ended.length}</h3>
-              <Cards cards={ended} stations={stations} freshness={freshness} now={now} />
-            </section>
-          )}
-        </>
-      )}
-    </div>
+    <OwnProject id={project.project_id}>
+      <div className="fd-int-tab" data-tab="sessions">
+        {canDrive ? (
+          <div className="fd-pane-row">
+            <button
+              type="button"
+              className="fd-primary"
+              onClick={() => onNewSession(project.station_id, project.path)}
+            >
+              <Icon of={Plus} /> New session in this project
+            </button>
+          </div>
+        ) : null}
+        {own.length === 0 ? (
+          <p className="fd-empty">No sessions in this project yet.</p>
+        ) : (
+          <>
+            {live.length === 0 ? null : (
+              <section aria-label="Live sessions">
+                <h3 className="fd-label">
+                  Live <span className="fd-count">{live.length}</span>
+                </h3>
+                <Strips cards={live} stations={stations} freshness={freshness} now={now} />
+              </section>
+            )}
+            {ended.length === 0 ? null : (
+              // The fleet lane's Ended row: folded, "Ended" and its count.
+              <section aria-label="Ended sessions">
+                <details className="fd-lane-ended fd-int-ended">
+                  <summary>
+                    Ended <span className="fd-count">{ended.length}</span>
+                  </summary>
+                  <Strips cards={ended} stations={stations} freshness={freshness} now={now} />
+                </details>
+              </section>
+            )}
+          </>
+        )}
+      </div>
+    </OwnProject>
   );
 }

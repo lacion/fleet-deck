@@ -24,13 +24,14 @@
   border-bottom: 0;
 }
 
-/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns.
-   The texts share one baseline (the 12px where and age sit on the line of the 13px title); the
-   icon and the kind badge are boxes and stay centered. */
+/* One artifact: a 36px row. Kind icon, title, where, kind and age in fixed columns; the number of
+   copies and a version (only after v1) follow the title. The texts share one baseline (the 12px
+   where and age sit on the line of the 13px title); the icon and the kind badge are boxes and stay
+   centered. */
 .fd-art-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
-  grid-template-areas: "icon title where kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 48px;
+  grid-template-areas: "icon title where kind age";
   align-items: baseline;
   align-content: center;
   gap: var(--sp-3);
@@ -60,8 +61,8 @@
 }
 /* Without the where column (the session's tab). */
 .fd-art-row:not(:has(> .fd-art-where)) {
-  grid-template-columns: 14px minmax(0, 1fr) 96px 36px 48px;
-  grid-template-areas: "icon title kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) 96px 48px;
+  grid-template-areas: "icon title kind age";
 }
 
 /* The kind icon sits 8px before the title (the grid gap is 12px). */
@@ -72,23 +73,36 @@
   margin-right: calc(-1 * var(--sp-1));
   color: var(--faint);
 }
-.fd-art-title {
+.fd-art-titlecell {
+  display: flex;
   grid-area: title;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.fd-art-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fd-art-titlecell > .fd-count {
+  flex: none;
+  align-self: center;
+}
+/* A version after v1: quiet text after the title (v1 is the rule, so it says nothing). */
+.fd-art-ver {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
 .fd-art-row > .fd-badge {
   grid-area: kind;
   align-self: center;
   justify-self: start;
   max-width: 100%;
-}
-.fd-art-row > .fd-art-ver {
-  grid-area: version;
-  justify-self: start;
 }
 
 .fd-art-age,
@@ -109,8 +123,72 @@
   color: var(--dim);
 }
 
-/* The filters sit in the Page filters slot (page.css .fd-page-filters, §4.3): the search field,
-   then the three selects. A narrow main column wraps them under the title. */
+/* The older copies of a title fold under its row: a quiet 24px summary whose chevron sits in the
+   icon column and whose words start at the title, then one 28px row per copy with its exact time. */
+.fd-art-copies > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: max-content;
+  height: var(--ctl-h-sm);
+  margin: calc(-1 * var(--sp-1)) 0 var(--sp-1) var(--sp-2);
+  padding-right: var(--sp-2);
+  border-radius: var(--r-ctl);
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  transition: color var(--t-fast);
+}
+.fd-art-copies > summary::before {
+  margin-right: 0;
+}
+.fd-art-copies > summary:hover {
+  color: var(--text);
+}
+.fd-art-copies > ul {
+  margin: 0 0 var(--sp-1);
+  padding: 0;
+  list-style: none;
+}
+.fd-art-copy {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  height: auto;
+  min-height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 calc(var(--sp-2) + 14px + var(--sp-3));
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-align: left;
+  text-decoration: none;
+  transition: background-color var(--t-fast);
+}
+.fd-art-copy:hover,
+.fd-art-copy:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
+  text-decoration: none;
+}
+.fd-art-copy:focus-visible {
+  outline-offset: -2px;
+}
+.fd-art-copy > .fd-art-age {
+  margin-left: auto;
+}
+@media (pointer: coarse) {
+  .fd-art-copy {
+    min-height: var(--row-h-touch);
+  }
+}
+
+/* The filters sit in the Page filters slot (page.css .fd-page-filters, §4.3): a 200px search,
+   then three ghost selects (base.css `select.fd-ghost`; `data-active` while one filters), each at
+   most 180px with an ellipsis. A narrow main column wraps them under the title. */
 .fd-art-filters {
   display: flex;
   flex-wrap: wrap;
@@ -126,15 +204,64 @@
   min-width: 0;
 }
 .fd-art-filters .fd-art-search {
-  width: 240px;
+  width: 200px;
 }
 .fd-art-filters input {
   width: 100%;
   min-width: 0;
 }
+/* The small search keeps the text size of a field (--fs-field; 16px on touch). */
+.fd-art-filters input.fd-sm {
+  font-size: var(--fs-field);
+}
 .fd-art-filters select {
   min-width: 0;
-  max-width: 200px;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
+
+/* A phone: the search and one Filters menu on a row, the chosen filters as removable pressed chips
+   under them (the fleet's Filters pattern). */
+.fd-art-filters[data-layout="phone"] {
+  flex: 1 1 100%;
+  justify-content: flex-start;
+  width: 100%;
+}
+.fd-art-filters[data-layout="phone"] .fd-art-search {
+  flex: 1 1 auto;
+  width: auto;
+}
+.fd-art-filtermenu {
+  flex: none;
+}
+.fd-art-filtermenu .fd-menu-body {
+  width: min(320px, calc(100vw - 32px));
+  padding: var(--sp-3);
+}
+.fd-art-filtergrid {
+  display: grid;
+  gap: var(--sp-3);
+}
+.fd-art-filtergrid > label {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-art-filtergrid select {
+  width: 100%;
+  max-width: none;
+}
+.fd-art-chosen {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+.fd-art-chosen .fd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
 }
 
 .fd-art-state {
@@ -147,14 +274,14 @@
 }
 
 @media (max-width: 640px) {
-  /* Two lines: the icon and the title, then the kind and the version at the left, the age at
-     the right (and the where line on the global page). */
+  /* Two lines: the icon and the title (with its count and version), then the kind at the left
+     and the age at the right (and the where line on the global page). */
   .fd-art-row,
   .fd-art-row:not(:has(> .fd-art-where)) {
     grid-template-columns: 14px auto minmax(0, 1fr) auto;
     grid-template-areas:
       "icon title title title"
-      ". kind version age";
+      ". kind . age";
     gap: var(--sp-1) var(--sp-2);
     padding: var(--sp-2) 0;
   }
@@ -162,7 +289,7 @@
     grid-template-areas:
       "icon title title title"
       ". where where where"
-      ". kind version age";
+      ". kind . age";
   }
   .fd-art-kind {
     margin-right: 0;
@@ -171,32 +298,18 @@
   .fd-art-row:hover:not(:disabled) {
     background: transparent;
   }
-  /* The search field on its own line, then Kind and Station in two equal columns and Session
-     across the row: each select shows its full "All …" label inside a 390px screen. */
-  .fd-art-filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    flex: 1 1 100%;
-    width: 100%;
+  .fd-art-copies > summary {
+    margin-left: 0;
   }
-  .fd-art-filters .fd-art-search,
-  .fd-art-filters label:last-child {
-    grid-column: 1 / -1;
-  }
-  .fd-art-filters .fd-art-search {
-    width: auto;
-  }
-  .fd-art-filters label {
-    min-width: 0;
-  }
-  .fd-art-filters select {
-    width: 100%;
-    max-width: none;
+  .fd-art-copy {
+    padding-left: calc(14px + var(--sp-2));
   }
 }
 
 /* ---------- the viewer ---------- */
 
+/* The viewer is a container: its bar follows the width of the viewer (the full page, the session
+   panel, a phone), not the window. */
 .fd-art-viewer {
   display: flex;
   flex: 1;
@@ -204,6 +317,7 @@
   gap: var(--sp-3);
   min-width: 0;
   min-height: 0;
+  container: fd-art / inline-size;
 }
 .fd-art-viewer[data-variant="page"] {
   height: 100%;
@@ -217,7 +331,8 @@
   flex: 1;
 }
 
-/* The viewer bar: back, the title, the kind and the version, then the actions. */
+/* The viewer bar: back, the title, the kind and the version, then the actions and the More
+   actions menu. The parts keep their size; only the title gives way (an ellipsis). */
 .fd-art-bar {
   display: flex;
   flex: none;
@@ -228,7 +343,10 @@
   padding-bottom: var(--sp-2);
   border-bottom: 1px solid var(--border-soft);
 }
-.fd-art-name {
+.fd-art-bar > * {
+  flex: none;
+}
+.fd-art-bar > .fd-art-name {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0 var(--sp-1) 0 0;
@@ -238,6 +356,11 @@
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The full page: the title of a page (`--fs-page`, wide, like every page title). */
+.fd-art-viewer[data-variant="page"] .fd-art-bar > .fd-art-name {
+  font-size: var(--fs-page);
+  letter-spacing: -0.01em;
 }
 .fd-art-version {
   display: inline-flex;
@@ -270,6 +393,48 @@
   }
 }
 
+/* A wide viewer: one row; Download and Share… sit in the bar, the menu holds Send to wall… and
+   Delete artifact (and is absent when it has nothing else). */
+@container fd-art (min-width: 641px) {
+  .fd-art-bar {
+    flex-wrap: nowrap;
+  }
+  .fd-art-narrow,
+  .fd-art-more[data-wide="none"] {
+    display: none;
+  }
+}
+
+/* A narrow viewer (a phone, the session panel): the title on a row of its own (two lines at most),
+   then one row of actions: the version, Open in a new tab and the menu, which holds
+   Download, Send to wall…, Share… and Delete artifact. */
+@container fd-art (max-width: 640px) {
+  /* The row holds the version, Open in a new tab and the menu: the kind badge gives way. */
+  .fd-art-wide,
+  .fd-art-bar > .fd-badge {
+    display: none;
+  }
+  .fd-art-bar > .fd-art-name {
+    display: -webkit-box;
+    flex: 1 1 100%;
+    margin: 0;
+    line-height: 1.25;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+}
+
+/* The phone page: the top bar Back already goes to Artifacts, so the bar has no second back; the
+   page has the 16px phone gutter (the frame runs to the screen edges, below). */
+.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] {
+  padding: var(--sp-3) var(--sp-4);
+}
+.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] .fd-art-back {
+  display: none;
+}
+
 /* The delete confirmation under the bar. */
 .fd-art-confirm {
   padding: var(--sp-2) var(--sp-3);
@@ -297,6 +462,13 @@
   border: 0;
   border-radius: var(--r-card);
   box-shadow: var(--shadow-lift);
+}
+/* The phone page: the frame runs to the screen edges (the artifact gets the whole width). */
+.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] .fd-art-frame {
+  width: auto;
+  margin-inline: calc(-1 * var(--sp-4));
+  border-radius: 0;
+  box-shadow: none;
 }
 .fd-art-image {
   align-self: center;

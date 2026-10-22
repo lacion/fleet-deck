@@ -1,8 +1,9 @@
 // R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
-// "Issues" and "Pull requests".
+// "Issues", "Pull requests" and "Setup" (the homes, the secret files and the lands of the project).
 import { useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
+import { PathTail } from '../chat/PathTail';
 import { Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { useIntegrations } from './context';
@@ -17,7 +18,7 @@ import { ProjectSessions } from './ProjectSessions';
 import type { Freshness } from '../runtime/state';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 
-type Tab = 'sessions' | 'issues' | 'prs';
+type Tab = 'sessions' | 'issues' | 'prs' | 'setup';
 
 type Props = {
   readonly id: string;
@@ -81,21 +82,33 @@ export function ProjectPage({
       </Page>
     );
   }
+  // The header says where the project lives (§4.3: the summary under the title); the forge and the
+  // trackers are the header chips. The sessions come first under it; the configuration of the
+  // project (Same repository, Homes, Secret files, Lands) is the Setup tab.
+  const where = (
+    <span className="fd-int-where">
+      <span>{stationName(project.station_id, stations)}</span>
+      <span className="fd-int-sep" aria-hidden="true">
+        ·
+      </span>
+      <code className="fd-int-path">
+        <PathTail path={project.path} />
+      </code>
+    </span>
+  );
+  const chips =
+    project.forge === null && project.trackers.length === 0 ? null : (
+      <ProjectChips project={project} />
+    );
   return (
     <Page
       title={project.name}
       label={`Project ${project.name}`}
+      description={where}
+      filters={chips}
       wide
       className="fd-int fd-int-project"
     >
-      <p className="fd-plan-meta">
-        {stationName(project.station_id, stations)} · <code>{project.path}</code>
-      </p>
-      <ProjectChips project={project} />
-      <SameRepository project={project} stations={stations} />
-      <ProjectHomes project={project} stations={stations} list={list} />
-      <SecretFiles project={project} stations={stations} />
-      <ProjectLands project={project} stations={stations} sessions={sessions} />
       <div className="fd-pane-tabs" role="tablist" aria-label="Project views">
         <button
           type="button"
@@ -127,6 +140,16 @@ export function ProjectPage({
         >
           Pull requests
         </button>
+        <button
+          type="button"
+          role="tab"
+          id="fd-int-tab-setup"
+          aria-selected={tab === 'setup'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('setup')}
+        >
+          Setup
+        </button>
       </div>
       <div id="fd-int-panel" role="tabpanel" aria-labelledby={`fd-int-tab-${tab}`}>
         {tab === 'sessions' ? (
@@ -141,6 +164,13 @@ export function ProjectPage({
           />
         ) : tab === 'issues' ? (
           <IssuesTab project={project} actions={env.actions} stations={stations} now={now} />
+        ) : tab === 'setup' ? (
+          <div className="fd-int-tab fd-int-setup" data-tab="setup">
+            <SameRepository project={project} stations={stations} />
+            <ProjectHomes project={project} stations={stations} list={list} />
+            <SecretFiles project={project} stations={stations} />
+            <ProjectLands project={project} stations={stations} sessions={sessions} />
+          </div>
         ) : (
           <PrsTab
             project={project}
