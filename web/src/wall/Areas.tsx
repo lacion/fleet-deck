@@ -12,6 +12,7 @@ import { prOfSession } from '../integrations/model';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
 import { shortPath } from '../chat/PathTail';
+import { homeShortIn } from '../ui/format';
 import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
@@ -337,7 +338,7 @@ export function StreamArea({
                         <code>
                           {tool.form === 'path'
                             ? shortPath(homePath(tool.target), 60)
-                            : tool.target}
+                            : homeShortIn(tool.target)}
                         </code>
                       </>
                     )}

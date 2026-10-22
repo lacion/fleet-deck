@@ -305,7 +305,10 @@
   width: 100%;
   max-width: 360px;
 }
-.fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > input[type="number"] {
+/* The :not() parts give this rule the weight of the one above, so a number field keeps 160px. */
+.fd-fieldwrap[data-layout="row"]
+  .fd-fieldcontrol
+  > input[type="number"]:not([type="checkbox"]):not([type="radio"]) {
   max-width: 160px;
 }
 /* The switch sits in the middle of the control row. */

@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { PathTail } from '../chat/PathTail';
+import { shortPath } from '../chat/PathTail';
 import type { DeckSession, StationView } from '../gen';
 import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
@@ -7,6 +7,11 @@ import { readPins } from '../spawn/spawn';
 import { homeShort } from '../ui/format';
 import { FolderOpen, Icon, Pin } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
+
+/** A chip names its folder from the root (`~/projects/app`, §5); a long path drops whole leading
+ * folders behind "…/" to 28 characters (a chip is as wide as its text, so it is cut by count, not
+ * by a measured box). The title keeps the full path. */
+const chipPath = (path: string): string => shortPath(homeShort(path), 28);
 
 /** The most recent session folders that the chip row offers. */
 const MAX_FOLDERS = 8;
@@ -160,9 +165,7 @@ export function FilesPage({
                   onClick={() => open(station, path)}
                 >
                   <Icon of={Pin} size={12} />
-                  <span className="fd-files-chippath">
-                    <PathTail path={homeShort(path)} />
-                  </span>
+                  {chipPath(path)}
                 </button>
               ))}
               {recent.map((path) => (
@@ -173,9 +176,7 @@ export function FilesPage({
                   title={path}
                   onClick={() => open(station, path)}
                 >
-                  <span className="fd-files-chippath">
-                    <PathTail path={homeShort(path)} />
-                  </span>
+                  {chipPath(path)}
                 </button>
               ))}
             </div>

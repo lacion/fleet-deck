@@ -1019,7 +1019,7 @@
    edge of a plain button (§3, --btn-edge), so it reads as a button. */
 .fd-files-page .fd-recent .fd-chip {
   min-width: 0;
-  max-width: 28ch;
+  max-width: 100%;
   overflow: hidden;
   background: var(--raised);
   border-color: var(--btn-edge);
@@ -1034,13 +1034,6 @@
 }
 .fd-files-page .fd-recent .fd-chip[data-pinned] .fd-icon {
   fill: currentColor;
-}
-/* The path of a chip starts at its root (`~/projects/app`, §5); a long one drops whole leading
-   folders (`PathTail`), so this box is one line that hides what does not fit. */
-.fd-files-chippath {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
 }
 
 .fd-files-page .fd-files-view {
