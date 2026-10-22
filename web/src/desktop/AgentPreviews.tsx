@@ -48,7 +48,7 @@ export function AgentPreviews({
             <span>{previewText(p)}</span>
             <button
               type="button"
-              className="fd-ghost fd-sm"
+              className="fd-sm"
               disabled={busy}
               onClick={() => onClose(p.window_id)}
             >

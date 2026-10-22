@@ -16,22 +16,24 @@ export function StationChoices({
     <fieldset className="fd-disp-stations">
       <legend className="fd-fieldlabel">{label}</legend>
       {stations.length === 0 ? <p className="fd-note">No station is paired.</p> : null}
-      {stations.map((s) => (
-        <label key={s.station_id} className="fd-disp-check">
-          <input
-            type="checkbox"
-            checked={value.includes(s.station_id)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...value, s.station_id]
-                  : value.filter((id) => id !== s.station_id),
-              )
-            }
-          />{' '}
-          {s.name}
-        </label>
-      ))}
+      <span className="fd-disp-choices">
+        {stations.map((s) => (
+          <label key={s.station_id} className="fd-disp-check">
+            <input
+              type="checkbox"
+              checked={value.includes(s.station_id)}
+              onChange={(e) =>
+                onChange(
+                  e.target.checked
+                    ? [...value, s.station_id]
+                    : value.filter((id) => id !== s.station_id),
+                )
+              }
+            />{' '}
+            {s.name}
+          </label>
+        ))}
+      </span>
     </fieldset>
   );
 }

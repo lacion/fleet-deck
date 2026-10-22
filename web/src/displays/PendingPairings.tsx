@@ -102,7 +102,7 @@ function PendingRow({
         <strong>{pairing.source}</strong>{' '}
         <span className="fd-note">{relativeAge(pairing.created_at, now)}</span>
       </p>
-      <p className="fd-note">{agent === '' ? 'No user agent.' : agent}</p>
+      <p className="fd-note fd-disp-agent">{agent === '' ? 'No user agent.' : agent}</p>
       <form className="fd-set-dialogform" onSubmit={submit} aria-label="Approve this display">
         {locked ? (
           <p className="fd-note">
@@ -112,26 +112,28 @@ function PendingRow({
         ) : (
           <fieldset className="fd-disp-modes">
             <legend className="fd-fieldlabel">Display</legend>
-            <label className="fd-disp-check">
-              <input
-                type="radio"
-                name={`mode-${pairing.pairing_id}`}
-                checked={mode === 'new'}
-                onChange={() => setMode('new')}
-              />{' '}
-              New display
-            </label>
-            {displays.length === 0 ? null : (
-              <label className="fd-disp-check">
+            <span className="fd-seg">
+              <label>
                 <input
                   type="radio"
                   name={`mode-${pairing.pairing_id}`}
-                  checked={mode === 'existing'}
-                  onChange={() => setMode('existing')}
+                  checked={mode === 'new'}
+                  onChange={() => setMode('new')}
                 />{' '}
-                Existing display
+                New display
               </label>
-            )}
+              {displays.length === 0 ? null : (
+                <label>
+                  <input
+                    type="radio"
+                    name={`mode-${pairing.pairing_id}`}
+                    checked={mode === 'existing'}
+                    onChange={() => setMode('existing')}
+                  />{' '}
+                  Existing display
+                </label>
+              )}
+            </span>
           </fieldset>
         )}
         {mode === 'existing' ? (
@@ -163,6 +165,7 @@ function PendingRow({
         )}
         <Field label="Code on the wall screen">
           <input
+            className="fd-disp-code"
             value={code}
             inputMode="numeric"
             autoComplete="off"
@@ -198,7 +201,7 @@ export function PendingPairings(
   const [approved, setApproved] = useState(false);
   return (
     <section aria-label="Waiting for a code" className="fd-disp-section">
-      <h2 className="fd-form-title">Waiting for a code</h2>
+      <h2 className="fd-form-title fd-disp-title">Waiting for a code</h2>
       {approved ? (
         <p role="status">Approved. The wall display signs in within a few seconds.</p>
       ) : null}

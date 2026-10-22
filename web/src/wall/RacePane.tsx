@@ -93,7 +93,9 @@ function Column({
       ) : (
         <p className="fd-wall-message">{message}</p>
       )}
-      <p className="fd-wall-note">{cost ?? 'Cost unknown'}</p>
+      <p className={cost === null ? 'fd-wall-note' : 'fd-wall-note fd-wall-cost'}>
+        {cost ?? 'Cost unknown'}
+      </p>
     </li>
   );
 }
@@ -153,7 +155,9 @@ function DisplayColumn({
       ) : (
         <p className="fd-wall-message">{message}</p>
       )}
-      <p className="fd-wall-note">{cost ?? 'Cost unknown'}</p>
+      <p className={cost === null ? 'fd-wall-note' : 'fd-wall-note fd-wall-cost'}>
+        {cost ?? 'Cost unknown'}
+      </p>
     </li>
   );
 }

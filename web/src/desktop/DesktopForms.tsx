@@ -86,7 +86,7 @@ export function WorkspaceForm({
           {error}
         </p>
       )}
-      <button type="submit" className="fd-ghost" disabled={busy}>
+      <button type="submit" className="fd-sm" disabled={busy}>
         Show workspace
       </button>
     </form>
@@ -130,7 +130,7 @@ export function NotifyForm({ run, busy }: { readonly run: Run; readonly busy: bo
           {error}
         </p>
       )}
-      <button type="submit" className="fd-ghost" disabled={busy}>
+      <button type="submit" className="fd-sm" disabled={busy}>
         Send notification
       </button>
     </form>
@@ -188,7 +188,7 @@ export function LinkForm({
           {error}
         </p>
       )}
-      <button type="submit" className="fd-ghost" disabled={busy}>
+      <button type="submit" className="fd-sm" disabled={busy}>
         Open the link
       </button>
     </form>
@@ -271,11 +271,7 @@ export function WallOpenForm({
           {problem}
         </p>
       )}
-      <button
-        type="submit"
-        className="fd-ghost"
-        disabled={busy || list === null || list.length === 0}
-      >
+      <button type="submit" className="fd-sm" disabled={busy || list === null || list.length === 0}>
         Open the wall
       </button>
     </form>

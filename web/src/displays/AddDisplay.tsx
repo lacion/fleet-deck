@@ -65,7 +65,7 @@ export function AddDisplay({
   };
   return (
     <section className="fd-panel fd-disp-add" aria-label="Add a wall display">
-      <h2 className="fd-form-title">Add a wall display</h2>
+      <h2 className="fd-form-title fd-disp-title">Add a wall display</h2>
       <p className="fd-note">{COST_TEXT}</p>
       <form className="fd-set-dialogform" onSubmit={submit} aria-label="Add a wall display">
         <Field label="Name">
@@ -83,7 +83,7 @@ export function AddDisplay({
           </p>
         )}
         <div className="fd-formactions">
-          <button type="submit" className="fd-primary" disabled={busy}>
+          <button type="submit" disabled={busy}>
             {busy ? 'Making the link…' : 'Make a link'}
           </button>
         </div>

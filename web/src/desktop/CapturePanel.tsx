@@ -259,7 +259,7 @@ export function useCapture(
     button: (monitorName, slotActive = false) => (
       <button
         type="button"
-        className="fd-ghost fd-sm"
+        className="fd-sm"
         disabled={startOff({
           busy: busy || flow === null,
           slotActive,

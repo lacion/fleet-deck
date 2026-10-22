@@ -119,7 +119,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
       <ul className="fd-desk-monitors" aria-label="Monitors">
         {shown.monitors.map((m) => (
           <li key={m.name} data-monitor={m.name}>
-            <span>
+            <span className="fd-desk-monitor">
               <strong>{m.name}</strong> · {m.width}×{m.height} · scale {m.scale_pct / 100} ·{' '}
               {m.refresh_hz} Hz{m.focused ? ' · focused' : ''} · {screenText(m.dpms_on)}
             </span>
@@ -127,7 +127,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
               {capture.button(m.name, record.active)}
               <button
                 type="button"
-                className="fd-ghost fd-sm"
+                className="fd-sm"
                 disabled={busy}
                 onClick={() =>
                   send({ action: 'screen_power', monitor: m.name, on: true }, `${m.name} is on.`)
@@ -137,7 +137,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
               </button>
               <button
                 type="button"
-                className="fd-ghost fd-sm"
+                className="fd-sm"
                 disabled={busy}
                 onClick={() =>
                   setConfirm({
@@ -161,7 +161,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
       <div className="fd-desk-buttons">
         <button
           type="button"
-          className="fd-ghost fd-sm"
+          className="fd-sm"
           disabled={busy}
           onClick={() =>
             setConfirm({
@@ -201,7 +201,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
           />{' '}
           Keep the screen awake
         </label>
-        <button type="button" className="fd-ghost fd-sm" disabled={busy} onClick={refresh}>
+        <button type="button" className="fd-sm" disabled={busy} onClick={refresh}>
           Refresh
         </button>
       </div>
@@ -229,7 +229,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
           Opened window {address}{' '}
           <button
             type="button"
-            className="fd-ghost fd-sm"
+            className="fd-sm"
             disabled={busy}
             onClick={() => send({ action: 'window_close', address }, 'Window closed.')}
           >
@@ -242,14 +242,14 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
         <ul className="fd-desk-walls" aria-label="Open walls">
           {shown.walls.map((w) => (
             <li key={w.address} data-display={w.display_id}>
-              <span>
+              <span className="fd-desk-monitor">
                 Wall {w.display_id}
                 {w.monitor === null ? '' : ` on ${w.monitor}`}
               </span>
               <span className="fd-desk-buttons">
                 <button
                   type="button"
-                  className="fd-ghost fd-sm"
+                  className="fd-sm"
                   disabled={busy}
                   onClick={() =>
                     send({ action: 'wall_reload', display_id: w.display_id }, 'Reloading the wall.')
@@ -259,7 +259,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
                 </button>
                 <button
                   type="button"
-                  className="fd-ghost fd-sm"
+                  className="fd-sm"
                   disabled={busy}
                   onClick={() =>
                     setConfirm({
