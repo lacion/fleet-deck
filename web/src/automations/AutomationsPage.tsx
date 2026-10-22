@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, Schedule, ScheduleRun, ScheduleView, StationView } from '../gen';
 import { spawnTargets } from '../spawn/spawn';
@@ -13,7 +14,6 @@ import {
   draftOf,
   emptyDraft,
   inputOf,
-  lastRunText,
   STATE_LABEL,
   STATE_TONE,
   untilText,
@@ -43,13 +43,29 @@ type Props = {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The deck did not answer.');
 
+/** The full local date and time: the title of a relative time. */
 const when = (ms: number) => new Date(ms).toLocaleString();
+
+/** "3 h ago" (DESIGN-SYSTEM §5), "now" under a minute. */
+const ago = (ms: number, now: number) => {
+  const age = relativeAge(ms, now);
+  return age === 'now' ? age : `${age} ago`;
+};
 
 function RunBadge({ run }: { readonly run: ScheduleRun }) {
   return (
-    <span className="fd-badge" data-tone={STATE_TONE[run.state]}>
+    <span className="fd-badge fd-plan-status" data-tone={STATE_TONE[run.state]}>
       {STATE_LABEL[run.state]}
     </span>
+  );
+}
+
+/** A past time as a relative age, with the full date in its title. */
+function Ago({ at, now }: { readonly at: number; readonly now: number }) {
+  return (
+    <time dateTime={new Date(at).toISOString()} title={when(at)}>
+      {ago(at, now)}
+    </time>
   );
 }
 
@@ -58,10 +74,12 @@ function RunHistory({
   id,
   actions,
   version,
+  now,
 }: {
   readonly id: string;
   readonly actions: AutomationActions;
   readonly version: number;
+  readonly now: number;
 }) {
   const [runs, setRuns] = useState<readonly ScheduleRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,8 +102,7 @@ function RunHistory({
     <ol className="fd-auto-runs">
       {runs.map((r) => (
         <li key={r.run_id} data-run-state={r.state}>
-          <RunBadge run={r} />{' '}
-          <time dateTime={new Date(r.due_at).toISOString()}>{when(r.due_at)}</time>
+          <RunBadge run={r} /> <Ago at={r.due_at} now={now} />
           {r.manual ? ' · run now' : ''}
           {r.reason === '' ? '' : ` · ${r.reason}`}
           {r.session_id === null ? null : (
@@ -286,23 +303,28 @@ export function AutomationsPage({
                     <code>{s.path}</code>
                   </p>
                   <p className="fd-plan-meta">
-                    Next run:{' '}
-                    {next === null ? (
-                      'none (off)'
-                    ) : (
-                      <time dateTime={new Date(next).toISOString()} title={when(next)}>
-                        {untilText(next, now)}
-                      </time>
-                    )}
-                    {' · '}Last run:{' '}
-                    {last === null ? (
-                      'never'
-                    ) : (
-                      <>
-                        <RunBadge run={last} />{' '}
-                        <span title={when(last.due_at)}>{lastRunText(last)}</span>
-                      </>
-                    )}
+                    <span className="fd-auto-when">
+                      Next run:{' '}
+                      {next === null ? (
+                        'none (off)'
+                      ) : (
+                        <time dateTime={new Date(next).toISOString()} title={when(next)}>
+                          {untilText(next, now)}
+                        </time>
+                      )}
+                    </span>
+                    <span className="fd-auto-when">
+                      Last run:{' '}
+                      {last === null ? (
+                        'never'
+                      ) : (
+                        <>
+                          <RunBadge run={last} />
+                          {last.reason === '' ? null : <span>{last.reason}</span>}
+                          <Ago at={last.due_at} now={now} />
+                        </>
+                      )}
+                    </span>
                   </p>
                   <details
                     open={open.has(s.schedule_id)}
@@ -318,7 +340,12 @@ export function AutomationsPage({
                   >
                     <summary>Run history</summary>
                     {open.has(s.schedule_id) && actions !== undefined ? (
-                      <RunHistory id={s.schedule_id} actions={actions} version={version} />
+                      <RunHistory
+                        id={s.schedule_id}
+                        actions={actions}
+                        version={version}
+                        now={now}
+                      />
                     ) : null}
                   </details>
                   <div className="fd-plan-actions">
@@ -376,7 +403,7 @@ export function AutomationsPage({
                     ) : (
                       <button
                         type="button"
-                        className="fd-ghost fd-sm"
+                        className="fd-danger fd-sm"
                         disabled={!can}
                         onClick={() => setConfirming(s.schedule_id)}
                       >

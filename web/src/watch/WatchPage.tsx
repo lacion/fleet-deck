@@ -43,6 +43,11 @@ type Props = {
   readonly initialFilter?: WatchFilter;
 };
 
+/** The look of an answer (the ApprovalDock rule): the first is the decision primary, a deny is
+ * a danger button, the others are plain. */
+const optionClass = (kind: string | undefined, n: number) =>
+  n === 0 ? 'fd-decide fd-sm' : kind === 'deny' ? 'fd-danger fd-sm' : 'fd-sm';
+
 const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | undefined =>
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
 
@@ -132,9 +137,10 @@ export function Tile({
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
       ) : lines.length === 0 ? (
-        <span className="fd-wtile-empty">
-          {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
-        </span>
+        // A tile without chat shows no filler (DESIGN-SYSTEM §1 rule 7): "Loading…" only.
+        timeline?.ready === true ? null : (
+          <span className="fd-wtile-empty">Loading…</span>
+        )
       ) : (
         <span className="fd-wtile-lines">
           {lines.map((l) => (
@@ -179,7 +185,7 @@ export function Tile({
                 <button
                   key={o.option_id}
                   type="button"
-                  className={n === 0 ? 'fd-decide fd-sm' : 'fd-sm'}
+                  className={optionClass(o.kind, n)}
                   disabled={busy}
                   aria-label={`${o.label}: ${ask.request.title} in ${s.title ?? s.session_id}`}
                   onClick={() => answer(ask.request.request_id, o.option_id)}

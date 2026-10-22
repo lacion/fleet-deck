@@ -225,13 +225,45 @@
   gap: 6px;
 }
 
-/* The other answers sit on the tile fill: one step up. */
-.fd-wtile-ask .fd-options > button:not(.fd-decide) {
+/* The plain answers sit on the tile fill: one step up, with the light-theme hairline. Deny is a
+   .fd-danger button (the ApprovalDock rule). */
+.fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger) {
   background: var(--raised-hi);
+  border-color: var(--btn-edge);
 }
 
-.fd-wtile-ask .fd-options > button:not(.fd-decide):hover:not(:disabled) {
+.fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
   background: color-mix(in srgb, var(--raised-hi) 60%, var(--border));
+}
+
+/* A phone: the answers are 44px buttons on a two-column grid: Allow and Deny side by side, a
+   plain answer (Allow for this session) across both columns under them. */
+@media (max-width: 640px) {
+  .fd-wtile-ask .fd-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-auto-flow: row dense;
+    gap: var(--sp-2);
+  }
+
+  .fd-wtile-ask .fd-options > button {
+    width: 100%;
+    min-height: var(--tap-min);
+  }
+
+  .fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger) {
+    grid-column: 1 / -1;
+  }
+
+  /* Deny is a filled 44px button on the phone (concept A): the plain fill, --hazard text. */
+  .fd-wtile-ask .fd-options > button.fd-danger {
+    background: var(--raised-hi);
+    border-color: var(--btn-edge);
+  }
+
+  .fd-wtile-ask .fd-options > button.fd-danger:hover:not(:disabled) {
+    background: var(--hazard-bg);
+  }
 }
 
 /* ── Activity: the channel list and the stream ──────────────────── */
@@ -285,6 +317,16 @@
   background: var(--raised-hi);
   color: var(--text);
   box-shadow: inset 2px 0 0 var(--focus);
+}
+
+/* The light theme: --raised-hi does not show on the light --bg; the selected channel is a white
+   --raised row with the lift shadow (the sidebar look) and the same --focus bar. */
+[data-theme="light"] .fd-achan[aria-pressed="true"],
+[data-theme="light"] .fd-achan[aria-pressed="true"]:hover {
+  background: var(--raised);
+  box-shadow:
+    inset 2px 0 0 var(--focus),
+    var(--shadow-lift);
 }
 
 .fd-achan-label {
@@ -389,17 +431,19 @@
   white-space: nowrap;
 }
 
-/* The repository is an id: mono. */
+/* The repository is an id: mono, in a fixed left-aligned column so that its left edge is the
+   same on every row; the age is a fixed right-aligned column after it. */
 .fd-arow-meta > span {
-  max-width: 240px;
+  width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
 
 .fd-arow-meta > time {
-  min-width: 36px;
+  min-width: 48px;
   text-align: right;
 }
 
@@ -482,6 +526,28 @@
   height: 18px;
 }
 
+/* "Next run: in 3 h" and "Last run: [Started] 3 h ago": one part of the meta line each; the
+   drawn dot of .fd-plan-meta sits between the parts, never inside one. */
+.fd-auto-when {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--sp-1);
+  min-width: 0;
+}
+
+/* The flex gaps on both sides space the dot: 4px each side, the width of the text dots. */
+.fd-auto-list .fd-plan-meta > .fd-auto-when::before {
+  padding: 0;
+}
+
+/* Under 760px stations.css drops the drawn dots: the parts sit 12px apart. */
+@media (max-width: 760px) {
+  .fd-auto-list .fd-plan-meta {
+    column-gap: var(--sp-3);
+  }
+}
+
 .fd-auto-list .fd-plan-actions {
   grid-column: 2;
   grid-row: 1 / span 3;
@@ -557,6 +623,11 @@
     box-shadow: none;
   }
 
+  [data-theme="light"] .fd-achan[aria-pressed="true"],
+  [data-theme="light"] .fd-achan[aria-pressed="true"]:hover {
+    box-shadow: var(--shadow-lift);
+  }
+
   .fd-achan-label {
     max-width: 180px;
   }
@@ -592,6 +663,8 @@
   }
 
   .fd-arow-meta > span {
+    flex: 0 1 auto;
+    width: auto;
     max-width: none;
     min-width: 0;
   }
@@ -679,9 +752,46 @@
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
 }
 
+/* The Files panel inside the page: the search row has the page control height, the same as the
+   folder row above it (the .fd-sm size stays in the session side panel). */
+.fd-files-page .fd-files-bar :is(input, select, button).fd-sm {
+  height: var(--ctl-h);
+  padding-right: 10px;
+  padding-left: 10px;
+  font-size: var(--fs-ui);
+}
+
+.fd-files-page .fd-files-bar select.fd-sm {
+  padding-right: 28px;
+}
+
+/* The crumbs sit 8px above the list, the root icon on the column of the row icons. */
+.fd-files-page .fd-files-crumbs {
+  margin-bottom: calc(var(--sp-2) - var(--sp-3));
+  padding: 0 var(--sp-2);
+}
+
 @media (max-width: 640px) {
+  /* The labels are a 56px column: the Station and Folder controls start at one edge. */
   .fd-files-page .fd-files-folder label {
+    display: grid;
     flex: 1 1 100%;
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  /* The search row wraps: the input on its own line, Names and Search under it. */
+  .fd-files-page .fd-files-bar form {
+    flex-wrap: wrap;
+    max-width: none;
+  }
+
+  .fd-files-page .fd-files-bar input {
+    flex: 1 1 100%;
+  }
+
+  .fd-files-page .fd-files-bar form > :is(select, button) {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .fd-files-page .fd-files-folder label > :is(input, select) {

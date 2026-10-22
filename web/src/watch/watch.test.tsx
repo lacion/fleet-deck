@@ -300,4 +300,34 @@ describe('the read-only tile (R13 P1)', () => {
     expect(tile({ unavailable: true })).toContain('Unavailable');
     expect(tile()).not.toContain('Unavailable');
   });
+
+  test('a tile without chat shows Loading… until the timeline is ready, then nothing', () => {
+    const ready = {
+      incarnation: 'i',
+      cursor: 0,
+      events: [],
+      freshness: 'live' as const,
+      error: null,
+      ready: true,
+    };
+    expect(tile()).toContain('<span class="fd-wtile-empty">Loading…</span>');
+    const html = tile({ timeline: ready });
+    expect(html).not.toContain('fd-wtile-empty');
+    expect(html).not.toContain('No chat yet.');
+  });
+
+  test('the answers have the ApprovalDock look: Allow decides, Deny is a danger button', () => {
+    const options = [
+      { option_id: 'allow', label: 'Allow', kind: 'allow_once' as const },
+      { option_id: 'session', label: 'Allow for this session', kind: 'allow_session' as const },
+      { option_id: 'deny', label: 'Deny', kind: 'deny' as const },
+    ];
+    const html = tile({
+      readOnly: false,
+      card: waiting('w1', 10, { open_requests: [request(10, { options })] }),
+    });
+    expect(html).toMatch(/class="fd-decide fd-sm"[^>]*aria-label="Allow: /);
+    expect(html).toMatch(/class="fd-sm"[^>]*aria-label="Allow for this session: /);
+    expect(html).toMatch(/class="fd-danger fd-sm"[^>]*aria-label="Deny: /);
+  });
 });

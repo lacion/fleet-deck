@@ -241,17 +241,20 @@ export function ProjectsPage({
                           )}
                         </td>
                         <td data-label="Trackers">
-                          <span className="fd-cellbadges">
-                            {p.trackers.map((t) => (
-                              <span
-                                key={`${t.tracker}/${t.key}`}
-                                className="fd-badge"
-                                data-chip="tracker"
-                              >
-                                {trackerChip(t)}
-                              </span>
-                            ))}
-                          </span>
+                          {/* No trackers: an empty cell (the phone card hides it, §1 rule 7). */}
+                          {p.trackers.length === 0 ? null : (
+                            <span className="fd-cellbadges">
+                              {p.trackers.map((t) => (
+                                <span
+                                  key={`${t.tracker}/${t.key}`}
+                                  className="fd-badge"
+                                  data-chip="tracker"
+                                >
+                                  {trackerChip(t)}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                         </td>
                         <td className="fd-cell-actions">
                           {confirming === p.project_id ? (
@@ -293,7 +296,7 @@ export function ProjectsPage({
                               </button>
                               <button
                                 type="button"
-                                className="fd-ghost fd-sm"
+                                className="fd-danger fd-sm"
                                 onClick={() => setConfirming(p.project_id)}
                               >
                                 Delete…
