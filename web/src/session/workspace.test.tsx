@@ -16,6 +16,7 @@ import {
   finalizedTurns,
   joinPath,
   mergeDiffPaths,
+  mergeTurnPaths,
   parentPath,
   revertBlock,
   revertText,
@@ -381,6 +382,28 @@ describe('the diff since the session started (R1.2)', () => {
     expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts,c.ts</b>');
     setDiffTotal('station-a/m1', { files_changed: 1, insertions: 1, deletions: 0 }, ['c.ts']);
     expect(pathsOf('station-a/m1')).toBe('<b>c.ts</b>');
+  });
+
+  test('the diff of a reverted turn adds no paths; a kept turn adds its paths', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        return <b>{useDiffPaths(ref)?.join(',') ?? 'none'}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    const turn = (reverted: boolean) => ({
+      turnId: reverted ? 't1' : 't2',
+      start: ok('a1'),
+      end: ok('b1'),
+      diff: { files_changed: 1, insertions: 1, deletions: 0 },
+      reverted,
+    });
+    mergeTurnPaths('station-a/r1', turn(true), ['gone.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>none</b>');
+    mergeTurnPaths('station-a/r1', turn(false), ['kept.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>kept.ts</b>');
+    mergeTurnPaths('station-a/r1', undefined, ['other.ts']);
+    expect(pathsOf('station-a/r1')).toBe('<b>kept.ts,other.ts</b>');
   });
 });
 

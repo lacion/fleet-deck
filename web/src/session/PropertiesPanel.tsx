@@ -1,19 +1,27 @@
 // "Flight Deck" §4.5: the properties panel at the right of a session. It shows only what the
 // session summary (and the timeline that the pane already read) knows; a missing fact is absent.
-import { type ReactNode, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
+import type { Freshness } from '../runtime/state';
 import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
 import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { homeShort } from './CopyButton';
+import { loadChanged } from './changedFiles';
 import { StatusFact } from './HeaderBadges';
 import { runningSubagents } from './timeline';
-import { type FinalizedTurn, useDiffPaths, useDiffTotal } from './workspace';
+import {
+  type FileActions,
+  type FinalizedTurn,
+  mergeDiffPaths,
+  useDiffPaths,
+  useDiffTotal,
+} from './workspace';
 
 // The open state lives for the page: every session opens the panel the way the last one left it.
 let open = true;
@@ -113,6 +121,10 @@ type Props = {
   readonly subagents: number;
   /** A changed file opens the Changes tab on that file. */
   readonly onOpenChange: (path: string) => void;
+  /** The file service of the session; the panel reads the changed files with it, on every tab. */
+  readonly files?: FileActions | null | undefined;
+  /** The board connection: a stale board does not say that the station is online. */
+  readonly freshness?: Freshness | undefined;
 };
 
 /** The changed files that the Changes row lists; more show as "+N more". */
@@ -145,12 +157,50 @@ export function ChangedList({
   );
 }
 
+/** `2 min` → `since 2 min`; a change under a minute ago: `just now`. */
+export function sinceText(age: string): string {
+  return age === 'now' ? 'just now' : `since ${age}`;
+}
+
+/**
+ * Reads the changed files of the session diff for the Changes row when the panel shows, and again
+ * after each finalized turn, so the list is there on every tab (the Files and Changes tabs add
+ * theirs). No file service, or no change: nothing.
+ */
+function useChangedPaths(ref: string, files: FileActions | null | undefined, turns: number): void {
+  // The actions object changes on every render of the parent; the effect keys on "has files".
+  const latest = useRef(files);
+  latest.current = files;
+  const has = files != null;
+  useEffect(() => {
+    const current = latest.current;
+    if (!has || !current) return undefined;
+    let live = true;
+    void loadChanged(current).then((found) => {
+      if (live && found !== null) mergeDiffPaths(ref, found.paths);
+    });
+    return () => {
+      live = false;
+    };
+  }, [has, ref, turns]);
+}
+
 /** The properties of one session: status, place, agent, changes, usage and subagents. */
-export function PropertiesPanel({ session, stations, turns, subagents, onOpenChange }: Props) {
+export function PropertiesPanel({
+  session,
+  stations,
+  turns,
+  subagents,
+  onOpenChange,
+  files,
+  freshness = 'live',
+}: Props) {
   const s = session.summary;
   const now = useNow(undefined, 30000);
   const station = stations.find((st) => st.station_id === session.station_id);
+  const up = freshness !== 'stale' && station?.reachable === true;
   const ref = sessionRef(session.station_id, s.session_id);
+  useChangedPaths(ref, files, turns.length);
   const total = changeTotal(useDiffTotal(ref), turns);
   const paths = useDiffPaths(ref);
   const { input_tokens: input, output_tokens: output } = s.usage;
@@ -165,18 +215,18 @@ export function PropertiesPanel({ session, stations, turns, subagents, onOpenCha
       <dl className="fd-props-list">
         <Row label="Status">
           <StatusFact session={session} />
-          <span className="fd-props-aside">{relativeAge(s.updated_at, now)}</span>
+          <span className="fd-props-aside">{sinceText(relativeAge(s.updated_at, now))}</span>
         </Row>
         <Row label="Station">
           <span className="fd-props-station">{stationName(session.station_id, stations)}</span>
           {station === undefined ? null : (
-            <span className="fd-props-aside" data-up={station.reachable}>
+            <span className="fd-props-aside" data-up={up}>
               <span
                 className="fd-dot"
-                data-status={station.reachable ? 'online' : 'unreachable'}
+                data-status={up ? 'online' : 'unreachable'}
                 aria-hidden="true"
               />
-              {station.reachable ? 'online' : 'offline'}
+              {up ? 'online' : 'offline'}
             </span>
           )}
           {station === undefined ? null : <StationSlots station={station} />}

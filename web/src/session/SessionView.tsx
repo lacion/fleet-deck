@@ -778,6 +778,8 @@ export function SessionView(props: SessionViewProps) {
             turns={turns}
             subagents={tree.subagents.length}
             onOpenChange={onOpenChange}
+            files={filesReady ? files : null}
+            freshness={freshness}
           />
         ) : null}
       </div>

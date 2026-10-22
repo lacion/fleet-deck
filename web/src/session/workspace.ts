@@ -171,6 +171,19 @@ export function mergeDiffPaths(ref: string, paths: readonly string[]): void {
   for (const l of diffListeners) l();
 }
 
+/**
+ * Adds the changed paths of a loaded turn diff to the paths of a session, unless the turn is
+ * reverted: its changes are gone, and the Changes totals leave it out too.
+ */
+export function mergeTurnPaths(
+  ref: string,
+  turn: FinalizedTurn | undefined,
+  paths: readonly string[],
+): void {
+  if (turn?.reverted === true) return;
+  mergeDiffPaths(ref, paths);
+}
+
 /** The changed paths of the loaded session diff of one session, or `undefined`. */
 export function useDiffPaths(ref: string): readonly string[] | undefined {
   return useSyncExternalStore(

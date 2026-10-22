@@ -20,9 +20,9 @@ import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
 import {
   type FinalizedTurn,
+  mergeTurnPaths,
   revertBlock,
   revertHolds,
-  mergeDiffPaths,
   revertText,
   setDiffTotal,
 } from './workspace';
@@ -383,9 +383,13 @@ export function TurnsPanel(props: Props) {
     const settle = (shown: LoadedDiff | string) => {
       if (flight.current.finish(turnId)) setDiffs((all) => ({ ...all, [turnId]: shown }));
       setFlights((n) => n + 1);
-      // §4.5: the files of the turn also list in the Changes row of the Properties panel.
+      // §4.5: the files of a kept turn also list in the Changes row of the Properties panel.
       if (typeof shown !== 'string' && station !== undefined) {
-        mergeDiffPaths(sessionRef(station, summary.session_id), changedPaths(shown.diff.patch));
+        mergeTurnPaths(
+          sessionRef(station, summary.session_id),
+          turn,
+          changedPaths(shown.diff.patch),
+        );
       }
     };
     load.then(settle, (e: unknown) =>
