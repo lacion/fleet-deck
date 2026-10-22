@@ -619,9 +619,14 @@ body:has(.fd-app[data-layout="tablet"]) {
   border-color: var(--border-soft);
 }
 
-.fd-sidebar[data-variant="list"] .fd-sidebar-listhead {
-  justify-content: flex-end;
-  padding: 0;
+/* The phone has no list head: the grouping (Station | Project) sits in the search row. */
+.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-seg {
+  flex: none;
+}
+
+.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-seg > * {
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
 }
 
 .fd-sidebar[data-variant="list"] .fd-sidebar-list {
