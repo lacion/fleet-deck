@@ -571,20 +571,24 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                       ))}
                     </span>
                   ) : (
-                    <span className="fd-load-bar" aria-hidden="true">
-                      <span
-                        style={{ width: loadWidth(active, info.max_sessions) }}
-                        data-high={
-                          info.max_sessions > 0 && active / info.max_sessions >= 0.9
-                            ? ''
-                            : undefined
-                        }
-                      />
+                    <span
+                      className="fd-meter"
+                      data-tone="neutral"
+                      data-level={
+                        info.max_sessions > 0 && active / info.max_sessions >= 0.9
+                          ? 'high'
+                          : undefined
+                      }
+                      aria-hidden="true"
+                    >
+                      <span style={{ width: loadWidth(active, info.max_sessions) }} />
                     </span>
                   )}
-                  {info?.max_sessions == null
-                    ? `${active} sessions`
-                    : `${active} of ${info.max_sessions} sessions`}
+                  <span className="fd-station-load-count">
+                    {info?.max_sessions == null
+                      ? `${active} sessions`
+                      : `${active} of ${info.max_sessions} sessions`}
+                  </span>
                 </span>
                 {actions?.canAdmin === true ? (
                   <div className="fd-station-menu">

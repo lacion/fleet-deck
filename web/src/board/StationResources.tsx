@@ -24,8 +24,13 @@ function Row({
 }) {
   return (
     <li data-low={low ? '' : undefined} title={title}>
-      <span className="fd-load-bar" aria-hidden="true">
-        <span style={{ width: `${Math.round(share * 100)}%` }} data-high={low ? '' : undefined} />
+      <span
+        className="fd-meter"
+        data-tone="neutral"
+        data-level={low ? 'high' : undefined}
+        aria-hidden="true"
+      >
+        <span style={{ width: `${Math.round(share * 100)}%` }} />
       </span>
       <span>{children}</span>
     </li>

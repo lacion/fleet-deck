@@ -232,14 +232,16 @@ describe('station projections', () => {
           freshness="live"
         />,
       );
-    // Up to 24 slots the load is the .fd-slots ticks; above that, the plain bar.
+    // Up to 24 slots the load is the .fd-slots ticks; above that, the neutral .fd-meter.
     const low = render(10, 5);
     expect(low).toContain('<span class="fd-slots" aria-hidden="true">');
     expect(low.match(/data-slot="used"/g)?.length).toBe(5);
     expect(low).toContain('5 of 10 sessions');
-    expect(low).not.toContain('fd-load-bar');
+    expect(low).not.toContain('fd-meter');
     const big = render(30, 27);
-    expect(big).toContain('<span style="width:90%" data-high=""></span>');
+    expect(big).toContain(
+      '<span class="fd-meter" data-tone="neutral" data-level="high" aria-hidden="true"><span style="width:90%"></span></span>',
+    );
     expect(big).not.toContain('fd-slots');
   });
   test('stale station metadata never labels a cached link as currently up', () => {

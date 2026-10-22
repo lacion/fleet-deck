@@ -54,7 +54,7 @@ describe('station resources (DL-193)', () => {
     });
     expect(out.match(/data-low/g)?.length).toBe(1);
     expect(out).toMatch(/<li data-low="" title="\/var\/data">/);
-    expect(out).toContain('data-high=""');
+    expect(out.match(/data-level="high"/g)?.length).toBe(1);
   });
 
   test('the warning line shows only with a warning', () => {
