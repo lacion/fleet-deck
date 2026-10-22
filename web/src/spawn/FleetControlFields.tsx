@@ -1,3 +1,4 @@
+import { modeLabel } from '../ui/format';
 import {
   anyAckProblem,
   answerCapProblem,
@@ -187,7 +188,7 @@ export function FleetControlFields({ fleet: given, onChange, live = false }: Pro
               >
                 {CLAUDE_CEILINGS.map((mode) => (
                   <option key={mode} value={mode}>
-                    {mode}
+                    {modeLabel(mode)}
                   </option>
                 ))}
               </select>
@@ -200,7 +201,7 @@ export function FleetControlFields({ fleet: given, onChange, live = false }: Pro
               >
                 {CODEX_CEILINGS.map((mode) => (
                   <option key={mode} value={mode}>
-                    {mode}
+                    {modeLabel(mode)}
                   </option>
                 ))}
               </select>

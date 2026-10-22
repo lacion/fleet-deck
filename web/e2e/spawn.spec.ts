@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import type { WorkspaceListing } from '../src/gen';
 import { claudeCaps, codexCaps } from '../src/testing/capabilities';
 import { summary } from '../src/testing/summary';
+import { modeLabel } from '../src/ui/format';
 import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
 
 const alpha = stationView('st-alpha', 'Alpha', {
@@ -106,7 +107,7 @@ test('a session starts from the form with a picked directory and opens', async (
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
+  await expect(form.getByLabel('Provider')).toContainText('Claude (personal)');
   await form.getByLabel('Permission mode').selectOption('plan');
   await form.getByLabel('Model (optional)').fill('sonnet');
   await form.getByLabel('Title (optional)').fill('Fix the login');
@@ -185,13 +186,14 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   const mode = form.getByLabel('Permission mode');
+  // The modes show their names, as in the session header: never the raw ids.
   await expect(mode.locator('option')).toHaveText([
-    'Station default',
-    'default',
-    'plan',
-    'acceptEdits',
-    'dontAsk',
-    'auto',
+    'Default mode',
+    'Default',
+    'Plan',
+    'Accept edits',
+    "Don't ask",
+    'Auto',
   ]);
   await mode.selectOption('plan');
   // Another provider resets the mode and offers its own native modes.
@@ -200,7 +202,10 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
     .getByText(/\(work\)/)
     .click();
   await expect(mode).toHaveValue('');
-  await expect(mode.locator('option')).toHaveText(['Station default', ...codexCaps().modes]);
+  await expect(mode.locator('option')).toHaveText([
+    'Default mode',
+    ...codexCaps().modes.map(modeLabel),
+  ]);
   await mode.selectOption('untrusted/read-only');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
@@ -279,6 +284,8 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  // A phone shows the Batch switch in "More options": its sticky footer is one row of buttons.
+  await form.getByText('More options', { exact: true }).click();
   await form.getByLabel(/Batch: one session/).check();
   await form
     .getByLabel('What should the agent do? (optional)')
@@ -402,6 +409,8 @@ test('a batch lists its prompts and counts the sessions on the button', async ({
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  // A phone shows the Batch switch in "More options": its sticky footer is one row of buttons.
+  await form.getByText('More options', { exact: true }).click();
   await form.getByLabel(/Batch: one session/).check();
   const preview = form.getByLabel('Sessions to start');
   // one line is one session: no preview and the plain button

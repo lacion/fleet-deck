@@ -370,6 +370,10 @@ test('4c: in forced colors the inputs, switches and segments of New session keep
   await forcedColors(page);
   await goTo(page, '#/new');
   await expect(page.getByRole('region', { name: 'New session' })).toBeVisible();
+  // A phone shows the Batch switch in "More options" (its sticky footer is one row of buttons).
+  if (test.info().project.name === 'phone') {
+    await page.getByText('More options', { exact: true }).click();
+  }
   // The checked station ring and the pressed segments are forced-colors rules: a capture shows them.
   await screenshot(page, 'forced-colors-spawn');
   const seen = { inputs: 0, switches: 0, segs: 0 };

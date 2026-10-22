@@ -142,7 +142,7 @@ test('browse the sessions of a station, preview one, continue it', async ({ page
   await expect(form.getByLabel('Directory path')).toHaveValue(
     '/home/me/projects/some/very/long/folder/name/that/keeps/going/app',
   );
-  await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
+  await expect(form.getByLabel('Provider')).toContainText('Claude (personal)');
   await expect(form.getByRole('button', { name: 'Import session' })).toBeEnabled();
 });
 

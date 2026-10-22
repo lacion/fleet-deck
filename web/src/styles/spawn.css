@@ -1,16 +1,20 @@
-/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the page canvas. A breadcrumb head,
-   a borderless title and task, property rows (Agent, Station, Where) with a 72px key column and no
-   captions (each control carries its name as aria-label), "More options", and a one-line footer
-   with the Batch switch, Cancel and Start session. Also the native session dialog and the recent
-   folders. */
+/* New session (DESIGN-SYSTEM.md §4.6): a sheet on the page canvas, centered across and anchored at
+   the top. A breadcrumb head, a borderless title and task, property rows (Agent, Station, Where)
+   with a 72px key column and no captions (each control carries its name as aria-label), "More
+   options" with a hint of what it holds, and a one-line footer with the Batch switch, Cancel and
+   Start session (a phone: Cancel and Start session only). Also the native session dialog and the
+   recent folders. */
 
-/* ── the route: the sheet in the middle of the canvas ───────────── */
+/* ── the route: the sheet on the canvas ─────────────────────────── */
 /* Nothing is behind the sheet on its own route, so the canvas is not dimmed: --scrim on an empty
-   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. */
+   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. The scrollbar
+   gutter is kept: a sheet that grows past the window (Browse…) does not shift sideways when the
+   route starts to scroll. */
 .fd-route:has(> .fd-screen > .fd-spawn) {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  scrollbar-gutter: stable;
 }
 .fd-screen:has(> .fd-spawn) {
   flex: 1 0 auto;
@@ -20,16 +24,20 @@
   max-width: none;
   margin: 0;
   padding: var(--sp-6) var(--sp-5);
+  padding-top: clamp(var(--sp-6), 14vh, 160px);
 }
 
 /* ── the sheet ──────────────────────────────────────────────────── */
+/* The top stays where it is and the sheet grows downward: Browse…, More options, a new worktree,
+   a clone, the batch preview and a growing task never move the head and the task under the
+   pointer. The route scrolls when the sheet is taller than the window. */
 .fd-spawn {
   display: grid;
   gap: var(--sp-3);
   width: 100%;
   max-width: 720px;
   min-width: 0;
-  margin: auto;
+  margin: 0 auto auto;
   padding: var(--sp-5);
   background: var(--raised);
   border-radius: var(--r-sheet);
@@ -87,8 +95,8 @@
   min-width: 0;
   font-weight: 400;
 }
-/* A placeholder is words, never a path: it must not look like a filled value. The directory
-   placeholder is words too ("Folder on the station"), so it is sans in the mono path field. */
+/* A placeholder must not look like a filled value: it is sans, also in the mono path field, where
+   it starts with a word ("Folder, e.g. /home/me/app"). */
 .fd-spawn input::placeholder,
 .fd-spawn .fd-folder-row > input::placeholder {
   font-family: var(--font-ui);
@@ -261,6 +269,12 @@
 .fd-spawn-fields > .fd-spawn-need {
   color: var(--faint);
 }
+/* The folder note may sit inside the folder picker, right under its input row (its `hint`), so
+   that an open Browse… panel goes below the note. */
+.fd-spawn .fd-folder > .fd-spawn-need {
+  margin-top: calc(-1 * var(--sp-1));
+  color: var(--faint);
+}
 /* A segmented control may wrap on a narrow sheet. */
 .fd-spawn-seg {
   flex-wrap: wrap;
@@ -350,7 +364,9 @@
 /* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
    --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
    The chosen one has the look of a pressed .fd-seg segment (the provider and Where choices of the
-   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600. */
+   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600.
+   A pill has 8px sides (a segment 10px): it carries a name, a dot and a count, and Auto plus four
+   stations then share one line of the 588px field column. */
 .fd-spawn-stations {
   display: flex;
   flex-wrap: wrap;
@@ -363,7 +379,7 @@
   align-items: center;
   gap: 6px;
   height: var(--ctl-h);
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   background: var(--surface);
   border-radius: var(--r-ctl);
   box-shadow: none;
@@ -420,8 +436,14 @@
     padding-inline: var(--sp-2);
   }
 }
+/* The station name is wide (a place) but not bold at rest: the chosen name steps up from 500 to
+   640, as the chosen provider and Where segments step up from 500 to 600. */
 .fd-spawn-station > .fd-wide {
   font-size: var(--fs-ui);
+  font-weight: 500;
+}
+.fd-spawn-station:has(> input:checked) > .fd-wide {
+  font-weight: 640;
 }
 .fd-spawn-free {
   color: var(--faint);
@@ -519,6 +541,8 @@
   display: inline-flex;
   align-items: center;
   justify-self: start;
+  max-width: 100%;
+  min-width: 0;
   height: var(--ctl-h);
   color: var(--dim);
   font-size: var(--fs-ui);
@@ -526,6 +550,24 @@
 }
 .fd-spawn-options > summary.fd-label:hover {
   color: var(--text);
+}
+/* What the fold holds, dim after the name; it goes while the fold is open. */
+.fd-spawn-options-hint {
+  min-width: 0;
+  margin-left: var(--sp-2);
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-spawn-options[open] > summary > .fd-spawn-options-hint {
+  display: none;
+}
+/* A phone: the Batch switch is the first row of the fold. */
+.fd-spawn-options > .fd-spawn-batch {
+  justify-self: start;
 }
 .fd-spawn-options > :not(summary) {
   margin-left: calc(72px + var(--sp-3));
@@ -754,11 +796,12 @@
   .fd-spawn-status:empty {
     display: none;
   }
+  /* One row of buttons: Cancel as wide as its word, Start session takes the rest. */
   .fd-spawn-actions {
     flex: 1 1 auto;
   }
-  .fd-spawn-actions > * {
-    flex: 1 1 0;
+  .fd-spawn-actions > .fd-primary {
+    flex: 1 1 auto;
   }
   /* A touch screen has no ⌘↵: the key hint goes. */
   .fd-spawn-foot .fd-kbd {

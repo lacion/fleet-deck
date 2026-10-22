@@ -267,11 +267,13 @@ describe('the form', () => {
     expect(html).toMatch(/<option value="st-b" selected="">Bravo · \/srv\/atlas/);
   });
 
-  test('another start has the Station pills, with Auto after the stations', () => {
+  test('another start has the Station pills, with Auto first', () => {
     const html = form({ project: false });
     expect(html).not.toContain('Home');
-    expect(html).toContain('role="radiogroup" aria-label="Station"');
-    expect(html).toMatch(/>Auto<span class="fd-vh"> \(best station\)<\/span><\/label><\/div>/);
+    // Auto leads the pills (it never wraps alone after them), with a sparkles icon and a title.
+    expect(html).toMatch(
+      /aria-label="Station"><label class="fd-spawn-station" title="The deck picks the station that fits best"><input type="radio" name="[^"]+" value="auto"\/><svg[^>]*>.*?<\/svg>Auto<span class="fd-vh"> \(best station\)<\/span><\/label><label class="fd-spawn-station">/,
+    );
   });
 
   test('without a deck that places, or a station with traits, there is no Auto', () => {

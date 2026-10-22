@@ -1,10 +1,12 @@
 // The Agent row of the New session sheet for a chosen station (DESIGN-SYSTEM.md §4.6): the provider
 // instances as a segmented control with the limit of each instance (R4.3), the fuel badge of a
 // tight limit, then the model and the permission mode as two select pills with a leading icon
-// (sparkles, shield). Moved out of `SpawnForm.tsx` for the module size rule; the form keeps every
+// (sparkles, shield). The modes show their names (`modeLabel`, as in the session header), never
+// the raw ids. Moved out of `SpawnForm.tsx` for the module size rule; the form keeps every
 // state and every handler.
 import type { RateMeter } from '../board/usage';
 import type { ModelChoice, StationProvider } from '../gen';
+import { modeLabel } from '../ui/format';
 import { Shield } from '../ui/icons';
 import { ModelField, PillWrap } from './ModelField';
 import { Seg } from './SpawnSheet';
@@ -79,10 +81,10 @@ export function AgentFields({
             value={mode}
             onChange={(event) => onMode(event.target.value)}
           >
-            <option value="">Station default</option>
+            <option value="">Default mode</option>
             {modes.map((m) => (
               <option key={m} value={m}>
-                {m}
+                {modeLabel(m)}
               </option>
             ))}
           </select>
