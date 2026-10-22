@@ -460,7 +460,7 @@ export function FleetHome({
       {phone ? null : (
         <select
           aria-label="Group by"
-          className="fd-sm fd-home-group"
+          className="fd-ghost fd-sm fd-home-group"
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >

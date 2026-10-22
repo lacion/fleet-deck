@@ -695,6 +695,17 @@
   color: var(--text);
   font: inherit;
 }
+/* On a touch screen the file header row and its file-name button are a 44px target (the base.css
+   coarse rule has zero specificity, and the rule above resets it). */
+@media (pointer: coarse) {
+  .fd-diff > .fd-dl[data-kind="file"] {
+    min-height: var(--tap-min);
+  }
+  .fd-dl-file {
+    align-self: stretch;
+    min-height: var(--tap-min);
+  }
+}
 .fd-dl-path {
   display: inline-flex;
   min-width: 0;
@@ -849,7 +860,7 @@
   user-select: none;
 }
 .fd-chat-show-item:hover {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
 @media (pointer: coarse) {
   .fd-chat-show-item {
@@ -989,12 +1000,11 @@
   text-align: left;
 }
 .fd-agent-row:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
-/* The chosen agent: the selection fill and the blue marker at the left. */
+/* The chosen agent: the selection fill and the blue marker at the left (.fd-selbar). */
 .fd-agent-row[aria-current="true"] {
   background: var(--raised-hi);
-  box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-agent-line {
   display: flex;

@@ -96,7 +96,7 @@ function Row({
     <li>
       <a
         href={href}
-        className="fd-srow"
+        className="fd-srow fd-selbar"
         data-status={card.status}
         aria-current={open ? 'page' : undefined}
       >
@@ -360,6 +360,7 @@ function BoardLinks({
           needs > 0 ? `Fleet, ${needs} ${needs === 1 ? 'needs you' : 'need you'}` : undefined
         }
         aria-current={route.name === 'fleet' || route.name === 'home' ? 'page' : undefined}
+        className="fd-selbar"
       >
         <Icon of={LayoutGrid} />
         Fleet
@@ -369,17 +370,29 @@ function BoardLinks({
           </span>
         ) : null}
       </a>
-      <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
+      <a
+        href="#/watch"
+        aria-current={route.name === 'watch' ? 'page' : undefined}
+        className="fd-selbar"
+      >
         <Icon of={Eye} />
         Watch
       </a>
       {guest ? null : (
         <>
-          <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
+          <a
+            href="#/activity"
+            aria-current={route.name === 'activity' ? 'page' : undefined}
+            className="fd-selbar"
+          >
             <Icon of={Activity} />
             Activity
           </a>
-          <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
+          <a
+            href="#/stations"
+            aria-current={route.name === 'stations' ? 'page' : undefined}
+            className="fd-selbar"
+          >
             <Icon of={Server} />
             Stations
             <span className="fd-count">{stations.length}</span>
@@ -404,13 +417,18 @@ function BoardLinks({
           </summary>
           {guest ? null : (
             <>
-              <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
+              <a
+                href="#/plans"
+                aria-current={route.name === 'plans' ? 'page' : undefined}
+                className="fd-selbar"
+              >
                 <Icon of={FileText} />
                 Plans
               </a>
               <a
                 href="#/automations"
                 aria-current={route.name === 'automations' ? 'page' : undefined}
+                className="fd-selbar"
               >
                 <Icon of={Workflow} />
                 Automations
@@ -420,6 +438,7 @@ function BoardLinks({
                 aria-current={
                   route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
                 }
+                className="fd-selbar"
               >
                 <Icon of={Paperclip} />
                 Artifacts
@@ -430,12 +449,17 @@ function BoardLinks({
                   aria-current={
                     route.name === 'projects' || route.name === 'project' ? 'page' : undefined
                   }
+                  className="fd-selbar"
                 >
                   <Icon of={FolderGit2} />
                   Projects
                 </a>
               ) : null}
-              <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
+              <a
+                href="#/files"
+                aria-current={route.name === 'files' ? 'page' : undefined}
+                className="fd-selbar"
+              >
                 <Icon of={Folder} />
                 Files
               </a>
@@ -445,6 +469,7 @@ function BoardLinks({
             <a
               href="#/shares"
               aria-current={route.name === 'shares' || route.name === 'spaces' ? 'page' : undefined}
+              className="fd-selbar"
             >
               <Icon of={Users} />
               Shares

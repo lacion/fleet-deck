@@ -197,3 +197,30 @@ test('a login without the admin scope has no Open in terminal', async ({ page })
   await expect(header(page).getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
   await expectNoOpenInTerminal(page);
 });
+
+test('the terminal repaints when the theme attribute changes without the fd:theme event', async ({
+  page,
+}) => {
+  test.skip(onPhone(), 'the terminal dock of the desktop');
+  const deck = new FakeDeck();
+  deck.sessions = [session()];
+  const shells = deck.shells(ST);
+  await setUp(page, deck);
+  await confirmOpen(page, WARNING);
+  await expect.poll(() => shells.posts.length).toBe(1);
+  // xterm paints its theme background as an inline style of its scroll element: only a new
+  // xterm theme changes it, not the CSS of the new data-theme.
+  const scroller = page.locator('.xterm-scrollable-element').first();
+  await expect(scroller).toBeAttached();
+  const painted = () => scroller.evaluate((el) => (el as HTMLElement).style.backgroundColor);
+  await expect.poll(painted).not.toBe('');
+  const before = await painted();
+  const next = await page.evaluate(() =>
+    document.documentElement.dataset['theme'] === 'light' ? 'dark' : 'light',
+  );
+  // A theme set without the 'fd:theme' event (another tab, an extension, a later code path).
+  await page.evaluate((theme) => {
+    document.documentElement.dataset['theme'] = theme;
+  }, next);
+  await expect.poll(painted).not.toBe(before);
+});

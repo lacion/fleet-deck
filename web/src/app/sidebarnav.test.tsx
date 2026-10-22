@@ -136,14 +136,16 @@ describe('the sidebar navigation (S1)', () => {
   });
   test('the Fleet link names its needs-you count', () => {
     const one = render({ name: 'fleet' }, {}, [card('n1', 'needs_you')]);
-    expect(one).toContain('<a href="#/fleet" aria-label="Fleet, 1 needs you" aria-current="page">');
+    expect(one).toContain(
+      '<a href="#/fleet" aria-label="Fleet, 1 needs you" aria-current="page" class="fd-selbar">',
+    );
     expect(one).toContain(
       'Fleet<span class="fd-count" data-tone="act" aria-hidden="true">1</span>',
     );
     const two = render({ name: 'fleet' }, {}, [card('n1', 'needs_you'), card('n2', 'needs_you')]);
     expect(two).toContain('aria-label="Fleet, 2 need you"');
     // No count: the text "Fleet" is the name.
-    expect(render()).toContain('<a href="#/fleet" aria-current="page">');
+    expect(render()).toContain('<a href="#/fleet" aria-current="page" class="fd-selbar">');
   });
 
   test('a station group shows its count right after the name, then the reach dot', () => {

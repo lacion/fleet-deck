@@ -17,7 +17,7 @@ type Props = {
 
 type View = 'start' | 'tailnet' | 'invite' | 'listen';
 /** The tailnet choice: still loading, not available, or the number of addable computers. */
-type Count = 'loading' | 'unavailable' | number;
+export type Count = 'loading' | 'unavailable' | number;
 
 function countText(count: Count): string {
   if (count === 'loading') return 'Checking Tailscale…';
@@ -27,14 +27,17 @@ function countText(count: Count): string {
   return count === 1 ? '1 computer can be added' : `${count} computers can be added`;
 }
 
-function Start({
+/** The start view: the ways to add a station. `initialCount` is for tests (no effects there). */
+export function Start({
   env,
   onPick,
+  initialCount = 'loading',
 }: {
   readonly env: SettingsEnv | undefined;
   readonly onPick: (view: View) => void;
+  readonly initialCount?: Count;
 }) {
-  const [count, setCount] = useState<Count>('loading');
+  const [count, setCount] = useState<Count>(initialCount);
   const tailnet = env?.tailnet;
   // One look at the tailnet, for the number on the card. The tailnet view polls by itself.
   useEffect(() => {

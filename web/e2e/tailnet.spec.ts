@@ -126,9 +126,9 @@ function suite() {
     const card = page.getByRole('region', { name: 'Tailnet' });
     const toggle = card.getByRole('switch', { name: 'Use Tailscale automatically' });
     await expect(toggle).not.toBeChecked();
-    await expect(card).toContainText(
-      'Keeps the tailnet addresses current at each start. Applies after a restart.',
-    );
+    const help = card.locator('.fd-tailnet-help');
+    await expect(help).toContainText('Keeps the tailnet addresses current at each start.');
+    await expect(help.locator('.fd-badge')).toHaveText('Applies after a restart');
     await expect(card).toContainText(
       'Not applied at start: Tailscale did not answer within 3 seconds.',
     );

@@ -89,23 +89,6 @@
 .fd-home-search {
   width: 200px;
 }
-/* Group by is a quiet select among the ghost controls of the header (concept B's Display menu):
-   no fill and no edge; the edge shows on hover and the focus edge on focus. The chevron is the
-   background image of base.css, so only the background color changes. */
-.fd-home-group {
-  border-color: transparent;
-  background-color: transparent;
-  color: var(--dim);
-}
-.fd-home-group:hover:not(:disabled) {
-  border-color: var(--ctl-edge);
-  background-color: var(--raised);
-  color: var(--text);
-}
-.fd-home-group:focus {
-  border-color: var(--focus);
-  color: var(--text);
-}
 @media (max-width: 1439px) {
   .fd-home-search {
     width: 180px;

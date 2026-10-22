@@ -2,12 +2,16 @@
    ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). The primitives come from base.css. */
 
 /* ════════════════════ the Tailnet card (Settings → Deck) ═════════════════════ */
+/* A bare settings section (§4.7: no boxed groups): its heading, labels and controls sit on the
+   same columns as the sections of a station tab. A rule divides it from the next section. */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
-  margin-bottom: var(--sp-4);
-  padding: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  padding: 0 0 var(--sp-5);
+  background: none;
+  border-bottom: 1px solid var(--border-soft);
 }
 .fd-tailnet h2 {
   margin: 0;
@@ -47,6 +51,14 @@
   margin-left: calc(200px + var(--sp-5));
   font-size: var(--fs-meta);
   line-height: 1.45;
+}
+/* The help of the automatic mode ends with the "Applies after a restart" badge, as the help of a
+   settings field does (settings.css .fd-set-grid .fd-fieldhint:has(> .fd-set-badges)). */
+.fd-tailnet-auto > .fd-tailnet-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
 }
 /* Narrow screens: the switch ends the label row (touch settings), like the settings fields; the
    help and the state lines go under both. */

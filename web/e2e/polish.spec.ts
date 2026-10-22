@@ -1,10 +1,15 @@
 // The UI polish checks of the Flight Deck board (the test gaps of the UI refresh): the `c` key on
 // the wide fleet home, the outcome notes of a coordinator grant, the 44px touch targets of the Add
 // station flow and the folder crumbs, forced colors, the free-text model of New session and the
-// j/k order of the sidebar. The phone project runs every test that is not desktop-only; the
+// j/k order of the sidebar, the Focus pause of the Watch page and the one-shot Properties file
+// focus. The phone project runs every test that is not desktop-only; the
 // desktop project runs this file too (playwright.config.ts).
 import { expect, type Locator, type Page, test } from '@playwright/test';
-import { fitsWidth, logIn, PASSWORD } from './fake-deck';
+import type { Event } from '../src/gen';
+import { codexCaps } from '../src/testing/capabilities';
+import { summary } from '../src/testing/summary';
+import { envelopes } from '../src/testing/timeline';
+import { FakeDeck, fitsWidth, logIn, openSession, PASSWORD, stationView } from './fake-deck';
 import { OTTER } from './gallery-data';
 import { LIGHTING, polishDeck, SECRET_PROJECT } from './polish-scene';
 
@@ -301,11 +306,57 @@ test('4c: in forced colors the inputs, switches and segments of New session keep
   await forcedColors(page);
   await goTo(page, '#/new');
   await expect(page.getByRole('region', { name: 'New session' })).toBeVisible();
+  // The checked station ring and the pressed segments are forced-colors rules: a capture shows them.
+  await screenshot(page, 'forced-colors-spawn');
   const seen = { inputs: 0, switches: 0, segs: 0 };
   expect(await edgeless(page, seen)).toEqual([]);
   expect(seen.inputs).toBeGreaterThan(0);
   expect(seen.switches).toBeGreaterThan(0);
   expect(seen.segs).toBeGreaterThan(0);
+});
+
+test('4f: in forced colors the deck settings render a notice and their switches keep an edge', async ({
+  page,
+}) => {
+  desktopOnly();
+  await forcedColors(page);
+  // The deck settings do not load: the tab shows its error notice (and the Tailnet card its
+  // switches), the forced-colors rules of .fd-set-notice and .fd-switch.
+  await page.route('**/api/settings/deck', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 'internal', message: 'The deck could not read deck.toml.' }),
+        })
+      : route.fallback(),
+  );
+  await goTo(page, '#/settings');
+  await expect(page.getByRole('region', { name: 'Tailnet' })).toBeVisible();
+  const notice = page.locator('.fd-set-notice[data-tone="error"]');
+  await expect(notice).toBeVisible();
+  await screenshot(page, 'forced-colors-settings');
+  const seen = { inputs: 0, switches: 0, segs: 0 };
+  expect(await edgeless(page, seen)).toEqual([]);
+  expect(seen.switches).toBeGreaterThan(0);
+});
+
+test('4g: in forced colors the phone Fleet page and its needs-you rail render', async ({
+  page,
+}) => {
+  phoneOnly();
+  await forcedColors(page);
+  await goTo(page, '#/fleet');
+  await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+  const rail = page.getByRole('region', { name: 'Needs you rail' });
+  await expect(rail).toBeVisible();
+  await screenshot(page, 'forced-colors-fleet');
+  // The keyboard cursor of the rail is a fill only: forced colors give it a Highlight outline.
+  const selected = rail.locator('.fd-q[data-selected="true"]');
+  if ((await selected.count()) > 0)
+    await expect(selected.first()).toHaveCSS('outline-style', 'solid');
+  const seen = { inputs: 0, switches: 0, segs: 0 };
+  expect(await edgeless(page, seen)).toEqual([]);
 });
 
 test('5: the model "Other…" shows the free-text model input next to the pills', async ({
@@ -367,4 +418,148 @@ test('6: j from the first session walks the sidebar rows in their visible order'
   // After the last row, j goes back to the first.
   await page.keyboard.press('j');
   await expect(page).toHaveURL(new RegExp(`${quote(order[0] ?? '')}$`));
+});
+
+test('7: Focus on the Watch page waits while the pointer or the keyboard is in the tile', async ({
+  page,
+}) => {
+  desktopOnly();
+  // The fake clock: Focus moves on every FOCUS_MS (20 s), and the test runs the time by hand.
+  const FOCUS_MS = 20_000;
+  await page.clock.install();
+  await setUp(page);
+  await goTo(page, '#/watch');
+  await expect(page.getByRole('heading', { level: 1, name: 'Watch' })).toBeVisible();
+  const focus = page.getByRole('button', { name: 'Focus', exact: true });
+  await focus.click();
+  await expect(focus).toHaveAttribute('aria-pressed', 'true');
+  const tile = page.locator('.fd-wall[data-focus="true"] > .fd-wtile');
+  const paused = page.getByRole('status').filter({ hasText: 'Paused' });
+  await expect(tile).toHaveCount(1);
+  await expect(paused).toHaveCount(0);
+  // The two needs-you sessions take turns: the first tile, then the other one.
+  const first = (await tile.getAttribute('data-session')) ?? '';
+  await page.clock.runFor(FOCUS_MS);
+  await expect(tile).not.toHaveAttribute('data-session', first);
+  const second = (await tile.getAttribute('data-session')) ?? '';
+  expect(second).not.toBe('');
+
+  // The pointer on the tile: Focus waits.
+  await tile.hover();
+  await expect(paused).toBeVisible();
+  await page.clock.runFor(FOCUS_MS * 2);
+  await expect(tile).toHaveAttribute('data-session', second);
+  // The pointer goes away: Focus moves on after one more FOCUS_MS.
+  await page.mouse.move(0, 0);
+  await expect(paused).toHaveCount(0);
+  await page.clock.runFor(FOCUS_MS);
+  await expect(tile).toHaveAttribute('data-session', first);
+
+  // The keyboard in the tile: Focus waits; Shift+Tab out of it: Focus moves on.
+  await focus.focus();
+  await page.keyboard.press('Tab');
+  await expect(tile.locator('a.fd-wtile-open')).toBeFocused();
+  await expect(paused).toBeVisible();
+  await page.clock.runFor(FOCUS_MS * 2);
+  await expect(tile).toHaveAttribute('data-session', first);
+  await page.keyboard.press('Shift+Tab');
+  await expect(focus).toBeFocused();
+  await expect(paused).toHaveCount(0);
+  await page.clock.runFor(FOCUS_MS);
+  await expect(tile).toHaveAttribute('data-session', second);
+
+  // Focus off and on again with the pointer outside the tile: no old pause stays.
+  await focus.click();
+  await expect(focus).toHaveAttribute('aria-pressed', 'false');
+  await focus.click();
+  await expect(focus).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.move(0, 0);
+  await expect(paused).toHaveCount(0);
+  const shown = (await tile.getAttribute('data-session')) ?? '';
+  await page.clock.runFor(FOCUS_MS);
+  await expect(tile).not.toHaveAttribute('data-session', shown);
+});
+
+test('8: a changed file of Properties focuses its diff once; a later turn end leaves the focus', async ({
+  page,
+}) => {
+  desktopOnly();
+  const st = 'st-alpha';
+  const base = 'b'.repeat(40);
+  const patch = ['src/a.ts', 'src/b.ts']
+    .flatMap((file) => [
+      `diff --git a/${file} b/${file}`,
+      'index 1111111..2222222 100644',
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      '@@ -1,2 +1,2 @@',
+      ' one',
+      '-two',
+      '+TWO',
+    ])
+    .join('\n');
+  const finalized = (turn: string): Event => ({
+    kind: 'turn.finalized',
+    turn_id: turn,
+    checkpoint: {
+      worktree_id: 'wt',
+      scope: 'tracked',
+      start: { state: 'available', commit: `${turn}-start` },
+      end: { state: 'available', commit: `${turn}-end` },
+    },
+    diff_summary: { files_changed: 2, insertions: 2, deletions: 2 },
+  });
+  const deck = new FakeDeck();
+  deck.stations = [stationView(st, 'Alpha')];
+  deck.sessions = [
+    {
+      station_id: st,
+      status: 'idle',
+      summary: summary('s1', 'idle', 1_760_000_001_000, {
+        provider: 'codex',
+        title: 'Edit the docs',
+        capabilities: codexCaps(),
+        cwd: '/home/me/projects/app',
+        session_seq: 1,
+        base: { oid: base, inferred: false },
+      }),
+    },
+  ];
+  const diffPath = `/api/stations/${st}/sessions/s1/diff`;
+  deck.on(diffPath, () => ({
+    status: 200,
+    body: {
+      session_id: 's1',
+      base_oid: base,
+      summary: { files_changed: 2, insertions: 2, deletions: 2 },
+      patch,
+      truncated: false,
+    },
+  }));
+  deck.review(st, 's1', patch);
+  await deck.install(page);
+  await logIn(page);
+  deck.emit(st, 's1', envelopes('s1', [finalized('t1')]));
+  await openSession(page, 'Edit the docs');
+  const view = page.getByRole('region', { name: 'Session' });
+  const changes = view.getByRole('tab', { name: /^Changes/ });
+  // The Changes tab loads the session diff: the Properties panel then lists its files.
+  await changes.click();
+  await expect(view.locator('[data-diff="since-spawn"]')).toBeVisible();
+  await view.getByRole('tab', { name: 'Chat' }).click();
+  const listed = page.getByRole('list', { name: 'Changed files' });
+  await listed.getByRole('button', { name: 'src/b.ts' }).click();
+  await expect(changes).toHaveAttribute('aria-selected', 'true');
+  await expect(view.locator('.fd-dl-file[aria-label="src/b.ts"]')).toBeFocused();
+  // A turn ends: the diff loads again (held until the Refresh button has the focus). The
+  // request of the Properties panel is spent: the focus stays where the person put it.
+  const release = deck.hold(diffPath);
+  deck.emit(st, 's1', envelopes('s1', [finalized('t1'), finalized('t2')]).slice(1));
+  const refresh = view.getByRole('button', { name: 'Refresh' });
+  await expect(view.getByText('Loading the diff…')).toBeVisible();
+  await refresh.focus();
+  release();
+  await expect(view.locator('[data-diff="since-spawn"]')).toBeVisible();
+  await expect(view.locator('.fd-dl-file[aria-label="src/b.ts"]')).toBeVisible();
+  await expect(refresh).toBeFocused();
 });

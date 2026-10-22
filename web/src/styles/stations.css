@@ -177,43 +177,33 @@
 }
 
 @media (max-width: 760px) {
-  /* A wrapped meta line has no leading dot: the parts sit 12 px apart. */
-  .fd-plan-meta {
-    column-gap: var(--sp-3);
+  /* The phone keeps the drawn dots of the desktop. The session link goes on its own line without
+     a dot, so that no wrapped line starts with a dot. */
+  .fd-plan-meta > .fd-link:last-child {
+    flex-basis: 100%;
+    text-align: left;
   }
 
-  .fd-plan-meta
-    > :not(.fd-plan-status):not(.fd-badge)
-    + :not(.fd-plan-status):not(.fd-badge)::before {
+  /* The :not() parts repeat those of the dot rule above, so that this rule wins. */
+  .fd-plan-meta > :not(.fd-plan-status):not(.fd-badge) + .fd-link:last-child::before {
     content: none;
-  }
-
-  .fd-plan-meta > .fd-plan-status {
-    margin-right: 0;
   }
 
   .fd-plan-list article {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* The actions: an even two-column grid. The general action takes the full width; so does a
-     last action that would sit alone in its row (Assign, or Archive of an executed plan). */
+  /* The actions: the general action across the row, then the other actions in a left-aligned
+     wrapped row, the same as on Automations. */
   .fd-plan-list article > .fd-plan-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--sp-2);
+    justify-content: flex-start;
     grid-column: 1;
     grid-row: auto;
     margin-top: var(--sp-2);
   }
 
-  .fd-plan-list article > .fd-plan-actions > button:first-child,
-  .fd-plan-list article > .fd-plan-actions > button:nth-child(even):last-child {
-    grid-column: 1 / -1;
-  }
-
-  .fd-plan-list article > .fd-plan-actions > button {
-    width: 100%;
+  .fd-plan-list article > .fd-plan-actions > button:first-child {
+    flex-basis: 100%;
     justify-content: center;
   }
 

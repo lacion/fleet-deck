@@ -1,9 +1,6 @@
 // The tone icon of a settings notice (`.fd-set-notice`): the tone shows by a shape and a color, not
 // only by the 3px holder (WCAG 1.4.1: red and green holders; forced colors drop the holder).
-// `ui/icons.tsx` is the one icon set of the board; it does not export Info, OctagonAlert and
-// CircleCheck yet, so this module takes them from the same package (as integrations/icons.ts does).
-import { CircleCheck, Info, OctagonAlert } from 'lucide-react';
-import { Icon, type LucideIcon, TriangleAlert } from '../ui/icons';
+import { CircleCheck, Icon, Info, type LucideIcon, OctagonAlert, TriangleAlert } from '../ui/icons';
 
 /** The tones of a settings notice (the `data-tone` of `.fd-set-notice`). */
 export type NoticeTone = 'info' | 'warn' | 'error' | 'ok';

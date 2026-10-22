@@ -160,19 +160,19 @@
 }
 .fd-spawn .fd-spawn-title > input {
   height: 36px;
-  font-size: var(--fs-18);
+  font-size: var(--fs-sheet-title);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 .fd-spawn .fd-spawn-title > input::placeholder {
-  font-size: var(--fs-18);
+  font-size: var(--fs-sheet-title);
 }
 .fd-spawn .fd-spawn-task > textarea {
   /* Six lines at least; the field grows with the task (where the browser can). */
   min-height: calc(6 * 1.5em + 2 * var(--sp-1));
   max-height: 50vh;
   field-sizing: content;
-  font-size: max(var(--fs-15), var(--fs-field));
+  font-size: max(var(--fs-sheet-task), var(--fs-field));
   line-height: 1.5;
   resize: none;
 }

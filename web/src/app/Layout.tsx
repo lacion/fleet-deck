@@ -1,14 +1,13 @@
-// `ui/icons.tsx` is the one icon set of the board; it does not export the two notice tone icons
-// yet, so this module takes them from the same package (the integrations module does the same).
-import { Info, OctagonAlert } from 'lucide-react';
 import { type ReactNode, type RefObject, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   Ellipsis,
   Icon,
+  Info,
   Layers,
   LayoutGrid,
   type LucideIcon,
+  OctagonAlert,
   PanelLeft,
   Plus,
   X,

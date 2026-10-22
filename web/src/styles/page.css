@@ -89,8 +89,9 @@
   color: var(--dim);
   font-size: var(--fs-ui);
   line-height: 1.45;
-  /* No one-word last line ("sessions."). */
-  text-wrap: pretty;
+  /* Descriptions are 1 to 3 lines: balance splits two lines to equal length (pretty left a
+     two-word last line, "of sessions."). */
+  text-wrap: balance;
 }
 /* A wide page (tables, the wall) has room for a longer summary line. */
 .fd-page[data-wide="true"] .fd-page-desc {

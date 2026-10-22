@@ -316,24 +316,13 @@ body:has(.fd-app[data-layout="tablet"]) {
   text-decoration: none;
 }
 
-/* The open page: the --selected-bg fill (lifted in light) and a 2px --focus bar at the left edge. */
+/* The open page: the --selected-bg fill (lifted in light) and the 2px --focus bar of .fd-selbar
+   at the left edge. */
 .fd-sidebar-links a[aria-current="page"],
 .fd-srow[aria-current="page"] {
   background: var(--selected-bg);
   box-shadow: var(--selected-lift);
   color: var(--text);
-}
-
-.fd-sidebar-links a[aria-current="page"]::before,
-.fd-srow[aria-current="page"]::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--focus);
 }
 
 /* The "More" fold: a link row with a chevron at the icon place; its pages are rows below. */
@@ -1032,6 +1021,18 @@ a.fd-phonebar-back {
   background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
 }
 
+/* Forced colors drop the ink fill of the circle: an edge keeps the New target; Highlight when
+   New is the current page (like the Sessions tab). */
+@media (forced-colors: active) {
+  .fd-bottombar-circle {
+    outline: 2px solid ButtonText;
+    outline-offset: -2px;
+  }
+  .fd-bottombar a.fd-bottombar-new[aria-current="page"] .fd-bottombar-circle {
+    outline-color: Highlight;
+  }
+}
+
 /* ---------- Drawer (tablet) ---------- */
 
 .fd-drawer-layer {
@@ -1383,26 +1384,14 @@ a.fd-phonebar-back {
 }
 
 .fd-palette [role="option"]:hover {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
 
-/* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and a
-   straight 2px --focus bar at the left edge, the marker of the sidebar nav. A fill step alone does
-   not show on the --raised dialog. */
+/* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and the
+   straight 2px --focus bar of .fd-selbar at the left edge. A fill step alone does not show on the
+   --raised dialog. */
 .fd-palette [role="option"][aria-selected="true"] {
-  position: relative;
   background: var(--focus-bg);
-}
-
-.fd-palette [role="option"][aria-selected="true"]::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--focus);
 }
 
 /* Forced colors drop the tint and the bar: a Highlight ring marks the active option. */
@@ -1605,28 +1594,6 @@ a.fd-phonebar-back {
 
 .fd-more .fd-sidebar-version {
   margin-top: var(--sp-2);
-}
-
-/* ---------- Load bar (stations) ---------- */
-
-.fd-load-bar {
-  display: inline-block;
-  flex: none;
-  width: 56px;
-  height: 4px;
-  overflow: hidden;
-  background: var(--border);
-  border-radius: var(--r-pill);
-}
-
-.fd-load-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--ok);
-}
-
-.fd-load-bar > span[data-high] {
-  background: var(--act);
 }
 
 .fd-res-warn {

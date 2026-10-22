@@ -182,6 +182,7 @@ export function ComposerMenu(props: {
             id={`${props.id}-${n}`}
             role="option"
             tabIndex={-1}
+            className="fd-selbar"
             aria-selected={n === props.current}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onChoose(n)}

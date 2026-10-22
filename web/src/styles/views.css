@@ -342,9 +342,7 @@
 .fd-achan[aria-pressed="true"]:hover {
   background: var(--selected-bg);
   color: var(--text);
-  box-shadow:
-    inset 2px 0 0 var(--focus),
-    var(--selected-lift);
+  box-shadow: var(--selected-lift);
 }
 
 .fd-achan-label {
@@ -666,12 +664,17 @@
     outline-offset: -2px;
   }
 
-  /* the phone pill: the pressed-chip look of base.css (fill, control edge, weight 600) */
+  /* the phone pill: the pressed-chip look of base.css (fill, control edge, weight 600), and no
+     selection bar (a pill is not a row) */
   .fd-achan[aria-pressed="true"],
   .fd-achan[aria-pressed="true"]:hover {
     background: var(--badge-bg);
     box-shadow: inset 0 0 0 1px var(--ctl-edge);
     font-weight: 600;
+  }
+
+  .fd-achan.fd-selbar[aria-pressed="true"]::before {
+    content: none;
   }
 
   .fd-achan-label {
@@ -859,7 +862,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--dim);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-data);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

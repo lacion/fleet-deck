@@ -80,7 +80,12 @@ export function IssueRows({
       {state.value.map((i) => {
         const key = i.ref.key;
         return (
-          <li key={key} data-key={key} data-open={open === key ? 'true' : undefined}>
+          <li
+            key={key}
+            className="fd-selbar"
+            data-key={key}
+            data-open={open === key ? 'true' : undefined}
+          >
             {canDrive ? (
               <input
                 type="checkbox"

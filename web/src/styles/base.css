@@ -761,6 +761,31 @@ details[open] > summary[data-variant="toggle"]::after {
   font-weight: 600;
 }
 
+/* ── selection bar (§3) ─────────────────────────────────────────── */
+/* The straight 2px --focus marker at the left edge of a selected row (palette and slash-menu
+   option, activity channel, subagent row, open integration row, sidebar nav and session row).
+   Never an inset box-shadow: on a row with --r-ctl corners that draws a curved bracket. Forced
+   colors: the Highlight outline rules below already mark these selected states. */
+.fd-selbar {
+  position: relative;
+}
+.fd-selbar:is(
+  [aria-selected="true"],
+  [aria-current="page"],
+  [aria-current="true"],
+  [aria-pressed="true"],
+  [data-open="true"]
+)::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--focus);
+}
+
 /* ── badges and counts ──────────────────────────────────────────── */
 /* A quiet label. Tones carry a meaning; models and providers are never colored. */
 .fd-badge {
@@ -1032,6 +1057,17 @@ details[open] > summary[data-variant="toggle"]::after {
 .fd-meter[data-level="high"] > * {
   background: var(--act);
 }
+/* `data-tone="neutral"`: a load that is not usage (station resources, a long slot row). The high
+   rule comes after the tone rule (same specificity), so the high fill wins. */
+.fd-meter[data-tone="neutral"] {
+  background: var(--badge-bg);
+}
+.fd-meter[data-tone="neutral"] > * {
+  background: var(--dim);
+}
+.fd-meter[data-tone="neutral"][data-level="high"] > * {
+  background: var(--act);
+}
 /* `.fd-slots` with one `<span>` per slot: `data-slot="used"`, `"needs_you"`, or free (none). */
 .fd-slots {
   display: inline-flex;
@@ -1192,8 +1228,9 @@ details[open] > summary[data-variant="toggle"]::after {
   height: 14px;
   color: var(--dim);
 }
+/* --badge-bg, not --raised-hi: the light --raised-hi is 1.07:1 on the --raised menu body. */
 .fd-menu-body > button:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   border-color: transparent;
 }
 /* The variants keep their look inside a menu. */
@@ -1404,11 +1441,13 @@ details[open] > summary[data-variant="toggle"]::after {
     outline-offset: -2px;
   }
   /* A pressed toggle (.fd-iconbtn, the terminal Ctrl key, the session Mode buttons), the selected
-     option of a list box (palette, composer slash menu), the current subagent row and the
-     needs-you keyboard cursor: their state is a fill or a box-shadow only. */
+     option of a list box (palette, composer slash menu), the current subagent row, the open
+     integration row (.fd-selbar) and the needs-you keyboard cursor: their state is a fill or a
+     bar only. */
   :is(button, [role="button"])[aria-pressed="true"]:not(:focus-visible),
   [role="option"][aria-selected="true"],
   [aria-current="true"]:not(:focus-visible),
+  .fd-selbar[data-open="true"],
   .fd-q[data-selected="true"] {
     outline: 2px solid Highlight;
     outline-offset: -2px;

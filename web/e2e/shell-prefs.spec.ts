@@ -88,3 +88,33 @@ test('a first visit shows the help notice once; the help dialog does not open by
   await expect(notice).toHaveCount(0);
   await expect(help).toHaveCount(0);
 });
+
+test('on a phone, the selected station tab of Settings scrolls into view, clear of the fade', async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== 'phone', 'the phone tab row scrolls');
+  const deck = new FakeDeck();
+  deck.stations = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'].map((name) =>
+    stationView(`st-${name.toLowerCase()}`, name),
+  );
+  await deck.install(page);
+  await logIn(page);
+  await expect(page.getByRole('navigation', { name: 'Board' })).toBeVisible();
+  await page.evaluate(() => {
+    window.location.hash = '#/settings/station/st-echo';
+  });
+  const tabs = page.getByRole('tablist', { name: 'Settings' });
+  const echo = tabs.getByRole('tab', { name: 'Echo' });
+  await expect(echo).toHaveAttribute('aria-selected', 'true');
+  // The row is wider than the phone: it scrolls.
+  expect(await tabs.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  // The selected tab is inside the row, and clear of the 32px fade at its right edge.
+  await expect
+    .poll(async () => {
+      const row = await tabs.boundingBox();
+      const tab = await echo.boundingBox();
+      if (row === null || tab === null) return false;
+      return tab.x >= row.x && tab.x + tab.width <= row.x + row.width - 32;
+    })
+    .toBe(true);
+});

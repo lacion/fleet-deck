@@ -223,7 +223,7 @@ function ChannelButton({
   readonly children?: ReactNode;
 }) {
   return (
-    <button type="button" className="fd-achan" aria-pressed={on} onClick={onPick}>
+    <button type="button" className="fd-achan fd-selbar" aria-pressed={on} onClick={onPick}>
       <span className="fd-achan-label">{label}</span>
       {count === undefined ? null : <span className="fd-count">{count}</span>}
       {children}

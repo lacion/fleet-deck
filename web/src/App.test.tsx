@@ -103,7 +103,7 @@ describe('App', () => {
       <App initialLayout="phone" stations={[station()]} sessions={[card('s1')]} />,
     );
     expect(html).toContain('data-layout="phone"');
-    expect(html).toContain('class="fd-srow"');
+    expect(html).toContain('class="fd-srow fd-selbar"');
     expect(html).toContain('aria-label="Board"');
     expect(html).not.toContain('aria-label="Fleet board"');
   });

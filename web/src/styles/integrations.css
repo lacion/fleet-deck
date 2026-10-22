@@ -319,11 +319,10 @@
 .fd-int-row:focus-visible {
   outline-offset: -2px;
 }
-/* The open row: selected (the --raised-hi fill and the blue marker). */
+/* The open row: selected (the --raised-hi fill and the blue marker of .fd-selbar). */
 .fd-int-list > li[data-open="true"],
 .fd-int-tab .fd-int-list > li[data-open="true"]:hover {
   background: var(--raised-hi);
-  box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-int-key {
   flex: none;

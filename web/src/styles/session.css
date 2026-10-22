@@ -284,7 +284,7 @@
   color: var(--text);
 }
 .fd-sh-confirm > button:hover:not(:disabled) {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   border-color: transparent;
 }
 .fd-sh-confirm > .fd-primary:not(:disabled),
@@ -1205,12 +1205,12 @@ button.fd-composer-model > .fd-icon {
   font-size: var(--fs-data);
 }
 .fd-composer-menu [role="option"]:hover {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
 }
-/* The selected option: the --focus-bg selection tint and the 2px --focus bar, as in the palette. */
+/* The selected option: the --focus-bg selection tint and the 2px --focus bar (.fd-selbar), as in
+   the palette. */
 .fd-composer-menu [role="option"][aria-selected="true"] {
   background: var(--focus-bg);
-  box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-composer-menu .fd-composer-status {
   height: auto;
@@ -1978,6 +1978,11 @@ button.fd-cchip:hover:not(:disabled) {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+/* The list follows the crumbs at the row rhythm: no grid gap between them (the crumbs have the
+   row height and the rule of a row). */
+.fd-files-crumbs + [data-listing] {
+  margin-top: calc(-1 * var(--sp-2));
+}
 .fd-files-crumb-item {
   display: inline-flex;
   align-items: center;
@@ -2001,11 +2006,10 @@ button.fd-cchip:hover:not(:disabled) {
   border-color: transparent;
   color: var(--text);
 }
-/* The root crumb is the folder's name: a word, so sans; only the path segments are mono. */
+/* The root crumb is the folder's name: a path in the mono of the other crumbs and the entries,
+   in --text and 600 so that it reads as the root. */
 .fd-files-crumb.fd-files-root {
   color: var(--text);
-  font-family: var(--font-ui);
-  font-size: var(--fs-ui);
   font-weight: 600;
 }
 .fd-files-root > .fd-icon {
