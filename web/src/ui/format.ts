@@ -11,9 +11,13 @@ export function modelFamily(model: string | null): ModelFamily | null {
   return FAMILIES.find((f) => m.includes(f)) ?? null;
 }
 
+/** The `[1m]` context suffix of a model id: `claude-opus-5-5[1m]` → `1m`; none → `undefined`. */
+const contextSuffix = (model: string): string | undefined => /\[([^\]]+)\]$/.exec(model)?.[1];
+
 /**
- * `claude-sonnet-4-5` → `Sonnet 4.5`; a context suffix shows after the version
- * (`claude-opus-5-5[1m]` → `Opus 5.5 1M`); an unknown family stays as is; no model → `default`.
+ * `claude-sonnet-4-5` → `Sonnet 4.5`: the family and the version only. A context suffix is not
+ * part of the name (`claude-opus-5-5[1m]` → `Opus 5.5`; `contextLabel` gives `1M context`), and a
+ * bare `1M` read as a version or a count. An unknown family stays as is; no model → `default`.
  */
 export function shortModel(model: string | null): string {
   if (model === null || model === '') return 'default';
@@ -26,16 +30,24 @@ export function shortModel(model: string | null): string {
   const family = modelFamily(model);
   if (family === null) return model;
   // A `[1m]` suffix is not part of the version (it hid the minor version).
-  const suffix = /\[([^\]]+)\]$/.exec(model)?.[1]?.toUpperCase();
-  const base = suffix === undefined ? model : model.slice(0, model.lastIndexOf('['));
+  const base = contextSuffix(model) === undefined ? model : model.slice(0, model.lastIndexOf('['));
   const rest = base.toLowerCase().split(family)[1] ?? '';
   const version = rest
     .split(/[-_.]/)
     .filter((part) => /^\d{1,2}$/.test(part))
     .slice(0, 2);
   const name = family.charAt(0).toUpperCase() + family.slice(1);
-  const short = version.length > 0 ? `${name} ${version.join('.')}` : name;
-  return suffix === undefined ? short : `${short} ${suffix}`;
+  return version.length > 0 ? `${name} ${version.join('.')}` : name;
+}
+
+/**
+ * The context window that a model id names: `claude-opus-5-5[1m]` → `1M context`, `[200k]` →
+ * `200K context`; `null` when the id names none (the session shows no Context row then).
+ */
+export function contextLabel(model: string | null): string | null {
+  if (model === null) return null;
+  const suffix = contextSuffix(model);
+  return suffix === undefined || suffix === '' ? null : `${suffix.toUpperCase()} context`;
 }
 
 /** A line of chat as plain text: no heading marks, emphasis marks, code ticks or link syntax. */
@@ -130,6 +142,57 @@ export function toolParts(
     return null;
   }
   return { lead: `${m[1] ?? ''}${name}${(m[3] ?? ' ').trimEnd()}`, target };
+}
+
+// ── numbers (DESIGN-SYSTEM §5): one format for one kind of number on every surface ──
+
+const COUNT = new Intl.NumberFormat('en-US');
+// The compact notation rounds to two significant digits and never to fewer whole digits:
+// 940, 9.4K, 52K, 236K, 1.3M (no trailing .0).
+const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact' });
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+/** A count with thousands separators: `1286` → `1,286`, `7405` → `7,405`. */
+export const countText = (n: number): string => COUNT.format(n);
+
+/** A large count in short form (tokens): `940`, `9.4K`, `236K`, `1.3M`. */
+export const compactCount = (n: number): string => COMPACT.format(n);
+
+/** Money in US dollars with separators and cents: `$1.20`, `$14,876.41`. */
+export const usdText = (n: number): string => USD.format(n);
+
+/** The added lines of a diff: `1286` → `+1,286`. */
+export const addedText = (n: number): string => `+${countText(n)}`;
+
+/** The removed lines of a diff, with the minus sign (U+2212): `400` → `−400`. */
+export const removedText = (n: number): string => `−${countText(n)}`;
+
+// ── paths (DESIGN-SYSTEM §5): a shown path starts at `~/` under a home folder, else at `/` ──
+
+/** `/home/me/projects/x` → `~/projects/x` (a home folder of Linux or macOS); other paths stay. */
+export function homeShort(path: string): string {
+  return path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~');
+}
+
+/**
+ * Every home folder in a text (a command, a tool target) as `~`: `cat /home/me/a.txt` →
+ * `cat ~/a.txt`, `--dir=/home/me/x` → `--dir=~/x`. A path must start the text or follow a space,
+ * a quote, `=`, `:` or `(`; display only (a copy action copies the raw text).
+ */
+export function homeShortIn(text: string): string {
+  return text.replace(/(^|[\s'"=:(])\/(?:home|Users)\/[^/\s'"()]+(?=[/\s'")]|$)/g, '$1~');
+}
+
+/**
+ * A folder for a list row: its name and its parent folder, from the root (`~/` or `/`).
+ * `/home/me/fleet/v2` → `{ base: 'v2', parent: '~/fleet/' }`; the home folder is `~` with no
+ * parent; `/` is `/`. The full path stays for the title and the copy actions.
+ */
+export function pathParts(path: string): { readonly parent: string; readonly base: string } {
+  const short = homeShort(path.replace(/(?<=.)\/+$/, ''));
+  const cut = short.lastIndexOf('/');
+  if (short === '/' || cut < 0) return { parent: '', base: short };
+  return { parent: short.slice(0, cut + 1), base: short.slice(cut + 1) };
 }
 
 /** A size in decimal units: `512 B`, `12.3 KB`, `4.5 MB`, `1.2 GB`. */

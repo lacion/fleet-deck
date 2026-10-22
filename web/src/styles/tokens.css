@@ -24,6 +24,9 @@
   --ink-fill: #e9eef4; /* fill of the general primary button */
   --ink-on: #111821; /* text on --ink-fill */
   --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
+  /* a neutral count or key hint on a selected row: --badge-bg is the dark --selected-bg (1:1);
+     one step up (#313b4a, 1.2:1 on --raised-hi, --dim 5.1:1 on it) */
+  --badge-on-selected: color-mix(in srgb, var(--text) 7%, var(--raised-hi));
   --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
   /* edge of a plain button on a --raised surface (a dialog, a strip): the button has the same
      fill there (#3a4556, 1.6:1; it follows an Omarchy palette through --ctl-edge and --border) */
@@ -98,6 +101,7 @@
   --ink-fill: #111821;
   --ink-on: #ffffff;
   --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
+  --badge-on-selected: var(--badge-bg); /* the light selected row is white: the pill shows */
   --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
   --btn-edge-raised: var(--border); /* a white button on a white --raised surface */
   --ctl-edge: #788496;
