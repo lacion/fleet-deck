@@ -4,7 +4,6 @@ import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { usedShare } from '../board/resources';
 import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
@@ -20,6 +19,7 @@ import { loadMap } from './loadCells';
 import { NEED_LABEL, type Need, oneLine, toolParts, usageParts, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
+import { stationStats } from './stationStats';
 
 export function NeedsArea({
   needs,
@@ -143,34 +143,10 @@ export function TilesArea({
   );
 }
 
-/** One decimal place of gigabytes, without the unit: "20.4". */
-const gbNumber = (bytes: number): string => (bytes / 1e9).toFixed(1);
-
-type DiskLike = { readonly total_bytes: number; readonly free_bytes: number };
-
 function StationRow({ station }: { readonly station: StationView }) {
   // A wall display gets `display_resources` (no disk label, no path) in place of `info`. The wall
-  // shows the load, the memory and the fullest disk: one short line that a person reads across a
-  // room.
-  const r = station.info?.resources ?? station.display_resources;
-  const disks: readonly DiskLike[] = r?.disks ?? [];
-  const fullest = disks.reduce<DiskLike | null>(
-    (best, d) =>
-      best === null ||
-      usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
-        usedShare(best.total_bytes - best.free_bytes, best.total_bytes)
-        ? d
-        : best,
-    null,
-  );
-  const stats = [
-    r?.cpu == null ? null : `CPU ${(r.cpu.load5_x100 / 100).toFixed(1)}/${r.cpu.cores}`,
-    r?.memory == null
-      ? null
-      : `Mem ${gbNumber(r.memory.total_bytes - r.memory.available_bytes)}/${gbNumber(r.memory.total_bytes)} GB`,
-    // The free space only: "312.5 GB free" keeps its meaning when the line ends in an ellipsis.
-    fullest === null ? null : `Disk ${gbNumber(fullest.free_bytes)} GB free`,
-  ].filter((t): t is string => t !== null);
+  // shows the CPU, the memory and the fullest disk: a short line that a person reads across a room.
+  const stats = stationStats(station.info?.resources ?? station.display_resources);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
       {/* The reach glyph and the words of the board (fleet lanes, Stations page). */}

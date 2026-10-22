@@ -732,13 +732,17 @@
   color: var(--hazard);
 }
 
-/* The figures of a station on one line; the line ends in an ellipsis when it is too long. */
+/* The figures of a station: one line when it fits, else two, so that the last word ("free") never
+   drops. A third line ends in an ellipsis. */
 .fd-wall-station-stats {
   grid-column: 2 / -1;
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
   color: var(--faint);
   font-size: var(--fs-meta);
 }
@@ -753,14 +757,21 @@
   overflow: hidden;
 }
 
-/* The load of each session (R13 P9). It is the last block and takes the height that is left.
-   The cells are fuel: the busier, the stronger. */
+/* The CPU of each session (R13 P9). It is the last block and takes the height that is left.
+   A CPU load is not usage, so the cells are neutral, as `.fd-meter[data-tone="neutral"]`: the
+   busier, the stronger, and a high load is --act. */
 .fd-wall-loadblock {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+/* No cell fits under the blocks above: the block shows nothing rather than half a heading. It
+   keeps its box, so that the wall measures it again when the side grows. */
+.fd-wall-loadblock[data-fit="none"] {
+  visibility: hidden;
 }
 
 .fd-wall-load {
@@ -770,7 +781,7 @@
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 72), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 96), 1fr));
   grid-auto-flow: dense;
   gap: var(--sp-1);
   margin: 0;
@@ -783,7 +794,7 @@
   flex-direction: column;
   min-width: 0;
   padding: var(--sp-1) var(--sp-2);
-  background: var(--fuel-bg);
+  background: var(--badge-bg);
   border-radius: var(--r-chip);
   font-size: var(--fs-meta);
   line-height: 1.25;
@@ -797,12 +808,14 @@
   grid-column: span 3;
 }
 
+/* --text 9.3:1 (dark) and 12.0:1 (light) on the mid fill. */
 .fd-wall-load li[data-heat="mid"] {
-  background: color-mix(in srgb, var(--fuel) 28%, var(--surface));
+  background: color-mix(in srgb, var(--dim) 22%, var(--surface));
 }
 
+/* --text 13.3:1 / 16.5:1 and --act 10.9:1 / 5.7:1 on --act-bg. */
 .fd-wall-load li[data-heat="high"] {
-  background: color-mix(in srgb, var(--fuel) 52%, var(--surface));
+  background: var(--act-bg);
 }
 
 .fd-wall-load li[data-heat="unknown"] {
@@ -810,10 +823,15 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+/* A name is the session title, as on its tile: two lines, so that two titles that start alike
+   ("Fleet Deck UI", "Fleet Deck backlog") still differ. */
 .fd-wall-load-name {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
   color: var(--text);
 }
 
@@ -821,9 +839,14 @@
   color: var(--dim);
 }
 
-/* --dim on the mid fill is under 4.5:1 in the dark theme (4.37:1); --text passes in both. */
-.fd-wall-load li:is([data-heat="mid"], [data-heat="high"]) .fd-wall-load-value {
+/* The value of a busier cell steps up: --text on the mid fill, --act on a high load. */
+.fd-wall-load li[data-heat="mid"] .fd-wall-load-value {
   color: var(--text);
+}
+
+.fd-wall-load li[data-heat="high"] .fd-wall-load-value {
+  color: var(--act);
+  font-weight: 600;
 }
 
 /* ── stream: the newest under the heading; the oldest give way at the bottom ───────────────── */

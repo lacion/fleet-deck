@@ -472,9 +472,9 @@ describe('the wall for a display login', () => {
     expect(html).toContain('This artifact is not available.');
   });
 
-  test('the station row shows the load, the memory and the fullest disk in one short line', () => {
+  test('the station row shows the CPU share, the memory and the fullest disk in short figures', () => {
     const html = wall({});
-    expect(html).toContain('CPU 2.5/8 · Mem 8.0/16.0 GB · Disk 40.0 GB free');
+    expect(html).toContain('CPU 31% · Mem 8/16 GB · Disk 40 GB free');
   });
 
   test('the side area reads the same resources', () => {
@@ -495,7 +495,7 @@ describe('the wall for a display login', () => {
         now={1}
       />,
     );
-    expect(html).toContain('CPU 0.5/4');
+    expect(html).toContain('CPU 13%');
   });
 });
 

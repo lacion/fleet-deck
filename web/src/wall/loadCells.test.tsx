@@ -1,4 +1,4 @@
-// R13 P9 (design §10): the per-session load heatmap on the wall `side` area.
+// R13 P9 (design §10): the per-session CPU heatmap on the wall `side` area.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationResources, StationView } from '../gen';
@@ -104,16 +104,17 @@ describe('the cells of the load heatmap', () => {
     expect(out.cells[0]?.session).toBe('s49');
   });
 
-  test('the name is the callsign, then the title, then 8 characters of the id', () => {
+  test('the name is the title (as on the tile), then the callsign, then 8 characters of the id', () => {
     const cards = [
-      card('a', 'working', 'station-a', { callsign: 'Falcon' }),
-      card('b', 'working', 'station-a', { title: 'Fix login' }),
+      card('a', 'working', 'station-a', { callsign: 'Falcon', title: 'Fix login' }),
+      card('b', 'working', 'station-a', { callsign: 'Otter' }),
       card('0123456789abcdef'),
     ];
     const out = loadMap(cards, [
       owner('station-a', [load('a', 30), load('b', 20), load('0123456789abcdef', 10)]),
     ]);
-    expect(out.cells.map((c) => c.name)).toEqual(['Falcon', 'Fix login', '01234567']);
+    expect(out.cells.map((c) => c.name)).toEqual(['Fix login', 'Otter', '01234567']);
+    expect(out.cells.map((c) => c.callsign)).toEqual([false, true, false]);
   });
 });
 
@@ -125,8 +126,8 @@ describe('the load block of the side area', () => {
 
   test('a cell has the tooltip, the size and the heat', () => {
     const html = render([owner('station-a', [load('a', 450, 2.5e9), load('b', null, null)])]);
-    expect(html).toContain('<h2 class="fd-wall-h">Session load</h2>');
-    expect(html).toContain('aria-label="Session load"');
+    expect(html).toContain('<h2 class="fd-wall-h">CPU by session</h2>');
+    expect(html).toContain('aria-label="CPU by session"');
     expect(html).toContain('title="Falcon on Alpha: CPU 450%, memory 2.5 GB"');
     expect(html).toContain('data-size="2" data-heat="high"');
     expect(html).toContain('title="b on Alpha: CPU unknown, memory unknown"');
@@ -135,10 +136,19 @@ describe('the load block of the side area', () => {
     expect(html).toContain('>—<');
   });
 
+  test('a titled session shows its title, without the callsign type', () => {
+    const html = render(
+      [owner('station-a', [load('a', 10)])],
+      [card('a', 'working', 'station-a', { callsign: 'Falcon', title: 'Fleet Deck UI' })],
+    );
+    expect(html).toContain('<span class="fd-wall-load-name">Fleet Deck UI</span>');
+    expect(html).not.toContain('fd-callsign');
+  });
+
   test('the heading counts the cells that are not shown', () => {
-    expect(loadHeading(0)).toBe('Session load');
-    expect(loadHeading(1)).toBe('Session load (+1 more)');
-    expect(loadHeading(7)).toBe('Session load (+7 more)');
+    expect(loadHeading(0)).toBe('CPU by session');
+    expect(loadHeading(1)).toBe('CPU by session (+1 more)');
+    expect(loadHeading(7)).toBe('CPU by session (+7 more)');
   });
 
   test('the load block is the last block and has no separate count line', () => {
@@ -147,7 +157,7 @@ describe('the load block of the side area', () => {
       html.lastIndexOf('data-part="stations"'),
     );
     expect(html.lastIndexOf('data-part=')).toBe(html.lastIndexOf('data-part="load"'));
-    expect(html).toContain('<h2 class="fd-wall-h">Session load</h2>');
+    expect(html).toContain('<h2 class="fd-wall-h">CPU by session</h2>');
     expect(html).not.toContain('more');
   });
 
@@ -162,13 +172,13 @@ describe('the load block of the side area', () => {
   });
 
   test('the block is left out without cells', () => {
-    expect(render([owner('station-a', [])])).not.toContain('Session load');
-    expect(render([station('station-a')])).not.toContain('Session load');
+    expect(render([owner('station-a', [])])).not.toContain('CPU by session');
+    expect(render([station('station-a')])).not.toContain('CPU by session');
   });
 
   test('the cells are not interactive', () => {
     const html = render([owner('station-a', [load('a', 10)])]);
-    const list = html.slice(html.indexOf('aria-label="Session load"'));
+    const list = html.slice(html.indexOf('aria-label="CPU by session"'));
     expect(list).not.toContain('<a ');
     expect(list).not.toContain('<button');
     expect(list).not.toContain('tabindex');
@@ -185,7 +195,7 @@ describe('the load block of the side area', () => {
       ],
       ids.map((id) => card(id)),
     );
-    expect(html).toContain('<h2 class="fd-wall-h">Session load (+2 more)</h2>');
+    expect(html).toContain('<h2 class="fd-wall-h">CPU by session (+2 more)</h2>');
     expect(html).not.toContain('</p>');
   });
 });
