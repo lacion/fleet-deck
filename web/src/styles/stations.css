@@ -17,11 +17,12 @@
   align-items: center;
 }
 
-/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. */
+/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. The rules
+   stop 16 px short of the panel edges, the same as the Automations and Projects lists. */
 .fd-plan-list {
   display: grid;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--sp-4);
   list-style: none;
 }
 
@@ -36,7 +37,7 @@
   align-items: center;
   gap: 2px var(--sp-4);
   min-width: 0;
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-3) 0;
 }
 
 :where(.fd-plan-list article > *) {
@@ -195,11 +196,25 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The actions: an even two-column grid. The general action takes the full width; so does a
+     last action that would sit alone in its row (Assign, or Archive of an executed plan). */
   .fd-plan-list article > .fd-plan-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-2);
     grid-column: 1;
     grid-row: auto;
-    justify-content: flex-start;
     margin-top: var(--sp-2);
+  }
+
+  .fd-plan-list article > .fd-plan-actions > button:first-child,
+  .fd-plan-list article > .fd-plan-actions > button:nth-child(even):last-child {
+    grid-column: 1 / -1;
+  }
+
+  .fd-plan-list article > .fd-plan-actions > button {
+    width: 100%;
+    justify-content: center;
   }
 
   .fd-plan-list article > h3 {
@@ -413,10 +428,6 @@
   font-weight: 500;
 }
 
-.fd-station-providers > li + li {
-  border-top: 1px solid var(--border-soft);
-}
-
 .fd-station-auth {
   display: inline-flex;
   align-items: center;
@@ -575,28 +586,6 @@
   font-weight: 500;
 }
 
-/* A toggle, not a path: no leading chevron-right (base.css), a trailing chevron-down that
-   turns over when the fold opens. */
-.fd-station-folds > details > summary::before {
-  content: none;
-}
-
-.fd-station-folds > details > summary::after {
-  content: "";
-  flex: none;
-  width: 12px;
-  height: 12px;
-  background-color: var(--faint);
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  transition: transform var(--t-move);
-}
-
-.fd-station-folds > details[open] > summary::after {
-  transform: rotate(180deg);
-}
-
 .fd-station-folds > details > summary:hover,
 .fd-station-folds > details[open] > summary {
   color: var(--text);
@@ -604,15 +593,6 @@
 
 .fd-station-folds > details[open] {
   padding-bottom: var(--sp-3);
-}
-
-/* A station that reports no desktop says so in the fold row, after the toggles. */
-.fd-station-folds > .fd-note {
-  align-self: center;
-  padding: 0 var(--sp-4);
-  color: var(--faint);
-  font-size: var(--fs-meta);
-  line-height: var(--row-h);
 }
 
 @supports selector(::details-content) {
@@ -701,14 +681,6 @@
 
   .fd-station-folds > details:nth-child(4)::details-content {
     grid-row: 5;
-  }
-
-  .fd-station-folds > .fd-note {
-    grid-row: 1;
-    grid-column: -2;
-    justify-self: end;
-    padding: 0 var(--sp-2);
-    line-height: 1.4;
   }
 
   /* The Desktop fold (displays.css) keeps the column of its parts. */
@@ -973,36 +945,19 @@
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
-  /* A plan row: the note that explains Start comes before the actions; the general action takes
-     the full width, the other actions an even two-column grid under it. */
+  /* A plan row: the note that explains Start comes before the actions (the grid of the actions
+     is in the 760 px rule above). */
   .fd-plan-list article > .fd-note {
     order: 2;
   }
 
   .fd-plan-list article > .fd-plan-actions {
     grid-column: 1 / -1;
-    grid-row: auto;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
     order: 3;
-  }
-
-  .fd-plan-list article > .fd-plan-actions > :first-child {
-    grid-column: 1 / -1;
   }
 
   .fd-plan-list article > :is([role="status"], [role="alert"], .fd-plan-assign) {
     order: 4;
-  }
-
-  /* The no-desktop note takes its own line under the toggles (after every open fold). */
-  @supports selector(::details-content) {
-    .fd-station-folds > .fd-note {
-      grid-row: 6;
-      grid-column: 1 / -1;
-      justify-self: start;
-      padding: 0 var(--sp-2) var(--sp-2);
-    }
   }
 
   /* The page actions take their own line: Add station first, at the left edge. */
@@ -1036,5 +991,13 @@
 
   .fd-wt-session {
     margin-left: 0;
+  }
+}
+
+/* ── touch screens: the fold toggles are 44 px targets (§6). The area rule above sets the 36 px
+   row height and beats the zero-specificity touch rule of base.css. ── */
+@media (pointer: coarse) {
+  .fd-station-folds > details > summary {
+    min-height: var(--tap-min);
   }
 }

@@ -6,7 +6,7 @@ import { sessionRef } from '../ui/localSet';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
-import { liveProposer, type PlanActions, planTitle, proposerNote, STATUS_LABEL } from './plans';
+import { liveProposer, type PlanActions, PROPOSER_NOTE, planTitle, STATUS_LABEL } from './plans';
 
 /** The mail of the fleet that carries a plan to a live session. */
 type Assign = (
@@ -207,13 +207,18 @@ export function PlanLibrary({
                     ) : null}
                   </details>
                   <div className="fd-plan-actions">
-                    <button type="button" disabled={!canDrive} onClick={() => onExecute(p)}>
+                    <button
+                      type="button"
+                      className="fd-sm"
+                      disabled={!canDrive}
+                      onClick={() => onExecute(p)}
+                    >
                       Start a session with this plan
                     </button>
                     {p.status !== 'executed' ? (
                       <button
                         type="button"
-                        className="fd-ghost"
+                        className="fd-ghost fd-sm"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'executed')}
                       >
@@ -223,7 +228,7 @@ export function PlanLibrary({
                     {p.status === 'archived' ? (
                       <button
                         type="button"
-                        className="fd-ghost"
+                        className="fd-ghost fd-sm"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'proposed')}
                       >
@@ -232,7 +237,7 @@ export function PlanLibrary({
                     ) : (
                       <button
                         type="button"
-                        className="fd-ghost"
+                        className="fd-ghost fd-sm"
                         disabled={!canDrive || busy === p.id}
                         onClick={() => mark(p, 'archived')}
                       >
@@ -242,7 +247,7 @@ export function PlanLibrary({
                     {onAssign !== undefined && p.status === 'proposed' ? (
                       <button
                         type="button"
-                        className="fd-ghost"
+                        className="fd-ghost fd-sm"
                         disabled={!live}
                         onClick={() =>
                           setAssigning({
@@ -259,7 +264,13 @@ export function PlanLibrary({
                   </div>
                   {proposer === undefined ? null : (
                     <p className="fd-note">
-                      {proposerNote(proposer.summary.callsign ?? sessionTitle(proposer))}
+                      {PROPOSER_NOTE.before}
+                      {proposer.summary.callsign == null ? (
+                        sessionTitle(proposer)
+                      ) : (
+                        <span className="fd-callsign">{proposer.summary.callsign}</span>
+                      )}
+                      {PROPOSER_NOTE.after}
                     </p>
                   )}
                   {sent !== null && sent.plan === p.id ? <p role="status">{sent.text}</p> : null}
