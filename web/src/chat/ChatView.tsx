@@ -33,7 +33,7 @@ import { Markdown } from './Markdown';
 import { SubagentWork } from './SubagentWork';
 import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
-import { hasOpenRequest, pairWaiting, type Waiting } from './waiting';
+import { hasOpenRequest, pairWaiting, WAITING_LABEL, WAITING_SHORT, type Waiting } from './waiting';
 import { ReviewCard } from '../review/ReviewCard';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
@@ -224,9 +224,15 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <span className="fd-badge" data-tone="hazard">{`exit ${tool.exit_code}`}</span>
         ) : null}
         {waitingFor !== undefined ? (
+          // The phone row shows the short label (chat.css); the approval sheet says the rest.
           <span className="fd-chat-tool-result" data-tone="act">
-            <span className="fd-vh">{`Waiting for your answer · ${waitingFor}`}</span>
-            <span aria-hidden="true">Waiting for your answer</span>
+            <span className="fd-vh">{`${WAITING_LABEL} · ${waitingFor}`}</span>
+            <span className="fd-chat-wait-long" aria-hidden="true">
+              {WAITING_LABEL}
+            </span>
+            <span className="fd-chat-wait-short" aria-hidden="true">
+              {WAITING_SHORT}
+            </span>
           </span>
         ) : result ? (
           <span className="fd-chat-tool-result" data-tone={result.tone}>
@@ -370,7 +376,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
           <Icon of={TriangleAlert} size={14} />
-          Waiting for your answer · {item.title}
+          {`${WAITING_LABEL} · ${item.title}`}
         </p>
       ) : (
         <p className="fd-chat-line" data-state={item.state}>

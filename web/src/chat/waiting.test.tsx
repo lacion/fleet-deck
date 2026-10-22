@@ -57,6 +57,11 @@ describe('a call that waits for your answer', () => {
     expect(html).toContain('aria-label="waiting" data-status="waiting"');
     expect(html).not.toContain('data-status="working"');
     expect(html).toContain('<span class="fd-vh">Waiting for your answer · Bash</span>');
+    // The visible label: in full, and short for the phone row (chat.css shows one of them).
+    expect(html).toContain(
+      '<span class="fd-chat-wait-long" aria-hidden="true">Waiting for your answer</span>',
+    );
+    expect(html).toContain('<span class="fd-chat-wait-short" aria-hidden="true">Waiting</span>');
     expect(html).not.toContain('fd-chat-ask');
     expect(html).not.toContain('fd-chat-working');
   });

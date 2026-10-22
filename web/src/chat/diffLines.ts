@@ -47,7 +47,8 @@ export function diffLineKinds(lines: readonly string[]): DiffLineKind[] {
 
 /**
  * The git plumbing of a file section: the view leaves these lines out, because the file header
- * row (path and +/−) says the same. A rename and a binary file stay: they tell something new.
+ * row (path, +/− and the status badge of a new, deleted or mode-changed file) says the same.
+ * A rename and a binary file stay: they tell something new.
  */
 const PLUMBING = [
   '--- ',
@@ -74,8 +75,33 @@ export function splitDiffFileLine(
     : null;
 }
 
-/** The header row of a file section: its path and the count of its added and deleted lines. */
-export type FileHead = { readonly path: string; readonly add: number; readonly del: number };
+/** What a file section does to the file, besides its lines: from its `new file mode`, `deleted file mode` or `old mode`/`new mode` lines. */
+export type FileStatus =
+  | { readonly kind: 'added' }
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'mode'; readonly old: string; readonly new: string };
+
+/**
+ * The header row of a file section: its path, the count of its added and deleted lines, and its
+ * status (`null` for a file that git only changes in its lines, or renames).
+ */
+export type FileHead = {
+  readonly path: string;
+  readonly add: number;
+  readonly del: number;
+  readonly status: FileStatus | null;
+};
+
+/** The status that a header line of a file section gives, merged into the status so far. */
+function statusOf(line: string, now: FileStatus | null): FileStatus | null {
+  if (line.startsWith('new file mode')) return { kind: 'added' };
+  if (line.startsWith('deleted file mode')) return { kind: 'deleted' };
+  const mode = (prefix: string) => line.slice(prefix.length).trim();
+  if (line.startsWith('old mode ')) return { kind: 'mode', old: mode('old mode '), new: '' };
+  if (line.startsWith('new mode ') && now?.kind === 'mode')
+    return { ...now, new: mode('new mode ') };
+  return now;
+}
 
 /** The header of each file section, by the index of its `diff --git` line. */
 export function fileHeads(lines: readonly string[]): ReadonlyMap<number, FileHead> {
@@ -84,8 +110,9 @@ export function fileHeads(lines: readonly string[]): ReadonlyMap<number, FileHea
   let path = '';
   let add = 0;
   let del = 0;
+  let status: FileStatus | null = null;
   const flush = () => {
-    if (at >= 0) heads.set(at, { path, add, del });
+    if (at >= 0) heads.set(at, { path, add, del, status });
   };
   const kinds = diffLineKinds(lines);
   lines.forEach((line, n) => {
@@ -96,7 +123,9 @@ export function fileHeads(lines: readonly string[]): ReadonlyMap<number, FileHea
       path = splitDiffFileLine(line)?.path ?? line.slice('diff --git '.length);
       add = 0;
       del = 0;
-    } else if (kind === 'add') add += 1;
+      status = null;
+    } else if (kind === 'meta') status = statusOf(line, status);
+    else if (kind === 'add') add += 1;
     else if (kind === 'del') del += 1;
   });
   flush();

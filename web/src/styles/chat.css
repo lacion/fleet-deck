@@ -255,14 +255,27 @@
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
 }
-/* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. */
+/* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. It takes
+   at most 30% of the row, so that the mono target keeps the most of it. */
 .fd-chat-tool-result {
   flex: none;
+  max-width: 30%;
   margin-left: auto;
+  overflow: hidden;
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A call that waits for you: "Waiting for your answer", on the phone only "Waiting" (the
+   approval sheet under the log says what is needed). The full text is the accessible name. */
+.fd-chat-wait-short,
+[data-layout="phone"] .fd-chat-wait-long {
+  display: none;
+}
+[data-layout="phone"] .fd-chat-wait-short {
+  display: inline;
 }
 .fd-chat-tool-result[data-tone="hazard"] {
   color: var(--hazard);
@@ -706,6 +719,14 @@
 .fd-dl-stat > [data-sign="del"] {
   color: var(--hazard);
 }
+/* The status badge of a new, deleted or mode-changed file sits at the right, before the +/−. */
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-status {
+  flex: none;
+  margin-left: auto;
+}
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-status + .fd-dl-stat {
+  margin-left: 0;
+}
 /* DL-179: two number gutters, old then new; a deleted line leaves the new one blank and an
    added line the old one. The comment target (.fd-dl-n) sits in the gutter of its side. */
 .fd-dl-g {
@@ -774,8 +795,10 @@
     --chat-tabs-h: var(--tap-min);
   }
 }
+/* The phone tab row keeps 136px clear for the menu (session.css); "Show (7 hidden)" fits. */
 [data-layout="phone"] .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
   padding-right: var(--sp-2);
+  padding-left: var(--sp-1);
 }
 /* A menu: the ghost summary gets a small chevron after its text. */
 .fd-chat-filters > .fd-chat-show > summary::after {
@@ -858,11 +881,13 @@
 [data-layout="phone"] .fd-chat > .fd-chat-filters {
   padding-inline: var(--sp-3);
 }
+/* The count of a hidden kind, right-aligned in its column (no tabular figures: §2.3). */
 .fd-chat-filter-count {
+  min-width: 2ch;
   margin-left: auto;
   color: var(--faint);
   font-size: var(--fs-meta);
-  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* DL-189: the earlier history of an imported session, above the timeline. */
