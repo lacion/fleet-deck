@@ -94,10 +94,21 @@ test('01 home', async ({ page }) => {
   await themed(page, '01', 'home');
 });
 
-test('02 fleet', async ({ page }) => {
-  await setUp(page);
+/** The Fleet page: on the phone through its hash (the home is the session list there). */
+async function toFleet(page: Page) {
   await goTo(page, '#/fleet');
   await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+}
+
+// The desktop home is the Fleet page (01): 02 shows the board grouped by project there, so that
+// each shot shows something new. The phone shows its Fleet page.
+test('02 fleet', async ({ page }) => {
+  await setUp(page);
+  await toFleet(page);
+  if (test.info().project.name === 'desktop') {
+    await page.getByRole('combobox', { name: 'Group by' }).selectOption('project');
+    await expect(page.getByRole('combobox', { name: 'Group by' })).toHaveValue('project');
+  }
   await themed(page, '02', 'fleet');
 });
 
@@ -299,9 +310,15 @@ test('24 palette', async ({ page }) => {
   await themed(page, '24', 'palette');
 });
 
+// The Fleet page with nothing waiting: its header sentence and no Needs you panel (the phone
+// goes to its Fleet page, as in 02).
 test('25 home all clear', async ({ page }) => {
   await setUp(page, { needsYou: false });
   await homeReady(page, false);
+  if (test.info().project.name === 'phone') await toFleet(page);
   await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Needs you rail' })).toHaveCount(0);
+  // (a narrow desktop header drops the calm words next to a conflict, so: attached, not visible)
+  await expect(page.locator('.fd-home-needs[data-clear="true"]')).toHaveCount(1);
   await themed(page, '25', 'home-all-clear');
 });

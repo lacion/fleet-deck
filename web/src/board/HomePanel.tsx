@@ -1,6 +1,6 @@
 // The secondary part of the fleet home's ops panel (DL-141, DESIGN-SYSTEM §4.4): Activity, Mail &
 // tasks, Assign and Usage. From 1280 px (the wide ops column) Mail & tasks is an always-visible
-// section, and Activity, Assign and Usage are ghost buttons in a foot row that open their panel above
+// section, and Activity, Assign and All usage are ghost buttons in a foot row that open their panel above
 // it. Under 1280 px and on the phone the panel folds under the board as tabs.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
@@ -19,6 +19,7 @@ import {
   Send,
 } from '../ui/icons';
 import type { FeedItem } from './feed';
+import { fleetVersion } from './fleet';
 import { Feed } from './FeedPanel';
 import { UsageMeters } from './UsageMeters';
 
@@ -77,6 +78,10 @@ const PANEL_LABEL: Record<PanelTab, string> = {
   assign: 'Assign',
   usage: 'Usage',
 };
+
+/** The wide foot: the Usage section of the column above already says "Usage", so the button that
+ * opens every meter says "All usage". */
+const FOOT_LABEL: Record<PanelTab, string> = { ...PANEL_LABEL, usage: 'All usage' };
 
 const PANEL_ICON: Record<PanelTab, LucideIcon> = {
   activity: Activity,
@@ -180,6 +185,7 @@ export function HomePanel({
               sessions={sessions}
               stations={stations}
               layout="section"
+              version={fleetVersion(sessions)}
               composeSeq={composeSeq}
               waiting={waiting}
             />
@@ -208,7 +214,7 @@ export function HomePanel({
                   set(shown === t ? { ...state, open: false } : { open: true, tab: t })
                 }
               >
-                <Icon of={PANEL_ICON[t]} size={16} /> {PANEL_LABEL[t]}
+                <Icon of={PANEL_ICON[t]} size={16} /> {FOOT_LABEL[t]}
               </button>
             ))}
           </div>

@@ -114,7 +114,7 @@
 /* A narrow board (the main column under 1100px: every desktop with the ops column under about
    1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
    text, Share board shows its icon only, and from 841 to 960px the sentence drops "on N
-   stations". */
+   stations" and a calm "Nothing needs you." next to a conflict. */
 @container fleet (max-width: 1100px) {
   .fd-home:not([data-layout="phone"]) .fd-home-search {
     width: calc(var(--ctl-h) + 6px);
@@ -154,7 +154,8 @@
   }
 }
 @container fleet (min-width: 841px) and (max-width: 960px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-on {
+  .fd-home:not([data-layout="phone"]) .fd-home-on,
+  .fd-home:not([data-layout="phone"]) .fd-home-state[data-calm="true"] {
     display: none;
   }
 }
@@ -417,13 +418,14 @@
 .fd-q-open {
   margin-left: auto;
 }
-/* The other answers sit on the strip fill: one step up, and an edge on hover. */
-.fd-q-body button:not(.fd-decide) {
+/* The other plain answers sit on the strip fill: one step up, and a control edge on hover. Deny
+   (.fd-danger) keeps its ghost look of base.css (§3); only the phone fills it (concept A). */
+.fd-q-body button:not(.fd-decide, .fd-danger) {
   background: var(--raised-hi);
 }
-.fd-q-body button:not(.fd-decide):hover:not(:disabled) {
+.fd-q-body button:not(.fd-decide, .fd-danger):hover:not(:disabled) {
   background: var(--raised-hi);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: inset 0 0 0 1px var(--ctl-edge);
 }
 .fd-q-error {
   flex-basis: 100%;
@@ -688,8 +690,9 @@
   flex: none;
   margin-left: auto;
 }
+/* A data graphic (WCAG 1.4.11, 3:1): --faint, not the decoration token. */
 .fd-spark rect {
-  fill: var(--faint-decor);
+  fill: var(--faint);
 }
 .fd-spark rect[data-last="true"] {
   fill: var(--ok);
@@ -1026,7 +1029,13 @@
   margin-top: 6px;
   padding: 0;
 }
-/* States. Needs you in a lane: the holder and the request in yellow (the glow is the panel's). */
+/* States. Needs you in a lane: the holder, the 1px --act-line outline and the request in yellow;
+   the breathing glow is the Needs you panel's (§4.1). */
+.fd-stripwrap[data-status="needs_you"] {
+  box-shadow:
+    inset 0 0 0 1px var(--act-line),
+    var(--shadow-lift);
+}
 .fd-strip[data-status="ended"],
 .fd-strip[data-status="lost"] {
   color: var(--faint);
@@ -1035,8 +1044,18 @@
 .fd-strip[data-status="lost"] :is(.fd-strip-model, .fd-strip-now, .fd-strip-where) {
   color: var(--faint);
 }
+/* A cleared (archived) strip steps back without opacity: no fill, a soft edge and a lighter
+   title. Its text keeps the --faint of an ended or lost strip (§4.1; a cleared strip is always
+   ended or lost), so every text stays on its own token (4.5:1). */
 .fd-stripwrap:has(> .fd-strip[data-archived="true"]) {
-  opacity: 0.6;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+.fd-stripwrap:has(> .fd-strip[data-archived="true"]):hover {
+  background: var(--raised);
+}
+.fd-strip[data-archived="true"] .fd-strip-title {
+  font-weight: 500;
 }
 
 /* On a narrow board (under 720 px: the phone, a tablet, a desktop window under 1024 px) the strip
@@ -1408,10 +1427,14 @@
   padding-top: var(--sp-4);
   border-top: 1px solid var(--border-soft);
 }
+/* Each label stays on one line ("All usage"): the buttons share the row by their width. */
 .fd-ops-foot > button {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
+  padding: 0 var(--sp-2);
+  white-space: nowrap;
 }
 .fd-ops-foot > button[aria-expanded="true"] {
   background: var(--raised);
@@ -1818,6 +1841,13 @@
 .fd-home[data-layout="phone"] .fd-q-body {
   padding: var(--sp-1) var(--sp-3) var(--sp-3);
   border-top: 0;
+}
+/* Concept A phone: Deny is a filled box beside Allow (the ghost look of §3 on a desktop). */
+.fd-home[data-layout="phone"] .fd-q-body .fd-danger {
+  background: var(--raised-hi);
+}
+.fd-home[data-layout="phone"] .fd-q-body .fd-danger:hover:not(:disabled) {
+  background: var(--hazard-bg);
 }
 .fd-home[data-layout="phone"] .fd-q-cmd,
 .fd-home[data-layout="phone"] .fd-q-title {

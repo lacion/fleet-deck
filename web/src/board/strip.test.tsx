@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { activeFilters, clearFilter, FleetHome, statusMatches } from '../app/FleetHome';
+import {
+  activeFilters,
+  clearFilter,
+  clearText,
+  FleetHome,
+  scopeFleet,
+  statusMatches,
+} from '../app/FleetHome';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, OpenRequest } from '../gen';
 import { card, station } from '../testing/fleet';
@@ -8,6 +15,7 @@ import { priority } from '../ui/localSet';
 import { emptyFilter } from './fleet';
 import { FleetBoard, STRIP_ORDER, stripCards } from './FleetBoard';
 import { HomePanel } from './HomePanel';
+import { UsageGlance } from './UsageGlance';
 
 const NOW = 1_760_000_040_000;
 
@@ -167,7 +175,14 @@ describe('strip markup', () => {
     expect(full).not.toContain('data-ico="stale"');
     expect(full).not.toContain('data-ico="archived"');
     expect(full).not.toContain('data-ico="contested"');
-    expect(full).toContain('title="In terminal"');
+    expect(full).toContain(
+      '<span role="img" aria-label="In terminal" class="fd-strip-ico" data-ico="terminal" title="In terminal">',
+    );
+    // each fact is named for the strip link, with its count
+    expect(full).toContain('<span role="img" aria-label="Artifacts: 3" class="fd-strip-ico"');
+    expect(full).toContain(
+      '<span role="img" aria-label="Background tasks: 2" class="fd-strip-ico"',
+    );
     expect(full).toContain('data-artifacts="3"');
   });
 
@@ -321,6 +336,31 @@ describe('flight deck fixes', () => {
     expect(statusMatches(card('e', 'ended'), 'all')).toBe(true);
   });
 
+  test('the status filter hides strips, not the usage: Needs you keeps the meter of a working session', () => {
+    const working = card('w', 'working', 'station-a', {
+      rate_limits: [{ scope: 'five_hour', used_percent: 42, resets_at: null }],
+    });
+    const waiting = card('n', 'needs_you', 'station-a', { open_requests: [ask] });
+    const { scoped, visible } = scopeFleet(
+      [working, waiting],
+      [station()],
+      emptyFilter,
+      'needs_you',
+    );
+    expect(ids(visible)).toEqual(['n']);
+    expect(ids(scoped)).toEqual(['w', 'n']);
+    const glance = renderToStaticMarkup(
+      <UsageGlance sessions={scoped} stations={[station()]} now={NOW} />,
+    );
+    expect(glance).toContain('<span class="fd-glance-pct">42%</span>');
+  });
+
+  test('the header says Nothing needs you, not All clear, next to a conflict', () => {
+    expect(clearText(0)).toBe('All clear');
+    expect(clearText(1)).toBe('Nothing needs you');
+    expect(clearText(3)).toBe('Nothing needs you');
+  });
+
   test('the desktop header has the status segments and, with nothing waiting, the bell slot', () => {
     const html = home([card('a')]);
     expect(html).toContain('<div class="fd-seg fd-home-status" role="group" aria-label="Status">');
@@ -331,7 +371,7 @@ describe('flight deck fixes', () => {
     expect(phone).not.toContain('fd-home-bell');
   });
 
-  test('wide, the ops panel has a Mail & tasks section and Activity, Assign and Usage foot buttons', () => {
+  test('wide, the ops panel has a Mail & tasks section and Activity, Assign and All usage foot buttons', () => {
     const actions: FleetActions = {
       mail: async () => ({ ok: true, text: '' }),
       task: async () => ({ ok: true, text: '' }),
@@ -373,6 +413,7 @@ describe('flight deck fixes', () => {
     expect(html).toContain('</svg> Activity</button>');
     expect(html).toContain('</svg> Assign</button>');
     // The glance shows only the tightest meters: the foot keeps the full Usage panel.
-    expect(html).toContain('</svg> Usage</button>');
+    // The Usage section above names the glance: the foot button says All usage.
+    expect(html).toContain('</svg> All usage</button>');
   });
 });
