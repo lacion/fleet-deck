@@ -150,20 +150,69 @@ const diffListeners = new Set<() => void>();
 // The changed paths of the same session diff (patch order), for the Properties panel.
 const diffPaths = new Map<string, readonly string[]>();
 
+// The sessions whose paths come from a full session diff: a turn diff or the Files list then adds
+// nothing (the full result is the truth, also when it is empty).
+const diffFull = new Set<string>();
+
+// The changed paths of each loaded turn diff, by session and turn id: a changed file of the
+// Properties panel opens the turn diff that lists it when the session has no spawn base.
+const turnPaths = new Map<string, ReadonlyMap<string, readonly string[]>>();
+
 /** Records the size (and the changed paths, when known) of a session diff that the Changes tab loaded. */
 export function setDiffTotal(ref: string, summary: DiffSummary, paths?: readonly string[]): void {
   diffTotals.set(ref, summary);
-  if (paths === undefined) diffPaths.delete(ref);
-  else diffPaths.set(ref, paths);
+  if (paths === undefined) {
+    diffPaths.delete(ref);
+    diffFull.delete(ref);
+  } else {
+    diffPaths.set(ref, paths);
+    diffFull.add(ref);
+  }
   for (const l of diffListeners) l();
+}
+
+/**
+ * Replaces the changed paths of a session with those of a full session diff, also an empty list
+ * (a clean diff). A turn diff or the Files list adds nothing after it.
+ */
+export function replaceDiffPaths(ref: string, paths: readonly string[]): void {
+  diffPaths.set(ref, paths);
+  diffFull.add(ref);
+  for (const l of diffListeners) l();
+}
+
+/** Records the changed paths of a loaded turn diff of a session. */
+export function setTurnPaths(ref: string, turnId: string, paths: readonly string[]): void {
+  const next = new Map(turnPaths.get(ref));
+  next.set(turnId, paths);
+  turnPaths.set(ref, next);
+  for (const l of diffListeners) l();
+}
+
+/** The changed paths of each loaded turn diff of one session (by turn id), or `undefined`. */
+export function turnPathsOf(ref: string): ReadonlyMap<string, readonly string[]> | undefined {
+  return turnPaths.get(ref);
+}
+
+/** `turnPathsOf` as a hook; it re-renders when a turn diff loads. */
+export function useTurnPaths(ref: string): ReadonlyMap<string, readonly string[]> | undefined {
+  return useSyncExternalStore(
+    (l) => {
+      diffListeners.add(l);
+      return () => diffListeners.delete(l);
+    },
+    () => turnPaths.get(ref),
+    () => turnPaths.get(ref),
+  );
 }
 
 /**
  * Adds the changed paths of a diff that only shows a part of the session (a turn diff, the Files
  * "changed" list) to the paths of a session: the known paths first, then the new ones in patch
- * order. Nothing new: no notice.
+ * order. Nothing new, or a full session diff already gave the paths: no notice.
  */
 export function mergeDiffPaths(ref: string, paths: readonly string[]): void {
+  if (diffFull.has(ref)) return;
   const known = diffPaths.get(ref) ?? [];
   const added = paths.filter((p, i) => !known.includes(p) && paths.indexOf(p) === i);
   if (added.length === 0) return;

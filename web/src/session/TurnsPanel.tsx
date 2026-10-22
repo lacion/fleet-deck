@@ -15,7 +15,7 @@ import { ReviewBar } from '../review/ReviewBar';
 import { ChevronRight, Icon } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { BranchesView } from './BranchesView';
-import { changedPaths } from './changedFiles';
+import { allChangedPaths, turnForPath } from './changedFiles';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
 import {
@@ -25,6 +25,8 @@ import {
   revertHolds,
   revertText,
   setDiffTotal,
+  setTurnPaths,
+  turnPathsOf,
 } from './workspace';
 
 type Props = {
@@ -160,6 +162,16 @@ export function SinceNotes({
   );
 }
 
+/** The file header of `path` inside `root` gets the scroll and the focus; `true` when it has them. */
+function focusFileHead(root: HTMLElement | null | undefined, path: string): boolean {
+  const heads = root?.querySelectorAll<HTMLElement>('.fd-dl-file') ?? [];
+  const head = [...heads].find((h) => h.getAttribute('aria-label') === path);
+  if (head === undefined) return false;
+  head.scrollIntoView({ block: 'start' });
+  head.focus({ preventScroll: true });
+  return document.activeElement === head;
+}
+
 /** The working tree of the session against its base commit, with review comments (R1.2, DL-179). */
 function SinceSpawn({
   summary,
@@ -199,7 +211,7 @@ function SinceSpawn({
       (diff) => {
         if (!live) return;
         setState({ diff, error: null });
-        setDiffTotal(ref, diff.summary, changedPaths(diff.patch));
+        setDiffTotal(ref, diff.summary, allChangedPaths(diff.patch));
       },
       (e: unknown) => {
         if (live) {
@@ -221,12 +233,7 @@ function SinceSpawn({
   // The file header of the requested file (its button names the path) gets the focus.
   useEffect(() => {
     if (diff === null || target === undefined) return;
-    const heads = box.current?.querySelectorAll<HTMLElement>('.fd-dl-file') ?? [];
-    const head = [...heads].find((h) => h.getAttribute('aria-label') === target.path);
-    if (head === undefined) return;
-    head.scrollIntoView({ block: 'start' });
-    head.focus({ preventScroll: true });
-    if (document.activeElement === head) onTargetShown?.();
+    if (focusFileHead(box.current, target.path)) onTargetShown?.();
   }, [diff, shown]);
   return (
     <div className="fd-since" data-view="spawn" ref={box}>
@@ -349,14 +356,13 @@ export function TurnsPanel(props: Props) {
   const files = actions?.files ?? null;
   const flight = useRef(new DiffFlight());
   const [, setFlights] = useState(0);
-  // A file request of the Properties panel opens "Since spawn" on that file.
+  // A file request of the Properties panel opens "Since spawn" on that file; without a spawn base
+  // it opens the newest turn diff that lists the file (`targetTurn`).
   const [target, setTarget] = useState<FileRequest>();
+  const [targetTurn, setTargetTurn] = useState<string>();
   const request = props.fileRequest;
-  useEffect(() => {
-    if (request === undefined) return;
-    setTarget(request);
-    if (hasBase) setChosen('spawn');
-  }, [request?.seq]);
+  const turnsBox = useRef<HTMLOListElement>(null);
+  const stationRef = station === undefined ? undefined : sessionRef(station, summary.session_id);
   const showDiff = (turnId: string) => {
     if (!files) return;
     const started = flight.current.start(turnId);
@@ -385,11 +391,10 @@ export function TurnsPanel(props: Props) {
       setFlights((n) => n + 1);
       // §4.5: the files of a kept turn also list in the Changes row of the Properties panel.
       if (typeof shown !== 'string' && station !== undefined) {
-        mergeTurnPaths(
-          sessionRef(station, summary.session_id),
-          turn,
-          changedPaths(shown.diff.patch),
-        );
+        const paths = allChangedPaths(shown.diff.patch);
+        const key = sessionRef(station, summary.session_id);
+        mergeTurnPaths(key, turn, paths);
+        if (turn?.reverted !== true) setTurnPaths(key, turnId, paths);
       }
     };
     load.then(settle, (e: unknown) =>
@@ -409,6 +414,24 @@ export function TurnsPanel(props: Props) {
   latest.current = showDiff;
   const turnList = useRef(turns);
   turnList.current = turns;
+  useEffect(() => {
+    if (request === undefined) return;
+    if (hasBase) {
+      setTarget(request);
+      setTargetTurn(undefined);
+      setChosen('spawn');
+      return;
+    }
+    const turn =
+      stationRef === undefined
+        ? undefined
+        : turnForPath(turnList.current, turnPathsOf(stationRef), request.path);
+    if (turn === undefined) return;
+    setTarget(request);
+    setTargetTurn(turn.turnId);
+    setChosen('turns');
+    if (!diffOpen(diffs[turn.turnId])) latest.current(turn.turnId);
+  }, [request?.seq]);
   const focusNonce = review?.focus?.nonce;
   const focusThread = review?.focus?.threadId;
   const threadList = review?.state.data?.threads;
@@ -443,6 +466,19 @@ export function TurnsPanel(props: Props) {
   ];
   const fallback: View = hasBase && summary.base?.inferred !== true ? 'spawn' : 'turns';
   const view: View = chosen !== null && views.includes(chosen) ? chosen : fallback;
+  // The requested turn diff shows: its file header gets the scroll and the focus (a failed load
+  // spends the request).
+  const targetDiff = targetTurn === undefined ? undefined : diffs[targetTurn];
+  useEffect(() => {
+    if (target === undefined || targetTurn === undefined || view !== 'turns') return;
+    if (typeof targetDiff === 'string') {
+      setTarget(undefined);
+      return;
+    }
+    if (targetDiff === undefined) return;
+    const item = turnsBox.current?.querySelector<HTMLElement>(`li[data-turn="${targetTurn}"]`);
+    if (focusFileHead(item, target.path)) setTarget(undefined);
+  }, [targetDiff, target?.seq, view]);
   if (turns.length === 0 && !hasBase && !hasBranches) return null;
   const toggle =
     views.length >= 2 ? (
@@ -509,7 +545,7 @@ export function TurnsPanel(props: Props) {
           This provider cannot roll back its conversation, so the board offers no revert.
         </p>
       )}
-      <ol>
+      <ol ref={turnsBox}>
         {turns.map((t, i) => {
           const block = revertBlock(t, summary, caps);
           const diff = diffs[t.turnId];

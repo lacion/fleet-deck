@@ -13,15 +13,16 @@ import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { homeShort } from './CopyButton';
-import { loadChanged } from './changedFiles';
+import { loadSessionChanges, turnForPath } from './changedFiles';
 import { StatusFact } from './HeaderBadges';
 import { runningSubagents } from './timeline';
 import {
   type FileActions,
   type FinalizedTurn,
-  mergeDiffPaths,
+  replaceDiffPaths,
   useDiffPaths,
   useDiffTotal,
+  useTurnPaths,
 } from './workspace';
 
 // The open state lives for the page: every session opens the panel the way the last one left it.
@@ -135,9 +136,12 @@ export const PROPS_FILES_MAX = 5;
 export function ChangedList({
   paths,
   onOpen,
+  opens,
 }: {
   readonly paths: readonly string[] | undefined;
   readonly onOpen: (path: string) => void;
+  /** A file that no diff can open shows as plain text; absent: every file opens. */
+  readonly opens?: ((path: string) => boolean) | undefined;
 }) {
   if (paths === undefined || paths.length === 0) return null;
   const more = paths.length - PROPS_FILES_MAX;
@@ -145,12 +149,18 @@ export function ChangedList({
     <ul className="fd-props-files" aria-label="Changed files">
       {paths.slice(0, PROPS_FILES_MAX).map((path) => (
         <li key={path}>
-          <button type="button" className="fd-ghost" title={path} onClick={() => onOpen(path)}>
-            <code className="fd-props-file">
+          {opens === undefined || opens(path) ? (
+            <button type="button" className="fd-ghost" title={path} onClick={() => onOpen(path)}>
+              <code className="fd-props-file">
+                <PathTail path={path} />
+              </code>
+              <Icon of={ChevronRight} size={14} />
+            </button>
+          ) : (
+            <code className="fd-props-file" title={path}>
               <PathTail path={path} />
             </code>
-            <Icon of={ChevronRight} size={14} />
-          </button>
+          )}
         </li>
       ))}
       {more > 0 ? <li className="fd-props-more">+{more} more</li> : null}
@@ -177,8 +187,9 @@ function useChangedPaths(ref: string, files: FileActions | null | undefined, tur
     const current = latest.current;
     if (!has || !current) return undefined;
     let live = true;
-    void loadChanged(current).then((found) => {
-      if (live && found !== null) mergeDiffPaths(ref, found.paths);
+    // A read of the full session diff replaces the paths, an empty result too.
+    void loadSessionChanges(current).then((found) => {
+      if (live && found !== null) replaceDiffPaths(ref, found.all);
     });
     return () => {
       live = false;
@@ -204,6 +215,10 @@ export function PropertiesPanel({
   useChangedPaths(ref, files, turns.length);
   const total = changeTotal(useDiffTotal(ref), turns);
   const paths = useDiffPaths(ref);
+  // Without a spawn base only a file that a loaded turn diff lists opens (that turn's diff).
+  const turnPaths = useTurnPaths(ref);
+  const hasBase = Boolean(s.base);
+  const opens = (path: string) => hasBase || turnForPath(turns, turnPaths, path) !== undefined;
   const { input_tokens: input, output_tokens: output } = s.usage;
   const cost = costText(s.usage);
   const meters = rateMeters([session], stations);
@@ -275,7 +290,7 @@ export function PropertiesPanel({
                 <span className="fd-props-aside">
                   {total.files_changed} {total.files_changed === 1 ? 'file' : 'files'}
                 </span>
-                <ChangedList paths={paths} onOpen={onOpenChange} />
+                <ChangedList paths={paths} onOpen={onOpenChange} opens={opens} />
               </>
             )}
           </Row>

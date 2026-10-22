@@ -1,9 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionDiff } from '../gen';
-import { CHANGED_FILES_MAX, changedFiles, changedPaths, loadChanged } from './changedFiles';
+import {
+  allChangedPaths,
+  CHANGED_FILES_MAX,
+  changedFiles,
+  changedPaths,
+  loadChanged,
+  loadSessionChanges,
+  turnForPath,
+} from './changedFiles';
 import { ChangedFilesList } from './FilesPanel';
-import type { FileActions } from './workspace';
+import type { FileActions, FinalizedTurn } from './workspace';
 
 const header = (a: string, b = a) => `diff --git a/${a} b/${b}\n`;
 
@@ -168,5 +176,63 @@ describe('the changed files section', () => {
   test('the cut line shows only when truncated', () => {
     expect(html(true)).toContain('More changes than shown.');
     expect(html(false)).not.toContain('More changes than shown.');
+  });
+});
+
+describe('all changed paths for diff navigation', () => {
+  const deleteOnly = `${header('gone.rs')}deleted file mode 100644\nindex 1..0\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n`;
+
+  test('a delete-only patch lists its file; changedPaths still leaves it out', () => {
+    expect(allChangedPaths(deleteOnly)).toEqual(['gone.rs']);
+    expect(changedPaths(deleteOnly)).toEqual([]);
+  });
+
+  test('every header in patch order, once, with deleted files among them', () => {
+    expect(allChangedPaths(`${patch}${deleteOnly}${header('src/a.ts')}`)).toEqual([
+      'src/a.ts',
+      'docs/new.md',
+      'moved/name.rs',
+      'gone.rs',
+    ]);
+    expect(allChangedPaths('')).toEqual([]);
+  });
+
+  test('a clean session diff gives an empty list, an error gives none', async () => {
+    const clean = await loadSessionChanges(actions(async () => diff({ patch: '' })));
+    expect(clean).toEqual({ changed: null, all: [] });
+    const gone = await loadSessionChanges(actions(async () => diff({ patch: deleteOnly })));
+    expect(gone).toEqual({ changed: null, all: ['gone.rs'] });
+    const failed = actions(async () => {
+      throw new Error('refused');
+    });
+    expect(await loadSessionChanges(failed)).toBeNull();
+  });
+});
+
+describe('the turn that a changed file opens without a spawn base', () => {
+  const turn = (turnId: string, reverted = false): FinalizedTurn => ({
+    turnId,
+    start: null,
+    end: null,
+    diff: { files_changed: 1, insertions: 1, deletions: 0 },
+    reverted,
+  });
+  const turns = [turn('t1'), turn('t2'), turn('t3', true)];
+  const byTurn = new Map<string, readonly string[]>([
+    ['t1', ['a.ts', 'b.ts']],
+    ['t2', ['b.ts']],
+    ['t3', ['c.ts']],
+  ]);
+
+  test('the newest turn whose patch lists the path', () => {
+    expect(turnForPath(turns, byTurn, 'b.ts')?.turnId).toBe('t2');
+    expect(turnForPath(turns, byTurn, 'a.ts')?.turnId).toBe('t1');
+  });
+
+  test('an unknown path, a reverted turn or no loaded diff: no turn (not a link)', () => {
+    expect(turnForPath(turns, byTurn, 'unknown.ts')).toBeUndefined();
+    expect(turnForPath(turns, byTurn, 'c.ts')).toBeUndefined();
+    expect(turnForPath(turns, undefined, 'a.ts')).toBeUndefined();
+    expect(turnForPath([], byTurn, 'a.ts')).toBeUndefined();
   });
 });

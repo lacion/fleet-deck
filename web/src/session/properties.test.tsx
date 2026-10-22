@@ -160,6 +160,19 @@ describe('properties panel changed files (§4.5)', () => {
     expect(html).toContain('<li class="fd-props-more">+2 more</li>');
     expect(list(paths.slice(0, 5))).not.toContain('more');
   });
+
+  test('a file that no diff opens is plain text, not a button', () => {
+    const html = renderToStaticMarkup(
+      <ChangedList
+        paths={['src/open.ts', 'src/plain.ts']}
+        onOpen={() => {}}
+        opens={(p) => p === 'src/open.ts'}
+      />,
+    );
+    expect(html.match(/<button /g)?.length).toBe(1);
+    expect(html).toContain('<bdi>src/plain.ts</bdi>');
+    expect(html).toContain('title="src/open.ts"');
+  });
 });
 
 describe('composer model chip (§4.5)', () => {

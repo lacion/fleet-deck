@@ -1,4 +1,4 @@
-import type { FileActions } from './workspace';
+import type { FileActions, FinalizedTurn } from './workspace';
 
 /** The most paths the Files panel lists as changed. */
 export const CHANGED_FILES_MAX = 50;
@@ -90,13 +90,62 @@ export function changedPaths(patch: string, max = CHANGED_FILES_MAX): string[] {
   return changedFiles(patch, max).paths;
 }
 
-/** The session diff of `files` as a list of changed files; an error or no change: `null`. */
-export async function loadChanged(files: FileActions): Promise<ChangedFiles | null> {
+/**
+ * All changed paths of a patch for diff navigation: the `b/` path of each header in patch order,
+ * at most `max`. A deleted file is included (`changedPaths` leaves it out: it cannot be opened).
+ */
+export function allChangedPaths(patch: string, max = CHANGED_FILES_MAX): string[] {
+  const found = new Set<string>();
+  for (const line of patch.split('\n')) {
+    const path = headerPath(line);
+    if (path === null || found.has(path)) continue;
+    if (found.size >= max) break;
+    found.add(path);
+  }
+  return [...found];
+}
+
+/** What one read of the session diff says: the openable files, and every changed path. */
+export interface SessionChanges {
+  /** The files for the Files browser (readable files only); `null` when the diff has none. */
+  readonly changed: ChangedFiles | null;
+  /** Every changed path for diff navigation (deleted files too); empty when the diff is clean. */
+  readonly all: readonly string[];
+}
+
+/** Reads the session diff of `files` once; an error: `null`. */
+export async function loadSessionChanges(files: FileActions): Promise<SessionChanges | null> {
   try {
     const diff = await files.sessionDiff();
     const { paths, changes } = changedFiles(diff.patch);
-    return paths.length === 0 ? null : { paths, changes, truncated: diff.truncated };
+    return {
+      changed: paths.length === 0 ? null : { paths, changes, truncated: diff.truncated },
+      all: allChangedPaths(diff.patch),
+    };
   } catch {
     return null;
   }
+}
+
+/** The session diff of `files` as a list of changed files; an error or no change: `null`. */
+export async function loadChanged(files: FileActions): Promise<ChangedFiles | null> {
+  return (await loadSessionChanges(files))?.changed ?? null;
+}
+
+/**
+ * The turn that a changed file of the Properties panel opens when the session has no spawn base:
+ * the newest kept turn whose loaded patch lists `path`. `byTurn` holds the paths of each loaded
+ * turn diff (by turn id). No such turn: `undefined` (the file is not a link).
+ */
+export function turnForPath(
+  turns: readonly FinalizedTurn[],
+  byTurn: ReadonlyMap<string, readonly string[]> | undefined,
+  path: string,
+): FinalizedTurn | undefined {
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const turn = turns[i];
+    if (turn === undefined || turn.reverted) continue;
+    if (byTurn?.get(turn.turnId)?.includes(path) === true) return turn;
+  }
+  return undefined;
 }
