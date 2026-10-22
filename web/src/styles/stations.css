@@ -306,7 +306,8 @@
 }
 
 /* The session slots: "3 of 12 sessions" with the .fd-slots meter (base.css); a station with
-   more than 24 slots shows a plain bar. */
+   more than 24 slots shows a neutral .fd-meter (base.css). The count has a fixed width, so the
+   meters of the cards line up. */
 .fd-station-load {
   display: inline-flex;
   align-items: center;
@@ -318,16 +319,14 @@
   white-space: nowrap;
 }
 
-.fd-station-load .fd-load-bar {
+.fd-station-load > .fd-meter {
+  flex: none;
   width: 72px;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
 }
 
-.fd-station-load .fd-load-bar > span,
-.fd-station-load .fd-load-bar > span[data-high] {
-  background: var(--ok);
+.fd-station-load-count {
+  min-width: 7.5em;
+  text-align: right;
 }
 
 .fd-station-menu {
@@ -481,22 +480,6 @@
   min-height: 28px;
   color: var(--dim);
   font-size: var(--fs-meta);
-}
-
-.fd-station-res .fd-load-bar {
-  width: 56px;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-}
-
-.fd-station-res .fd-load-bar > span {
-  background: var(--dim);
-  border-radius: inherit;
-}
-
-.fd-station-res .fd-load-bar > span[data-high] {
-  background: var(--act);
 }
 
 .fd-station-res li[data-low] > span:last-child {
@@ -980,6 +963,10 @@
   .fd-station-load {
     order: 3;
     margin-left: 0;
+  }
+
+  .fd-station-load-count {
+    min-width: 0;
   }
 
   /* The menu stays on the name line; the slots and the meta take the second line. */

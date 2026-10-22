@@ -7,7 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
-import { ChevronRight, Globe, Icon, type LucideIcon, Send, X } from '../ui/icons';
+import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Send, X } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -158,7 +158,8 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
         {view === 'start' ? null : (
           <div className="fd-add-back">
             <button type="button" className="fd-ghost fd-sm" onClick={back}>
-              ← Back
+              <Icon of={ChevronLeft} />
+              Back
             </button>
           </div>
         )}
