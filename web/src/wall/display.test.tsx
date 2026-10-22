@@ -474,7 +474,7 @@ describe('the wall for a display login', () => {
 
   test('the station row shows the load, the memory and the fullest disk in one short line', () => {
     const html = wall({});
-    expect(html).toContain('CPU 2.5/8 · Mem 8.0/16.0 GB · Disk 40.0/100.0 GB free');
+    expect(html).toContain('CPU 2.5/8 · Mem 8.0/16.0 GB · Disk 40.0 GB free');
   });
 
   test('the side area reads the same resources', () => {
