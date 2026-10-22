@@ -57,6 +57,10 @@ const KIND_ICON = {
   lifecycle: Play,
 } as const;
 
+/** The repository without its forge host: "github.com/lacion/fleet-deck" → "lacion/fleet-deck". A
+ * first part without a dot is not a host and stays. */
+const repoLabel = (repo: string) => repo.replace(/^[^/]*\.[^/]*\//, '');
+
 function Row({
   item,
   now,
@@ -85,7 +89,15 @@ function Row({
         <span className="fd-arow-text">{item.text}</span>
       </span>
       <span className="fd-arow-meta">
-        <span title={stationName(item.station_id, stations)}>{item.repo ?? ''}</span>
+        <span
+          title={
+            item.repo === null
+              ? stationName(item.station_id, stations)
+              : `${item.repo} on ${stationName(item.station_id, stations)}`
+          }
+        >
+          {item.repo === null ? '' : repoLabel(item.repo)}
+        </span>
         <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>
       </span>
     </li>

@@ -24,6 +24,79 @@
   font-size: var(--fs-meta);
 }
 
+/* A hovered row has the --raised fill of a plain button: its plain buttons step up one more. */
+.fd-int-projects tbody tr:hover .fd-cell-actions > button:not(.fd-ghost):not(.fd-danger) {
+  background: var(--raised-hi);
+}
+.fd-int-projects
+  tbody
+  tr:hover
+  .fd-cell-actions
+  > button:not(.fd-ghost):not(.fd-danger):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--raised-hi) 60%, var(--border));
+}
+
+/* A phone: each project is a compact card without column labels (each value says what it is):
+   the name, one meta line "Lighting · /home/me/projects/fleet-deck", the forge and tracker
+   badges, then the actions. An empty cell is absent (page.css hides a td:empty). */
+@media (max-width: 640px) {
+  .fd-int-projects tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-1) var(--sp-2);
+  }
+  .fd-int-projects td,
+  .fd-tablepanel .fd-int-projects td:first-child,
+  .fd-tablepanel .fd-int-projects td:last-child {
+    padding: 0;
+  }
+  .fd-int-projects td[data-label]::before {
+    content: none;
+  }
+  .fd-int-projects td.fd-cell-name,
+  .fd-int-projects td.fd-cell-actions,
+  .fd-int-projects td[colspan] {
+    flex: 1 1 100%;
+  }
+  .fd-int-projects td[data-label="Station"] {
+    flex: none;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-int-projects td[data-label="Folder"] {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .fd-int-projects td[data-label="Station"] + td[data-label="Folder"]::before {
+    content: "·";
+    display: inline;
+    margin-right: var(--sp-2);
+    color: var(--faint);
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+    font-weight: 400;
+  }
+  /* A line break after the meta line: the badges start a line of their own. */
+  .fd-int-projects tr::after {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+    order: 2;
+  }
+  .fd-int-projects td[data-label="Forge"],
+  .fd-int-projects td[data-label="Trackers"] {
+    flex: none;
+    max-width: 100%;
+    order: 3;
+  }
+  .fd-int-projects td.fd-cell-actions,
+  .fd-int-projects td[colspan] {
+    order: 4;
+    margin-top: var(--sp-1);
+  }
+}
+
 .fd-int-form {
   display: grid;
   gap: var(--sp-3);
