@@ -292,15 +292,16 @@ a.fd-btn {
   background: color-mix(in srgb, var(--act-fill) 88%, var(--text));
   border-color: transparent;
 }
+/* background-color, not the shorthand: a ghost select keeps its chevron (a background image). */
 .fd-ghost,
 .fd-iconbtn {
-  background: transparent;
+  background-color: transparent;
   border-color: transparent;
   color: var(--dim);
 }
 .fd-ghost:hover:not(:disabled),
 .fd-iconbtn:hover:not(:disabled) {
-  background: var(--raised);
+  background-color: var(--raised);
   border-color: transparent;
   color: var(--text);
 }
@@ -313,6 +314,20 @@ a.fd-btn {
   border-color: transparent;
   color: var(--hazard);
 }
+/* On a --raised layer (the session header strip, the composer, a chat code block, the approval
+   dock, a turn strip, a dialog) the --raised hover is the fill of the layer (1:1): the hover is
+   --badge-bg there (--raised-hi dark, --border-soft light). The layer list is :where() and the
+   specificity equals the hover above (0,3,0), so an area rule for one button still wins; a
+   pressed toggle and the primary, decide and danger variants keep their own hover. */
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+:where(.fd-ghost, .fd-iconbtn):not(
+  [aria-pressed="true"],
+  .fd-primary,
+  .fd-decide,
+  .fd-danger
+):hover:not(:disabled) {
+  background-color: var(--badge-bg);
+}
 .fd-sm {
   height: var(--ctl-h-sm);
   padding: 0 8px;
@@ -321,6 +336,25 @@ a.fd-btn {
 /* A select keeps room for its chevron when .fd-sm sets the padding of a button. */
 :where(select:not([multiple]):not([size])).fd-sm {
   padding-right: 28px;
+}
+/* A ghost select (the fleet Group by): a quiet view option in a page header. No fill and no edge
+   at rest; on hover the --raised fill, the --ctl-edge edge (3:1) and --text; on focus the
+   --focus edge of every field. Only the background color changes: the chevron is the background
+   image. Forced colors give it an edge (below). */
+select.fd-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+select.fd-ghost:hover:not(:disabled) {
+  background-color: var(--raised);
+  border-color: var(--ctl-edge);
+  color: var(--text);
+}
+select.fd-ghost:focus,
+select.fd-ghost:focus:hover:not(:disabled) {
+  border-color: var(--focus);
+  color: var(--text);
 }
 .fd-iconbtn {
   width: var(--ctl-h);
@@ -1114,6 +1148,15 @@ details[open] > summary[data-variant="toggle"]::after {
   border-color: transparent;
   color: var(--text);
 }
+/* A ghost or icon summary on a --raised layer: hover and open --badge-bg (see .fd-ghost). */
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+  .fd-menu
+  > summary:is(.fd-ghost, .fd-iconbtn):hover,
+:where(.fd-sh, .fd-composer, .fd-md-code, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"])
+  .fd-menu[open]
+  > summary:is(.fd-ghost, .fd-iconbtn) {
+  background: var(--badge-bg);
+}
 .fd-menu > summary.fd-iconbtn.fd-sm {
   width: var(--ctl-h-sm);
   height: var(--ctl-h-sm);
@@ -1377,6 +1420,30 @@ details[open] > summary[data-variant="toggle"]::after {
   .fd-avatar {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
+  }
+  /* The general and the decision primary keep a solid fill (one primary per decision): forced
+     colors drop the fill, and Allow looked like Deny. Ink on button face; not Highlight, which
+     marks the selection and the focus. */
+  :is(.fd-primary, .fd-decide):not(:disabled),
+  :is(.fd-primary, .fd-decide):hover:not(:disabled),
+  .fd-menu-body > button.fd-primary:not(:disabled),
+  .fd-menu-body > button.fd-primary:hover:not(:disabled) {
+    forced-color-adjust: none;
+    background: ButtonText;
+    color: ButtonFace;
+    border-color: ButtonText;
+  }
+  :is(.fd-primary, .fd-decide):focus-visible {
+    outline-color: Highlight;
+  }
+  :is(.fd-primary, .fd-decide) > .fd-kbd {
+    forced-color-adjust: none;
+    color: ButtonFace;
+    outline-color: ButtonFace;
+  }
+  /* A ghost select has no edge at rest: forced colors give it the edge of a control. */
+  select.fd-ghost {
+    border-color: ButtonText;
   }
   /* A checked checkbox or radio: forced colors drop the ink fill, and the mark (a mask on a
      background color) would take the Canvas color. Draw both in Highlight / HighlightText. */

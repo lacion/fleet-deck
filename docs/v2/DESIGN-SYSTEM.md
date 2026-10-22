@@ -110,7 +110,9 @@ Fonts are bundled (offline LAN rule, DL-141): `@fontsource-variable/mona-sans/st
 | `--fs-page` *(new)* | 20px: page title (wide, weight 640, letter-spacing −0.01em) |
 | `--fs-hero` *(new)* | 26px: phone large title |
 | `--fs-display` *(new)* | 56px: display numbers read across a room (wall ambient counts, the pairing code) |
-| `--fs-12`, `--fs-13`, `--fs-15`, `--fs-18`, `--fs-24` | 12, 13, 15, 18, 24 px (kept for old CSS) |
+| `--fs-sheet-title` *(new)* | 18px: the title field of the New session sheet (§4.6, weight 600) |
+| `--fs-sheet-task` *(new)* | 15px: the task field of the New session sheet (§4.6); the rule is `max(var(--fs-sheet-task), var(--fs-field))`, so a touch screen gets 16px |
+| `--fs-12`, `--fs-13`, `--fs-15`, `--fs-18`, `--fs-24` | 12, 13, 15, 18, 24 px (kept for old CSS; new CSS uses a semantic token, and adds one when no token has the meaning) |
 
 Width utilities (in `base.css`):
 
@@ -159,9 +161,10 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | Primitive | Look |
 | --- | --- |
 | `button` (bare) | `--ctl-h`, padding 0 10px, `--raised` fill, no border, `--r-ctl`, 13px weight 500, `--text`; hover `--raised-hi`; focus-visible 2px `--focus` outline offset 2px; disabled opacity .45. A plain button (no class, or only `.fd-sm`) in a `.fd-panel` has a `--btn-edge` edge; in a dialog (`.fd-dialog`, `[role=dialog]`, a `--raised` layer) a `--btn-edge-raised` edge. An area rule gives a plain button on another `--raised` surface (a strip, a card) the `--btn-edge-raised` edge |
-| `.fd-primary` | **general primary**: `--ink-fill`, `--ink-on` text, weight 600 |
-| `.fd-decide` *(new)* | **decision primary**: `--act-fill`, `--act-ink`, weight 600 |
-| `.fd-ghost` | transparent, `--dim`; hover `--raised` + `--text` |
+| `.fd-primary` | **general primary**: `--ink-fill`, `--ink-on` text, weight 600; forced colors: a `ButtonText` fill with `ButtonFace` text |
+| `.fd-decide` *(new)* | **decision primary**: `--act-fill`, `--act-ink`, weight 600; forced colors: the same solid `ButtonText` fill as `.fd-primary` |
+| `.fd-ghost` | transparent, `--dim`; hover `--raised` + `--text`. On a `--raised` layer (`.fd-sh`, `.fd-composer`, `.fd-md-code`, `.fd-q-dock`, `.fd-turn`, `.fd-dialog`, `[role=dialog]`), hover `--badge-bg`: there the `--raised` hover is the fill of the layer (1:1). The same holds for `.fd-iconbtn` and the ghost and icon menu summaries (hover and open); a pressed toggle and the `.fd-primary`, `.fd-decide` and `.fd-danger` variants keep their own hover |
+| `select.fd-ghost` *(new)* | a quiet select for a view option in a page header (the fleet Group by): transparent fill and edge, `--dim`; hover `--raised` + a `--ctl-edge` edge + `--text`; focus the `--focus` edge of every field; forced colors a `ButtonText` edge. Only the background color changes (the chevron is the background image). Use it with `.fd-sm`; an area file never restyles a select into a ghost |
 | `.fd-danger` | transparent, `--hazard` text; hover `--hazard-bg` |
 | `.fd-sm` | 24px, padding 0 8px, 12px; on a `<select>` the padding-right stays 28px (the chevron) |
 | `.fd-iconbtn` | square ghost (28 or 24), icon 16px. A toggle (`aria-pressed=true`, a panel toggle, compact cards) looks like a pressed segment: `--pressed-bg` fill + a 1px inset `--ctl-edge` ring + `--shadow-lift` + `--text` |
@@ -229,7 +232,7 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 
 ### 4.3 Page header
 
-48px bar (`--header-h`), `--bg`, bottom 1px `--border-soft`: page title (`--fs-page` `.fd-wide`) + one summary sentence in `--dim` (`7 sessions on 3 stations. 2 need you.` with "2 need you" in `--act`), filters as `.fd-seg` at the right, then view options. No boxed toolbars. The `Page` component has a `filters` slot (`.fd-page-filters`) before the actions; a narrow column wraps it under the title, and a phone gives it a full row.
+48px bar (`--header-h`), `--bg`, bottom 1px `--border-soft`: page title (`--fs-page` `.fd-wide`) + one summary sentence in `--dim` (`7 sessions on 3 stations. 2 need you.` with "2 need you" in `--act`), filters as `.fd-seg` at the right, then view options (a view option select is `select.fd-ghost.fd-sm`). No boxed toolbars. The `Page` component has a `filters` slot (`.fd-page-filters`) before the actions; a narrow column wraps it under the title, and a phone gives it a full row.
 
 Narrow main columns (the fleet home header): under 1100px the search folds to its icon until it has focus or text, and Share board shows its icon only (the text stays as the accessible name); between 841 and 960px the sentence drops "on N stations", and a "Nothing needs you." next to a conflict (the calm part goes first, so the conflict stays readable); under 840px the controls take a second header row.
 
@@ -269,8 +272,8 @@ Narrow main columns (the fleet home header): under 1100px the search folds to it
 
 The `#/new` route keeps its URL and its form. It renders a centered **sheet** (max 720px, `--raised`, `--r-sheet`, `--shadow-pop`, 24px padding) on the page canvas (`--bg`; dim with `--scrim` only when a page is behind the sheet):
 
-1. A title input without a border (18px weight 600, "Session title (optional)").
-2. The task textarea without a border (15px, 6 lines, "What should the agent do?"); the batch hint under it.
+1. A title input without a border (18px `--fs-sheet-title` weight 600, "Session title (optional)").
+2. The task textarea without a border (15px `--fs-sheet-task`, 16px on touch, 6 lines, "What should the agent do?"); the batch hint under it.
 3. Property rows (label 12px `--dim` at the left, 72px): **Agent**: provider `.fd-seg` (with instance limits, R4.3, the segments stack and the limit sits right-aligned in `--dim` 12px), model select pill and permission mode select pill, each with a leading 14px icon (sparkles: model, shield: mode) (Bypass shows a `--hazard` hint "Runs every tool without asking"); **Station**: station radio pills (name, reach dot, "9 free"); **Where**: workspace `.fd-seg`, directory input (mono) + Browse…
 4. "More options" disclosure.
 5. Footer (top rule): Batch switch, then at the right Cancel (ghost) and **Start session** (`.fd-primary`, kbd ⌘↵).
@@ -303,7 +306,7 @@ Sentence case; plain verbs; one name per action across a flow (Allow → "Allowe
 
 ## 6. Accessibility floor
 
-Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette (`ui/palette.ts` computes the palette tokens and steps them until they pass); focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`); gives a `Highlight` ring to the pressed segment, chip and toggle (any `aria-pressed=true` button), the selected tab (`[role=tab][aria-selected=true]`), the selected option of a list box (`[role=option][aria-selected=true]`), the current nav or session row (`[aria-current=page]`), the current subagent row (`[aria-current=true]`) and the needs-you keyboard cursor (`.fd-q[data-selected=true]`); draws the switch and a checked checkbox or radio in `Highlight`/`HighlightText`; draws the summary chevron in `CanvasText` and the select chevron as an `url()` image; and gives key hints, badges, counts and the avatar a 1px `CanvasText` edge. An area part whose edge or selection is only a `box-shadow` or a fill adds its own `@media (forced-colors: active)` rule. The chat flight path (its line and nodes) keeps its own colors (`forced-color-adjust: none` in chat.css), so that a filled node and a ring still differ by fill. Check it with Playwright `page.emulateMedia({ forcedColors: "active" })`.
+Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette (`ui/palette.ts` computes the palette tokens and steps them until they pass); focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`); gives a `Highlight` ring to the pressed segment, chip and toggle (any `aria-pressed=true` button), the selected tab (`[role=tab][aria-selected=true]`), the selected option of a list box (`[role=option][aria-selected=true]`), the current nav or session row (`[aria-current=page]`), the current subagent row (`[aria-current=true]`) and the needs-you keyboard cursor (`.fd-q[data-selected=true]`); draws the switch and a checked checkbox or radio in `Highlight`/`HighlightText`; draws the summary chevron in `CanvasText` and the select chevron as an `url()` image; gives key hints, badges, counts and the avatar a 1px `CanvasText` edge; keeps `.fd-primary` and `.fd-decide` solid (`ButtonText` fill, `ButtonText` edge, `ButtonFace` text and key hint; not `Highlight`, which marks the selection and the focus), so that one primary still stands out of a row of plain buttons; and gives the ghost select a `ButtonText` edge. An area part whose edge or selection is only a `box-shadow` or a fill adds its own `@media (forced-colors: active)` rule. The chat flight path (its line and nodes) keeps its own colors (`forced-color-adjust: none` in chat.css), so that a filled node and a ring still differ by fill. Check it with Playwright `page.emulateMedia({ forcedColors: "active" })`.
 
 ## 7. Expansion log
 
@@ -367,3 +370,7 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | `--code-chat` (dark `--code`, light `--raised`) | the light `--code` (#F1F5F9) is 1.02:1 on `--bg`, so the chat code block showed only its hairline; a darker light `--code` (#E9EEF4) drops `--faint` on the `--add-bg` diff line to 4.42:1 | chat code blocks (`.fd-md-code`) |
 | 2026-10-22 | `summary[data-variant="toggle"]` | stations.css copied the summary chevron to turn it into a trailing chevron-down for the fold toggles (a primitive changed in an area file) | station card folds: Details, Shells, Worktrees, Desktop |
 | 2026-10-22 | selected option tint: the composer slash menu uses `--focus-bg` + the 2px `--focus` bar, the same as the palette | §2.2: `--focus-bg` is the selection tint; the two option lists had two looks for one state | composer slash menu, Go to session palette |
+| 2026-10-22 | `select.fd-ghost`; `.fd-ghost` and `.fd-iconbtn` set `background-color` (not the shorthand) | home.css restyled the Group by select into a ghost (an area file restyled a primitive), and at rest it had no edge in forced colors; the shorthand would drop the select chevron | fleet home Group by (`fd-ghost fd-sm fd-home-group`) |
+| 2026-10-22 | ghost and icon button hover `--badge-bg` on a `--raised` layer | the `--raised` hover on the `--raised` header strip, composer, light code block, approval dock, turn strip and dialogs was 1:1: Interrupt, Files, the session menu, attach, Steer now and the code copy button had no hover | session header, composer, chat code blocks, approval dock, turn strips, dialogs |
+| 2026-10-22 | `--fs-sheet-title` (18px), `--fs-sheet-task` (15px) | §4.6 asks for these sizes and spawn.css used the legacy `--fs-18` and `--fs-15`; not in the wall scope (the wall has no New session sheet) | New session sheet title and task fields (spawn.css) |
+| 2026-10-22 | forced colors: `.fd-primary` and `.fd-decide` keep a solid `ButtonText` fill | forced colors dropped the fill: Allow, Allow for this session and Deny were three equal outlined buttons, and Start session, Save and Queue follow-up did not stand out | approval card, phone request sheet, needs-you rail, Watch, New session, settings |
