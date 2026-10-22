@@ -303,7 +303,7 @@ export function OmarchyView({
     );
   }
   return (
-    <section className="fd-panel fd-omarchy" aria-label="Omarchy">
+    <section className="fd-set-sec fd-omarchy" aria-label="Omarchy">
       <h2>Omarchy</h2>
       {body}
     </section>
