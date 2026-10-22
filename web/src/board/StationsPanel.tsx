@@ -24,6 +24,7 @@ import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
 import { ConfigReferenceHeader, StationConfigDrift, useDriftReference } from './StationConfigDrift';
 import { StationResources } from './StationResources';
+import { showLastSeen, stationsSummary } from './StationSummary';
 import { StationTaildrive } from './StationTaildrive';
 import { StationTraits } from './StationTraits';
 import type { Outcome } from '../session/commands';
@@ -487,6 +488,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
     <Page
       title="Stations"
       count={stations.length}
+      description={stationsSummary(stations, freshness)}
       className="fd-stations"
       actions={
         actions?.canAdmin === true ? (
@@ -614,17 +616,17 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   </div>
                 ) : null}
                 <div className="fd-station-live">
-                  <span
-                    title={
-                      station.last_seen === null ||
-                      Number.isNaN(new Date(station.last_seen).getTime())
-                        ? undefined
-                        : new Date(station.last_seen).toISOString()
-                    }
-                  >
-                    Last seen{' '}
-                    {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
-                  </span>
+                  {station.last_seen !== null && showLastSeen(station.last_seen, up, now) ? (
+                    <span
+                      title={
+                        Number.isNaN(new Date(station.last_seen).getTime())
+                          ? undefined
+                          : new Date(station.last_seen).toISOString()
+                      }
+                    >
+                      Last seen {relativeAge(station.last_seen, now)}
+                    </span>
+                  ) : null}
                   {drift.offered ? (
                     <StationConfigDrift station={station} reference={reference} />
                   ) : null}
@@ -734,7 +736,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     now={now}
                   />
                 )}
-                {info?.desktop === undefined ? null : <DesktopPanel station={station} />}
+                <DesktopPanel station={station} />
               </div>
               {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">

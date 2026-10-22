@@ -32,6 +32,13 @@ function Row({
   );
 }
 
+/**
+ * One rule for every resource row: the bar draws the used share, and the text names the used
+ * amount first, then the total and what is free.
+ */
+const usedText = (label: string, free: number, total: number): string =>
+  `${label}: ${gb(Math.max(0, total - free))} used of ${gb(total)} · ${gb(free)} free`;
+
 /** The most sessions in the busiest list (R13 §10). */
 const BUSIEST = 5;
 
@@ -102,7 +109,7 @@ export function StationResources({
               low={isLow(d.free_bytes, d.total_bytes, LOW_DISK_BYTES)}
               title={d.path}
             >
-              {`${d.label}: ${gb(d.free_bytes)} free of ${gb(d.total_bytes)}`}
+              {usedText(d.label, d.free_bytes, d.total_bytes)}
             </Row>
           ))}
           {memory === null ? null : (
@@ -110,7 +117,7 @@ export function StationResources({
               share={usedShare(memory.total_bytes - memory.available_bytes, memory.total_bytes)}
               low={isLow(memory.available_bytes, memory.total_bytes, LOW_MEMORY_BYTES)}
             >
-              {`Memory: ${gb(memory.available_bytes)} free of ${gb(memory.total_bytes)}`}
+              {usedText('Memory', memory.available_bytes, memory.total_bytes)}
             </Row>
           )}
           {cpu === null ? null : (

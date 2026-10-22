@@ -332,10 +332,20 @@
   font-size: var(--fs-meta);
 }
 
+/* An online station seen just now has no meta: the header stays one line. */
+.fd-station-live:empty {
+  display: none;
+}
+
 .fd-station-live > * + *::before {
   content: "·";
   padding: 0 6px;
   color: var(--faint);
+}
+
+/* The offline count of the page summary sentence (§4.3): offline is a hazard. */
+.fd-stations-off {
+  color: var(--hazard);
 }
 
 /* ── the property rows: a label column and the values (concept B) ─── */
@@ -596,6 +606,15 @@
   padding-bottom: var(--sp-3);
 }
 
+/* A station that reports no desktop says so in the fold row, after the toggles. */
+.fd-station-folds > .fd-note {
+  align-self: center;
+  padding: 0 var(--sp-4);
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  line-height: var(--row-h);
+}
+
 @supports selector(::details-content) {
   .fd-station-folds {
     grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
@@ -682,6 +701,14 @@
 
   .fd-station-folds > details:nth-child(4)::details-content {
     grid-row: 5;
+  }
+
+  .fd-station-folds > .fd-note {
+    grid-row: 1;
+    grid-column: -2;
+    justify-self: end;
+    padding: 0 var(--sp-2);
+    line-height: 1.4;
   }
 
   /* The Desktop fold (displays.css) keeps the column of its parts. */
@@ -946,6 +973,16 @@
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
+  /* The no-desktop note takes its own line under the toggles (after every open fold). */
+  @supports selector(::details-content) {
+    .fd-station-folds > .fd-note {
+      grid-row: 6;
+      grid-column: 1 / -1;
+      justify-self: start;
+      padding: 0 var(--sp-2) var(--sp-2);
+    }
+  }
+
   /* The page actions take their own line: Add station first, at the left edge. */
   .fd-stations .fd-page-actions > .fd-menu {
     order: 1;
