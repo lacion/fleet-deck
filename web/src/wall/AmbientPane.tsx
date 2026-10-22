@@ -3,7 +3,7 @@
 import { relativeAge } from '../app/sessions';
 import { rateMeters, resetsText, tightest } from '../board/usage';
 import type { DeckSession, StationView } from '../gen';
-import { ambientCounts, type Need, usageLine } from './model';
+import { ambientCounts, type Need, usageParts } from './model';
 
 export function AmbientPane({
   sessions,
@@ -36,15 +36,44 @@ export function AmbientPane({
         </div>
       </dl>
       {meter === null || meter.usedPercent === null ? null : (
+        // Each part keeps its words on one line, and a separator ends the part before it: a
+        // line never starts with "·".
         <p className="fd-wall-ambient-line">
-          {usageLine(meter)} · {meter.station}
-          {meter.resetsAt === null ? '' : `, ${resetsText(meter.resetsAt, now)}`}
+          <span className="fd-wall-part">{usageParts(meter).label} ·</span>{' '}
+          <span className="fd-wall-part">
+            <span className="fd-wall-fuel">{usageParts(meter).percent}</span> ·
+          </span>{' '}
+          <span className="fd-wall-part">
+            {meter.station}
+            {meter.resetsAt === null ? '' : ','}
+          </span>
+          {meter.resetsAt === null ? null : (
+            <>
+              {' '}
+              <span className="fd-wall-part">{resetsText(meter.resetsAt, now)}</span>
+            </>
+          )}
         </p>
       )}
       <p className="fd-wall-ambient-line">
-        {next === undefined
-          ? 'Nothing needs you.'
-          : `Next needs you: ${next.card.summary.callsign ?? next.card.summary.session_id} · ${next.request.title} · ${relativeAge(next.request.requested_at, now)}`}
+        {next === undefined ? (
+          'Nothing needs you.'
+        ) : (
+          <>
+            <span className="fd-wall-part">
+              Next needs you:{' '}
+              <span className="fd-callsign">
+                {next.card.summary.callsign ?? next.card.summary.session_id}
+              </span>{' '}
+              ·
+            </span>{' '}
+            {/* The request title may be long: it wraps, and a no-break space keeps the
+                separator on the line of its last word. */}
+            {next.request.title}
+            {'\u00a0·'}{' '}
+            <span className="fd-wall-part">{relativeAge(next.request.requested_at, now)}</span>
+          </>
+        )}
       </p>
     </section>
   );

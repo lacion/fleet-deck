@@ -229,9 +229,15 @@
 .fd-wall-root[data-shape="ultra"] .fd-wall-grid {
   grid-template-columns: 22% minmax(0, 1fr) 22%;
   grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  /* Activity sits under the side blocks: a 22% column cut every row to about 40 characters. */
   grid-template-areas:
     "needs tiles side"
-    "stream tiles side";
+    "needs tiles stream";
+}
+
+/* The needs area spans the left column but takes only the height of its requests. */
+.fd-wall-root[data-shape="ultra"] .fd-wall-grid > [data-area="needs"] {
+  align-self: start;
 }
 
 .fd-wall-root[data-shape="wide"] .fd-wall-grid {
@@ -347,6 +353,7 @@
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -372,13 +379,6 @@
   flex: none;
 }
 
-/* A narrow strip leaves out the station (its tile shows it) rather than cut it to one letter. */
-@container (max-width: 22em) {
-  .fd-wall-need-where {
-    display: none;
-  }
-}
-
 /* The age sits at the right of the head line. */
 .fd-wall-need-text > .fd-wall-need-age {
   grid-row: 1;
@@ -387,6 +387,24 @@
   color: var(--act);
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* A narrow strip leaves out the station (its tile shows it) rather than cut it to one letter,
+   and the age moves from the right of the head line to a last line of its own. */
+@container (max-width: 22em) {
+  .fd-wall-need-where {
+    display: none;
+  }
+
+  .fd-wall-need-text > .fd-wall-need-head {
+    grid-column: 1 / -1;
+  }
+
+  .fd-wall-need-text > .fd-wall-need-age {
+    grid-row: auto;
+    grid-column: 1 / -1;
+    align-self: start;
+  }
 }
 
 /* The question is the one thing the wall must show: it wraps, up to three lines. */
@@ -617,6 +635,12 @@
   white-space: nowrap;
 }
 
+/* A usage percent is fuel (§2.2), as on the board ops panel. */
+.fd-wall-fuel {
+  color: var(--fuel);
+  font-weight: 600;
+}
+
 .fd-wall-block[data-part="usage"] > .fd-meter {
   height: calc(var(--fd-wall-u) * 6);
 }
@@ -631,18 +655,24 @@
 }
 
 /* A standard wall: the side is a band under the tiles, its blocks side by side. */
+/* Its columns line up with the tile columns above it: the same gap (the tile grid gap,
+   --sp-2), no side padding on the band, the padding inside each block. */
 .fd-wall-root[data-shape="standard"] .fd-wall-area[data-area="side"] {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  column-gap: var(--sp-5);
+  column-gap: var(--sp-2);
   max-height: calc(var(--fd-wall-u) * 220);
+  padding-inline: 0;
+}
+
+.fd-wall-root[data-shape="standard"] .fd-wall-block {
+  padding-inline: var(--sp-4);
 }
 
 .fd-wall-root[data-shape="standard"] .fd-wall-block + .fd-wall-block {
   margin-top: 0;
   padding-top: 0;
-  padding-left: var(--sp-5);
   border-top: 0;
   border-left: 1px solid var(--border-soft);
 }
@@ -813,7 +843,8 @@
   padding: 0;
   list-style: none;
   color: var(--dim);
-  font-size: var(--fs-meta);
+  /* one step larger than the board, as every wall text (§4.9) */
+  font-size: var(--fs-ui);
   /* the oldest rows fade out at the bottom */
   mask-image: linear-gradient(to top, transparent, black calc(var(--fd-wall-u) * 16));
 }
@@ -842,6 +873,13 @@
 .fd-wall-stream strong {
   color: var(--text);
   font-weight: 600;
+}
+
+/* The target of a tool row: a command or a path. */
+.fd-wall-stream code {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
 }
 
 /* ── focus and review: the chat and the changes of one session ────────────────────────────── */
@@ -1193,8 +1231,10 @@
   place-items: center;
 }
 
-.fd-wall-root[data-mode="ambient"] .fd-wall-corner {
-  opacity: 0.6;
+/* The corner steps back by its color, not by opacity: the connection state keeps its full
+   --ok or --act (it is the only sign that the wall is stale), the words are --faint (6.1:1). */
+.fd-wall-root[data-mode="ambient"] :is(.fd-wall-corner, .fd-wall-brand) {
+  color: var(--faint);
 }
 
 .fd-wall-ambient {
@@ -1243,6 +1283,12 @@
   margin: 0 0 var(--sp-2);
   color: var(--dim);
   font-size: var(--fs-heading);
+  text-wrap: balance;
+}
+
+/* A part of a line keeps its words together; the line wraps between the parts. */
+.fd-wall-part {
+  white-space: nowrap;
 }
 
 /* ── phone ─────────────────────────────────────────────────────────────────────────────────── */
