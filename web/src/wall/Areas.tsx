@@ -4,7 +4,7 @@ import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-
+import { usedShare } from '../board/resources';
 import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
@@ -146,15 +146,31 @@ export function TilesArea({
 /** One decimal place of gigabytes, without the unit: "20.4". */
 const gbNumber = (bytes: number): string => (bytes / 1e9).toFixed(1);
 
+type DiskLike = { readonly total_bytes: number; readonly free_bytes: number };
+
 function StationRow({ station }: { readonly station: StationView }) {
   // A wall display gets `display_resources` (no disk label, no path) in place of `info`. The wall
-  // shows the load and the memory only: one short line that a person reads across a room.
+  // shows the load, the memory and the fullest disk: one short line that a person reads across a
+  // room.
   const r = station.info?.resources ?? station.display_resources;
+  const disks: readonly DiskLike[] = r?.disks ?? [];
+  const fullest = disks.reduce<DiskLike | null>(
+    (best, d) =>
+      best === null ||
+      usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
+        usedShare(best.total_bytes - best.free_bytes, best.total_bytes)
+        ? d
+        : best,
+    null,
+  );
   const stats = [
     r?.cpu == null ? null : `CPU ${(r.cpu.load5_x100 / 100).toFixed(1)}/${r.cpu.cores}`,
     r?.memory == null
       ? null
       : `Mem ${gbNumber(r.memory.total_bytes - r.memory.available_bytes)}/${gbNumber(r.memory.total_bytes)} GB`,
+    fullest === null
+      ? null
+      : `Disk ${gbNumber(fullest.free_bytes)}/${gbNumber(fullest.total_bytes)} GB free`,
   ].filter((t): t is string => t !== null);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
@@ -289,12 +305,11 @@ export function StreamArea({
     // `filterStations` stands for `filter.stations`.
     [sessions, filterStations, filter.repo],
   );
-  // The deck sends the newest first. The list runs oldest first, and `.fd-wall-stream` draws it
-  // from the bottom up: the newest row sits under the heading, the oldest are cut at the bottom.
+  // The deck sends the newest first, and the list keeps that order: the newest row sits under the
+  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first.
   const rows = (items ?? [])
     .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
-    .slice(0, STREAM_ITEMS)
-    .reverse();
+    .slice(0, STREAM_ITEMS);
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
       <h2 className="fd-wall-h">Activity</h2>

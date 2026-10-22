@@ -9,6 +9,7 @@ import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
 import { StreamArea } from './Areas';
+import { ChatPane } from './ChatPane';
 import { WallPage } from './WallPage';
 import {
   ambientCounts,
@@ -323,5 +324,23 @@ describe('the stream follows the wall filter', () => {
     const html = stream([]);
     expect(html).toContain('Alpha said hi');
     expect(html).toContain('Beta said hi');
+  });
+
+  test('the list keeps the deck order: the newest row is the first in the DOM', () => {
+    const html = stream([]);
+    expect(html.indexOf('Alpha said hi')).toBeLessThan(html.indexOf('Beta said hi'));
+  });
+});
+
+describe('the focus chat pane', () => {
+  test('a ready chat without lines says so', () => {
+    const html = renderToStaticMarkup(<ChatPane events={[]} ready unavailable={false} />);
+    expect(html).toContain('No chat yet.');
+  });
+
+  test('a chat that loads says so', () => {
+    const html = renderToStaticMarkup(<ChatPane events={[]} ready={false} unavailable={false} />);
+    expect(html).toContain('Loading…');
+    expect(html).not.toContain('No chat yet.');
   });
 });
