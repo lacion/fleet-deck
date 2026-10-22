@@ -4,7 +4,7 @@ import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { FileText, Folder, Icon, Paperclip } from '../ui/icons';
+import { FileText, Folder, Icon, Upload } from '../ui/icons';
 import { type ChangedFiles, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
@@ -16,6 +16,14 @@ type View =
   | { readonly kind: 'listing'; readonly listing: FileListing }
   | { readonly kind: 'file'; readonly file: FileContent }
   | { readonly kind: 'search'; readonly search: FileSearch };
+
+/** `812` → `812 B`, `3200` → `3.1 KB`, `1250000` → `1.2 MB` (one decimal from a kilobyte on). */
+export function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 /** A Markdown file shows rendered or raw; a path copy is always there. */
 export function FileView({
@@ -36,7 +44,7 @@ export function FileView({
   return (
     <div data-file={file.path}>
       <p className="fd-path">
-        {file.size} B{' '}
+        {sizeText(file.size)}{' '}
         <button type="button" className="fd-link" onClick={onBack}>
           Back to the folder
         </button>
@@ -65,7 +73,7 @@ export function FileView({
         <CopyButton text={root ? `${root}/${file.path}` : file.path} label="Copy the path" />
         {onPublish !== undefined && publishable(file.path) ? (
           <button type="button" className="fd-ghost fd-sm" onClick={onPublish}>
-            <Icon of={Paperclip} size={14} /> Publish as artifact
+            <Icon of={Upload} size={14} /> Publish as artifact
           </button>
         ) : null}
       </div>
@@ -205,7 +213,7 @@ export function FilesPanel({
   const fileName = view.kind === 'file' ? (view.file.path.split('/').pop() ?? '') : null;
   return (
     <section className="fd-files" aria-label="Files" data-variant={variant}>
-      <h3 className={variant === 'side' ? 'fd-vh' : 'fd-label'}>Files</h3>
+      <h3 className="fd-vh">Files</h3>
       <div className="fd-files-bar">
         <form
           aria-label="Search the files"
@@ -318,25 +326,15 @@ export function FilesPanel({
             )}
             {view.listing.entries.map((e) => {
               const path = joinPath(view.listing.path, e.name);
-              const size = e.size !== null ? <span className="fd-size"> {e.size} B</span> : null;
+              const size =
+                e.size !== null ? <span className="fd-size"> {sizeText(e.size)}</span> : null;
               const offer = e.kind === 'file' && canPublish && publishable(e.name);
               return (
                 <li
                   key={e.name}
                   data-entry-kind={e.kind}
-                  className={offer ? 'fd-files-item' : undefined}
+                  className={canPublish ? 'fd-files-item' : undefined}
                 >
-                  {offer ? (
-                    <button
-                      type="button"
-                      className="fd-iconbtn fd-sm fd-files-publish"
-                      aria-label={`Publish ${e.name} as artifact`}
-                      title="Publish as artifact"
-                      onClick={() => setPublishing(path)}
-                    >
-                      <Icon of={Paperclip} size={14} />
-                    </button>
-                  ) : null}
                   {e.kind === 'dir' || e.kind === 'file' ? (
                     <button
                       type="button"
@@ -358,6 +356,19 @@ export function FilesPanel({
                       {size}
                     </div>
                   )}
+                  {offer ? (
+                    <button
+                      type="button"
+                      className="fd-iconbtn fd-sm fd-files-publish"
+                      aria-label={`Publish ${e.name} as artifact`}
+                      title="Publish as artifact"
+                      onClick={() => setPublishing(path)}
+                    >
+                      <Icon of={Upload} size={14} />
+                    </button>
+                  ) : canPublish ? (
+                    <span className="fd-files-publish" aria-hidden="true" />
+                  ) : null}
                 </li>
               );
             })}

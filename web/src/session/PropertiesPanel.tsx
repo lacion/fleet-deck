@@ -6,10 +6,11 @@ import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import { costText, rateMeters, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
-import { isRiskyMode, shortModel } from '../ui/format';
+import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
 import { Icon, ShieldAlert } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
+import { homeShort } from './CopyButton';
 import { StatusFact } from './HeaderBadges';
 import { runningSubagents } from './timeline';
 import { type FinalizedTurn, useDiffTotal } from './workspace';
@@ -45,10 +46,43 @@ export function compactCount(n: number): string {
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')} M`;
 }
 
-/** `five_hour` → `Five hour window` (sentence case). */
-function scopeLabel(scope: string): string {
-  const words = scope.replace(/_/g, ' ');
-  return `${words.charAt(0).toUpperCase()}${words.slice(1)} window`;
+/** The window names that the providers report, in the words of the board (digits for numbers). */
+const SCOPE_TEXT: Readonly<Record<string, string>> = {
+  five_hour: '5-hour window',
+  seven_day: 'weekly window',
+  weekly: 'weekly window',
+};
+
+/** `five_hour` → `Claude 5-hour window`, `weekly` → `Claude weekly window`; no provider: `Weekly window`. */
+export function scopeLabel(scope: string, provider: string | null): string {
+  const words = SCOPE_TEXT[scope] ?? `${scope.replace(/_/g, ' ')} window`;
+  if (provider === null) return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+  return `${provider} ${words}`;
+}
+
+/** A slot meter draws one tick per slot up to this many; a bigger station shows the count only. */
+const MAX_TICKS = 16;
+
+/** The used slots of a station as ticks and "3 of 12"; absent when the station does not say. */
+function StationSlots({ station }: { readonly station: StationView }) {
+  const max = station.info?.max_sessions ?? null;
+  if (max === null || max <= 0) return null;
+  const live = station.info?.live_sessions ?? 0;
+  const used = Math.min(live, max);
+  return (
+    <span className="fd-props-slots">
+      {max <= MAX_TICKS ? (
+        <span className="fd-slots" aria-hidden="true">
+          {Array.from({ length: max }, (_, i) => (
+            <span key={i} data-slot={i < used ? 'used' : undefined} />
+          ))}
+        </span>
+      ) : null}
+      <span className="fd-props-aside">
+        {live} of {max}
+      </span>
+    </span>
+  );
 }
 
 /** The size of the session's changes: the loaded session diff, else the sum of its kept turns. */
@@ -97,6 +131,7 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
   const meters = rateMeters([session], stations);
   const running = runningSubagents(s);
   const agents = Math.max(subagents, running);
+  const provider = s.provider === null ? null : providerLabel(s.provider);
   return (
     <aside className="fd-props" aria-label="Properties">
       <h3 className="fd-props-title">Properties</h3>
@@ -113,6 +148,7 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
               {station.reachable ? 'online' : 'offline'}
             </span>
           )}
+          {station === undefined ? null : <StationSlots station={station} />}
         </Row>
         {s.branch ? (
           <Row label="Branch">
@@ -121,8 +157,8 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
         ) : null}
         {s.cwd ? (
           <Row label="Folder">
-            <code className="fd-props-mono" title={s.cwd}>
-              {s.cwd}
+            <code className="fd-props-mono" data-path="" title={s.cwd}>
+              <bdi>{homeShort(s.cwd)}</bdi>
             </code>
           </Row>
         ) : null}
@@ -134,9 +170,13 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
         {s.provider === null ? null : <Row label="Provider">{providerLabel(s.provider)}</Row>}
         {s.mode ? (
           <Row label="Mode">
-            <span className="fd-props-mode" data-tone={isRiskyMode(s.mode) ? 'hazard' : undefined}>
+            <span
+              className="fd-props-mode"
+              data-tone={isRiskyMode(s.mode) ? 'hazard' : undefined}
+              title={`Permission mode: ${s.mode}`}
+            >
               {isRiskyMode(s.mode) ? <Icon of={ShieldAlert} size={13} /> : null}
-              {s.mode}
+              {modeLabel(s.mode)}
             </span>
           </Row>
         ) : null}
@@ -178,7 +218,7 @@ export function PropertiesPanel({ session, stations, turns, subagents }: Props) 
           m.usedPercent === null ? null : (
             <div key={m.key} className="fd-props-meter">
               <span className="fd-props-meter-label">
-                <span>{scopeLabel(m.scope)}</span>
+                <span>{scopeLabel(m.scope, provider)}</span>
                 <span className="fd-props-fuel">{Math.round(m.usedPercent)}%</span>
               </span>
               <span

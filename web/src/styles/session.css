@@ -376,6 +376,13 @@
   padding: 0;
   border-left: 0;
 }
+/* The phone header buttons are touch targets: 44px squares (Back, Interrupt, Resume, menu). */
+.fd-sh[data-layout="phone"] > .fd-iconbtn,
+.fd-sh[data-layout="phone"] .fd-sh-actions > .fd-iconbtn,
+.fd-sh[data-layout="phone"] .fd-sh-actions > .fd-menu > summary.fd-iconbtn {
+  width: var(--tap-min);
+  height: var(--tap-min);
+}
 /* The rename form of the phone takes the whole header; the header grows with it. */
 .fd-sh[data-layout="phone"]:has(.fd-rename) {
   padding: var(--sp-2);
@@ -619,6 +626,26 @@
   font-size: var(--fs-data);
   overflow-wrap: anywhere;
 }
+/* A folder stays on one line; a long one loses its start (the end names the folder). */
+.fd-props-mono[data-path] {
+  flex: 1;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The used slots of the station under its name: ticks and "3 of 12". */
+.fd-props-slots {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: 2px;
+}
+.fd-props-slots > .fd-props-aside {
+  margin-left: 0;
+}
 .fd-props-mode {
   display: inline-flex;
   align-items: center;
@@ -783,13 +810,49 @@
 .fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
   background: var(--border);
 }
-/* On the phone the request is a bottom sheet: a 4px top bar and stacked 44px buttons (§4.8). */
+/* The key hints of the card: a and d (the touch layout has none). */
+.fd-q-dock-kbd {
+  margin-left: var(--sp-1);
+}
+.fd-pane[data-layout="phone"] .fd-q-dock-kbd {
+  display: none;
+}
+@media (pointer: coarse) {
+  .fd-q-dock-kbd {
+    display: none;
+  }
+}
+/* On the phone the request is a bottom sheet (§4.8): full width, round top corners, a 4px top
+   bar and stacked 44px buttons; the composer under it is the foot of the sheet. */
+.fd-pane[data-layout="phone"] .fd-dock-approvals {
+  width: auto;
+  max-width: none;
+  margin-inline: calc(-1 * var(--sp-3));
+}
 .fd-pane[data-layout="phone"] .fd-q-dock {
   padding: var(--sp-4) var(--sp-4) var(--sp-3);
-  border-radius: var(--r-sheet);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  outline: none;
   box-shadow:
     inset 0 4px 0 var(--act),
     var(--shadow-pop);
+}
+.fd-pane[data-layout="phone"] .fd-q-dock::after {
+  display: none;
+}
+.fd-pane[data-layout="phone"] .fd-pane-foot:has(> .fd-dock-approvals + .fd-composer) {
+  padding-bottom: 0;
+}
+.fd-pane[data-layout="phone"] .fd-dock-approvals + .fd-composer {
+  width: auto;
+  max-width: none;
+  margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-3)) 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--border-soft);
+}
+.fd-pane[data-layout="phone"] .fd-dock-approvals + .fd-composer:focus-within {
+  box-shadow: inset 0 0 0 2px var(--focus);
 }
 .fd-pane[data-layout="phone"] .fd-q-dock .fd-options {
   flex: 1 1 100%;
@@ -905,9 +968,10 @@ fieldset:disabled .fd-opt {
     var(--shadow-pop);
   transition: box-shadow var(--t-fast);
 }
+/* The text box has no own ring: the whole dock shows the keyboard focus (2px --focus). */
 .fd-composer:focus-within {
   box-shadow:
-    0 0 0 1px var(--border),
+    0 0 0 2px var(--focus),
     var(--shadow-pop);
 }
 .fd-composer textarea {
@@ -1030,6 +1094,33 @@ fieldset:disabled .fd-opt {
   gap: var(--sp-1);
   margin-left: auto;
 }
+/* The model chip after the attach button: a 24px --raised-hi chip that opens the model picker. */
+.fd-composer-model {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  height: var(--ctl-h-sm);
+  padding: 0 var(--sp-2);
+  background: var(--raised-hi);
+  border-radius: var(--r-ctl);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.fd-composer-model:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+button.fd-composer-model > .fd-icon {
+  color: var(--faint);
+}
+/* The phone toolbar has room for attach and the two send buttons only (concept A, §4.8). */
+.fd-pane[data-layout="phone"] .fd-composer-kbd,
+.fd-pane[data-layout="phone"] .fd-composer-model {
+  display: none;
+}
 /* Enter sends with a fine pointer only; on a touch screen it is a newline. */
 @media (pointer: coarse) {
   .fd-composer-kbd {
@@ -1128,6 +1219,11 @@ fieldset:disabled .fd-opt {
   max-width: 1040px;
   margin-inline: auto;
 }
+/* The turns, the files and the artifact list share the chat column (the open artifact keeps
+   the wide column). */
+.fd-pane-body > :not(.fd-art-viewer) {
+  max-width: var(--chat-w);
+}
 .fd-pane[data-layout="phone"] .fd-pane-body {
   padding: var(--sp-3);
 }
@@ -1193,6 +1289,14 @@ fieldset:disabled .fd-opt {
 }
 .fd-turns li > button:first-of-type {
   margin-left: auto;
+}
+/* Show / Hide the diff is a disclosure: the chevron turns 90° when the diff is open. */
+.fd-turn-diff > .fd-icon {
+  color: var(--faint);
+  transition: transform var(--t-move);
+}
+.fd-turn-diff[aria-expanded="true"] > .fd-icon {
+  transform: rotate(90deg);
 }
 .fd-turn-name {
   min-width: 52px;

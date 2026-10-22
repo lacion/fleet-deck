@@ -1,6 +1,18 @@
 import { relativeAge } from '../app/sessions';
-import type { DeckArtifact } from '../gen';
+import type { ArtifactKind, DeckArtifact } from '../gen';
+import { Code, FileText, Icon, ImageIcon, type LucideIcon, Play } from '../ui/icons';
 import { artifactHref, KIND_LABEL } from './kinds';
+
+/** The icon of each artifact kind, before the title. */
+const KIND_ICON: Record<ArtifactKind, LucideIcon> = {
+  html: Code,
+  markdown: FileText,
+  image: ImageIcon,
+  svg: ImageIcon,
+  pdf: FileText,
+  video: Play,
+  other: FileText,
+};
 
 /** Newest first, optionally one kind only. The deck sorts too; a list that grew locally stays right. */
 export function visible(
@@ -29,11 +41,16 @@ export function ArtifactList({ items, now, where, onOpen }: Props) {
       {items.map((a) => {
         const content = (
           <>
+            <span className="fd-art-kind" aria-hidden="true">
+              <Icon of={KIND_ICON[a.kind]} size={14} />
+            </span>
             <span className="fd-art-title">{a.title}</span>
             <span className="fd-badge" data-kind={a.kind}>
               {KIND_LABEL[a.kind]}
             </span>
-            <span className="fd-count">v{a.latest_version}</span>
+            <span className="fd-badge fd-art-ver" data-tone="muted">
+              v{a.latest_version}
+            </span>
             <span className="fd-art-age">{relativeAge(a.updated_at, now)}</span>
             {where === undefined ? null : <span className="fd-art-where">{where(a)}</span>}
           </>

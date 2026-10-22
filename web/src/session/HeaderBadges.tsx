@@ -7,10 +7,10 @@ import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
 import { digestLines } from '../ui/generated';
-import { Folder, GitBranch, Icon, Server, ShieldAlert } from '../ui/icons';
-import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
+import { Folder, GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
+import { isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
-import { CopyButton, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
+import { CopyButton, homeShort, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
 
 /** The word of the status fact. A hibernated session says so. */
 export function statusWord(session: DeckSession): string {
@@ -74,9 +74,12 @@ function ModeFact({ session }: { readonly session: DeckSession }) {
   if (!s.mode || s.mode === 'default') return null;
   const tone = modeTone(s.mode);
   return (
-    <span className="fd-sh-mode" data-tone={tone} title="Permission mode">
-      {tone === 'hazard' ? <Icon of={ShieldAlert} size={13} /> : null}
-      {s.mode}
+    <span className="fd-sh-mode" data-tone={tone} title={`Permission mode: ${s.mode}`}>
+      <Icon
+        of={tone === 'hazard' ? ShieldAlert : s.mode === 'acceptEdits' ? Pencil : Shield}
+        size={13}
+      />
+      {modeLabel(s.mode)}
     </span>
   );
 }
@@ -152,7 +155,7 @@ export function Place({
       {cwd ? (
         <span className="fd-badge fd-sh-chip" data-mono="" title={cwd}>
           <Icon of={Folder} size={13} />
-          <span>{shortenMiddle(cwd, MAX_PATH_CHARS)}</span>
+          <span>{shortenMiddle(homeShort(cwd), MAX_PATH_CHARS)}</span>
         </span>
       ) : null}
       {session === undefined ? null : <ModeFact session={session} />}

@@ -5,6 +5,7 @@ import { diffReview, type ReviewProps } from '../review/diffReview';
 import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
 import { ReviewBar } from '../review/ReviewBar';
+import { ChevronRight, Icon } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { BranchesView } from './BranchesView';
 import type { Outcome, SessionActions } from './commands';
@@ -304,6 +305,11 @@ export function TurnsPanel(props: Props) {
       () => void plain(true),
     );
   };
+  const hideDiff = (turnId: string) =>
+    setDiffs((all) => {
+      const { [turnId]: _hidden, ...rest } = all;
+      return rest;
+    });
   // A click on a comment chip chooses the view of its thread and loads the diff of its turn.
   const latest = useRef(showDiff);
   latest.current = showDiff;
@@ -401,7 +407,7 @@ export function TurnsPanel(props: Props) {
   return (
     <section className="fd-turns" aria-label="Turns">
       {toggle}
-      <h3 className="fd-label">Turns</h3>
+      <h3 className="fd-vh">Turns</h3>
       {caps?.rollback === true ? null : (
         <p className="fd-note">
           This provider cannot roll back its conversation, so the board offers no revert. A
@@ -438,8 +444,14 @@ export function TurnsPanel(props: Props) {
               )}
               {t.reverted ? <span className="fd-turn-stat">reverted</span> : null}
               {hasChanges(t.diff) && files ? (
-                <button type="button" className="fd-sm" onClick={() => showDiff(t.turnId)}>
-                  Show the diff
+                <button
+                  type="button"
+                  className="fd-sm fd-turn-diff"
+                  aria-expanded={diff !== undefined}
+                  onClick={() => (diff === undefined ? showDiff(t.turnId) : hideDiff(t.turnId))}
+                >
+                  <Icon of={ChevronRight} size={14} />
+                  {diff === undefined ? 'Show the diff' : 'Hide the diff'}
                 </button>
               ) : null}
               {caps?.rollback === true && !t.reverted ? (

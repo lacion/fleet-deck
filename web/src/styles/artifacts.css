@@ -21,11 +21,11 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
-/* One artifact: a 36px row. Title, where, kind, version and age in fixed columns. */
+/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns. */
 .fd-art-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
-  grid-template-areas: "title where kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
+  grid-template-areas: "icon title where kind version age";
   align-items: center;
   gap: var(--sp-3);
   width: 100%;
@@ -54,10 +54,17 @@
 }
 /* Without the where column (the session's tab). */
 .fd-art-row:not(:has(> .fd-art-where)) {
-  grid-template-columns: minmax(0, 1fr) 96px 36px 48px;
-  grid-template-areas: "title kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) 96px 36px 48px;
+  grid-template-areas: "icon title kind version age";
 }
 
+/* The kind icon sits 8px before the title (the grid gap is 12px). */
+.fd-art-kind {
+  display: inline-flex;
+  grid-area: icon;
+  margin-right: calc(-1 * var(--sp-1));
+  color: var(--faint);
+}
 .fd-art-title {
   grid-area: title;
   min-width: 0;
@@ -71,7 +78,7 @@
   justify-self: start;
   max-width: 100%;
 }
-.fd-art-row > .fd-count {
+.fd-art-row > .fd-art-ver {
   grid-area: version;
   justify-self: start;
 }
@@ -129,19 +136,25 @@
 }
 
 @media (max-width: 640px) {
+  /* Two lines: the icon and the title, then the kind and the version at the left, the age at
+     the right (and the where line on the global page). */
   .fd-art-row,
   .fd-art-row:not(:has(> .fd-art-where)) {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
     grid-template-areas:
-      "title title age"
-      "where kind version";
-    gap: 2px var(--sp-2);
+      "icon title title title"
+      ". kind version age";
+    gap: var(--sp-1) var(--sp-2);
     padding: var(--sp-2) 0;
   }
-  .fd-art-row:not(:has(> .fd-art-where)) {
+  .fd-art-row:has(> .fd-art-where) {
     grid-template-areas:
-      "title title age"
-      ". kind version";
+      "icon title title title"
+      ". where where where"
+      ". kind version age";
+  }
+  .fd-art-kind {
+    margin-right: 0;
   }
   .fd-art-row:hover,
   .fd-art-row:hover:not(:disabled) {
@@ -349,11 +362,26 @@
   text-decoration: none;
 }
 
+/* Each file row has a fixed 24px trailing slot for "Publish as artifact" (empty when it is not
+   offered), so the size column stays aligned. */
 .fd-files-item {
   display: flex;
   align-items: center;
+  gap: var(--sp-1);
+}
+.fd-files-item > .fd-files-row {
+  flex: 1;
 }
 .fd-files-item > .fd-files-publish {
-  order: 2;
   flex: none;
+  width: var(--ctl-h-sm);
+  color: var(--faint);
+}
+.fd-files-item > button.fd-files-publish:hover:not(:disabled) {
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  .fd-files-item > .fd-files-publish {
+    min-width: var(--tap-min);
+  }
 }

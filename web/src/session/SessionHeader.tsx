@@ -24,6 +24,7 @@ import {
   Search,
   Server,
   Send,
+  CircleStop,
   Square,
   SquareTerminal,
   Star,
@@ -628,10 +629,11 @@ export function SessionHeader({
                 type="button"
                 className="fd-iconbtn"
                 aria-label="Interrupt"
+                title="Interrupt"
                 disabled={busy !== null}
                 onClick={() => run('interrupt', (a) => a.interrupt())}
               >
-                <Icon of={Square} />
+                <Icon of={CircleStop} />
               </button>
             ) : (
               <button
