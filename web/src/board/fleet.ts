@@ -93,6 +93,13 @@ export function stationName(id: string, stations: readonly StationView[]): strin
   return stations.find((station) => station.station_id === id)?.name ?? id;
 }
 
+/** Changes when any session changes, so derived panels load again. */
+export function fleetVersion(sessions: readonly DeckSession[]): string {
+  let newest = 0;
+  for (const s of sessions) newest = Math.max(newest, s.summary.updated_at);
+  return `${sessions.length}/${newest}`;
+}
+
 /** Filters never change the source projections or the cached runtime state. */
 export function filterFleet(
   sessions: readonly DeckSession[],

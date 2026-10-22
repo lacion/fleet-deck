@@ -36,7 +36,11 @@ import type { Contested } from './fleet';
 import { stationName } from './fleet';
 import { costText } from './usage';
 
-/** One fact of the meta cell: a 12 px icon and an optional number. */
+/**
+ * One fact of the meta cell: a 12 px icon and an optional number (DESIGN-SYSTEM §4.1: the quiet
+ * form of a counter or a flag; a chip that is a link of its own is a `.fd-badge`). The strip is a
+ * link, so the fact is an image with a name ("Subagents running: 2"), not only a title.
+ */
 function Ico({
   kind,
   icon,
@@ -53,7 +57,15 @@ function Ico({
   readonly extra?: Record<string, number> | undefined;
 }) {
   return (
-    <span className="fd-strip-ico" data-ico={kind} data-tone={tone} title={title} {...extra}>
+    <span
+      role="img"
+      aria-label={n === undefined ? title : `${title}: ${n}`}
+      className="fd-strip-ico"
+      data-ico={kind}
+      data-tone={tone}
+      title={title}
+      {...extra}
+    >
       <Icon of={icon} size={12} />
       {n === undefined ? null : <span>{n}</span>}
     </span>

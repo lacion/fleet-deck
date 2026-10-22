@@ -207,9 +207,11 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 - Callsign cell 104px: `.fd-callsign` 14px `--text` over the model (12px `--dim`) — or one line (callsign only) when the strip is one line.
 - Title 14px weight 600; the "now" text (current tool icon + name + mono target, or focus line) in `--dim` on the same line after the title, truncated with an ellipsis.
 - Changes: `+142` `--ok`, `−37` `--hazard`, 12px; files count `--faint`.
-- Chips (PR, subagents, project, issue, batch): `.fd-badge` with a Lucide icon.
+- Chips that are links of their own (PR, issue, project, batch compare): `.fd-badge` with a Lucide icon, in the second line of the where cell. Counters and flags of the session (mail, subagents, artifacts, background tasks, terminal, permission mode, conflict, archived, stale) are the quiet form `.fd-strip-ico` in the meta cell: a 12px Lucide icon and the count (12px `--dim`; a hazard flag `--hazard`), with no fill. Each one is `role="img"` with an accessible name ("Subagents running: 2"), because the strip is a link.
 - Hover `--raised-hi`. Selected (the open session): `--raised-hi` + 1px `--focus` outline. A selected needs-you card shows its selection as a 2px inset `--focus` ring inside the `--act-line` outline (fine pointer only, never on the phone), with no tint.
-- **Needs you**: holder `--act`, 1px `--act-line` outline, `--act-glow` glow (breathing), the request text in `--act`, inline action buttons (`.fd-decide` Allow with kbd `a`, Deny ghost danger with kbd `d`, or the question's options).
+- **Needs you**: holder `--act`, 1px `--act-line` outline, `--act-glow` glow (breathing), the request text in `--act`, inline action buttons (`.fd-decide` Allow with kbd `a`, Deny ghost danger with kbd `d`, or the question's options). The other plain answers have a `--raised-hi` fill and a 1px `--ctl-edge` edge on hover. In a station lane under the Needs you panel, the needs-you strip has the holder, the 1px `--act-line` outline and the yellow request text; the breathing glow is the panel's (one glow for one request on the screen).
+- **Cleared (archived)**: no fill, a 1px inset `--border-soft` edge, title weight 500; the text keeps the `--faint` of an ended strip. Never opacity: a dimmed text falls under 4.5:1.
+- The lane activity sparkline is a data graphic: bars `--faint` (3:1 or more), the last bar `--ok`.
 - **Ended/lost**: text `--faint`, holder hollow.
 - Below 900px the strip becomes two lines (title line, meta line) and drops the field rules.
 
@@ -227,7 +229,7 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 
 48px bar (`--header-h`), `--bg`, bottom 1px `--border-soft`: page title (`--fs-page` `.fd-wide`) + one summary sentence in `--dim` (`7 sessions on 3 stations. 2 need you.` with "2 need you" in `--act`), filters as `.fd-seg` at the right, then view options. No boxed toolbars. The `Page` component has a `filters` slot (`.fd-page-filters`) before the actions; a narrow column wraps it under the title, and a phone gives it a full row.
 
-Narrow main columns (the fleet home header): under 1100px the search folds to its icon until it has focus or text, and Share board shows its icon only (the text stays as the accessible name); between 841 and 960px the sentence drops "on N stations"; under 840px the controls take a second header row.
+Narrow main columns (the fleet home header): under 1100px the search folds to its icon until it has focus or text, and Share board shows its icon only (the text stays as the accessible name); between 841 and 960px the sentence drops "on N stations", and a "Nothing needs you." next to a conflict (the calm part goes first, so the conflict stays readable); under 840px the controls take a second header row.
 
 ### 4.4 Fleet home
 
@@ -243,9 +245,9 @@ Narrow main columns (the fleet home header): under 1100px the search folds to it
 └─────────────┴──────────────────────────────────────────────────────┴────────────────┘
 ```
 
-- The needs-you requests move from the right rail into a **Needs you panel** at the top of main (`--surface` panel, `--r-panel`, header "Needs you" + count + key hints `[` `]` `a` `d`), each request a needs-you strip with its inline actions. With no request the panel is absent and the header sentence says "All clear."
+- The needs-you requests move from the right rail into a **Needs you panel** at the top of main (`--surface` panel, `--r-panel`, header "Needs you" + count + key hints `[` `]` Move `a` First `d` Last: the keys answer with the first and the last option, whatever their labels), each request a needs-you strip with its inline actions. The keyboard cursor (the 2px `--focus` ring and the key hints on the buttons) is always on a request that the keys can answer: it starts on the first answerable request, and `[` `]` skip a request that only opens its session. With no request the panel is absent and the header sentence says "All clear." in `--ok` — only when there is also no conflict; with a conflict it says "Nothing needs you." (`--ok`), so that green "all clear" never stands next to a red conflict.
 - Station groups: a group header (station `.fd-wide` 15px weight 620, platform `--dim`, reach dot + "online"/"offline", `.fd-slots` + "3 of 12" at the right), then strips with 6px gaps. Collapsible.
-- The **ops panel** (right, `--rail-w`, `--surface`) replaces the bottom tab bar: sections Usage (`.fd-meter` per rate limit with percent and reset time, totals in `--fuel`), Conflict radar (file in mono, the sessions), Mail & tasks (the waiting rows; the new-mail form folds under "New mail or task"), and the secondary pages (Activity, Assign) as ghost buttons in a sticky foot that open them. Under 1280px the ops panel folds under main.
+- The **ops panel** (right, `--rail-w`, `--surface`) replaces the bottom tab bar: sections Usage (`.fd-meter` per rate limit with percent and reset time, totals in `--fuel`), Conflict radar (file in mono, the sessions), Mail & tasks (the waiting rows; the new-mail form folds under "New mail or task"), and the secondary pages (Activity, Assign, All usage — every meter and the unknown parts; the section above is the glance, so the button does not repeat its "Usage" name) as ghost buttons in a sticky foot that open them. The Usage section and All usage ignore the status segment of the header: a rate limit belongs to an account, not to a status. The Mail & tasks section stays mounted, so it loads its tasks and grants again each time the fleet changes. Under 1280px the ops panel folds under main.
 - The conflict radar never says "Conflict radar unavailable" in a banner: an unavailable radar shows a quiet `--faint` line inside its ops section.
 
 ### 4.5 Session
@@ -281,7 +283,7 @@ The `#/new` route keeps its URL and its form. It renders a centered **sheet** (m
 
 ### 4.8 Phone (< 640px)
 
-From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar) on every page with the bottom bar; the page h1 and the New session caption stay only for screen readers, and a page under More shows a "Back to More" chevron in place of the mark; needs-you cards first (strip + full-width 44px buttons); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
+From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar) on every page with the bottom bar; the page h1 and the New session caption stay only for screen readers, and a page under More shows a "Back to More" chevron in place of the mark; needs-you cards first (strip + full-width 44px buttons; Deny there has a `--raised-hi` fill, as in concept A phone); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
 
 ### 4.9 Wall display (`/display`)
 
@@ -357,3 +359,4 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | forced colors: `Highlight` ring for any pressed toggle, selected option, `aria-current=true` row and the needs-you cursor | these states were only a fill or a box-shadow | session header toggles, terminal Ctrl key, session Mode buttons, subagent menu, composer slash menu, palette, home needs-you cursor |
 | 2026-10-22 | light `--act` `#7F5C00`, `--fuel` `#6447D6` | they were 4.41 and 4.46:1 on `--badge-bg`, and 4.2–4.4:1 on the diff line fills | needs-you text, fuel badges and numbers, diffs |
 | 2026-10-22 | scrollbar thumb `--ctl-edge` (Firefox `scrollbar-color`) | the `--border` thumb was 1.3:1, under 3:1 for an operable control (WCAG 1.4.11) | every scroll area |
+| 2026-10-22 | lane needs-you strip: holder + outline, glow on the panel; `.fd-strip-ico` quiet counter form with a name; cleared strip without opacity; sparkline bars `--faint`; "Nothing needs you." with a conflict; foot button "All usage"; rail key hint `a` First `d` Last | fleet review: the lane strip had no outline (§4.1), the chips were drawn two ways, opacity put the cleared text and the `--faint-decor` bars under 4.5:1 and 3:1, "All clear" stood next to a red conflict, two "Usage" labels, the hint named Allow/Deny for any option | fleet home lanes, strips, ops foot, Needs you panel |

@@ -82,8 +82,6 @@ export function NeedsYouRail({
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [picked, setPicked] = useState(0);
   useNotifications(sessions, notify, onOpen);
-  // The selection stays inside the list when the list shrinks.
-  const selected = Math.min(picked, Math.max(waiting.length - 1, 0));
   const answerableOf = (w: (typeof waiting)[number]) => {
     const actions = sessionActions?.(w.key);
     const r = w.request;
@@ -94,6 +92,11 @@ export function NeedsYouRail({
       r.options.length > 0;
     return ok && actions !== undefined ? actions : null;
   };
+  const answerable = waiting.map((w) => answerableOf(w) !== null);
+  // The keyboard cursor is always on a request that the keys can answer: it starts on the first
+  // one, stays inside the list when the list shrinks, and leaves a request that became
+  // unanswerable.
+  const selected = railCursor(answerable, picked);
   const settle = (requestId: string) =>
     setPending((p) => {
       const next = new Set(p);
@@ -114,7 +117,7 @@ export function NeedsYouRail({
       },
     );
   };
-  const anyAnswerable = waiting.some((w) => answerableOf(w) !== null);
+  const anyAnswerable = selected >= 0;
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     // Help, the palette and the drawer are modal: the rail keys do nothing behind them.
@@ -123,8 +126,7 @@ export function NeedsYouRail({
     if (!anyAnswerable || shouldIgnore(e) || e.shiftKey) return;
     if (e.key === '[' || e.key === ']') {
       e.preventDefault();
-      const step = e.key === ']' ? 1 : -1;
-      setPicked(Math.min(Math.max(selected + step, 0), waiting.length - 1));
+      setPicked(railStep(answerable, selected, e.key === ']' ? 1 : -1));
       return;
     }
     const item = waiting[selected];
@@ -132,17 +134,7 @@ export function NeedsYouRail({
     const actions = answerableOf(item);
     const options = item.request.options;
     if (actions === null || pending.has(item.request.request_id)) return;
-    const index =
-      e.key === 'a'
-        ? 0
-        : e.key === 'd'
-          ? options.length >= 2
-            ? options.length - 1
-            : -1
-          : /^[1-9]$/.test(e.key)
-            ? Number(e.key) - 1
-            : -1;
-    const option = options[index];
+    const option = options[railKeyOption(e.key, options.length)];
     if (option === undefined) return;
     e.preventDefault();
     answer(actions, item.request, option.option_id);
@@ -176,8 +168,8 @@ export function NeedsYouRail({
         {anyAnswerable ? (
           <span className="fd-rail-keys">
             <span className="fd-kbd">[</span>
-            <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> Allow{' '}
-            <span className="fd-kbd">d</span> Deny
+            <span className="fd-kbd">]</span> Move <span className="fd-kbd">a</span> First{' '}
+            <span className="fd-kbd">d</span> Last
           </span>
         ) : null}
         <NotifyToggle on={notify} onChange={setNotify} />
@@ -280,6 +272,33 @@ export function NeedsYouRail({
       </div>
     </section>
   );
+}
+
+/**
+ * The keyboard cursor: the request at `picked` when the keys can answer it, else the next
+ * answerable one after it, else the last answerable one before it. `-1`: none is answerable.
+ */
+export function railCursor(answerable: readonly boolean[], picked: number): number {
+  const from = Math.min(Math.max(picked, 0), answerable.length - 1);
+  for (let i = from; i < answerable.length; i += 1) if (answerable[i]) return i;
+  for (let i = from - 1; i >= 0; i -= 1) if (answerable[i]) return i;
+  return -1;
+}
+
+/** `[` and `]`: the next answerable request in the direction `step`; at the end the cursor stays. */
+export function railStep(answerable: readonly boolean[], selected: number, step: 1 | -1): number {
+  for (let i = selected + step; i >= 0 && i < answerable.length; i += step)
+    if (answerable[i]) return i;
+  return selected;
+}
+
+/** The option index that a key answers among `n` options: `a` the first, `d` the last (with two
+ * or more), `1`–`9` by number. `-1`: the key answers nothing. */
+export function railKeyOption(key: string, n: number): number {
+  if (key === 'a') return n >= 1 ? 0 : -1;
+  if (key === 'd') return n >= 2 ? n - 1 : -1;
+  if (/^[1-9]$/.test(key)) return Number(key) <= n ? Number(key) - 1 : -1;
+  return -1;
 }
 
 /** A permission's first option is the decision primary and its last one denies; a question's

@@ -39,6 +39,11 @@ type Props = {
   readonly waiting?: readonly MailWaiting[] | undefined;
   /** Section layout: each new value opens the "New mail or task" fold and focuses its text. */
   readonly composeSeq?: number | undefined;
+  /**
+   * Each new value loads the tasks and the grants again. The section stays mounted while the home
+   * is open, so it follows the fleet (`fleetVersion`) to show the new task and grant states.
+   */
+  readonly version?: unknown;
 };
 
 /** Who gets the mail: one session, a station, a repository, or everyone. */
@@ -59,6 +64,27 @@ type ManyResult = {
 const keyOf = (s: DeckSession) => `${s.station_id}/${s.summary.session_id}`;
 const nameOf = (s: DeckSession) => s.summary.callsign ?? s.summary.title ?? s.summary.session_id;
 
+/**
+ * Loads the tasks and the grants into `onTasks` and `onGrants`. The returned function drops the
+ * answers that come after it (an unmount, or a newer load).
+ */
+export function loadLists(
+  actions: FleetActions,
+  onTasks: (tasks: readonly TaskView[]) => void,
+  onGrants: (grants: readonly GrantView[]) => void,
+): () => void {
+  let current = true;
+  void actions.tasks().then((t) => {
+    if (current) onTasks(t);
+  });
+  void actions.grants().then((g) => {
+    if (current) onGrants(g);
+  });
+  return () => {
+    current = false;
+  };
+}
+
 /** Mail and tasks for one session of the fleet (M3 6-2 / 6-4). */
 export function FleetPanel({
   actions,
@@ -67,6 +93,7 @@ export function FleetPanel({
   layout = 'tab',
   waiting = [],
   composeSeq,
+  version,
 }: Props) {
   const live = sessions.filter((s) => s.status !== 'ended');
   const [target, setTarget] = useState('');
@@ -101,19 +128,10 @@ export function FleetPanel({
     composeFocus.current = false;
     textRef.current?.focus();
   }, [composeOpen, composeSeq]);
-  useEffect(() => {
-    if (actions === undefined) return undefined;
-    let current = true;
-    void actions.tasks().then((t) => {
-      if (current) setTasks(t);
-    });
-    void actions.grants().then((g) => {
-      if (current) setGrants(g);
-    });
-    return () => {
-      current = false;
-    };
-  }, [actions]);
+  useEffect(
+    () => (actions === undefined ? undefined : loadLists(actions, setTasks, setGrants)),
+    [actions, version],
+  );
   if (actions === undefined) return null;
   const chosen = live.find((s) => keyOf(s) === target) ?? live[0];
   const reachable = sessions.filter((s) => !NOT_LIVE.includes(s.status));

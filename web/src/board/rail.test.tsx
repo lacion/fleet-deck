@@ -6,7 +6,7 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { recordedRequest } from '../testing/timeline';
-import { NeedsYouRail } from './NeedsYouRail';
+import { NeedsYouRail, railCursor, railKeyOption, railStep } from './NeedsYouRail';
 
 const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
   request_id: 'r1',
@@ -76,7 +76,7 @@ describe('needs-you rail', () => {
     );
     expect(html).toContain('data-request="r1" data-selected="true"');
     expect(html).toContain(
-      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move',
+      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move <span class="fd-kbd">a</span> First <span class="fd-kbd">d</span> Last</span>',
     );
     expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
     expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
@@ -108,6 +108,68 @@ describe('needs-you rail', () => {
     expect(two.match(/data-selected="true"/g)).toHaveLength(1);
     expect(two).toContain('data-request="r1" data-selected="true"');
     expect(two).not.toContain('data-request="r2" data-selected');
+  });
+
+  test('the cursor starts on the first answerable request, and a answers it', () => {
+    const permission = request({ request_id: 'r2', requested_at: 2 });
+    const sessions = [
+      card('s1', 'needs_you', 'station-a', {
+        title: 'Ask me',
+        capabilities: claudeCaps(),
+        open_requests: [{ ...recordedRequest('codex-question_rpc'), requested_at: 1 }],
+      }),
+      card('s2', 'needs_you', 'station-a', {
+        title: 'Fix login',
+        capabilities: claudeCaps(),
+        open_requests: [permission],
+      }),
+    ];
+    const html = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={sessions}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        sessionActions={(key) =>
+          sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
+        }
+      />,
+    );
+    // the question comes first (the oldest) and opens its session; the permission is selected
+    expect(html.indexOf('Open session')).toBeLessThan(html.indexOf('data-request="r2"'));
+    expect(html.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(html).toContain('data-request="r2" data-selected="true"');
+    // the keys work on the cursor: a answers the permission with its first option
+    const cursor = railCursor([false, true], 0);
+    expect(cursor).toBe(1);
+    expect(permission.options[railKeyOption('a', permission.options.length)]?.option_id).toBe(
+      'allow',
+    );
+    expect(permission.options[railKeyOption('d', permission.options.length)]?.option_id).toBe(
+      'deny',
+    );
+  });
+
+  test('[ and ] skip the requests that the keys cannot answer, and stop at the ends', () => {
+    const answerable = [true, false, false, true, false];
+    expect(railStep(answerable, 0, 1)).toBe(3);
+    expect(railStep(answerable, 3, 1)).toBe(3);
+    expect(railStep(answerable, 3, -1)).toBe(0);
+    expect(railStep(answerable, 0, -1)).toBe(0);
+    // a shrunk list or a request that became unanswerable moves the cursor to an answerable one
+    expect(railCursor(answerable, 9)).toBe(3);
+    expect(railCursor(answerable, 1)).toBe(3);
+    expect(railCursor([true, false], 1)).toBe(0);
+    expect(railCursor([false, false], 0)).toBe(-1);
+    expect(railCursor([], 0)).toBe(-1);
+    // a, d and the numbers
+    expect(railKeyOption('a', 1)).toBe(0);
+    expect(railKeyOption('d', 1)).toBe(-1);
+    expect(railKeyOption('d', 3)).toBe(2);
+    expect(railKeyOption('2', 3)).toBe(1);
+    expect(railKeyOption('4', 3)).toBe(-1);
+    expect(railKeyOption('x', 3)).toBe(-1);
   });
 
   test('without an answerable request there is no selection and no key hint', () => {
