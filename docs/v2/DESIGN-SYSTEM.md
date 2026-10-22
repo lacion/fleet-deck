@@ -32,6 +32,7 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--raised` | `#1C2532` | `#FFFFFF` | strips, rows, inputs, buttons, cards ("strip") |
 | `--raised-hi` *(new)* | `#232E3D` | `#EEF4FB` | hover, selected row, pressed segment |
 | `--code` | `#0E141C` | `#F1F5F9` | code blocks, diffs, terminal frame |
+| `--code-chat` *(new)* | `var(--code)` | `var(--raised)` | fill of a code block in the chat prose (`.fd-md-code`): the light `--code` is about 1.02:1 on `--bg` and the block looked like an empty outline |
 | `--border` | `#2A3545` | `#D8E0E9` | strip field rules, section rules, dividers (never the edge of a form control) |
 | `--border-soft` | `#212B39` | `#E4E9F0` | the faintest divider (list separators) |
 | `--text` | `#E9EEF4` | `#111821` | primary text |
@@ -186,6 +187,7 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
+| `summary[data-variant="toggle"]` *(new)* | a fold toggle in a row of toggles (the station card folds): no leading marker; a trailing 12px `chevron-down` mask in `--faint` that turns 180° when open (forced colors: `CanvasText`). The area sets the size and the fill |
 | `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments, chips, `.fd-tap`: min-height 44px (`--tap-min`); `.fd-iconbtn` 44px; checkbox and radio 24px. The rule has zero specificity (`:where()`): an area rule that sets `min-height: 0` on a button, a summary or a button class must give the target back in a `@media (pointer: coarse)` rule of the same file for the same selector (`tools/design-check.sh` fails otherwise; inline controls in a line of text are on its allowlist) |
 | scrollbars | 8px, thumb `--ctl-edge` (3:1 on `--bg` and `--surface`, WCAG 1.4.11), transparent track; Firefox: `scrollbar-color` |
 | links | `--focus`, no underline; underline on hover and focus. A link without a class, or with only `.fd-tap`, inside prose (`.fd-note`, `.fd-md`, `p`) is always underlined (1px, offset 2px): color alone does not mark it (WCAG 1.4.1) |
@@ -222,7 +224,7 @@ From concept B, with A's look. Width `--sidebar-w`, `--surface`, no right border
 1. Brand row (48px): the mark (24px rounded square, `--ink-fill`, "FD" in `--ink-on`, `.fd-wide` weight 800 10px), "Fleet Deck" 14px weight 600, the connection pill at the right (`Live`: `--ok` dot; `Stale`: `--act`; `Offline`: `--hazard`).
 2. A row: **New session** (`.fd-primary` `.fd-sm`, `plus`, kbd `N`) and a search button (`search`, kbd `/`; ⌘K opens the palette).
 3. Nav (rows 28px, Lucide 16px icon + label, active: `--raised-hi` fill + a 2px `--focus` bar at the left): Fleet (with the needs-you `.fd-count data-tone=act` when > 0), Watch, Activity, Stations, then the "More" disclosure (Plans, Automations, Artifacts, Projects, Files, Shares, Terminals).
-4. Sessions: groups (Needs you first, then each station: `.fd-wide` 12px weight 600 name, the reach dot, the count at the right), rows `--row-h` with `.fd-dot` + title (13px) + age (12px `--faint`) at the right; the selected row: `--raised-hi` + 2px `--focus` bar. Ended sessions in a collapsed "Ended" group with its `.fd-count` pill (the fleet lanes use the same row).
+4. Sessions: groups (Needs you first, then each station: `.fd-wide` 12px weight 600 name, the count right after the name, then the reach dot; every group header and the fleet lanes put the count inline after the name), rows `--row-h` with `.fd-dot` + title (13px) + age (12px `--faint`) at the right; the selected row: `--raised-hi` + 2px `--focus` bar. Ended sessions in a collapsed "Ended" group with its `.fd-count` pill (the fleet lanes use the same row).
 5. Footer (44px): settings icon, the theme segmented control (sun / moon / monitor), the compact cards icon toggle (pressed like a segment), the account avatar (24px circle, initials).
 
 ### 4.3 Page header
@@ -257,9 +259,9 @@ Narrow main columns (the fleet home header): under 1100px the search folds to it
 - Chat column `--chat-w`, centered in the space left of the properties panel.
 - **Properties panel** (right, 280px, `--surface`, collapsible with `panel-right`): Status (glyph + text + since), Station (reach + slots), Branch, Folder, Model, Mode, Changes (+/− and the files), Usage (tokens and cost in `--fuel`), Subagents.
 - Transcript: the user message in a `--raised` bubble, right-aligned, max 75 %. Agent prose plain, 14px/1.6. **Tool calls on a flight path**: a 2px `--border` vertical line at the left of the column; each tool call a 30px row with a 10px node (filled `--ok` ok, ring `--act` waiting, `--hazard` failed; a running call without a request: the working glyph in the chat, an `--ok` ring on the wall; an ended call without a result: a hollow `--faint-decor` ring), tool icon, tool name weight 600, target mono `--dim`, result at the right in `--faint`. Reasoning collapsed ("Thinking · 12 s").
-- Code: `--code`, `--r-panel`, a 28px header (language + copy icon button), mono 12.5px/1.55, token colors: keywords `--focus`, strings `--ok`, comments `--faint`.
+- Code: `--code-chat` with a 1px `--border` inset ring, `--r-panel`, a 28px header (language + copy icon button), mono 12.5px/1.55, token colors: keywords `--focus`, strings `--ok`, comments `--faint`.
 - Tables: no outer border, header 12px weight 600 `--dim`, rows divided by `--border-soft`.
-- **Approval card**: `--raised`, `--r-panel`, holder `--act` at the left, `--act-line` outline, `--act-glow`, `--shadow-pop`. Header: shield icon + "Permission request" (or "Question", "Plan") weight 600, the tool, the age at the right. The command in a `.fd-code` line, the reason in `--dim`, buttons: `.fd-decide` Allow (kbd `a`), Allow for this session (plain), Deny (`.fd-danger`, kbd `d`).
+- **Approval card**: `--raised`, `--r-panel`, holder `--act` at the left, `--act-line` outline, `--act-glow`, `--shadow-pop`. Header: shield icon + "Permission request" (or "Question", "Plan") weight 600, the tool, the age at the right. The command in a `.fd-code` line, the reason in `--dim`, buttons: `.fd-decide` Allow, Allow for this session (plain, with the `--btn-edge-raised` edge on the `--raised` card), Deny (`.fd-danger`); no key hints: the a/d keys work only in the fleet Needs you panel.
 - **Composer**: a `--raised` dock, `--r-sheet`, `--shadow-pop`, textarea 2 lines min, toolbar: attach (`paperclip`), the model chip, at the right **Steer now** (ghost, kbd ⌘↵) and **Queue follow-up** (`.fd-primary`, kbd ↵).
 - Terminal dock: `--surface` bar 32px, tabs like the session tabs, the terminal on `--code`. With the Properties panel open, the dock stops at the panel and the panel's `--surface` column goes on to the window bottom.
 
@@ -283,7 +285,7 @@ The `#/new` route keeps its URL and its form. It renders a centered **sheet** (m
 
 ### 4.8 Phone (< 640px)
 
-From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar) on every page with the bottom bar; the page h1 and the New session caption stay only for screen readers, and a page under More shows a "Back to More" chevron in place of the mark; needs-you cards first (strip + full-width 44px buttons; Deny there has a `--raised-hi` fill, as in concept A phone); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
+From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar) on every page with the bottom bar; the page h1 and the New session caption stay only for screen readers, and a page under More shows a Back chevron in place of the mark (to its list for a detail page: Artifact to Artifacts, Project to Projects, Compare to Fleet; else "Back to More"); needs-you cards first (strip + full-width 44px buttons; Deny there has a `--raised-hi` fill, as in concept A phone); station groups of two-line strips; the bottom bar (60px + safe area, `--surface`): Sessions, Fleet, **New** (a 44px `--ink-fill` circle with `plus`), More. Session: back + callsign over title + status; the approval is a **bottom sheet** (`--r-sheet` top corners, a 4px `--act` top bar, three stacked 44px buttons); the composer under it.
 
 ### 4.9 Wall display (`/display`)
 
@@ -360,3 +362,8 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | light `--act` `#7F5C00`, `--fuel` `#6447D6` | they were 4.41 and 4.46:1 on `--badge-bg`, and 4.2–4.4:1 on the diff line fills | needs-you text, fuel badges and numbers, diffs |
 | 2026-10-22 | scrollbar thumb `--ctl-edge` (Firefox `scrollbar-color`) | the `--border` thumb was 1.3:1, under 3:1 for an operable control (WCAG 1.4.11) | every scroll area |
 | 2026-10-22 | lane needs-you strip: holder + outline, glow on the panel; `.fd-strip-ico` quiet counter form with a name; cleared strip without opacity; sparkline bars `--faint`; "Nothing needs you." with a conflict; foot button "All usage"; rail key hint `a` First `d` Last | fleet review: the lane strip had no outline (§4.1), the chips were drawn two ways, opacity put the cleared text and the `--faint-decor` bars under 4.5:1 and 3:1, "All clear" stood next to a red conflict, two "Usage" labels, the hint named Allow/Deny for any option | fleet home lanes, strips, ops foot, Needs you panel |
+| 2026-10-22 | sidebar group count inline after the name | one placement with the Needs you group and the fleet lanes | desktop sidebar station groups |
+| 2026-10-22 | approval card: no a/d key hints; the plain option has the `--btn-edge-raised` edge | the session page has no a/d keys (c94d93b9); `--raised-hi` on the white `--raised` card was 1.07:1 in light | session approval card (desktop dock, phone sheet) |
+| 2026-10-22 | `--code-chat` (dark `--code`, light `--raised`) | the light `--code` (#F1F5F9) is 1.02:1 on `--bg`, so the chat code block showed only its hairline; a darker light `--code` (#E9EEF4) drops `--faint` on the `--add-bg` diff line to 4.42:1 | chat code blocks (`.fd-md-code`) |
+| 2026-10-22 | `summary[data-variant="toggle"]` | stations.css copied the summary chevron to turn it into a trailing chevron-down for the fold toggles (a primitive changed in an area file) | station card folds: Details, Shells, Worktrees, Desktop |
+| 2026-10-22 | selected option tint: the composer slash menu uses `--focus-bg` + the 2px `--focus` bar, the same as the palette | §2.2: `--focus-bg` is the selection tint; the two option lists had two looks for one state | composer slash menu, Go to session palette |

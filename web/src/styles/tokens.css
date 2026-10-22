@@ -14,6 +14,7 @@
   --raised: #1c2532; /* strips, rows, inputs, buttons, cards ("strip") */
   --raised-hi: #232e3d; /* hover, selected row, pressed segment */
   --code: #0e141c; /* code blocks, diffs, terminal frame */
+  --code-chat: var(--code); /* a code block in the chat prose (on --bg) */
   --border: #2a3545; /* strip field rules, section rules, input edge */
   --border-soft: #212b39; /* the faintest divider (list separators) */
   --text: #e9eef4; /* primary text */
@@ -85,6 +86,7 @@
   --raised: #ffffff;
   --raised-hi: #eef4fb;
   --code: #f1f5f9;
+  --code-chat: var(--raised); /* --code is about 1.02:1 on the light --bg */
   --border: #d8e0e9;
   --border-soft: #e4e9f0;
   --text: #111821;

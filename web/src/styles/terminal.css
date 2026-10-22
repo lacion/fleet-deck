@@ -21,6 +21,11 @@
   position: absolute;
   inset: var(--sp-2) var(--sp-1) var(--sp-2) var(--sp-3);
 }
+/* In the dock the prompt column starts on the tab column of the 32px bar (tabs padding 8 + tab
+   padding 8). The Terminals page keeps the --sp-3 inset. */
+.fd-tdock .fd-term-screen {
+  left: var(--sp-4);
+}
 .fd-term-screen .xterm {
   height: 100%;
 }
@@ -290,6 +295,15 @@
   }
   .fd-tdock-bar {
     height: var(--tap-min);
+  }
+  /* WCAG 2.5.8: a 24px hit area for the resize handle on a touch screen; the 2px line stays
+     centered on the dock edge. */
+  .fd-tdock-handle {
+    top: -12px;
+    height: 24px;
+  }
+  .fd-tdock-handle::after {
+    top: 11px;
   }
 }
 

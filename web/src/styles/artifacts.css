@@ -240,6 +240,12 @@
   padding-left: var(--sp-2);
   font-size: var(--fs-meta);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-art-version select {
+    font-size: var(--fs-field);
+  }
+}
 .fd-art-back,
 .fd-art-action {
   display: inline-flex;

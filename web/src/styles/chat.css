@@ -556,7 +556,7 @@
   overflow: hidden;
   /* --code-chat: --code in the dark theme, --raised in the light one, where --code is about
      1.02:1 on --bg and the block looked like an empty outline (§2.1). */
-  background: var(--code-chat, var(--code));
+  background: var(--code-chat);
   border-radius: var(--r-panel);
   box-shadow: inset 0 0 0 1px var(--border);
 }
@@ -1265,6 +1265,29 @@
 .fd-chat-nested > .fd-chat-ask::after,
 .fd-chat-nested .fd-chat-mark:not([data-status="ok"], [data-status="failed"]) {
   background: var(--surface);
+}
+
+/* Forced colors: the flight path keeps its colors, so that a filled ok node and a waiting ring
+   still differ by fill, and the line stays (DESIGN-SYSTEM §6). */
+@media (forced-colors: active) {
+  .fd-chat-mark,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
+    > :is(.fd-chat-reasoning, .fd-chat-toolgroup)
+    > summary::after,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body) > .fd-chat-ask::after,
+  :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
+    > :is(
+      .fd-chat-message,
+      .fd-chat-reasoning,
+      .fd-chat-tool,
+      .fd-chat-toolgroup,
+      .fd-chat-card,
+      .fd-chat-line,
+      .fd-chat-turn,
+      .fd-chat-working
+    )::before {
+    forced-color-adjust: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

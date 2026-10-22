@@ -766,6 +766,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-shells form input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 
 /* The human shell: a terminal that fits a phone width. */
 .fd-shells .fd-terminal {
@@ -941,6 +947,12 @@
 .fd-wt-confirm .fd-wt-actions input {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-wt-confirm .fd-wt-actions input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
 }
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */

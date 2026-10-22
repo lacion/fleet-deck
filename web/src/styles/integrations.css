@@ -568,6 +568,12 @@ a.fd-int-projectchip:hover {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-int-secrets textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 .fd-int-secret-scroll {
   overflow-x: auto;
   min-width: 0;

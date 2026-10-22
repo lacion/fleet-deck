@@ -677,13 +677,22 @@ describe('terminal palette', () => {
     '--focus': '#8fbcf7',
     '--fuel': '#c4b0ff',
     '--term-cyan': '#6fd6cd',
-    '--faint': '#5c6880',
+    '--term-black': '#0b0e14',
+    '--term-white': '#e7ecf5',
+    '--term-bright-black': '#5c6880',
+    '--term-bright-red': '#ff8a76',
+    '--term-bright-green': '#7bd3a6',
+    '--term-bright-yellow': '#f6be6a',
+    '--term-bright-blue': '#aecffa',
+    '--term-bright-magenta': '#d8cbff',
+    '--term-bright-cyan': '#9ae4dd',
+    '--term-bright-white': '#ffffff',
   };
   const stub = (values: Record<string, string>) => ({
     getPropertyValue: (name: string) => (values[name] === undefined ? '' : ` ${values[name]} `),
   });
 
-  test('gives the 16 ANSI colors, the chrome and the fixed bright values', () => {
+  test('gives the 16 ANSI colors and the chrome from the tokens', () => {
     const t = termTheme(stub(tokens));
     const ansi = [
       'black',
@@ -713,14 +722,16 @@ describe('terminal palette', () => {
     expect(t.blue).toBe('#8fbcf7');
     expect(t.magenta).toBe('#c4b0ff');
     expect(t.cyan).toBe('#6fd6cd');
+    expect(t.black).toBe('#0b0e14');
+    expect(t.white).toBe('#e7ecf5');
     expect(t.brightBlack).toBe('#5c6880');
-    expect(t.brightRed).toBe('#FF8A76');
-    expect(t.brightGreen).toBe('#7BD3A6');
-    expect(t.brightYellow).toBe('#F6BE6A');
-    expect(t.brightBlue).toBe('#AECFFA');
-    expect(t.brightMagenta).toBe('#D8CBFF');
-    expect(t.brightCyan).toBe('#9AE4DD');
-    expect(t.brightWhite).toBe('#FFFFFF');
+    expect(t.brightRed).toBe('#ff8a76');
+    expect(t.brightGreen).toBe('#7bd3a6');
+    expect(t.brightYellow).toBe('#f6be6a');
+    expect(t.brightBlue).toBe('#aecffa');
+    expect(t.brightMagenta).toBe('#d8cbff');
+    expect(t.brightCyan).toBe('#9ae4dd');
+    expect(t.brightWhite).toBe('#ffffff');
   });
 
   test('the selection is --term-selection, else --focus with a 44 alpha', () => {

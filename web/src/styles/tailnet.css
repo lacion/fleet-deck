@@ -241,6 +241,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-add-flow > textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 .fd-add-flow code {
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -583,6 +589,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
   word-break: break-all;
+}
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-add-command textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
 }
 .fd-add-command-actions {
   display: flex;

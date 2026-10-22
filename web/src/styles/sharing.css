@@ -65,6 +65,11 @@
   border-radius: var(--r-card);
   transition: background-color var(--t-fast);
 }
+@media (pointer: coarse) {
+  .fd-share-roles .fd-share-role {
+    min-height: var(--tap-min);
+  }
+}
 .fd-share-roles .fd-share-role:hover {
   background: var(--raised-hi);
 }
@@ -204,7 +209,7 @@
   padding: 0;
   list-style: none;
 }
-.fd-avatar,
+/* The "+N" disc of the stack: the look of the .fd-avatar primitive (base.css), in --dim. */
 .fd-avatar-more {
   display: inline-flex;
   flex: none;
@@ -212,21 +217,25 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  margin-left: -6px;
-  background: var(--raised-hi);
-  border: 2px solid var(--surface);
   border-radius: var(--r-pill);
-  color: var(--text);
+  background: var(--badge-bg);
+  color: var(--dim);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 600;
   line-height: 1;
 }
+/* The stack overlaps by 6px; a 2px --surface ring parts two discs (the primitive keeps its
+   --btn-edge ring inside). */
+.fd-avatars > .fd-avatar,
+.fd-avatars > .fd-avatar-more {
+  margin-left: -6px;
+  box-shadow:
+    inset 0 0 0 1px var(--btn-edge),
+    0 0 0 2px var(--surface);
+}
 .fd-avatars > :first-child {
   margin-left: 0;
-}
-.fd-avatar-more {
-  background: var(--raised);
-  color: var(--dim);
 }
 
 /* ---------- mob steering ---------- */

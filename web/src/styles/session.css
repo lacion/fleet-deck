@@ -203,11 +203,6 @@
   padding: 0 var(--sp-2) 0 var(--sp-3);
   border-left: 1px solid var(--border);
 }
-.fd-sh-actions .fd-iconbtn[aria-pressed="true"],
-.fd-sh-actions .fd-iconbtn[aria-pressed="true"]:hover:not(:disabled) {
-  background: var(--raised-hi);
-  color: var(--text);
-}
 /* The Terminal menu summary is a ghost button like Interrupt (local modifier: base.css has no
    ghost summary; requested as `.fd-menu > summary.fd-ghost`). */
 .fd-sh-actions .fd-menu > summary:not(.fd-iconbtn) {
@@ -1013,7 +1008,7 @@ fieldset:disabled .fd-opt {
   background: transparent;
   border: 0;
   border-radius: var(--r-sheet) var(--r-sheet) 0 0;
-  font-size: var(--fs-chat);
+  font-size: max(var(--fs-chat), var(--fs-field));
   line-height: 1.45;
   resize: none;
 }
@@ -1211,8 +1206,12 @@ button.fd-composer-model > .fd-icon {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
-.fd-composer-menu [role="option"][aria-selected="true"] {
+.fd-composer-menu [role="option"]:hover {
   background: var(--raised-hi);
+}
+/* The selected option: the --focus-bg selection tint and the 2px --focus bar, as in the palette. */
+.fd-composer-menu [role="option"][aria-selected="true"] {
+  background: var(--focus-bg);
   box-shadow: inset 2px 0 0 var(--focus);
 }
 .fd-composer-menu .fd-composer-status {

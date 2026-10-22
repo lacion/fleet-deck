@@ -150,7 +150,11 @@ describe('App', () => {
     );
     // desktop (§4.2): the Fleet row counts the requests; the "Needs you" group comes first
     expect(html).not.toContain('fd-needschip');
-    expect(html).toMatch(/Fleet<span class="fd-count" data-tone="act">1<\/span><\/a>/);
+    // the link name carries the count ("Fleet, 1 needs you"); the visible pill is aria-hidden
+    expect(html).toContain('aria-label="Fleet, 1 needs you"');
+    expect(html).toMatch(
+      /Fleet<span class="fd-count" data-tone="act" aria-hidden="true">1<\/span><\/a>/,
+    );
     const needs = html.indexOf('data-group="needs"');
     expect(needs).toBeGreaterThan(-1);
     expect(html).toContain('Ended <span class="fd-count">1</span>');

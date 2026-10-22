@@ -137,6 +137,39 @@ test('a session starts from the form with a picked directory and opens', async (
   await expect(page.getByRole('heading', { name: 'Fix the login' })).toBeVisible();
 });
 
+test('Ctrl+Enter in the task starts a startable form only', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  deck.on('/api/commands/session.start', () => ({
+    status: 200,
+    body: {
+      state: 'done',
+      receipt: { state: 'accepted', result: { session_id: 's-key', input_id: null }, reject: null },
+    },
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await page.getByRole('link', { name: 'New', exact: true }).click();
+  const form = page.getByRole('region', { name: 'New session' });
+  const task = form.getByLabel('What should the agent do? (optional)');
+  const starts = () => deck.calls.filter((c) => c.path === '/api/commands/session.start');
+  // No directory: the form is not startable, so the key does nothing.
+  await task.fill('Find the bug');
+  await task.press('Control+Enter');
+  await expect(form.getByRole('button', { name: 'Start session' })).toBeDisabled();
+  await expect(page).toHaveURL(/#\/new$/);
+  expect(starts()).toHaveLength(0);
+  // A valid directory: the key starts one session from the task field.
+  await form.getByLabel('Directory path').fill(`${ROOT}/app`);
+  await task.press('Control+Enter');
+  await expect(page).toHaveURL(/#\/s\/st-alpha\/s-key$/);
+  expect(starts()).toHaveLength(1);
+  expect(starts()[0]?.body).toMatchObject({
+    command: { spec: { cwd: `${ROOT}/app` }, prompt: { text: 'Find the bug' } },
+  });
+});
+
 test('the mode list follows the capabilities of the chosen provider (P5-3)', async ({ page }) => {
   const deck = new FakeDeck();
   deck.stations = [alpha];

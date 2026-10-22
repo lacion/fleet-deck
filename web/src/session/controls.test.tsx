@@ -13,6 +13,7 @@ import { SessionHeader } from './SessionHeader';
 import { ModelPicker } from './SessionSettings';
 import { matchSlash } from './slash';
 import { matchHash } from '../review/hashMenu';
+import { submitKeyHint } from '../spawn/keyHint';
 
 const key = { station_id: 'station-a', session_id: 's1' };
 const drive = sessionActions(async () => ({}), key, ['read', 'drive', 'approve']);
@@ -695,7 +696,7 @@ describe('composer (DL-140)', () => {
     expect(working).toContain('The station holds a follow-up until the turn ends.');
     // §4.5: Steer now carries its ⌘↵ hint, the same as Queue follow-up carries ↵.
     expect(working).toContain(
-      'aria-keyshortcuts="Meta+Enter Control+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">⌘↵</span></button>',
+      `aria-keyshortcuts="Meta+Enter Control+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
     );
   });
 });

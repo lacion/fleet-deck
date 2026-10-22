@@ -141,6 +141,7 @@ export function PlanLibrary({
       wide
       title="Plans"
       label="Plan library"
+      description="Plans that sessions proposed. Start one as a new session."
       actions={
         <>
           <label className="fd-checkrow">

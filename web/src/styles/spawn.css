@@ -91,7 +91,7 @@
 .fd-spawn input::placeholder,
 .fd-spawn .fd-folder-row > input::placeholder {
   font-family: var(--font-ui);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
 }
 .fd-spawn textarea {
   resize: vertical;
@@ -169,7 +169,7 @@
   min-height: calc(6 * 1.5em + 2 * var(--sp-1));
   max-height: 50vh;
   field-sizing: content;
-  font-size: var(--fs-15);
+  font-size: max(var(--fs-15), var(--fs-field));
   line-height: 1.5;
   resize: none;
 }
@@ -519,6 +519,16 @@
 .fd-spawn textarea.fd-spawn-setup {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+/* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
+@media (pointer: coarse) {
+  .fd-spawn .fd-folder-row > input,
+  .fd-spawn input[aria-label="Directory path"],
+  .fd-spawn .fd-spawn-branch input,
+  .fd-spawn .fd-spawn-url input,
+  .fd-spawn textarea.fd-spawn-setup {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
 }
 /* ADR-008: the fleet-control switches under the Coordinator checkbox. */
 .fd-spawn .fd-spawn-fleet {

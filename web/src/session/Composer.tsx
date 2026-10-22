@@ -16,6 +16,7 @@ import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
+import { submitKeyHint } from '../spawn/keyHint';
 
 type Props = {
   readonly enabled: boolean;
@@ -594,7 +595,7 @@ export function Composer(props: Props) {
                 >
                   Steer now
                   <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                    ⌘↵
+                    {submitKeyHint()}
                   </span>
                 </button>
               ) : null}

@@ -123,22 +123,24 @@ export function termTheme(
     'selectionBackground',
     v('--term-selection') || (/^#[0-9a-fA-F]{6}$/.test(focus) ? `${focus}44` : focus),
   );
-  set('black', v('--bg'));
+  // Every ANSI color is a token (tokens.css): the light theme needs dark ink for white and the
+  // bright colors, so that each one reads on the light --code.
+  set('black', v('--term-black'));
   set('red', v('--hazard'));
   set('green', v('--ok'));
   set('yellow', act);
   set('blue', focus);
   set('magenta', v('--fuel'));
   set('cyan', v('--term-cyan'));
-  set('white', text);
-  set('brightBlack', v('--faint'));
-  set('brightRed', '#FF8A76');
-  set('brightGreen', '#7BD3A6');
-  set('brightYellow', '#F6BE6A');
-  set('brightBlue', '#AECFFA');
-  set('brightMagenta', '#D8CBFF');
-  set('brightCyan', '#9AE4DD');
-  set('brightWhite', '#FFFFFF');
+  set('white', v('--term-white'));
+  set('brightBlack', v('--term-bright-black'));
+  set('brightRed', v('--term-bright-red'));
+  set('brightGreen', v('--term-bright-green'));
+  set('brightYellow', v('--term-bright-yellow'));
+  set('brightBlue', v('--term-bright-blue'));
+  set('brightMagenta', v('--term-bright-magenta'));
+  set('brightCyan', v('--term-bright-cyan'));
+  set('brightWhite', v('--term-bright-white'));
   return out as ITheme;
 }
 

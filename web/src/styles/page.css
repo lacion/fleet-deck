@@ -258,6 +258,13 @@
   flex: none;
   margin-top: 1px;
 }
+/* In a page header the label sits level with its box and with the buttons next to it. */
+.fd-page-actions > .fd-checkrow {
+  align-items: center;
+}
+.fd-page-actions > .fd-checkrow > input {
+  margin-top: 0;
+}
 /* A form section: a rule above it, then its heading and its fields. */
 .fd-formsec {
   display: grid;
@@ -343,7 +350,7 @@
 }
 .fd-table td {
   height: var(--row-h);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-1) var(--sp-3);
   border-bottom: 1px solid var(--border-soft);
   vertical-align: middle;
   min-width: 0;
@@ -357,11 +364,16 @@
 .fd-table tbody tr:hover {
   background: var(--raised);
 }
-.fd-table tr[data-dim="true"] {
-  opacity: 0.6;
+/* A row that is no longer live (an expired share): dim ink, not opacity, so the text keeps
+   its contrast (WCAG 1.4.3). */
+.fd-table tr[data-dim="true"] td {
+  color: var(--dim);
 }
 .fd-table .fd-cell-name {
   font-weight: 500;
+}
+.fd-table tr[data-dim="true"] .fd-cell-name {
+  font-weight: 400;
 }
 .fd-table .fd-cell-path {
   font-family: var(--font-data);
@@ -455,6 +467,11 @@
     font-weight: 500;
     color: var(--dim);
   }
+  /* A card row reads left to right: the number column is not right-aligned here. */
+  .fd-table th.fd-num,
+  .fd-table td.fd-num {
+    text-align: left;
+  }
   .fd-table .fd-cell-actions {
     margin-top: 6px;
     white-space: normal;
@@ -542,6 +559,10 @@
   .fd-folder-crumbs button {
     min-height: var(--tap-min);
     padding: 0 var(--sp-2);
+  }
+  /* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
+  .fd-folder-row > input {
+    font-size: max(var(--fs-data), var(--fs-field));
   }
 }
 .fd-folder-quick {

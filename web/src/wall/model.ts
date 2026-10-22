@@ -3,10 +3,13 @@
 import { WALL_MODES, type WallMode, type WallRoute } from '../app/routes';
 import { repoName } from '../board/fleet';
 import { type RateMeter, scopeText } from '../board/usage';
-import type { ActivityKind, DeckSession, OpenRequest, RequestKind } from '../gen';
+import type { DeckSession, OpenRequest, RequestKind } from '../gen';
 import type { ReviewState } from '../review/useReview';
 import { emptyWatchFilter, refOf, watchSessions } from '../watch/tiles';
 import type { Ask } from './autofocus';
+
+/** The tool line split of the stream; the Activity page uses the same rule (ui/format.ts). */
+export { toolParts } from '../ui/format';
 
 /** The sessions that pass the station and repository filter of the route. */
 export function wallSessions(
@@ -64,46 +67,6 @@ export function usageParts(meter: RateMeter): { readonly label: string; readonly
 export function usageLine(meter: RateMeter): string {
   const { label, percent } = usageParts(meter);
   return `${label} · ${percent}`;
-}
-
-/** The tools whose input is a command or a path: the stream draws that input in mono. A tool with
- * prose input (a task, a search query) is not here. */
-const CODE_TOOLS: ReadonlySet<string> = new Set([
-  'Bash',
-  'Shell',
-  'shell',
-  'exec_command',
-  'Read',
-  'Edit',
-  'MultiEdit',
-  'Write',
-  'NotebookEdit',
-  'Grep',
-  'Glob',
-  'LS',
-  'WebFetch',
-  'apply_patch',
-]);
-
-/** "Bash cargo test", "Edit: src/a.ts", "Permission: Bash cargo test": an optional request
- * label, the tool name, a space or ": ", then the target. */
-const TOOL_LINE = /^((?:Permission|Needs you): )?([A-Za-z_]+)(:? )(\S.*)$/;
-
-/** A tool or approval row of the stream split into the words (the label and the tool name, in
- * sans) and the target (the command or the path, in mono). `null`: the row is words only. The
- * two parts joined by a space give the text again. */
-export function toolParts(
-  kind: ActivityKind,
-  text: string,
-): { readonly lead: string; readonly target: string } | null {
-  if (kind !== 'tool' && kind !== 'approval') return null;
-  const m = TOOL_LINE.exec(text);
-  const name = m?.[2];
-  const target = m?.[4];
-  if (m === null || name === undefined || target === undefined || !CODE_TOOLS.has(name)) {
-    return null;
-  }
-  return { lead: `${m[1] ?? ''}${name}${(m[3] ?? ' ').trimEnd()}`, target };
 }
 
 /** The requests as the auto-focus function reads them. */

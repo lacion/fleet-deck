@@ -117,3 +117,34 @@ describe('the desktop of a station card', () => {
     expect(html).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
   });
 });
+
+describe('the config reference', () => {
+  test('a refused reference shows the deck error as an alert and keeps the old reference', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('st-alpha', { name: 'Alpha' }), station('st-bravo', { name: 'Bravo' })]}
+        sessions={[]}
+        freshness="live"
+        drift={{
+          offered: true,
+          station: 'st-alpha',
+          error: 'Unknown station.',
+          set: async () => {},
+        }}
+      />,
+    );
+    expect(html).toContain('<p role="alert">Unknown station.</p>');
+    expect(html).toContain('Config reference: Alpha');
+  });
+  test('no alert while the deck has not answered', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('st-alpha')]}
+        sessions={[]}
+        freshness="live"
+        drift={{ offered: false, station: null, error: 'Unknown station.', set: async () => {} }}
+      />,
+    );
+    expect(html).not.toContain('role="alert"');
+  });
+});

@@ -165,6 +165,12 @@ input[data-mono="true"] {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
+  input[data-mono="true"] {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 /* A folder row: the picker's own row (path, pin, Browse…) and the remove button share one line
    and one center line. */
 .fd-set-row > .fd-folder .fd-folder-row {

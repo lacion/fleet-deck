@@ -22,7 +22,12 @@ import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
-import { ConfigReferenceHeader, StationConfigDrift, useDriftReference } from './StationConfigDrift';
+import {
+  ConfigReferenceHeader,
+  type DriftReference,
+  StationConfigDrift,
+  useDriftReference,
+} from './StationConfigDrift';
 import { StationResources } from './StationResources';
 import { showLastSeen, stationsSummary } from './StationSummary';
 import { StationTaildrive } from './StationTaildrive';
@@ -41,6 +46,8 @@ type Props = {
   readonly sessions: readonly DeckSession[];
   readonly freshness: Freshness;
   readonly actions?: StationActions | undefined;
+  /** Test seam: the config reference state in place of the deck's (`useDriftReference`). */
+  readonly drift?: DriftReference | undefined;
 };
 
 const NONE = '—';
@@ -467,13 +474,14 @@ function Worktrees({
 }
 
 /** Link health and board freshness are different facts. Never invent metadata. */
-export function StationsPanel({ stations, sessions, freshness, actions }: Props) {
+export function StationsPanel({ stations, sessions, freshness, actions, drift: given }: Props) {
   const [adding, setAdding] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const now = useNow(undefined, 30000);
   const canPair = actions?.canAdmin === true && freshness === 'live';
-  const drift = useDriftReference();
+  const deckDrift = useDriftReference();
+  const drift = given ?? deckDrift;
   const reference = stations.find((s) => s.station_id === drift.station);
   const referenceMenu =
     drift.offered && stations.length > 0 ? (

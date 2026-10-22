@@ -258,6 +258,41 @@ test('4b: in forced colors the session renders and its controls keep an edge', a
     dock.some((e) => e.edge),
     'the composer has no border or outline',
   ).toBe(true);
+  // The phone permission sheet: forced colors drop its fill and shadow, so it needs an edge.
+  if (test.info().project.name === 'phone') {
+    const sheet = page.locator('.fd-q-dock').first();
+    await expect(sheet).toBeVisible();
+    const edge = await sheet.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return s.outlineStyle !== 'none' || parseFloat(s.borderTopWidth) >= 1;
+    });
+    expect(edge, 'the permission sheet has no outline and no top border').toBe(true);
+  }
+});
+
+test('4d: in forced colors the active palette option has a Highlight outline', async ({ page }) => {
+  desktopOnly();
+  await forcedColors(page);
+  await blur(page);
+  await page.locator('body').press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Go to session' });
+  await expect(palette).toBeVisible();
+  const active = palette.locator('[role="option"][aria-selected="true"]');
+  await expect(active).toHaveCount(1);
+  await expect(active).toHaveCSS('outline-style', 'solid');
+});
+
+test('4e: in forced colors the pressed Properties toggle has a Highlight outline', async ({
+  page,
+}) => {
+  desktopOnly();
+  await forcedColors(page);
+  await goTo(page, `#/s/${LIGHTING}/${OTTER}`);
+  const toggle = page.getByRole('button', { name: 'Properties' });
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggle).toHaveCSS('outline-style', 'solid');
 });
 
 test('4c: in forced colors the inputs, switches and segments of New session keep an edge', async ({

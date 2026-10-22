@@ -747,6 +747,12 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-files-page .fd-files-folder input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 
 .fd-files-page .fd-files-folder select {
   width: auto;
@@ -782,7 +788,7 @@
 .fd-files-page .fd-files-bar :is(input, select).fd-sm {
   height: var(--ctl-h);
   padding-right: 10px;
-  font-size: var(--fs-ui);
+  font-size: var(--fs-field);
 }
 
 .fd-files-page .fd-files-bar select.fd-sm {

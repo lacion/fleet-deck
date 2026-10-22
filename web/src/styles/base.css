@@ -570,6 +570,31 @@ a.fd-btn {
 :where(details[open]:not(.fd-menu) > summary:not(:has(svg)))::before {
   transform: rotate(90deg);
 }
+/* A toggle summary (data-variant="toggle"): a fold that opens in place under a row of toggles,
+   not a path. No leading chevron-right; a trailing 12px chevron-down that turns 180° when the
+   details open. The area sets the size and the fill of the summary. */
+:where(summary[data-variant="toggle"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+summary[data-variant="toggle"]::before {
+  content: none;
+}
+summary[data-variant="toggle"]::after {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background-color: var(--faint);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  transition: transform var(--t-move);
+}
+details[open] > summary[data-variant="toggle"]::after {
+  transform: rotate(180deg);
+}
 
 /* ── key hints and fields ───────────────────────────────────────── */
 .fd-kbd {
@@ -1375,7 +1400,8 @@ a.fd-btn {
     border-color: GrayText;
   }
   /* The summary chevron is a mask on a background color: draw it in the text color. */
-  :where(details:not(.fd-menu) > summary:not(:has(svg)))::before {
+  :where(details:not(.fd-menu) > summary:not(:has(svg)))::before,
+  summary[data-variant="toggle"]::after {
     forced-color-adjust: none;
     background-color: CanvasText;
   }

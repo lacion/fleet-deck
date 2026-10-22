@@ -698,24 +698,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0;
 }
 
-/* Compact cards: a plain icon toggle, not a track with one segment. Pressed, it looks like a
-   pressed segment: the --pressed-bg fill, a 1px inset --ctl-edge ring and --text. */
-.fd-sidebar-density[aria-pressed="true"],
-.fd-sidebar-density[aria-pressed="true"]:hover:not(:disabled) {
-  background: var(--pressed-bg);
-  color: var(--text);
-  box-shadow:
-    inset 0 0 0 1px var(--ctl-edge),
-    var(--shadow-lift);
-}
-
-@media (forced-colors: active) {
-  .fd-sidebar-density[aria-pressed="true"] {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-  }
-}
-
 .fd-sidebar[data-variant="full"] .fd-sidebar-prefs > .fd-seg {
   background: var(--bg);
 }
@@ -929,7 +911,8 @@ a.fd-phonebar-back {
 }
 
 /* A header with nothing left to show leaves the flow of the page (and its gap). */
-.fd-app[data-phonebar="true"] .fd-page-head:not(:has(.fd-page-desc, .fd-page-actions)) {
+.fd-app[data-phonebar="true"]
+.fd-page-head:not(:has(.fd-page-desc, .fd-page-actions, .fd-page-filters)) {
   position: absolute;
   padding: 0;
   border-bottom: 0;
@@ -1169,6 +1152,12 @@ a.fd-phonebar-back {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-devlink-url input {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
 
 .fd-devlink-error {
   color: var(--hazard);
@@ -1339,7 +1328,7 @@ a.fd-phonebar-back {
   border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
   background: transparent;
-  font-size: var(--fs-15);
+  font-size: max(var(--fs-15), var(--fs-field));
 }
 
 .fd-palette > input:focus {
