@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
-import { stationName } from '../board/fleet';
-import { STATUS_LANES } from '../board/fleet';
+import { useEffect, useRef, useState } from 'react';
+import { STATUS_LANES, stationName } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
+import { archived } from '../ui/archive';
 import { useDismiss } from '../ui/dismiss';
 import { Icon, Plus } from '../ui/icons';
+import { isHibernated } from '../views/hibernate';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
 import { paletteMatches, sessionTitle } from './sessions';
@@ -19,10 +20,23 @@ type Props = {
   readonly initialQuery?: string;
 };
 
+// A hibernated session is in the Live group: its label says Hibernated, not Ended (R6.6).
 const statusLabel = (card: DeckSession) =>
-  STATUS_LANES.find((lane) => lane.status === card.status)?.label ?? card.status;
+  isHibernated(card)
+    ? 'Hibernated'
+    : (STATUS_LANES.find((lane) => lane.status === card.status)?.label ?? card.status);
 
-/** "Go to session": type a name, pick with the arrow keys, Enter opens it. */
+/** The two option groups of the list, each under its 12px label. */
+const GROUPS = [
+  { key: 'live', label: 'Live' },
+  { key: 'ended', label: 'Ended' },
+] as const;
+
+/**
+ * "Go to session": type a name, pick with the arrow keys, Enter opens it. The live sessions come
+ * first (needs you, running, idle), the ended ones under their own label; an archived session
+ * shows only for a query that matches it.
+ */
 export function Palette({
   sessions,
   stations,
@@ -38,8 +52,13 @@ export function Palette({
   useFocusReturn(root, input);
   useOverlay();
   useDismiss(root, true, onClose);
-  const matches = paletteMatches(sessions, query);
+  const groups = paletteMatches(sessions, query, archived.use());
+  const matches = [...groups.live, ...groups.ended];
   const at = Math.min(active, Math.max(0, matches.length - 1));
+  // The list scrolls (up to 50 rows): the keys keep the active option in view.
+  useEffect(() => {
+    root.current?.querySelector(`#fd-palette-option-${at}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [at]);
   const pick = (card: DeckSession) => {
     onClose();
     onOpen({ station_id: card.station_id, session_id: card.summary.session_id });
@@ -96,28 +115,44 @@ export function Palette({
           }}
         />
         <div id="fd-palette-list" role="listbox" aria-label="Matching sessions">
-          {matches.map((card, i) => (
-            <div
-              key={`${card.station_id}/${card.summary.session_id}`}
-              id={optionId(i)}
-              role="option"
-              tabIndex={-1}
-              className="fd-selbar"
-              aria-selected={i === at}
-              data-status={card.status}
-              onMouseMove={() => setActive(i)}
-              onClick={() => pick(card)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') pick(card);
-              }}
-            >
-              <span className="fd-dot" data-status={card.status} aria-hidden="true" />
-              <span className="fd-palette-title">{sessionTitle(card)}</span>
-              <span className="fd-palette-meta">
-                {stationName(card.station_id, stations)} · {statusLabel(card)}
-              </span>
-            </div>
-          ))}
+          {GROUPS.map(({ key, label }) => {
+            const cards = groups[key];
+            if (cards.length === 0) return null;
+            // The index of an option in the whole list: the arrow keys walk both groups.
+            const from = key === 'live' ? 0 : groups.live.length;
+            return (
+              <div key={key} role="group" aria-labelledby={`fd-palette-${key}`}>
+                <div id={`fd-palette-${key}`} role="presentation" className="fd-label">
+                  {label}
+                </div>
+                {cards.map((card, n) => {
+                  const i = from + n;
+                  return (
+                    <div
+                      key={`${card.station_id}/${card.summary.session_id}`}
+                      id={optionId(i)}
+                      role="option"
+                      tabIndex={-1}
+                      className="fd-selbar"
+                      aria-selected={i === at}
+                      data-status={card.status}
+                      onMouseMove={() => setActive(i)}
+                      onClick={() => pick(card)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') pick(card);
+                      }}
+                    >
+                      <span className="fd-dot" data-status={card.status} aria-hidden="true" />
+                      <span className="fd-palette-title">{sessionTitle(card)}</span>
+                      <span className="fd-palette-meta">
+                        {stationName(card.station_id, stations)} · {statusLabel(card)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
           {canStart ? (
             <div
               id={optionId(0)}

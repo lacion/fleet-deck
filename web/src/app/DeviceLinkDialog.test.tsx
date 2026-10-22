@@ -177,8 +177,7 @@ describe('the Add a device button', () => {
         chrome={c}
       />,
     );
-  const more = (c: Chrome) =>
-    renderToStaticMarkup(<More stationCount={0} terminalCount={0} chrome={c} />);
+  const more = (c: Chrome) => renderToStaticMarkup(<More terminalCount={0} chrome={c} />);
 
   test('the sidebar and the More page show it only when the chrome can add a device', () => {
     const withAdd = chrome(async () => ({ ok: false, text: 'x' }));
