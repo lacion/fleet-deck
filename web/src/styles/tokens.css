@@ -18,7 +18,7 @@
   --border-soft: #212b39; /* the faintest divider (list separators) */
   --text: #e9eef4; /* primary text */
   --dim: #a5b0bf; /* secondary text */
-  --faint: #8896a7; /* tertiary text: at least 4.5:1 on --bg, --surface, --raised */
+  --faint: #8896a7; /* tertiary text: at least 4.5:1 on --bg, --surface, --raised, --raised-hi, --badge-bg and the add/del diff fills */
   --faint-decor: #5b6779; /* decoration only (hollow rings, ticks), never text */
   --ink-fill: #e9eef4; /* fill of the general primary button */
   --ink-on: #111821; /* text on --ink-fill */
@@ -27,9 +27,9 @@
   --ctl-edge: #6b778a; /* edge of a form control (input, select, checkbox, radio, off switch): 3:1 */
   --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
   --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
-  --knob-shadow: none; /* shadow of the switch knob (the light theme only) */
+  --knob-shadow: 0 0 0 0 transparent; /* shadow of the switch knob (the light theme only) */
   --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
-  --selected-lift: none; /* lift of the selected row (the light theme only) */
+  --selected-lift: 0 0 0 0 transparent; /* lift of the selected row (the light theme only) */
 
   /* semantic colors: the jersey colors (§2.2) */
   --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
@@ -56,7 +56,10 @@
   /* elevation (§2.5) */
   --shadow-pop:
     0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 40px rgba(0, 0, 0, 0.45); /* floating layers only */
-  --shadow-lift: none; /* strips and cards (the light theme only) */
+  /* A shadow token is never `none`: area rules put it in a box-shadow list
+     (`inset 3px 0 0 var(--ok), var(--shadow-lift)`), and `…, none` is invalid, so the
+     browser drops the whole declaration. "No shadow" is the zero shadow `0 0 0 0 transparent`. */
+  --shadow-lift: 0 0 0 0 transparent; /* strips and cards (the light theme only) */
 }
 
 /* ── color · light: the day deck ──────────────────────────────────── */
@@ -72,7 +75,7 @@
   --border-soft: #e4e9f0;
   --text: #111821;
   --dim: #4a5666;
-  --faint: #5f6b7b;
+  --faint: #596575; /* 4.5:1 also on --badge-bg and the add/del diff fills */
   --faint-decor: #9aa5b4;
   --ink-fill: #111821;
   --ink-on: #ffffff;

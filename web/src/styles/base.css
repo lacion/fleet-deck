@@ -367,7 +367,9 @@ a.fd-btn {
 ):focus {
   border-color: var(--focus);
   box-shadow: 0 0 0 1px var(--focus); /* with the edge: a 2px blue ring */
-  outline: none;
+  /* A transparent outline: forced-colors mode drops the box-shadow and paints this outline. */
+  outline: 2px solid transparent;
+  outline-offset: 0;
 }
 :where(
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
@@ -1190,8 +1192,19 @@ a.fd-btn {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  box-sizing: border-box;
+  max-width: 100cqi; /* the visible width: the counts stay in view when the lines are wider */
   min-height: 28px;
   border-bottom: 1px solid var(--border-soft);
+}
+/* The path gives up its folders first (an ellipsis); the +/- counts stay at the right edge. */
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fd-diff > .fd-dl[data-kind="file"] > .fd-dl-stat {
+  flex: none;
+  margin-left: auto;
 }
 .fd-dl[data-kind="meta"] {
   color: var(--faint);
@@ -1262,5 +1275,41 @@ a.fd-btn {
     display: inline-flex;
     align-items: center;
     min-height: var(--tap-min);
+  }
+}
+
+/* ── forced colors (Windows High Contrast): keep every state visible ─ */
+/* Forced colors drop box-shadow and background images: the glyph shapes, holders and meters
+   keep their own colors, and a pressed segment and the switch get system-color cues. */
+@media (forced-colors: active) {
+  .fd-dot,
+  .fd-dot::before,
+  .fd-dot::after,
+  .fd-holder,
+  .fd-slots > *,
+  .fd-meter,
+  .fd-meter > * {
+    forced-color-adjust: none;
+  }
+  .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .fd-switch {
+    forced-color-adjust: none;
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
+  .fd-switch::after {
+    background: CanvasText;
+  }
+  .fd-switch:checked {
+    background: Highlight;
+  }
+  .fd-switch:checked::after {
+    background: HighlightText;
+  }
+  .fd-tdock-handle:focus-visible {
+    outline: 2px solid Highlight;
   }
 }
