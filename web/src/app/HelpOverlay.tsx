@@ -16,7 +16,7 @@ export const SHORTCUTS: readonly Row[] = [
   { keys: 't', does: 'Show or hide terminals' },
   { keys: '?', does: 'Show this help' },
   { keys: 'Ctrl+K or ⌘K', does: 'Go to session' },
-  { keys: 'Ctrl+↵ or ⌘↵', does: 'Steer now while a turn runs (composer); Start (New session)' },
+  { keys: 'Ctrl+↵ or ⌘↵', does: 'Steer now (composer) or Start (New session)' },
 ];
 
 /** The keys of the fleet home (the Needs you panel). */
