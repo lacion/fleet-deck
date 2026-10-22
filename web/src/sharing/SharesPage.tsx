@@ -153,7 +153,7 @@ function ShareRow({
           )}
         </span>
       </td>
-      <td data-label="Members">
+      <td data-label="Members" className={share.members.length === 0 ? 'fd-cell-dim' : undefined}>
         {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
       </td>
       <td data-label="Uses left" className="fd-num">
