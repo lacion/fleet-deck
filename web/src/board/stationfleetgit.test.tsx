@@ -13,7 +13,13 @@ import {
   driftLabels,
   StationConfigDrift,
 } from './StationConfigDrift';
-import { exposedText, shareNotes, StationTaildrive } from './StationTaildrive';
+import {
+  exposedText,
+  shareNotes,
+  StationTaildrive,
+  TaildriveFact,
+  taildriveFact,
+} from './StationTaildrive';
 import { StationTraits, traitsText } from './StationTraits';
 
 const HASH = 'a'.repeat(64);
@@ -35,9 +41,10 @@ const withConfig = (id: string, config: ConfigDigest | undefined) =>
 describe('the traits line', () => {
   test('os, arch, battery and labels', () => {
     expect(traitsText({ os: 'linux', arch: 'x86_64', labels: [] })).toBe('Linux · x86_64');
+    // One separator for every part: each label reads as its own value.
     expect(
       traitsText({ os: 'macos', arch: 'aarch64', on_battery: true, labels: ['gpu', 'big'] }),
-    ).toBe('macOS · aarch64 · on battery · gpu, big');
+    ).toBe('macOS · aarch64 · on battery · gpu · big');
     expect(traitsText({ os: 'linux', arch: 'x86_64', on_battery: false, labels: ['gpu'] })).toBe(
       'Linux · x86_64 · gpu',
     );
@@ -97,17 +104,23 @@ describe('the config line', () => {
     ).toEqual([]);
   });
 
-  test('the header menu names the reference, or asks for one', () => {
+  test('the header menu says what it does, then names the reference', () => {
     const stations = [station('station-a'), station('st-b')];
     const none = renderToStaticMarkup(
       <ConfigReferenceHeader stations={stations} reference={undefined} canSet onSet={() => {}} />,
     );
-    expect(none).toContain('<summary class="fd-ghost fd-sm">Config reference…</summary>');
+    // A menu toggle (trailing chevron), not a dialog (no ellipsis).
+    expect(none).toContain(
+      '<summary class="fd-ghost fd-sm" data-variant="toggle">Compare configs</summary>',
+    );
+    expect(none).toContain('<details class="fd-menu">');
     expect(none).toContain('Pick a reference station for the config report.');
     const set = renderToStaticMarkup(
       <ConfigReferenceHeader stations={stations} reference={stations[0]} canSet onSet={() => {}} />,
     );
-    expect(set).toContain('<summary class="fd-ghost fd-sm">Config reference: Alpha</summary>');
+    expect(set).toContain(
+      '<summary class="fd-ghost fd-sm" data-variant="toggle">Configs vs Alpha</summary>',
+    );
     expect(set.match(/<button type="button">/g)?.length).toBe(2);
     // Without the admin scope: the reference as a plain line, and nothing before one exists.
     const locked = renderToStaticMarkup(
@@ -118,7 +131,7 @@ describe('the config line', () => {
         onSet={() => {}}
       />,
     );
-    expect(locked).toBe('<span class="fd-note fd-station-ref">Config reference: Alpha</span>');
+    expect(locked).toBe('<span class="fd-note fd-station-ref">Configs vs Alpha</span>');
     expect(
       renderToStaticMarkup(
         <ConfigReferenceHeader
@@ -165,23 +178,45 @@ describe('the Taildrive section', () => {
     expect(html).not.toContain('web · /srv/web · as');
   });
 
-  test('no shares, unknown, unavailable', () => {
-    expect(drive({ state: 'ok', shares: [], checked_at: 1, inventory_revision: 1 })).toContain(
-      'No Taildrive shares.',
+  // No shares, a share list that cannot be read, and no Taildrive leave the card body empty
+  // (principle 7): the Details fold has a quiet fact, and the station's reason (a tool error)
+  // is only its tooltip. This replaces the body line "Taildrive is not available: <reason>."
+  test('no shares, unknown, unavailable: no body part, a Details fact', () => {
+    const none = { state: 'ok' as const, shares: [], checked_at: 1, inventory_revision: 1 };
+    const unknown = {
+      state: 'unknown' as const,
+      reason: 'Fleet Deck cannot read the share list',
+      shares: [],
+      checked_at: 1,
+      inventory_revision: 1,
+    };
+    const off = {
+      state: 'unavailable' as const,
+      reason: 'tailscale is not installed',
+      shares: [],
+      checked_at: 1,
+      inventory_revision: 1,
+    };
+    for (const td of [none, unknown, off, undefined]) expect(drive(td)).toBe('');
+    expect(taildriveFact(none)).toEqual({ text: 'No shares' });
+    expect(taildriveFact(unknown)).toEqual({
+      text: 'Share list not readable',
+      reason: 'Fleet Deck cannot read the share list',
+    });
+    expect(taildriveFact(off)).toEqual({
+      text: 'Not available',
+      reason: 'tailscale is not installed',
+    });
+    expect(taildriveFact(undefined)).toBeNull();
+    // A station with shares lists them in the body: no fact.
+    expect(taildriveFact({ ...none, shares: [share()] })).toBeNull();
+    expect(renderToStaticMarkup(<TaildriveFact taildrive={off} />)).toBe(
+      '<dt>Taildrive</dt><dd class="fd-facts-text" title="tailscale is not installed">Not available</dd>',
     );
-    expect(drive({ state: 'unknown', shares: [], checked_at: 1, inventory_revision: 1 })).toContain(
-      'Taildrive: Fleet Deck cannot read the share list.',
+    expect(renderToStaticMarkup(<TaildriveFact taildrive={none} />)).toBe(
+      '<dt>Taildrive</dt><dd class="fd-facts-text">No shares</dd>',
     );
-    expect(
-      drive({
-        state: 'unavailable',
-        reason: 'tailscale is not installed',
-        shares: [],
-        checked_at: 1,
-        inventory_revision: 1,
-      }),
-    ).toContain('Taildrive is not available: tailscale is not installed.');
-    expect(drive(undefined)).toBe('');
+    expect(renderToStaticMarkup(<TaildriveFact taildrive={undefined} />)).toBe('');
   });
 
   test('an exposed share has the warning of O37 with its labels', () => {

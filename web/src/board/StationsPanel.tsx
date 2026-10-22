@@ -1,22 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { DesktopPanel } from '../desktop/DesktopPanel';
-import { formatHash } from '../app/routes';
-import { basename, relativeAge } from '../app/sessions';
-import type { DeckSession, StationView, WorktreeInfo, WorktreeVerdict } from '../gen';
-import { ApiError } from '../runtime/api';
+import { relativeAge } from '../app/sessions';
+import type { DeckSession, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
-import {
-  ArchiveRestore,
-  Check,
-  Copy,
-  Ellipsis,
-  GitBranch,
-  Icon,
-  Plus,
-  RotateCcw,
-  Server,
-  Trash2,
-} from '../ui/icons';
+import { Check, Copy, Ellipsis, Icon, Plus, Server } from '../ui/icons';
 import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
@@ -28,18 +15,14 @@ import {
   StationConfigDrift,
   useDriftReference,
 } from './StationConfigDrift';
-import { StationResources } from './StationResources';
-import { showLastSeen, stationsSummary } from './StationSummary';
-import { StationTaildrive } from './StationTaildrive';
+import { StationBusiest, StationResources } from './StationResources';
+import { stationsSummary } from './StationSummary';
+import { StationTaildrive, TaildriveFact } from './StationTaildrive';
 import { StationTraits } from './StationTraits';
-import type { Outcome } from '../session/commands';
-import {
-  authLabel,
-  confirmMatches,
-  removeCommand,
-  type StationActions,
-  type WorktreeAction,
-} from './pairing';
+import { Worktrees } from './StationWorktrees';
+import { authLabel, type StationActions } from './pairing';
+
+export { WorktreeRow } from './StationWorktrees';
 
 type Props = {
   readonly stations: readonly StationView[];
@@ -61,8 +44,21 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 export const loadWidth = (active: number, max: number): string =>
   `${max > 0 ? Math.min(100, (active / max) * 100) : 0}%`;
 
-/** The shortened key fingerprint with a button that copies the whole value. */
-function Fingerprint({ value }: { readonly value: string }) {
+/** "8 h ago", or "now" within the minute. */
+const agoText = (at: number, now: number): string => {
+  const age = relativeAge(at, now);
+  return age === 'now' ? age : `${age} ago`;
+};
+
+/** The exact time of a fact, as its tooltip; nothing for a value that is not a time. */
+const isoTitle = (at: number): string | undefined =>
+  Number.isNaN(new Date(at).getTime()) ? undefined : new Date(at).toISOString();
+
+/**
+ * A long id (a key fingerprint, a station id) shortened to 12 characters, the whole value in the
+ * tooltip, with a button that copies the whole value.
+ */
+function Fingerprint({ value, label }: { readonly value: string; readonly label: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -73,8 +69,8 @@ function Fingerprint({ value }: { readonly value: string }) {
       <button
         type="button"
         className="fd-iconbtn fd-sm"
-        aria-label="Copy the key fingerprint"
-        title="Copy the key fingerprint"
+        aria-label={label}
+        title={label}
         onClick={() => {
           void navigator.clipboard?.writeText(value).then(() => {
             setCopied(true);
@@ -86,390 +82,6 @@ function Fingerprint({ value }: { readonly value: string }) {
         <Icon of={copied ? Check : Copy} size={14} />
       </button>
     </>
-  );
-}
-
-const VERDICTS: Record<WorktreeVerdict, { label: string; tone: string }> = {
-  clean: { label: 'Clean', tone: 'ok' },
-  has_work: { label: 'Has work', tone: 'act' },
-  live: { label: 'Live', tone: 'info' },
-  missing: { label: 'Missing', tone: 'muted' },
-  unknown: { label: 'Unknown', tone: 'muted' },
-  trashed: { label: 'In the trash', tone: 'muted' },
-};
-
-const count = (n: number | null) => (n === null ? '?' : String(n));
-
-/** The button that copies the command that removes a worktree. The board never runs it. */
-function CopyCommand({ command }: { readonly command: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  return (
-    <button
-      type="button"
-      className="fd-ghost fd-sm"
-      title={command}
-      onClick={() => {
-        void navigator.clipboard?.writeText(command).then(() => {
-          setCopied(true);
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      <Icon of={copied ? Check : Copy} size={14} /> Copy the remove command
-    </button>
-  );
-}
-
-const IN_PROGRESS: Record<string, string> = {
-  trashing: 'Moving…',
-  restoring: 'Restoring…',
-  purging: 'Deleting…',
-};
-
-/** The longest the board polls the inventory after an accepted command. */
-const POLL_MS = 2000;
-const POLL_LIMIT_MS = 60_000;
-
-type RowAction = (action: WorktreeAction, confirmName?: string) => Promise<Outcome>;
-
-/**
- * One worktree: the verdict, the evidence, and the trash buttons (DL-150) when `onAction` is
- * given. Without it the row is read only.
- */
-export function WorktreeRow({
-  worktree: w,
-  station,
-  now,
-  onAction,
-}: {
-  readonly worktree: WorktreeInfo;
-  readonly station: string;
-  readonly now: number;
-  readonly onAction?: RowAction | undefined;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [purging, setPurging] = useState(false);
-  const [typed, setTyped] = useState('');
-  const verdict = VERDICTS[w.verdict];
-  const trash = w.trash;
-  const command = trash === undefined ? removeCommand(w) : null;
-  const compared = w.compared_with === 'remotes' ? 'a remote' : 'main';
-  const name = basename(w.path);
-  const act = async (action: WorktreeAction, confirmName?: string) => {
-    if (onAction === undefined) return;
-    setBusy(true);
-    try {
-      setOutcome(await onAction(action, confirmName));
-      setPurging(false);
-      setTyped('');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const moveToTrash = () => {
-    const risky = w.verdict === 'has_work' || w.verdict === 'unknown';
-    const text = `Move the worktree ${name} to the trash? It can be restored.${
-      risky ? '\nIt has work that is not pushed or not saved; the trash keeps every file.' : ''
-    }`;
-    if (window.confirm(text)) void act('trash');
-  };
-  const release = () => {
-    const path = trash?.trash_path ?? w.path;
-    const text = `Fleet Deck stops tracking this folder. Nothing is moved or deleted. Check the folder yourself: ${path}.`;
-    if (window.confirm(text)) void act('release');
-  };
-  const restore = (
-    <button
-      type="button"
-      className="fd-ghost fd-sm"
-      disabled={busy}
-      onClick={() => void act('restore')}
-    >
-      <Icon of={ArchiveRestore} size={14} /> Restore
-    </button>
-  );
-  const purge = (
-    <button
-      type="button"
-      className="fd-danger fd-sm"
-      disabled={busy}
-      onClick={() => setPurging(true)}
-    >
-      <Icon of={Trash2} size={14} /> Delete permanently
-    </button>
-  );
-  const actions = (() => {
-    if (onAction === undefined) return null;
-    if (trash === undefined) {
-      return !w.live && w.verdict !== 'missing' ? (
-        <button type="button" className="fd-ghost fd-sm" disabled={busy} onClick={moveToTrash}>
-          <Icon of={Trash2} size={14} /> Move to trash
-        </button>
-      ) : null;
-    }
-    if (trash.state === 'trashed') {
-      return (
-        <>
-          {restore}
-          {purging ? null : purge}
-        </>
-      );
-    }
-    if (trash.state === 'failed') {
-      return (
-        <>
-          {trash.phase === 'trash' || trash.phase === 'restore' ? restore : null}
-          {trash.phase === 'purge' && !purging ? purge : null}
-          <button type="button" className="fd-ghost fd-sm" disabled={busy} onClick={release}>
-            Stop tracking
-          </button>
-        </>
-      );
-    }
-    return null;
-  })();
-  const trashPath = trash?.trash_path ?? '';
-  const trashName = basename(trashPath);
-  return (
-    <li className="fd-wt-row" data-verdict={w.verdict}>
-      <div className="fd-wt-line">
-        <span className="fd-badge fd-caps" data-tone={verdict.tone}>
-          {verdict.label}
-        </span>
-        <span className="fd-wt-name" title={w.path}>
-          {name}
-        </span>
-        {w.branch === null ? null : (
-          <span className="fd-wt-branch">
-            <Icon of={GitBranch} size={12} />
-            {w.branch}
-          </span>
-        )}
-        <a
-          className="fd-wt-session"
-          href={formatHash({
-            name: 'session',
-            station,
-            session: w.session_id,
-            tab: 'chat',
-          })}
-        >
-          {w.title ?? w.session_id}
-        </a>
-      </div>
-      <p className="fd-wt-evidence">
-        {count(w.dirty)} changed · {count(w.ignored)} ignored · {count(w.unpushed)} commits not on{' '}
-        {compared}
-        {w.last_commit === null
-          ? ''
-          : ` · last commit “${w.last_commit.subject}” ${relativeAge(w.last_commit.at, now)}`}
-      </p>
-      {w.verdict === 'unknown' && w.note !== null ? <p className="fd-wt-note">{w.note}</p> : null}
-      {!w.registered && w.exists ? (
-        <p className="fd-wt-note" data-tone="act">
-          Git does not list this worktree.
-        </p>
-      ) : null}
-      {trash?.state === 'trashed' ? (
-        <>
-          <p className="fd-wt-note">
-            In the trash since{' '}
-            {relativeAge(trash.trashed_at, now) === 'now'
-              ? 'now'
-              : `${relativeAge(trash.trashed_at, now)} ago`}
-          </p>
-          <p className="fd-wt-path" title={trash.trash_path}>
-            {trash.trash_path}
-          </p>
-        </>
-      ) : null}
-      {trash?.state === 'failed' ? (
-        <p className="fd-wt-note" data-tone="act">
-          The last step failed: {trash.message ?? 'no reason given'}
-        </p>
-      ) : null}
-      {trash !== undefined && IN_PROGRESS[trash.state] !== undefined ? (
-        <p className="fd-wt-note">{IN_PROGRESS[trash.state]}</p>
-      ) : null}
-      {actions === null && command === null ? null : (
-        <div className="fd-wt-actions">
-          {actions}
-          {command === null ? null : <CopyCommand command={command} />}
-        </div>
-      )}
-      {purging && onAction !== undefined ? (
-        <div className="fd-wt-confirm">
-          <p className="fd-wt-note">
-            This deletes {trashPath} and cannot be undone. The branch stays. Type {trashName} to
-            confirm.
-          </p>
-          <div className="fd-wt-actions">
-            <input
-              type="text"
-              aria-label="Type the folder name to confirm"
-              value={typed}
-              disabled={busy}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setTyped(event.target.value)}
-            />
-            <button
-              type="button"
-              className="fd-danger fd-sm"
-              disabled={busy || !confirmMatches(typed, trashPath)}
-              onClick={() => void act('purge', typed)}
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              className="fd-sm"
-              disabled={busy}
-              onClick={() => {
-                setPurging(false);
-                setTyped('');
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {outcome === null ? null : outcome.ok ? (
-        <p className="fd-wt-note" role="status">
-          {outcome.text}
-        </p>
-      ) : (
-        <p className="fd-wt-note" role="alert" data-tone="act">
-          {outcome.text}
-        </p>
-      )}
-    </li>
-  );
-}
-
-type WorktreeState =
-  | { readonly kind: 'idle' }
-  | { readonly kind: 'loading' }
-  | { readonly kind: 'ready'; readonly worktrees: readonly WorktreeInfo[] }
-  | { readonly kind: 'error'; readonly text: string; readonly status: number | null };
-
-const failure = (error: unknown): WorktreeState => ({
-  kind: 'error',
-  status: error instanceof ApiError ? error.status : null,
-  text: error instanceof Error ? error.message : 'The worktrees did not load.',
-});
-
-/** The worktree inventory of one station (DL-142) with the trash buttons (DL-150); loads on the first open. */
-function Worktrees({
-  station,
-  stationId,
-  load,
-  act,
-  now,
-}: {
-  readonly station: string;
-  readonly stationId: string;
-  readonly load: (station: string) => Promise<{ readonly worktrees: readonly WorktreeInfo[] }>;
-  readonly act?: StationActions['worktreeAction'];
-  readonly now: number;
-}) {
-  const [state, setState] = useState<WorktreeState>({ kind: 'idle' });
-  const pollUntil = useRef(0);
-  const run = () => {
-    setState({ kind: 'loading' });
-    load(station).then(
-      (list) => setState({ kind: 'ready', worktrees: list.worktrees }),
-      (error: unknown) => setState(failure(error)),
-    );
-  };
-  // The list keeps its last answer while the inventory reloads after a command.
-  const refresh = () => {
-    load(station).then(
-      (list) => setState({ kind: 'ready', worktrees: list.worktrees }),
-      () => setState((current) => (current.kind === 'ready' ? { ...current } : current)),
-    );
-  };
-  useEffect(() => {
-    if (state.kind !== 'ready' || Date.now() >= pollUntil.current) return;
-    const working = state.worktrees.some(
-      (w) => w.trash !== undefined && IN_PROGRESS[w.trash.state] !== undefined,
-    );
-    if (!working) return;
-    const timer = setTimeout(refresh, POLL_MS);
-    return () => clearTimeout(timer);
-  }, [state]);
-  const rowAction = (sessionId: string): RowAction | undefined =>
-    act === undefined
-      ? undefined
-      : async (action, confirmName) => {
-          const outcome = await act(station, action, sessionId, confirmName);
-          if (outcome.ok) {
-            pollUntil.current = Date.now() + POLL_LIMIT_MS;
-            refresh();
-          }
-          return outcome;
-        };
-  return (
-    <details
-      className="fd-wt"
-      onToggle={(event) => {
-        if (event.currentTarget.open && state.kind === 'idle') run();
-      }}
-    >
-      <summary className="fd-label" data-variant="toggle">
-        Worktrees{state.kind === 'ready' ? ` (${state.worktrees.length})` : ''}
-      </summary>
-      <div className="fd-wt-body">
-        <button
-          type="button"
-          className="fd-ghost fd-sm fd-wt-refresh"
-          disabled={state.kind === 'loading'}
-          onClick={run}
-        >
-          <Icon of={RotateCcw} size={14} /> Refresh
-        </button>
-        {state.kind === 'loading' ? <p className="fd-note">Loading…</p> : null}
-        {state.kind === 'error' ? (
-          state.status === 403 ? (
-            <p className="fd-note">Only the owner can see worktrees.</p>
-          ) : state.status === 502 ? (
-            <p className="fd-note">This station does not report worktrees. Update the station.</p>
-          ) : (
-            <p role="alert">{state.text}</p>
-          )
-        ) : null}
-        {state.kind === 'ready' ? (
-          state.worktrees.length === 0 ? (
-            <p className="fd-note">
-              No worktrees. A session started with “A new worktree” gets one.
-            </p>
-          ) : (
-            <>
-              <ul className="fd-wt-list">
-                {state.worktrees.map((w) => (
-                  <WorktreeRow
-                    key={w.session_id}
-                    worktree={w}
-                    station={stationId}
-                    now={now}
-                    onAction={rowAction(w.session_id)}
-                  />
-                ))}
-              </ul>
-              <p className="fd-note">
-                Move to trash keeps every file; Restore puts the worktree back. Delete permanently
-                removes a trashed folder; the branch stays.
-              </p>
-            </>
-          )
-        ) : null}
-      </div>
-    </details>
   );
 }
 
@@ -497,6 +109,7 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
       title="Stations"
       description={stationsSummary(stations, freshness)}
       className="fd-stations"
+      wide
       actions={
         actions?.canAdmin === true ? (
           <>
@@ -538,6 +151,10 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
           ).length;
           const info = station.info ?? null;
           const up = freshness !== 'stale' && station.reachable;
+          // `last_seen` is the time the last link came up: for a station that is up it is the
+          // age of the link (the Linked fact in Details), never a "Last seen" (principle 7).
+          const lastSeen = up ? null : station.last_seen;
+          const linkedAt = up ? station.last_seen : null;
           return (
             <li
               className="fd-station fd-panel"
@@ -545,51 +162,76 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
               data-station={station.station_id}
             >
               <div className="fd-station-head">
-                <h3 className="fd-station-name">{station.name}</h3>
-                <StationTraits traits={info?.traits} />
-                <span
-                  className="fd-station-health fd-health"
-                  data-health={freshness === 'stale' ? 'stale' : station.reachable ? 'up' : 'down'}
-                >
-                  <span
-                    className="fd-dot"
-                    data-status={up ? 'online' : 'unreachable'}
-                    aria-hidden="true"
-                  />
-                  {freshness === 'stale'
-                    ? 'Stale link status'
-                    : station.reachable
-                      ? 'online'
-                      : 'offline'}
-                </span>
-                <span className="fd-station-load">
-                  {info?.max_sessions == null ? null : info.max_sessions > 0 &&
-                    info.max_sessions <= MAX_TICKS ? (
-                    <span className="fd-slots" aria-hidden="true">
-                      {Array.from({ length: info.max_sessions }, (_, i) => (
-                        <span key={i} data-slot={i < active ? 'used' : undefined} />
-                      ))}
-                    </span>
-                  ) : (
+                <div className="fd-station-line">
+                  <div className="fd-station-title">
+                    <h3 className="fd-station-name">{station.name}</h3>
+                    <StationTraits traits={info?.traits} />
+                  </div>
+                  <div className="fd-station-meta">
                     <span
-                      className="fd-meter"
-                      data-tone="neutral"
-                      data-level={
-                        info.max_sessions > 0 && active / info.max_sessions >= 0.9
-                          ? 'high'
-                          : undefined
+                      className="fd-station-health fd-health"
+                      data-health={
+                        freshness === 'stale' ? 'stale' : station.reachable ? 'up' : 'down'
                       }
-                      aria-hidden="true"
                     >
-                      <span style={{ width: loadWidth(active, info.max_sessions) }} />
+                      <span
+                        className="fd-dot"
+                        data-status={up ? 'online' : 'unreachable'}
+                        aria-hidden="true"
+                      />
+                      {freshness === 'stale'
+                        ? 'Stale link status'
+                        : station.reachable
+                          ? 'online'
+                          : 'offline'}
                     </span>
-                  )}
-                  <span className="fd-station-load-count">
-                    {info?.max_sessions == null
-                      ? `${active} sessions`
-                      : `${active} of ${info.max_sessions} sessions`}
-                  </span>
-                </span>
+                    <div className="fd-station-live">
+                      {lastSeen === null ? null : (
+                        <span title={isoTitle(lastSeen)}>Last seen {agoText(lastSeen, now)}</span>
+                      )}
+                      {drift.offered ? (
+                        <StationConfigDrift station={station} reference={reference} />
+                      ) : null}
+                      {freshness === 'stale' ? (
+                        <span>Last reported: {station.reachable ? 'online' : 'offline'}.</span>
+                      ) : null}
+                    </div>
+                    <span className="fd-station-load">
+                      {info?.max_sessions == null ? null : info.max_sessions > 0 &&
+                        info.max_sessions <= MAX_TICKS ? (
+                        <span className="fd-slots" aria-hidden="true">
+                          {Array.from({ length: info.max_sessions }, (_, i) => (
+                            <span key={i} data-slot={i < active ? 'used' : undefined} />
+                          ))}
+                        </span>
+                      ) : (
+                        <span
+                          className="fd-meter"
+                          data-tone="neutral"
+                          data-level={
+                            info.max_sessions > 0 && active / info.max_sessions >= 0.9
+                              ? 'high'
+                              : undefined
+                          }
+                          aria-hidden="true"
+                        >
+                          <span style={{ width: loadWidth(active, info.max_sessions) }} />
+                        </span>
+                      )}
+                      {/* Counts read "3 of 12" (§5); "sessions" is for a screen reader only. */}
+                      <span className="fd-station-load-count">
+                        {info?.max_sessions == null ? (
+                          `${active} sessions`
+                        ) : (
+                          <>
+                            {`${active} of ${info.max_sessions}`}
+                            <span className="fd-vh"> sessions</span>
+                          </>
+                        )}
+                      </span>
+                    </span>
+                  </div>
+                </div>
                 {actions?.canAdmin === true ? (
                   <div className="fd-station-menu">
                     <Menu
@@ -626,28 +268,9 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     </Menu>
                   </div>
                 ) : null}
-                <div className="fd-station-live">
-                  {station.last_seen !== null && showLastSeen(station.last_seen, up, now) ? (
-                    <span
-                      title={
-                        Number.isNaN(new Date(station.last_seen).getTime())
-                          ? undefined
-                          : new Date(station.last_seen).toISOString()
-                      }
-                    >
-                      Last seen {relativeAge(station.last_seen, now)}
-                    </span>
-                  ) : null}
-                  {drift.offered ? (
-                    <StationConfigDrift station={station} reference={reference} />
-                  ) : null}
-                  {freshness === 'stale' ? (
-                    <span>Last reported: {station.reachable ? 'online' : 'offline'}.</span>
-                  ) : null}
-                </div>
               </div>
               <div className="fd-station-props">
-                <div className="fd-station-prop">
+                <div className="fd-station-prop" data-prop="providers">
                   <h4 className="fd-station-prop-label">Providers</h4>
                   {info === null ? (
                     <p className="fd-note">Reported when the station links to this deck.</p>
@@ -683,7 +306,8 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     </ul>
                   )}
                 </div>
-                <StationResources
+                <StationResources resources={info?.resources} />
+                <StationBusiest
                   resources={info?.resources}
                   station={station.station_id}
                   sessions={cards}
@@ -697,10 +321,12 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                   </summary>
                   <dl className="fd-facts">
                     <dt>Station ID</dt>
-                    <dd>{station.station_id}</dd>
+                    <dd>
+                      <Fingerprint value={station.station_id} label="Copy the station ID" />
+                    </dd>
                     <dt>Key fingerprint</dt>
                     <dd>
-                      <Fingerprint value={station.key} />
+                      <Fingerprint value={station.key} label="Copy the key fingerprint" />
                     </dd>
                     <dt>Direction</dt>
                     <dd className="fd-facts-text">
@@ -714,12 +340,21 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     <dd className={station.dial_url == null ? 'fd-facts-text' : undefined}>
                       {station.dial_url ?? 'Not stored, the station dials this deck'}
                     </dd>
+                    {linkedAt === null ? null : (
+                      <>
+                        <dt>Linked</dt>
+                        <dd className="fd-facts-text" title={isoTitle(linkedAt)}>
+                          {agoText(linkedAt, now)}
+                        </dd>
+                      </>
+                    )}
                     {info?.version == null ? null : (
                       <>
                         <dt>Version</dt>
                         <dd>{info.version}</dd>
                       </>
                     )}
+                    <TaildriveFact taildrive={info?.taildrive} />
                   </dl>
                 </details>
                 {actions?.canAdmin === true && actions.shells !== undefined ? (

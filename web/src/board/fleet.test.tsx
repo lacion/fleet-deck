@@ -172,8 +172,11 @@ describe('station projections', () => {
       '0 sessions',
     ])
       expect(html).toContain(text);
-    // A station that was never seen shows no "Last seen" (principle 7).
-    expect(html.match(/Last seen/g)?.length).toBe(1);
+    // An online station shows no "Last seen": `last_seen` is the time its link came up, so it is
+    // the Linked fact in Details (the ISO time above is its tooltip). A station that was never
+    // seen shows neither (principle 7).
+    expect(html).not.toContain('Last seen');
+    expect(html.match(/<dt>Linked<\/dt>/g)?.length).toBe(1);
     expect(html).not.toContain('Dial-only');
     expect(html).not.toContain('Not reported');
   });
@@ -236,7 +239,8 @@ describe('station projections', () => {
     const low = render(10, 5);
     expect(low).toContain('<span class="fd-slots" aria-hidden="true">');
     expect(low.match(/data-slot="used"/g)?.length).toBe(5);
-    expect(low).toContain('5 of 10 sessions');
+    // Counts read "5 of 10" (§5); "sessions" is for a screen reader only.
+    expect(low).toContain('5 of 10<span class="fd-vh"> sessions</span>');
     expect(low).not.toContain('fd-meter');
     const big = render(30, 27);
     expect(big).toContain(
@@ -324,7 +328,7 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      '0 of 4 sessions',
+      '0 of 4<span class="fd-vh"> sessions</span>',
       '<dt>Version</dt><dd>0.2.0</dd>',
       '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
       '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
