@@ -3,23 +3,15 @@
    come from base.css, tokens from tokens.css. */
 
 /* ── marks shared by strips, sidebar rows and tiles ─────────────── */
-/* Unread is information, not "needs you": the blue tone of a badge. */
+/* The unread mark after a title: the look is the base.css `.fd-count[data-tone=info]` pill (tiles)
+   or its 6px dot (strips, sidebar rows); this rule only places it. */
 .fd-unread {
-  display: inline-flex;
   flex: none;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
   margin-left: 6px;
-  padding: 0 5px;
-  border-radius: var(--r-pill);
-  background: var(--focus-bg);
-  color: var(--focus);
-  font-family: var(--font-ui);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  line-height: 1;
+}
+.fd-unread[data-shape="dot"] {
+  align-self: center;
+  vertical-align: middle;
 }
 
 /* The agent's one-line focus (set_focus): a quiet line of words. */
@@ -1026,9 +1018,29 @@
 /* A chip is a plain button on the canvas: the --raised fill and, in the light theme, the hairline
    edge of a plain button (§3, --btn-edge), so it reads as a button. */
 .fd-files-page .fd-recent .fd-chip {
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  background: var(--raised);
   border-color: var(--btn-edge);
+  color: var(--dim);
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  font-weight: 400;
+}
+.fd-files-page .fd-recent .fd-chip:hover:not(:disabled) {
+  background: var(--raised-hi);
+  color: var(--text);
+}
+.fd-files-page .fd-recent .fd-chip[data-pinned] .fd-icon {
+  fill: currentColor;
+}
+/* The path of a chip starts at its root (`~/projects/app`, §5); a long one drops whole leading
+   folders (`PathTail`), so this box is one line that hides what does not fit. */
+.fd-files-chippath {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .fd-files-page .fd-files-view {

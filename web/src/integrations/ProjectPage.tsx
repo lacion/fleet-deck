@@ -1,9 +1,11 @@
 // R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
 // "Issues", "Pull requests" and "Setup" (the homes, the secret files and the lands of the project).
 import { useState } from 'react';
+import { usePhoneTitle } from '../app/Layout';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
 import { PathTail } from '../chat/PathTail';
+import { homeShort } from '../ui/format';
 import { Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { useIntegrations } from './context';
@@ -50,6 +52,9 @@ export function ProjectPage({
   const env = useIntegrations();
   const now = useNow(givenNow, 30_000);
   const [tab, setTab] = useState<Tab>(initialTab);
+  const project = env?.projects?.find((p) => p.project_id === id);
+  // §4.8: the phone top bar names the project ("Project" while it loads).
+  usePhoneTitle(project?.name);
   if (env === undefined) {
     return (
       <Page title="Project">
@@ -57,7 +62,6 @@ export function ProjectPage({
       </Page>
     );
   }
-  const project = env.projects?.find((p) => p.project_id === id);
   if (project === undefined) {
     return (
       <Page title="Project">
@@ -91,8 +95,8 @@ export function ProjectPage({
       <span className="fd-int-sep" aria-hidden="true">
         ·
       </span>
-      <code className="fd-int-path">
-        <PathTail path={project.path} />
+      <code className="fd-int-path" title={project.path}>
+        <PathTail path={homeShort(project.path)} />
       </code>
     </span>
   );
@@ -103,6 +107,7 @@ export function ProjectPage({
   return (
     <Page
       title={project.name}
+      back={{ href: '#/projects', label: 'All projects' }}
       label={`Project ${project.name}`}
       description={where}
       filters={chips}

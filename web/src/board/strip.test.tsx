@@ -265,7 +265,7 @@ describe('toolbar filters', () => {
     expect(html).toMatch(
       /<summary class="fd-ghost fd-sm"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
     );
-    expect(html).toContain('<option value="station" selected="">Group: Station</option>');
+    expect(html).toContain('<option value="station" selected="">Group by station</option>');
     expect(html).toContain('role="group" aria-label="Fleet filters"');
     expect(html).toContain('aria-label="Group by"');
     expect(html).not.toContain('fd-active-filters');

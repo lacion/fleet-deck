@@ -6,7 +6,7 @@ describe('generated text (DL-167)', () => {
   test('the mark says that the text is generated', () => {
     const html = renderToStaticMarkup(<GeneratedMark />);
     expect(html).toContain('class="fd-generated"');
-    expect(html).toContain('>generated<');
+    expect(html).toContain('aria-label="Named by model help"');
   });
 
   test('a digest loses its list markers and blank lines', () => {

@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { spawnModes } from '../spawn/spawn';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
+import { modeLabel } from '../ui/format';
 import { Field, FormActions, FormGrid, fieldError } from '../ui/page';
 import {
   CUSTOM,
@@ -253,10 +254,10 @@ export function ScheduleForm({
           <FormGrid>
             <Field label="Permission mode">
               <select value={draft.mode} onChange={(e) => set('mode', e.target.value)}>
-                <option value="">Station default</option>
+                <option value="">Default mode</option>
                 {modes.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {modeLabel(m)}
                   </option>
                 ))}
               </select>

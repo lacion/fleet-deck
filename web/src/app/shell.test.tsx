@@ -200,7 +200,7 @@ describe('help overlay (DL-141)', () => {
   });
 
   test('the header stays; the body under it scrolls, with the two key groups', () => {
-    const head = html.indexOf('class="fd-help-head"');
+    const head = html.indexOf('class="fd-dialog-head fd-help-head"');
     const body = html.indexOf('class="fd-help-body"');
     expect(head).toBeGreaterThan(-1);
     expect(body).toBeGreaterThan(head);
@@ -336,7 +336,7 @@ describe('the phone Terminals page without a terminal (§4.7)', () => {
   test('an empty state: the icon, the sentence and one way to the stations', () => {
     const html = renderToStaticMarkup(<TerminalsEmpty />);
     expect(html).toContain('<h1 class="fd-page-title">Terminals</h1>');
-    expect(html).toContain('class="fd-panel fd-emptystate"');
+    expect(html).toContain('class="fd-emptystate"');
     expect(html).toContain('Open a shell from a station or a session.');
     expect(html).toContain('<a href="#/stations" class="fd-btn fd-primary">Go to Stations</a>');
   });

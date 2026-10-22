@@ -316,63 +316,71 @@ export function SharesView({
       />
     );
   } else {
+    // The table sits on the canvas (§4.7: no box inside the page frame).
     body = (
-      <div className="fd-panel fd-tablepanel">
-        <div className="fd-tablewrap">
-          <table className="fd-table" aria-label="Shares">
-            <thead>
-              <tr>
-                <th scope="col">Shared</th>
-                <th scope="col">Role</th>
-                <th scope="col">Members</th>
-                <th scope="col" className="fd-num">
-                  Uses left
-                </th>
-                <th scope="col">Expires</th>
-                <th scope="col">
-                  <span className="fd-vh">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.value.map((share) => (
-                <ShareRow
-                  key={share.share_id}
-                  share={share}
-                  now={now}
-                  sessions={sessions}
-                  stations={stations}
-                  confirming={confirming === share.share_id}
-                  busy={revoking === share.share_id}
-                  historyConfirming={confirming === `history:${share.share_id}`}
-                  historyBusy={historyBusy === share.share_id}
-                  onAsk={() => onAsk?.(share.share_id)}
-                  onCancel={() => onAsk?.(null)}
-                  onRevoke={() => onRevoke?.(share)}
-                  onHistoryAsk={() => onAsk?.(`history:${share.share_id}`)}
-                  onHistory={() => onHistory?.(share)}
-                  onStopHistory={() => onStopHistory?.(share)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="fd-tablewrap">
+        <table className="fd-table" aria-label="Shares">
+          <thead>
+            <tr>
+              <th scope="col">Shared</th>
+              <th scope="col">Role</th>
+              <th scope="col">Members</th>
+              <th scope="col" className="fd-num">
+                Uses left
+              </th>
+              <th scope="col">Expires</th>
+              <th scope="col">
+                <span className="fd-vh">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.value.map((share) => (
+              <ShareRow
+                key={share.share_id}
+                share={share}
+                now={now}
+                sessions={sessions}
+                stations={stations}
+                confirming={confirming === share.share_id}
+                busy={revoking === share.share_id}
+                historyConfirming={confirming === `history:${share.share_id}`}
+                historyBusy={historyBusy === share.share_id}
+                onAsk={() => onAsk?.(share.share_id)}
+                onCancel={() => onAsk?.(null)}
+                onRevoke={() => onRevoke?.(share)}
+                onHistoryAsk={() => onAsk?.(`history:${share.share_id}`)}
+                onHistory={() => onHistory?.(share)}
+                onStopHistory={() => onStopHistory?.(share)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
+  const spacesLink = (
+    <a className="fd-btn fd-ghost" href="#/spaces">
+      <Icon of={Layers} /> Spaces
+    </a>
+  );
+  // One primary per screen (§2.2): while the list is empty, the empty state holds New share.
+  const empty = state.kind === 'ok' && state.value.length === 0;
   return (
     <Page
+      wide
       title="Shares"
-      description={
-        <>
-          People join through a link. A revoke ends the link and every login that came from it. See{' '}
-          <a className="fd-tap" href="#/spaces">
-            Spaces
-          </a>{' '}
-          for sets of sessions.
-        </>
+      description="People join through a link. Revoke a share to end its link and every login that came from it."
+      actions={
+        empty ? (
+          spacesLink
+        ) : (
+          <>
+            {spacesLink}
+            {newShare}
+          </>
+        )
       }
-      actions={newShare}
     >
       {error === null ? null : (
         <p role="alert" className="fd-note fd-share-error">
@@ -415,7 +423,7 @@ export function SharesPage({ sessions, stations }: Props) {
   }, [version]);
   if (!canShare(people) || calls === undefined) {
     return (
-      <Page title="Shares">
+      <Page title="Shares" wide>
         <p>Only the owner of the deck sees the shares.</p>
         <a href="#/">Back to the fleet</a>
       </Page>

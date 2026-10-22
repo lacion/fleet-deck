@@ -14,6 +14,7 @@ import {
 import { Thread } from '../review/Thread';
 import { ThreadLists } from '../review/ThreadLists';
 import type { DiffReview } from '../review/types';
+import { addedText, removedText } from '../ui/format';
 import { FileText, Icon } from '../ui/icons';
 import {
   diffLineKinds,
@@ -107,8 +108,8 @@ function FileHeader({
       <FileStatusBadge status={head.status} />
       {head.add > 0 || head.del > 0 ? (
         <span className="fd-dl-stat">
-          {head.add > 0 ? <span data-sign="add">{`+${head.add}`}</span> : null}
-          {head.del > 0 ? <span data-sign="del">{`\u2212${head.del}`}</span> : null}
+          {head.add > 0 ? <span data-sign="add">{addedText(head.add)}</span> : null}
+          {head.del > 0 ? <span data-sign="del">{removedText(head.del)}</span> : null}
         </span>
       ) : null}
     </span>

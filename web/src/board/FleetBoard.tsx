@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatHash } from '../app/routes';
-import { basename, relativeAge, stationOrder } from '../app/sessions';
+import { stationOrder } from '../app/sessions';
 import type {
   CardStatus,
   DeckSession,
@@ -10,45 +9,18 @@ import type {
   StationView,
 } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { hasChanges } from '../session/changes';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
-import { runningSubagents } from '../session/timeline';
-import { useDiffTotal } from '../session/workspace';
 import { batchCountOf, batchCounts } from '../compare/compare';
-import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
-import { digestLine, GeneratedMark } from '../ui/generated';
-import {
-  Archive,
-  ArchiveRestore,
-  Folder,
-  GitBranch,
-  Icon,
-  Layers,
-  Mail,
-  Paperclip,
-  Plus,
-  RotateCcw,
-  Star,
-  TriangleAlert,
-  Workflow,
-} from '../ui/icons';
+import { Archive, ArchiveRestore, Icon, Plus, RotateCcw } from '../ui/icons';
 import { archived } from '../ui/archive';
-import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
 import { projectGroups } from '../integrations/projectGroups';
-import { ProjectChip } from '../integrations/ProjectChip';
-import { IssueChip } from '../integrations/IssueChip';
-import { PrChip } from '../integrations/PrChip';
 import { useNow } from '../ui/useNow';
-import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
-import { CardNote, CompareChip } from './cardParts';
 import { FleetStrip } from './FleetStrip';
 import { resourceWarnings } from './resources';
-import { Sparkline } from './Sparkline';
-import { costText } from './usage';
 
 /** How the lanes of the board are made (DL-141, DL-176). */
 export type FleetGroup = 'station' | 'repo' | 'project';
@@ -164,177 +136,6 @@ const isOffline = (c: DeckSession) =>
   c.status === 'ended' || c.status === 'unreachable' || c.status === 'lost';
 
 const isDone = (c: DeckSession) => c.status === 'ended' || c.status === 'lost';
-
-/** One session card: the whole card is the link to the session. */
-export function FleetCard({
-  card,
-  stations,
-  freshness,
-  now,
-  showStation,
-  contested,
-  extra,
-  batchCount = 0,
-}: {
-  readonly card: DeckSession;
-  readonly stations: readonly StationView[];
-  readonly freshness: Freshness;
-  readonly now: number;
-  readonly showStation: boolean;
-  readonly contested?: Contested | undefined;
-  readonly extra?: SessionExtras | undefined;
-  /** How many sessions of the card's batch are on the board (R1.4); the chip shows for two or more. */
-  readonly batchCount?: number;
-}) {
-  const s = card.summary;
-  const ref = sessionRef(card.station_id, s.session_id);
-  const starred = priority.use().has(ref);
-  const projects = useProjects();
-  const cleared = archived.use().has(ref) && (card.status === 'ended' || card.status === 'lost');
-  const bypass = isRiskyMode(s.mode);
-  const subagents = runningSubagents(s);
-  const where =
-    s.branch !== null && s.branch !== '' ? (
-      <>
-        <Icon of={GitBranch} size={12} /> {s.branch}
-      </>
-    ) : s.cwd !== null && s.cwd !== '' ? (
-      <>
-        <Icon of={Folder} size={12} /> {basename(s.cwd)}
-      </>
-    ) : null;
-  const files = extra?.files ?? [];
-  const total = useDiffTotal(ref);
-  const digest = digestLine(s.digest);
-  const activity = buckets(ref, now);
-  const station = showStation
-    ? `${stationName(card.station_id, stations)}${where === null ? '' : ' · '}`
-    : '';
-  return (
-    <li className="fd-cardwrap">
-      <a
-        className="fd-card"
-        href={formatHash({
-          name: 'session',
-          station: card.station_id,
-          session: s.session_id,
-          tab: 'chat',
-        })}
-        data-session={s.session_id}
-        data-station={card.station_id}
-        data-status={card.status}
-        data-contested={contested === undefined ? undefined : 'true'}
-        data-archived={cleared ? 'true' : undefined}
-      >
-        <span className="fd-card-head">
-          <span className="fd-dot" data-status={card.status} aria-hidden="true" />
-          <span className="fd-card-title">{s.title ?? s.callsign ?? s.session_id}</span>
-          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
-          {starred ? (
-            <span className="fd-card-star" title="Priority">
-              <Icon of={Star} size={12} />
-            </span>
-          ) : null}
-          <UnreadMark count={unreadOf(card)} />
-          {extra !== undefined && extra.mail_pending > 0 ? (
-            <span className="fd-card-mail" title="Mail waiting for delivery">
-              <Icon of={Mail} size={12} /> {extra.mail_pending}
-            </span>
-          ) : null}
-        </span>
-        <span className="fd-card-where">
-          {station === '' && where === null ? null : (
-            <span className="fd-card-place">
-              {station}
-              {where}
-            </span>
-          )}
-          <span className="fd-badge" data-family={modelFamily(s.model) ?? undefined}>
-            {shortModel(s.model)}
-          </span>
-        </span>
-        <CardNote card={card} />
-        <FocusLine summary={s} />
-        {digest === null ? null : (
-          <span className="fd-card-digest" title="Generated summary">
-            {digest}
-          </span>
-        )}
-        {files.length === 0 ? null : (
-          <span className="fd-card-files">
-            {files.map((path) => (
-              <span
-                key={path}
-                className="fd-filechip"
-                title={path}
-                data-hot={contested?.files.includes(path) ? 'true' : undefined}
-              >
-                {basename(path)}
-              </span>
-            ))}
-          </span>
-        )}
-        {total === undefined || !hasChanges(total) ? null : (
-          <span className="fd-card-diff" title="Changed since the session started">
-            <span className="fd-add">+{total.insertions}</span>{' '}
-            <span className="fd-del">−{total.deletions}</span>
-          </span>
-        )}
-        {contested === undefined ? null : (
-          <span className="fd-card-contested">
-            <Icon of={TriangleAlert} size={12} /> contested with {contested.with.join(', ')}
-          </span>
-        )}
-        <span className="fd-card-foot">
-          {bypass ? (
-            <span className="fd-badge" data-tone="hazard" title="Permission mode">
-              {s.mode}
-            </span>
-          ) : null}
-          {cleared ? (
-            <span className="fd-badge" data-tone="muted">
-              Archived
-            </span>
-          ) : null}
-          {subagents > 0 ? (
-            <span className="fd-badge" title="Subagents running" data-running-subagents={subagents}>
-              <Icon of={Workflow} size={12} /> {subagents}
-            </span>
-          ) : null}
-          {s.artifacts_count > 0 ? (
-            <span className="fd-badge" title="Artifacts" data-artifacts={s.artifacts_count}>
-              <Icon of={Paperclip} size={12} /> {s.artifacts_count}
-            </span>
-          ) : null}
-          {s.background_tasks.length > 0 ? (
-            <span className="fd-badge" title="Background tasks">
-              <Icon of={Layers} size={12} /> {s.background_tasks.length}
-            </span>
-          ) : null}
-          {s.terminal != null ? (
-            <span className="fd-badge" data-tone="act">
-              In terminal
-            </span>
-          ) : null}
-          {costText(s.usage) !== null ? (
-            <span className="fd-badge">{costText(s.usage)}</span>
-          ) : null}
-          {freshness === 'stale' ? (
-            <span className="fd-badge" data-tone="muted">
-              Stale
-            </span>
-          ) : null}
-          {activity.some((n) => n > 0) ? <Sparkline values={activity} /> : null}
-          <span className="fd-card-age">{relativeAge(s.updated_at, now)}</span>
-        </span>
-      </a>
-      <CompareChip card={card} count={batchCount} />
-      <IssueChip summary={s} projects={projects} station={card.station_id} />
-      <PrChip card={card} />
-      <ProjectChip card={card} />
-    </li>
-  );
-}
 
 /** The swimlane order: the known stations first, then the other station ids (the sidebar order). */
 function laneOrder(sessions: readonly DeckSession[], stations: readonly StationView[]): string[] {

@@ -98,6 +98,7 @@ function FieldRow({
   return (
     <div
       className="fd-fieldwrap"
+      data-layout="row"
       data-span={group ? 2 : undefined}
       data-invalid={failed ? 'true' : undefined}
       role={group ? 'group' : undefined}

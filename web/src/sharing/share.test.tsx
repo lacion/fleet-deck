@@ -184,8 +184,8 @@ describe('shares page (R11.4)', () => {
     expect(empty).toContain(
       'Share a session, a space or the whole board with a link. People join with a name you can see, in the role you pick.',
     );
-    // The page action and the empty state both offer "New share".
-    expect(empty.match(/New share<\/button>/g)).toHaveLength(2);
+    // One primary per screen: while the list is empty, only the empty state offers "New share".
+    expect(empty.match(/New share<\/button>/g)).toHaveLength(1);
     expect(empty).toContain('class="fd-primary"');
   });
 
@@ -274,7 +274,7 @@ describe('spaces page (R11.3)', () => {
     expect(view({ kind: 'error', text: 'nope' })).toContain('role="alert"');
     const empty = view({ kind: 'ok', value: [] });
     expect(empty).toContain('No spaces yet');
-    // The page action opens the name form; a fresh page shows the button, not the form.
+    // The empty state holds New space (one primary); a fresh page shows the button, not the form.
     expect(empty).toContain('New space</button>');
     expect(empty).not.toContain('aria-label="New space"');
     const open = renderToStaticMarkup(

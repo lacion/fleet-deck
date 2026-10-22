@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationResources as Resources } from '../gen';
 import { card } from '../testing/fleet';
-import { bytesText, StationBusiest, StationResources } from './StationResources';
+import { bytesText } from './resources';
+import { StationBusiest, StationResources } from './StationResources';
 
 const full: Resources = {
   at: 1,

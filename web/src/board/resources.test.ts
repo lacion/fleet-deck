@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { StationResources } from '../gen';
 import {
+  bytesText,
   cpuBusy,
-  gb,
   isLow,
   LOW_DISK_BYTES,
   LOW_MEMORY_BYTES,
+  memorySize,
   resourceWarnings,
   usedShare,
 } from './resources';
@@ -45,9 +46,10 @@ describe('station resource rules (DL-193)', () => {
     expect(cpuBusy({ cores: 0, load1_x100: 0, load5_x100: 5000 })).toBe(false);
   });
 
-  test('sizes are decimal GB with one decimal', () => {
-    expect(gb(3_200_000_000)).toBe('3.2 GB');
-    expect(gb(0)).toBe('0.0 GB');
+  test('sizes step from MB to GB to TB (one format on every station surface)', () => {
+    expect(bytesText(3_200_000_000)).toBe('3.2 GB');
+    expect(bytesText(0)).toBe('0 MB');
+    expect(memorySize(340e6)).toBe('340 MB');
   });
 
   test('the warnings come in order with the exact texts', () => {
@@ -64,8 +66,8 @@ describe('station resource rules (DL-193)', () => {
     );
     expect(warnings).toEqual([
       { kind: 'disk', text: 'Low disk: 3.2 GB free on Data' },
-      { kind: 'disk', text: 'Low disk: 5.0 GB free on /work' },
-      { kind: 'memory', text: 'Low memory: 0.5 GB free of 16.0 GB' },
+      { kind: 'disk', text: 'Low disk: 5 GB free on /work' },
+      { kind: 'memory', text: 'Low memory: 500 MB free of 16 GB' },
       { kind: 'cpu', text: 'Busy CPU: load 12.5 on 4 cores' },
     ]);
   });

@@ -173,7 +173,7 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
           } else trapTab(e, root.current);
         }}
       >
-        <div className="fd-help-head">
+        <div className="fd-dialog-head fd-help-head">
           <h2>Keyboard and help</h2>
           <button
             ref={close}

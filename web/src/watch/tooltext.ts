@@ -2,6 +2,7 @@
 // target, never a raw MCP id or a JSON payload. The Watch tiles (and the wall tiles, which reuse
 // them) and the Activity rows use it, so one call reads the same everywhere.
 import type { ActivityKind, ToolKind } from '../gen';
+import { homeShort } from '../ui/format';
 
 /** How a target reads: a file path (mono, `PathTail`), a command or an id (mono) or words (sans). */
 export type TargetForm = 'path' | 'code' | 'words';
@@ -170,8 +171,9 @@ export function toolText(
   return { name: label, target, form: code ? 'code' : 'words' };
 }
 
-/** A path for the eye: the home folder of a user ("/home/ana/", "/Users/ana/") becomes "~/". */
-export const homePath = (path: string): string => path.replace(/^\/(?:home|Users)\/[^/]+\//, '~/');
+/** A path for the eye: the home folder of a user ("/home/ana/", "/Users/ana/") becomes "~/"
+ * (`homeShort` of ui/format, DESIGN-SYSTEM §5). */
+export const homePath = (path: string): string => homeShort(path);
 
 /** How a finished call of an activity row ended, when it did not end well. */
 export type ToolOutcome = 'failed' | 'denied' | null;

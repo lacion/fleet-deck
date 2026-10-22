@@ -11,12 +11,14 @@ import { usePrs, useProjects } from '../integrations/context';
 import { prOfSession } from '../integrations/model';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
+import { shortPath } from '../chat/PathTail';
+import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
-import { NEED_LABEL, type Need, oneLine, toolParts, usageParts, wallSessions } from './model';
+import { NEED_LABEL, type Need, oneLine, usageParts, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
 import { stationStats } from './stationStats';
@@ -309,12 +311,15 @@ export function StreamArea({
         <ol className="fd-wall-stream">
           {rows.map((item, n) => {
             const text = oneLine(item.text, 160);
-            // A command or a path is code (§4.5): the tool name in sans, the target in mono.
-            const tool = toolParts(item.kind, text);
+            // A tool call reads as the Activity page reads it (watch/tooltext): the tool name in
+            // words (no raw MCP id, no "(ok)"), a command or a path in mono, words in sans, and a
+            // failed or denied call as a hazard badge.
+            const tool = activityTool(item.kind, text);
             return (
               <li
                 key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
                 data-kind={item.kind}
+                data-outcome={tool?.outcome ?? undefined}
               >
                 <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>{' '}
                 <strong>{item.session_title ?? item.session_id}</strong>{' '}
@@ -322,7 +327,28 @@ export function StreamArea({
                   text
                 ) : (
                   <>
-                    {tool.lead} <code>{tool.target}</code>
+                    {tool.lead === '' ? null : `${tool.lead} `}
+                    <b className="fd-wall-tool">{tool.name}</b>
+                    {tool.target === '' ? null : tool.form === 'words' ? (
+                      <> {tool.target}</>
+                    ) : (
+                      <>
+                        {' '}
+                        <code>
+                          {tool.form === 'path'
+                            ? shortPath(homePath(tool.target), 60)
+                            : tool.target}
+                        </code>
+                      </>
+                    )}
+                    {tool.outcome === null ? null : (
+                      <>
+                        {' '}
+                        <span className="fd-badge" data-tone="hazard">
+                          {tool.outcome === 'failed' ? 'Failed' : 'Denied'}
+                        </span>
+                      </>
+                    )}
                   </>
                 )}
               </li>

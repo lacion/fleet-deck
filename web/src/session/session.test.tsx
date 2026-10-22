@@ -392,10 +392,10 @@ describe('session pane (DL-140)', () => {
   test('a Codex session shows the controls of its capabilities (P5-3)', () => {
     const codex = view(session({ capabilities: codexCaps(), mode: 'untrusted/workspace-write' }));
     expect(codex).toContain('Steer now');
-    // The modes are menu rows: a mode without a name keeps its raw id; the current one is checked.
-    expect(codex).toContain('</span>untrusted/read-only</button>');
+    // The modes are menu rows with their names (ui/format modeLabel); the current one is checked.
+    expect(codex).toContain('</span>Ask for untrusted commands · read only</button>');
     expect(codex).toMatch(
-      /aria-pressed="true" disabled=""><span class="fd-mode-lead"><\/span>untrusted\/workspace-write<svg[^>]*lucide-check/,
+      /aria-pressed="true" disabled=""><span class="fd-mode-lead"><\/span>Ask for untrusted commands · workspace write<svg[^>]*lucide-check/,
     );
     expect(codex).not.toContain('Accept edits</button>');
     // No native follow-up queue: the station holds the follow-up.

@@ -538,59 +538,10 @@ input[data-mono="true"] {
 .fd-set-sechead-row + :not(.fd-set-grid) + .fd-set-grid {
   margin-top: var(--sp-3);
 }
-.fd-set-grid > .fd-fieldwrap {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  column-gap: var(--sp-5);
-  row-gap: var(--sp-1);
-  align-items: start;
-  min-width: 0;
-}
-.fd-set-grid > .fd-fieldwrap > .fd-fieldcontrol {
-  display: contents;
-}
-.fd-set-grid .fd-fieldlabel {
-  grid-column: 1;
-  display: flex;
-  align-items: center;
-  min-height: var(--ctl-h);
-  color: var(--text);
-  font-size: var(--fs-ui);
-  font-weight: 500;
-  line-height: 1.25;
-}
-.fd-set-grid > .fd-fieldwrap > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
-.fd-set-grid > .fd-fieldwrap > .fd-fieldcontrol > :not(.fd-fieldlabel) {
-  grid-column: 2;
-  min-width: 0;
-}
-/* A one-value control stays at a readable width; lists and tables use the whole column. */
-.fd-set-grid .fd-fieldcontrol > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
-  width: 100%;
-  max-width: 360px;
-}
-.fd-set-grid .fd-fieldcontrol > input[type="number"]:not([type="checkbox"]):not([type="radio"]) {
-  max-width: 160px;
-}
+/* The field rows are `Field layout="row"` of page.css (SettingsFields sets data-layout). */
 .fd-set-grid .fd-fieldcontrol > .fd-folder,
 .fd-set-grid > .fd-fieldwrap > .fd-set-rows {
   max-width: 560px;
-}
-/* The switch sits in the middle of the control row. */
-.fd-set-grid .fd-fieldcontrol > .fd-switch {
-  margin-block: calc((var(--ctl-h) - 18px) / 2);
-}
-@media (pointer: coarse) {
-  .fd-set-grid .fd-fieldcontrol > .fd-switch {
-    margin-block: calc((var(--ctl-h) - 26px) / 2);
-  }
-}
-.fd-set-grid .fd-fieldhint,
-.fd-set-grid .fd-fielderror {
-  display: block;
-  max-width: 72ch;
-  font-size: var(--fs-meta);
-  line-height: 1.45;
 }
 /* The badges end the hint line, 8px after the help text (no line of their own). When the help
    fills the line, they start the next line at the left edge. */
@@ -608,43 +559,6 @@ input[data-mono="true"] {
 .fd-set-tab .fd-fieldwrap {
   position: relative;
 }
-/* Narrow screens: the label goes above its control. */
-@media (max-width: 720px) {
-  .fd-set-grid > .fd-fieldwrap {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 6px;
-  }
-  .fd-set-grid .fd-fieldlabel {
-    min-height: 0;
-    color: var(--dim);
-    font-size: var(--fs-meta);
-  }
-  .fd-set-grid > .fd-fieldwrap > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
-  .fd-set-grid > .fd-fieldwrap > .fd-fieldcontrol > :not(.fd-fieldlabel),
-  .fd-set-grid .fd-fieldlabel {
-    grid-column: 1;
-  }
-  .fd-set-grid .fd-fieldcontrol > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
-    max-width: none;
-  }
-  .fd-set-grid .fd-fieldcontrol > .fd-switch {
-    margin-block: 0;
-  }
-  /* A switch field (touch settings): the switch ends the label row, and the hint takes the line
-     under both. */
-  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-  }
-  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) > .fd-fieldcontrol > .fd-switch {
-    grid-row: 1;
-    grid-column: 2;
-  }
-  .fd-set-grid > .fd-fieldwrap:has(.fd-switch) > :is(.fd-fieldhint, .fd-fielderror) {
-    grid-column: 1 / -1;
-  }
-}
-
 /* the provider logins */
 .fd-set-instances {
   display: grid;

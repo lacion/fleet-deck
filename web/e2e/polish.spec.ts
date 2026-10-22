@@ -1,9 +1,10 @@
 // The UI polish checks of the Flight Deck board (the test gaps of the UI refresh): the `c` key on
-// the wide fleet home, the outcome notes of a coordinator grant, the 44px touch targets of the Add
-// station flow and the folder crumbs, forced colors, the free-text model of New session and the
-// j/k order of the sidebar, the Focus pause of the Watch page and the one-shot Properties file
-// focus. The phone project runs every test that is not desktop-only; the
-// desktop project runs this file too (playwright.config.ts).
+// the wide fleet home, the outcome notes of a coordinator grant in its Fleet access dialog, no
+// sideways scroll of the ops column, the 44px touch targets of the Add station flow and the folder
+// crumbs, forced colors, the free-text model of New session and the j/k order of the sidebar, the
+// Focus pause of the Watch page and the one-shot Properties file focus. The phone project runs
+// every test that is not desktop-only; the desktop project runs this file too
+// (playwright.config.ts).
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import type { Event } from '../src/gen';
 import { codexCaps } from '../src/testing/capabilities';
@@ -97,25 +98,63 @@ test('2: Revoke and Renew of a coordinator grant show their outcome note', async
   desktopOnly();
   const { grants } = await setUp(page);
   await goTo(page, '#/fleet');
-  const mail = page.getByRole('region', { name: 'Mail and tasks' });
-  const list = mail.getByRole('list', { name: 'Coordinator grants' });
+  // The grants are rows of their own Fleet access section (no form in the column); a row's
+  // Change… opens the Fleet access dialog, which shows the outcome of Renew and Revoke.
+  const access = page.getByRole('region', { name: 'Fleet access' });
+  const list = access.getByRole('list', { name: 'Coordinator grants' });
   await expect(list.getByRole('listitem')).toHaveCount(2);
   const live = list.getByRole('listitem').filter({ hasText: 'active' });
   const idle = list.getByRole('listitem').filter({ hasText: 'expired' });
-  // The form stays folded: the note shows outside the fold.
-  await expect(mail.locator('details.fd-fleet-compose')).not.toHaveAttribute('open');
+  const dialog = page.getByRole('dialog', { name: 'Fleet access' });
 
-  await idle.getByRole('button', { name: 'Renew' }).click();
-  await expect(mail.getByRole('status')).toHaveText(
+  await idle.getByRole('button', { name: 'Change…' }).click();
+  await dialog.getByRole('button', { name: 'Renew' }).click();
+  await expect(dialog.getByRole('status')).toHaveText(
     'Renewal sent; the grant is active when its station confirms.',
   );
-  await expect(mail.getByRole('status')).toBeVisible();
   expect(grants.rows.find((g) => g.grant_id === 'g-idle')?.state).toBe('active');
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
 
-  await live.first().getByRole('button', { name: 'Revoke' }).click();
-  await expect(mail.getByRole('status')).toHaveText('Grant revoked.');
-  await expect(mail.getByRole('status')).toBeVisible();
-  await expect(list).toContainText('read, mail: revoked');
+  await live.first().getByRole('button', { name: 'Change…' }).click();
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  // A revoked grant leaves the list.
+  await expect(list.getByRole('listitem')).toHaveCount(1);
+});
+
+test('2b: the page and the ops column never scroll sideways at 1280, 1440 and 1920', async ({
+  page,
+}) => {
+  desktopOnly();
+  await setUp(page);
+  for (const width of [1280, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await goTo(page, '#/fleet');
+    await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Fleet access' })).toBeVisible();
+    const sizes = await page.evaluate(() => {
+      const ops = document.querySelector<HTMLElement>('.fd-ops');
+      const body = document.querySelector<HTMLElement>('.fd-ops-body');
+      const over = (el: HTMLElement | null) => (el === null ? 0 : el.scrollWidth - el.clientWidth);
+      return {
+        page: document.documentElement.scrollWidth - window.innerWidth,
+        ops: over(ops),
+        body: over(body),
+      };
+    });
+    expect(sizes.page, `the page at ${width}px`).toBeLessThanOrEqual(0);
+    expect(sizes.ops, `the ops column at ${width}px`).toBeLessThanOrEqual(0);
+    expect(sizes.body, `the ops body at ${width}px`).toBeLessThanOrEqual(0);
+    // The foot of the column (Activity, Assign, All usage) is on the screen, not under the fold.
+    const foot = await page.locator('.fd-ops-foot').boundingBox();
+    expect(
+      foot === null ? 0 : foot.y + foot.height,
+      `the ops foot at ${width}px`,
+    ).toBeLessThanOrEqual(900);
+  }
 });
 
 test('3: the text buttons of Add station and the folder crumbs are 44px high on touch', async ({
@@ -154,7 +193,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   await goTo(page, '#/new');
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
-  await form.getByRole('button', { name: 'Open projects' }).click();
+  // The station has one allowed root (projects): Browse… opens inside it.
   await form.getByRole('button', { name: 'Open app' }).click();
   const crumbs = form.getByRole('navigation', { name: 'Folder path' });
   await expect(crumbs.locator('[aria-current="location"]')).toHaveText('app');
@@ -164,6 +203,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
 
   // The project page → Secret files → Browse…: the crumbs of the home folder.
   await goTo(page, `#/project/${SECRET_PROJECT}`);
+  await page.getByRole('tab', { name: 'Setup' }).click();
   const secrets = page.getByRole('region', { name: 'Secret files' });
   await secrets.getByRole('button', { name: 'Browse…' }).click();
   const browser = secrets.getByRole('region', { name: 'Browse the home' });

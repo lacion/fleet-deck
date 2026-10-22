@@ -556,158 +556,13 @@
   gap: var(--sp-2);
 }
 
-/* ── the card (project pages) ───────────────────────────────────── */
-.fd-cardwrap {
-  display: block;
-  min-width: 0;
-}
-.fd-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px var(--sp-3) 10px calc(3px + var(--sp-3));
-  background: var(--raised);
-  border-radius: var(--r-card);
-  box-shadow:
-    inset 3px 0 0 var(--faint-decor),
-    var(--shadow-lift);
-  color: var(--text);
-  font-size: var(--fs-ui);
-  text-decoration: none;
-  transition: background-color var(--t-fast);
-}
-.fd-card:hover {
-  background: var(--raised-hi);
-  color: var(--text);
-}
-.fd-card:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.fd-card[data-status="needs_you"] {
-  box-shadow:
-    inset 3px 0 0 var(--act),
-    var(--shadow-lift);
-}
-.fd-card[data-status="working"] {
-  box-shadow:
-    inset 3px 0 0 var(--ok),
-    var(--shadow-lift);
-}
-.fd-card:is([data-status="verifying"], [data-status="queued"]) {
-  box-shadow:
-    inset 3px 0 0 var(--focus),
-    var(--shadow-lift);
-}
-.fd-card:is([data-status="unreachable"], [data-status="lost"], [data-contested="true"]) {
-  box-shadow:
-    inset 3px 0 0 var(--hazard),
-    var(--shadow-lift);
-}
-.fd-card[data-status="ended"],
-.fd-card[data-archived="true"] {
-  color: var(--faint);
-}
-.fd-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-.fd-card-title {
-  display: -webkit-box;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--fs-title);
-  font-weight: 600;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-}
+/* ── card parts that the strips share (star, note, ask, tool, error) ── */
 .fd-card-star {
   flex: none;
   color: var(--act);
 }
 .fd-card-star .fd-icon {
   fill: currentColor;
-}
-.fd-card-head .fd-dot {
-  align-self: flex-start;
-  margin-top: 3px;
-}
-.fd-card-where {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  white-space: nowrap;
-}
-.fd-card-place {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.fd-card-where .fd-badge {
-  flex: none;
-  margin-left: auto;
-}
-.fd-card-diff {
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  white-space: nowrap;
-}
-.fd-card-contested {
-  color: var(--hazard);
-  font-size: var(--fs-meta);
-}
-.fd-card-contested .fd-icon {
-  display: inline;
-  vertical-align: -1px;
-}
-.fd-card-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-1);
-}
-.fd-card-mail {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 3px;
-  color: var(--dim);
-  font-size: var(--fs-meta);
-  white-space: nowrap;
-}
-.fd-card-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  min-width: 0;
-}
-.fd-filechip {
-  min-width: 0;
-  max-width: 140px;
-  padding: 1px 6px;
-  overflow: hidden;
-  background: var(--raised-hi);
-  border-radius: var(--r-chip);
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fd-filechip[data-hot="true"] {
-  background: var(--hazard-bg);
-  color: var(--hazard);
 }
 .fd-spark {
   flex: none;
@@ -720,17 +575,8 @@
 .fd-spark rect[data-last="true"] {
   fill: var(--ok);
 }
-.fd-card-age {
-  margin-left: auto;
-  color: var(--faint);
-  font-size: var(--fs-meta);
-  white-space: nowrap;
-}
-.fd-spark + .fd-card-age {
-  margin-left: 0;
-}
 
-/* The note line (the strip, the card and the watch tiles). */
+/* The note line (the strip and the watch tiles). */
 .fd-card-note {
   display: -webkit-box;
   min-width: 0;
@@ -888,24 +734,6 @@
 }
 .fd-strip-title > .fd-dot {
   margin-right: 2px;
-}
-/* Unread on a strip is a 6px --focus dot: a bare number after the title read as a count of
-   something unknown. The count stays in its name and its title ("3 unread"). */
-.fd-strip-title > .fd-unread {
-  width: 6px;
-  min-width: 0;
-  height: 6px;
-  margin-left: 2px;
-  padding: 0;
-  overflow: hidden;
-  background: var(--focus);
-  color: transparent;
-  font-size: 0;
-}
-@media (forced-colors: active) {
-  .fd-strip-title > .fd-unread {
-    forced-color-adjust: none;
-  }
 }
 .fd-strip-text {
   flex: 0 1 auto;
@@ -2260,19 +2088,8 @@
     min-height: var(--row-h-touch);
   }
 }
-:root[data-density="compact"] .fd-card {
-  gap: 3px;
-  padding-block: 6px;
-}
-:root[data-density="compact"] .fd-card-where,
-:root[data-density="compact"] .fd-card-files {
-  display: none;
-}
 :root[data-density="compact"] .fd-card-note {
   -webkit-line-clamp: 1;
-}
-:root[data-density="compact"] .fd-card-foot:not(:has(.fd-badge)) {
-  display: none;
 }
 
 /* ── grant access panels (§4.7) ─────────────────────────────────── */

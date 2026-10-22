@@ -8,7 +8,6 @@ import { UsageMeters } from './UsageMeters';
 import {
   costText,
   dollars,
-  exactDollars,
   fleetUsage,
   inputLabel,
   instanceLimit,
@@ -213,13 +212,12 @@ describe('the usage glance totals (live UI audit)', () => {
       },
     });
 
-  test('a cost has digit groups, whole dollars from $1,000, and its cents in the exact form', () => {
+  test('a cost has digit groups and cents (one money format, DESIGN-SYSTEM §5)', () => {
     expect(dollars(1.2)).toBe('$1.20');
     expect(dollars(812.4)).toBe('$812.40');
-    expect(dollars(51_735.86)).toBe('$51,736');
-    expect(dollars(1_234_567.8)).toBe('$1,234,568');
-    expect(exactDollars(51_735.86)).toBe('$51,735.86');
-    expect(exactDollars(0)).toBe('$0.00');
+    expect(dollars(51_735.857)).toBe('$51,735.86');
+    expect(dollars(1_234_567.8)).toBe('$1,234,567.80');
+    expect(dollars(0)).toBe('$0.00');
   });
 
   test('Claude counts only new input: a Claude fleet says "new input tokens"', () => {
@@ -233,8 +231,8 @@ describe('the usage glance totals (live UI audit)', () => {
       <UsageGlance sessions={[big('a'), big('b')]} stations={[station()]} now={NOW} />,
     );
     expect(html).toContain('<p class="fd-glance-span">2 sessions · all time</p>');
-    expect(html).toContain('<dd title="$51,735.86">$51,736</dd>');
-    expect(html).toContain('<dd title="1,500,000">1.5 M</dd>');
+    expect(html).toContain('<dd title="$51,735.86">$51,735.86</dd>');
+    expect(html).toContain('<dd title="1,500,000">1.5M</dd>');
     expect(html).toContain('<dt>new input tokens</dt>');
   });
 });

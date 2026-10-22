@@ -1,7 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { relativeAge, sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
-import { FileText, Icon, RefreshCw } from '../ui/icons';
+import { Archive, FileText, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
@@ -142,25 +142,27 @@ export function PlanLibrary({
       title="Plans"
       label="Plan library"
       description="Plans that sessions proposed. Start one as a new session."
+      filters={
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          aria-pressed={archived}
+          onClick={() => setArchived(!archived)}
+        >
+          <Icon of={Archive} size={14} /> Show archived
+        </button>
+      }
       actions={
-        <>
-          <label className="fd-checkrow">
-            <input
-              type="checkbox"
-              checked={archived}
-              onChange={(event) => setArchived(event.target.checked)}
-            />
-            Show archived
-          </label>
-          <button
-            type="button"
-            className="fd-ghost"
-            onClick={load}
-            disabled={actions === undefined}
-          >
-            <Icon of={RefreshCw} /> Refresh
-          </button>
-        </>
+        <button
+          type="button"
+          className="fd-iconbtn"
+          aria-label="Refresh"
+          title="Refresh"
+          onClick={load}
+          disabled={actions === undefined}
+        >
+          <Icon of={RefreshCw} />
+        </button>
       }
     >
       {error ? <p role="alert">{error}</p> : null}
@@ -171,9 +173,14 @@ export function PlanLibrary({
           icon={FileText}
           title="No plans yet"
           body="A session in plan mode adds its plan here."
+          action={
+            <a className="fd-btn fd-ghost fd-sm" href="#/new">
+              New session
+            </a>
+          }
         />
       ) : (
-        <ol className="fd-panel fd-plan-list">
+        <ol className="fd-plan-list">
           {plans.map((p) => {
             const title = planTitle(p.markdown);
             const proposer = p.status === 'proposed' ? liveProposer(p, sessions) : undefined;

@@ -1,6 +1,7 @@
 import { formatHash } from '../app/routes';
 import type { DeckSession, StationResources as Resources } from '../gen';
 import {
+  bytesText,
   cpuBusy,
   isLow,
   LOW_DISK_BYTES,
@@ -8,21 +9,6 @@ import {
   resourceWarnings,
   usedShare,
 } from './resources';
-
-/** `46.80` → `46.8`, `2.00` → `2`: a number with at most `digits` decimals, no trailing zeros. */
-const trimmed = (n: number, digits: number): string => String(Number(n.toFixed(digits)));
-
-/**
- * A size in decimal units for a station card: whole MB under 1 GB (`340 MB`), one decimal GB under
- * 100 GB (`46.8 GB`, `6 GB`), whole GB under 1 TB (`864 GB`), then TB with up to two decimals
- * (`1.08 TB`, `2 TB`). The limits sit where the rounding would reach the next step.
- */
-export function bytesText(bytes: number): string {
-  if (bytes < 999.5e6) return `${Math.round(bytes / 1e6)} MB`;
-  if (bytes < 99.95e9) return `${trimmed(bytes / 1e9, 1)} GB`;
-  if (bytes < 999.5e9) return `${Math.round(bytes / 1e9)} GB`;
-  return `${trimmed(bytes / 1e12, 2)} TB`;
-}
 
 /**
  * One resource row: the label, a bar of the used share, the used amount of the total in the text

@@ -79,7 +79,7 @@ test('a captured plan is read, archived, restored and starts a session', async (
 
   await p1.getByRole('button', { name: 'Archive' }).click();
   await expect(library.getByRole('article')).toHaveCount(1);
-  await library.getByLabel('Show archived').check();
+  await library.getByRole('button', { name: 'Show archived' }).click();
   await expect(p1).toContainText('Archived');
   await p1.getByRole('button', { name: 'Restore' }).click();
   await expect(p1).toContainText('Proposed');

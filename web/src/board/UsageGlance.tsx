@@ -2,11 +2,11 @@
 // rate-limit windows as fuel meters and the fleet totals. The Usage tab keeps every meter and the
 // unknown parts; this glance shows only what is known.
 import type { DeckSession, StationView } from '../gen';
+import { compactCount } from '../ui/format';
 import { Fuel, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
 import {
   dollars,
-  exactDollars,
   fleetUsage,
   inputLabel,
   rateMeters,
@@ -18,14 +18,6 @@ import {
 
 /** How many windows the glance shows (the tightest first). */
 const SHOWN = 3;
-
-/** "4.2 M", "610 k", "940". */
-export function compactCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} M`;
-  if (n >= 10_000) return `${Math.round(n / 1000)} k`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)} k`;
-  return String(n);
-}
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -45,7 +37,7 @@ export function UsageGlance({
   const manyStations = new Set(known.map((m) => m.stationId)).size > 1;
   const usage = fleetUsage(sessions);
   const approx = usage.costInferred ? '≈ ' : '';
-  // Each total has its exact value as its title: the row shows it short ("1.5 M", "$51,736").
+  // Each total has its exact value as its title: the row shows a count short ("1.5M").
   const totals = [
     { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
     { label: 'output tokens', value: usage.output.known, text: compactCount, exact: tokens },
@@ -53,7 +45,7 @@ export function UsageGlance({
       label: 'cost',
       value: usage.cost.known,
       text: (n: number) => `${approx}${dollars(n)}`,
-      exact: (n: number) => `${approx}${exactDollars(n)}`,
+      exact: (n: number) => `${approx}${dollars(n)}`,
     },
   ].filter((t) => t.value !== null);
   if (meters.length === 0 && totals.length === 0) return null;

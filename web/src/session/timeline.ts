@@ -51,7 +51,16 @@ export type Item =
       /** B8: how a `!` shell command ended (`provider_refs.shell` of `tool.completed`); absent until then. */
       shell?: string;
     }
-  | { type: 'reasoning'; key: string; turn_id: string; text: string; done: boolean }
+  | {
+      type: 'reasoning';
+      key: string;
+      turn_id: string;
+      text: string;
+      done: boolean;
+      /** Unix ms of the first and the last delta (the chat shows "Thinking · 12 s"). */
+      started_at: number;
+      ended_at: number;
+    }
   | { type: 'plan'; key: string; plan_id: string; markdown: string }
   | Subagent
   | {
@@ -417,6 +426,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         const open = openReasoning.get(root);
         if (open && open.turn_id === e.turn_id) {
           open.text += e.text;
+          open.ended_at = env.at;
         } else {
           const item = {
             type: 'reasoning' as const,
@@ -424,6 +434,8 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
             turn_id: e.turn_id,
             text: e.text,
             done: false,
+            started_at: env.at,
+            ended_at: env.at,
           };
           add(root, item);
           allReasoning.push(item);

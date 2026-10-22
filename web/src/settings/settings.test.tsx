@@ -195,6 +195,8 @@ describe('field rendering for each kind', () => {
     expect(html).toContain('class="fd-folder"');
     expect(html).toContain('aria-label="Remove Allowed folders 1"');
     expect(html).toContain('Add folder');
+    // A settings row has no pin button: pinning belongs to the New session sheet.
+    expect(html).not.toContain('Pin this directory');
     // The deck tab has no folders to browse: plain inputs.
     const deck = fields({ stationId: null });
     expect(deck).not.toContain('class="fd-folder"');
@@ -754,10 +756,10 @@ describe('the Settings link (DL-172)', () => {
       renderToStaticMarkup(
         withEnv ? (
           <SettingsProvider env={env}>
-            <More stationCount={1} terminalCount={0} />
+            <More terminalCount={0} />
           </SettingsProvider>
         ) : (
-          <More stationCount={1} terminalCount={0} />
+          <More terminalCount={0} />
         ),
       );
     expect(more(true)).toContain('href="#/settings"');

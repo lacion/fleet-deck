@@ -219,8 +219,13 @@ describe('TailnetCardView', () => {
 
   test('Use tailnet with the table of both lists', () => {
     const html = card(view());
+    // The tailnet name is a field row: its label, the name in mono, the addresses under it.
     expect(html).toContain(
-      'This deck on the tailnet: <code class="fd-tailnet-addr">deck.tail1234.ts.net</code> (<code class="fd-tailnet-addr">100.64.0.1, fd7a::1</code>)',
+      '<div class="fd-tailnet-row"><span class="fd-tailnet-label">Tailnet name</span><div class="fd-tailnet-value"><code class="fd-tailnet-addr">deck.tail1234.ts.net</code><ul class="fd-tailnet-addrs fd-tailnet-ips"><li>100.64.0.1</li><li>fd7a::1</li></ul></div></div>',
+    );
+    // Each address of a cell has its own line.
+    expect(html).toContain(
+      '<td data-label="Board"><ul class="fd-tailnet-addrs"><li>127.0.0.1:7420</li></ul></td>',
     );
     expect(html).toContain('Board address');
     expect(html).toContain('Link address');
@@ -237,7 +242,11 @@ describe('TailnetCardView', () => {
       managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
     });
     const html = card(same);
-    expect(html).toContain('<th scope="row">Listens on</th>');
+    // No change: the Board and Station link address fields of the Network section show the
+    // addresses; the card only says that the deck uses them.
+    expect(html).not.toContain('<table');
+    expect(html).not.toContain('Listens on');
+    expect(html).toContain('The deck listens on its tailnet addresses.');
     expect(html).not.toContain('With tailnet');
     expect(html).not.toContain('>Now<');
     // The same addresses in another order are the same set.
@@ -388,7 +397,7 @@ describe('the toggle "Trusted certificate from Tailscale" (DL-190)', () => {
     expect(
       certificateLine({ enabled: true, state: 'valid', name: 'deck.tail1.ts.net', not_after: end }),
     ).toBe(
-      `Trusted certificate for deck.tail1.ts.net, valid until ${new Date(end).toLocaleDateString()}`,
+      `Trusted certificate for deck.tail1.ts.net, valid until ${new Date(end).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`,
     );
     expect(certificateLine({ enabled: true, state: 'expired' })).toBe(
       'The certificate expired. Fleet Deck is renewing it.',

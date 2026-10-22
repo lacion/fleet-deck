@@ -9,6 +9,8 @@ export function Menu(props: {
   readonly summary: ReactNode;
   readonly label?: string;
   readonly summaryClass?: string;
+  /** `toggle`: the summary ends in the chevron of base.css that turns when the menu opens. */
+  readonly variant?: 'toggle';
   readonly title?: string;
   readonly onClosed?: () => void;
   readonly children: (close: () => void) => ReactNode;
@@ -35,7 +37,12 @@ export function Menu(props: {
         if (!event.currentTarget.open) props.onClosed?.();
       }}
     >
-      <summary className={props.summaryClass} aria-label={props.label} title={props.title}>
+      <summary
+        className={props.summaryClass}
+        data-variant={props.variant}
+        aria-label={props.label}
+        title={props.title}
+      >
         {props.summary}
       </summary>
       <div className="fd-menu-body">{props.children(close)}</div>

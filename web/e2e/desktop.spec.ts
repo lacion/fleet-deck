@@ -277,14 +277,17 @@ test('a file name of a diff opens the file in the Files side panel, rendered or 
   );
 });
 
-test('the sidebar footer has the theme and compact switches', async ({ page }) => {
+test('the sidebar footer has the theme switches; Compact cards is in the account menu', async ({
+  page,
+}) => {
   const { sidebar } = await setUp(page);
   const theme = sidebar.getByRole('group', { name: 'Theme' });
   await theme.getByRole('button', { name: 'Light theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await theme.getByRole('button', { name: 'Dark theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await sidebar.getByRole('button', { name: 'Compact cards' }).click();
+  await sidebar.locator('summary[aria-label="Account"]').click();
+  await sidebar.getByRole('switch', { name: 'Compact cards' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await expect(sidebar.locator('.fd-srow-meta').first()).toBeHidden();
 });
@@ -327,7 +330,7 @@ test('a starred session sorts first and ended sessions are cleared into Archived
   await alpha.locator('details.fd-sended > summary').click();
   await alpha.getByRole('button', { name: 'Archive the ended sessions of Alpha' }).click();
   await expect(alpha.locator('details.fd-sended')).toHaveCount(0);
-  const toggle = sidebar.getByRole('button', { name: /^Archived \(2\)/ });
+  const toggle = sidebar.getByRole('button', { name: 'Archived 2' });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');

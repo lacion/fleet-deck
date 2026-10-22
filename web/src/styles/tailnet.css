@@ -2,16 +2,14 @@
    ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). The primitives come from base.css. */
 
 /* ════════════════════ the Tailnet card (Settings → Deck) ═════════════════════ */
-/* A bare settings section (§4.7: no boxed groups): its heading, labels and controls sit on the
-   same columns as the sections of a station tab. A rule divides it from the next section. */
+/* A part of the Network section of the deck tab (§4.7: no boxed groups): its small heading, labels
+   and controls sit on the columns of the settings fields. It has no rule and no margin of its own:
+   the section and the tab space it. */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
-  margin-bottom: var(--sp-5);
-  padding: 0 0 var(--sp-5);
   background: none;
-  border-bottom: 1px solid var(--border-soft);
 }
 .fd-tailnet h2 {
   margin: 0;
@@ -78,14 +76,88 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+/* A list of addresses: one per line; a line never breaks inside an address. */
+.fd-tailnet-addrs {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-tailnet-addrs > li {
+  white-space: nowrap;
+}
+/* "Tailnet name": a field row of the settings grid: the label (200px), then the name and, under
+   it, the addresses of the deck on the tailnet in --dim. */
+.fd-tailnet-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  column-gap: var(--sp-5);
+  align-items: start;
+  min-width: 0;
+}
+.fd-tailnet-label {
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1.25;
+}
+.fd-tailnet-value {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-tailnet-value > .fd-tailnet-addr {
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+  overflow-wrap: anywhere;
+}
+.fd-tailnet-ips {
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+/* The note and the button of the addresses sit on the control column (the selector beats
+   `.fd-tailnet p`). */
+.fd-tailnet > .fd-tailnet-indent {
+  margin-left: calc(200px + var(--sp-5));
+}
 .fd-tailnet > button {
   justify-self: start;
 }
 /* A plain button on the page --bg keeps the light hairline, the same as Browse… in a settings
    folder row (settings.css .fd-set-grid .fd-folder-row > button). */
-.fd-tailnet > button:not([class]),
-.fd-tailnet > button:not([class]):hover:not(:disabled) {
+.fd-tailnet > button.fd-tailnet-indent,
+.fd-tailnet > button.fd-tailnet-indent:hover:not(:disabled) {
   border-color: var(--btn-edge);
+}
+/* The state of the certificate: --dim words; a valid one starts with the ok glyph. */
+.fd-tailnet-cert > .fd-tailnet-certline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+@media (max-width: 720px) {
+  .fd-tailnet-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+  .fd-tailnet-label,
+  .fd-tailnet-value > .fd-tailnet-addr {
+    min-height: 0;
+  }
+  .fd-tailnet-label {
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-tailnet > .fd-tailnet-indent {
+    margin-left: 0;
+  }
 }
 /* The two settings of the card: fields of one section, without a rule between them (like the
    fields of a station tab section); the .fd-tailnet grid gap spaces them as .fd-set-grid rows. */
@@ -95,9 +167,10 @@
   gap: var(--sp-1);
   padding-top: 0;
 }
-/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The row names take the
-   label column of the field grid, so that "Board address" starts on the switch column; the
-   address columns hug their values, 32px apart; an address never breaks. */
+/* "Now" and "With tailnet": rows of 36px or more, faint dividers, a dim header (§4.7 tables).
+   The row names take the label column of the field grid, so that "Board address" starts on the
+   switch column; the address columns hug their lists, 32px apart; each address has its own line,
+   so the table stays inside the page column. */
 .fd-tailnet-table {
   justify-self: start;
   width: auto;
@@ -126,16 +199,21 @@
   font-weight: 600;
 }
 .fd-tailnet-table tbody th {
+  padding-top: var(--sp-2);
   color: var(--dim);
   font-size: var(--fs-meta);
   font-weight: 500;
   white-space: nowrap;
+  vertical-align: top;
 }
 .fd-tailnet-table td {
+  height: auto;
+  padding-block: var(--sp-2);
   font-family: var(--font-data);
   font-size: var(--fs-data);
-  white-space: nowrap;
+  white-space: normal;
   overflow-wrap: normal;
+  vertical-align: top;
 }
 .fd-tailnet-table tbody tr:last-child > * {
   border-bottom: 0;
@@ -174,6 +252,9 @@
   .fd-tailnet-table th:first-child {
     width: auto;
   }
+  .fd-tailnet-table tbody th {
+    padding-top: 0;
+  }
   .fd-tailnet-table td {
     white-space: normal;
   }
@@ -196,7 +277,7 @@
 .fd-overlay .fd-dialog:has(> .fd-add-dialog) {
   position: relative;
   gap: var(--sp-4);
-  width: min(560px, 92vw);
+  width: min(560px, 100%);
 }
 /* The title keeps clear of the close button. */
 .fd-overlay .fd-dialog:has(> .fd-add-dialog) > h2 {

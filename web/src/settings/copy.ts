@@ -3,6 +3,7 @@
 // the board's copy instead, so that one field reads the same on every station version and never
 // shows raw protocol values. The values on the wire stay the same.
 import type { FieldMeta } from '../gen';
+import { codexModeLabel } from '../ui/format';
 
 /** The label of a field when the registry label repeats its section heading. */
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -35,32 +36,12 @@ const HELP: Readonly<Record<string, string>> = {
   'worker_grant.claude_mode':
     'The most permissive mode that a worker can give to a session that it starts. Default: Accept edits.',
   'worker_grant.codex_mode':
-    'The most permissive mode that a worker can give to a session that it starts. Default: Ask when needed, write in the workspace.',
+    'The most permissive mode that a worker can give to a session that it starts. Default: Ask when needed · workspace write.',
 };
 
 /** The help of a field: the board's words, else the registry help. */
 export const helpOf = (meta: Pick<FieldMeta, 'key' | 'help'>): string =>
   HELP[meta.key] ?? meta.help;
-
-const CODEX_APPROVAL: Readonly<Record<string, string>> = {
-  untrusted: 'Ask for untrusted commands',
-  'on-request': 'Ask when needed',
-  never: 'Never ask',
-};
-const CODEX_SANDBOX: Readonly<Record<string, string>> = {
-  'read-only': 'read only',
-  'workspace-write': 'write in the workspace',
-  'danger-full-access': 'full access, no sandbox',
-};
-
-/** `on-request/workspace-write` → `Ask when needed, write in the workspace`. */
-function codexModeLabel(value: string): string | undefined {
-  const [approval, sandbox, ...rest] = value.split('/');
-  if (approval === undefined || sandbox === undefined || rest.length > 0) return undefined;
-  const a = CODEX_APPROVAL[approval];
-  const s = CODEX_SANDBOX[sandbox];
-  return a === undefined || s === undefined ? undefined : `${a}, ${s}`;
-}
 
 /** The words of an enum option, by field key and value. */
 const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -78,7 +59,7 @@ const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> 
 
 /** The text of one option of an enum field: its words, or the value when it has none. */
 export function optionLabel(key: string, value: string): string {
-  if (key === 'worker_grant.codex_mode') return codexModeLabel(value) ?? value;
+  if (key === 'worker_grant.codex_mode') return codexModeLabel(value);
   return OPTION_LABELS[key]?.[value] ?? value;
 }
 

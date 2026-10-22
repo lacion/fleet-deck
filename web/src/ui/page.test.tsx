@@ -82,7 +82,7 @@ describe('EmptyState (DL-171)', () => {
         action={<button type="button">New share</button>}
       />,
     );
-    expect(html).toContain('class="fd-panel fd-emptystate"');
+    expect(html).toContain('class="fd-emptystate"');
     expect(html).toContain('<p class="fd-emptystate-title">No shares yet</p>');
     expect(html).toContain('<p class="fd-emptystate-body">Share a session.</p>');
     expect(html).toContain('New share</button>');

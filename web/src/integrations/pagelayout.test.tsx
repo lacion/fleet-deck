@@ -49,7 +49,7 @@ describe('the project page header', () => {
       <ProjectPage id="p1" stations={[station()]} sessions={[]} onFixChecks={noop} now={NOW} />,
     );
     expect(html).toContain(
-      '<p class="fd-page-desc"><span class="fd-int-where"><span>Alpha</span><span class="fd-int-sep" aria-hidden="true">·</span><code class="fd-int-path"><bdi>/work/atlas</bdi></code></span></p>',
+      '<p class="fd-page-desc"><span class="fd-int-where"><span>Alpha</span><span class="fd-int-sep" aria-hidden="true">·</span><code class="fd-int-path" title="/work/atlas"><bdi>/work/atlas</bdi></code></span></p>',
     );
     expect(html).toMatch(/<div class="fd-page-filters"><span class="fd-int-chips">/);
     // The sessions are first under the header: no setup panel before the tabs.

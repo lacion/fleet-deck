@@ -309,6 +309,13 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
+  // Right under the folder input: the folder picker's hint, or after the typed directory of Auto.
+  const needNote =
+    dirNote === null ? null : (
+      <p className="fd-note fd-spawn-need" id={NEED_ID}>
+        {dirNote}
+      </p>
+    );
   // A phone shows the board and scope notes in the sticky footer, where the disabled button is in
   // view (the form scrolls under the footer); the directory note stays under its field.
   const scopeNote = actions !== undefined && !canDrive;
@@ -642,14 +649,11 @@ export function SpawnForm({
                     browseDisabled={!live || !canDrive}
                     initialOpen={initialListing !== null}
                     initialListing={initialListing}
+                    hint={needNote}
                   />
                 </div>
               )}
-              {dirNote === null ? null : (
-                <p className="fd-note fd-spawn-need" id={NEED_ID}>
-                  {dirNote}
-                </p>
-              )}
+              {auto ? needNote : null}
               {branchFields ? (
                 <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
               ) : null}

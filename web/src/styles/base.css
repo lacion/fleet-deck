@@ -403,15 +403,23 @@ select.fd-ghost:focus:hover:not(:disabled) {
 .fd-iconbtn.fd-sm {
   width: var(--ctl-h-sm);
 }
-/* A pressed icon toggle (a panel toggle, compact cards) looks like a pressed segment of .fd-seg:
-   a fill step alone (--raised-hi on --raised) was 1.1:1 and did not show the state. */
-.fd-iconbtn[aria-pressed="true"],
-.fd-iconbtn[aria-pressed="true"]:hover:not(:disabled) {
-  background: var(--pressed-bg);
+/* A pressed toggle (an icon toggle, a ghost toggle of a page header) and a ghost select with a
+   filter on (`data-active`) look like a pressed segment of .fd-seg: a fill step alone
+   (--raised-hi on --raised) was 1.1:1 and did not show the state. background-color, not the
+   shorthand: a ghost select keeps its chevron. */
+:is(.fd-iconbtn, .fd-ghost)[aria-pressed="true"],
+:is(.fd-iconbtn, .fd-ghost)[aria-pressed="true"]:hover:not(:disabled),
+select.fd-ghost[data-active="true"],
+select.fd-ghost[data-active="true"]:hover:not(:disabled) {
+  background-color: var(--pressed-bg);
   color: var(--text);
   box-shadow:
     inset 0 0 0 1px var(--ctl-edge),
     var(--shadow-lift);
+}
+.fd-ghost[aria-pressed="true"],
+select.fd-ghost[data-active="true"] {
+  font-weight: 600;
 }
 /* A key hint inside a button sits on the button fill. */
 :where(button, a.fd-btn) > .fd-kbd {
@@ -1365,6 +1373,9 @@ details[open] > summary[data-variant="toggle"]::after {
    block margins), so that the title starts at the padding edge of the dialog. */
 .fd-dialog-head {
   display: grid;
+  /* The full width of the dialog, also in a dialog that starts its items (`justify-items`). */
+  align-self: stretch;
+  justify-self: stretch;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--sp-3);
@@ -1584,6 +1595,7 @@ details[open] > summary[data-variant="toggle"]::after {
   .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
   .fd-chip:is([aria-pressed="true"], [aria-selected="true"]),
   .fd-iconbtn[aria-pressed="true"]:not(:focus-visible),
+  select.fd-ghost[data-active="true"]:not(:focus-visible),
   [role="tab"][aria-selected="true"]:not(:focus-visible),
   :is(a, button)[aria-current="page"]:not(:focus-visible) {
     outline: 2px solid Highlight;

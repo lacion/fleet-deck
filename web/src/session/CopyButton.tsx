@@ -1,14 +1,9 @@
-// The copy button and the home folder shortener of the session header, moved out
-// of `SessionHeader.tsx` for the module size rule.
+// The copy button of the session header, moved out of `SessionHeader.tsx` for the module size
+// rule. The home folder shortener is `homeShort` of ui/format.
 import { useEffect, useState } from 'react';
 import { Check, Copy, Icon } from '../ui/icons';
 
 const COPIED_MS = 1500;
-
-/** `/home/me/projects/x` → `~/projects/x` (a home folder of Linux or macOS); other paths stay. */
-export function homeShort(path: string): string {
-  return path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~');
-}
 
 /** An icon button that copies `text`; it shows a check for 1.5 s. */
 export function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {

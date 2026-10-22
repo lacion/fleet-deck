@@ -86,6 +86,7 @@ export {
   TriangleAlert,
   Undo2,
   Upload,
+  User,
   Users,
   Workflow,
   Wrench,

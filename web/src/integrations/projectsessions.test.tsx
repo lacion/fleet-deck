@@ -114,7 +114,7 @@ describe('the project chip', () => {
   test('it links to the project page by name', () => {
     const html = provide(<ProjectChip card={inProject('a', 'p1')} />);
     expect(html).toContain('href="#/project/p1"');
-    expect(html).toContain('>Atlas<');
+    expect(html).toContain('</svg> Atlas</a>');
   });
 
   test('no project, or an unknown one, gives no chip', () => {
@@ -188,7 +188,7 @@ describe('grouping by project', () => {
     expect(lanes).toEqual(['Atlas', 'Borealis', NO_PROJECT]);
   });
 
-  test('the fleet home offers Group: Project when projects exist', () => {
+  test('the fleet home offers Group by project when projects exist', () => {
     const home = (projects: (typeof atlas)[]) =>
       provide(
         <FleetHome
@@ -205,8 +205,8 @@ describe('grouping by project', () => {
         />,
         projects,
       );
-    expect(home([atlas])).toContain('>Group: Project<');
-    expect(home([])).not.toContain('>Group: Project<');
+    expect(home([atlas])).toContain('>Group by project<');
+    expect(home([])).not.toContain('>Group by project<');
   });
 });
 

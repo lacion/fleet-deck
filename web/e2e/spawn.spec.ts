@@ -70,7 +70,7 @@ async function chooseApp(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
-  await form.getByRole('button', { name: 'Open projects' }).click();
+  // The station has one allowed root (projects): Browse… opens inside it.
   await expect(form.getByRole('button', { name: 'Open app' })).toContainText('git');
   await form.getByRole('button', { name: 'Open app' }).click();
   await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('app');
@@ -457,12 +457,13 @@ test('a recent directory chip selects its directory for the start', async ({ pag
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   const recent = form.getByLabel('Recent directories');
-  await expect(recent.getByRole('button')).toHaveText(['projects/app', 'projects/notes']);
-  await expect(recent.getByRole('button', { name: 'projects/app' })).toHaveAttribute(
+  // A folder row shows its name, then its parent from the root; its name is the whole short path.
+  await expect(recent.getByRole('button')).toHaveText(['app~/projects/', 'notes~/projects/']);
+  await expect(recent.getByRole('button', { name: '~/projects/app' })).toHaveAttribute(
     'title',
     `${ROOT}/app`,
   );
-  await recent.getByRole('button', { name: 'projects/notes' }).click();
+  await recent.getByRole('button', { name: '~/projects/notes' }).click();
   await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/notes`);
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-r$/);
@@ -487,8 +488,8 @@ test('a pinned directory stays after a reload and unpins again', async ({ page }
   const again = page.getByRole('region', { name: 'New session' });
   await again.getByRole('button', { name: 'Browse…' }).click();
   const recent = again.getByLabel('Recent directories');
-  await expect(recent.getByRole('button', { name: 'projects/app' })).toBeVisible();
-  await recent.getByRole('button', { name: 'projects/app' }).click();
+  await expect(recent.getByRole('button', { name: '~/projects/app' })).toBeVisible();
+  await recent.getByRole('button', { name: '~/projects/app' }).click();
   await expect(again.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
   await again.getByRole('button', { name: 'Unpin this directory' }).click();
   await again.getByRole('button', { name: 'Browse…' }).click();

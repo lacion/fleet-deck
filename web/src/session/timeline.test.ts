@@ -319,7 +319,15 @@ describe('chat timeline items (DL-140)', () => {
     });
     const open = buildTimeline(envelopes('r', [reasoning('t1', 'a'), reasoning('t1', 'b')]));
     expect(open.items).toEqual([
-      { type: 'reasoning', key: '1', turn_id: 't1', text: 'ab', done: false },
+      {
+        type: 'reasoning',
+        key: '1',
+        turn_id: 't1',
+        text: 'ab',
+        done: false,
+        started_at: 1_760_000_001_000,
+        ended_at: 1_760_000_002_000,
+      },
     ]);
     const closed = buildTimeline(
       envelopes('r', [reasoning('t1', 'a'), toolStarted('n1'), reasoning('t1', 'b')]),

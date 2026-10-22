@@ -1,9 +1,10 @@
 // DL-171: the folder of a station: a text input and "Browse…", which opens an inline panel with the
 // breadcrumbs of the folder, its sub-folders, the pinned and recent folders, and "Use this folder".
 // The spawn form, the Projects form and the Automations form use it.
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { DeckSession, WorkspaceListing } from '../gen';
-import { lastParts, readPins, recentDirs, togglePin, writePins } from '../spawn/spawn';
+import { readPins, recentDirs, togglePin, writePins } from '../spawn/spawn';
+import { pathParts } from './format';
 import { Folder, FolderGit2, Icon, Pin, PinOff } from './icons';
 
 /** Reads one folder of a station; `null` is the list of the allowed roots. */
@@ -30,6 +31,14 @@ type Props = {
   readonly initialOpen?: boolean;
   /** The listing at the first render (tests). */
   readonly initialListing?: WorkspaceListing | null;
+  /**
+   * The pin button of the path (the pinned folders of the New session sheet). Off in a settings
+   * list, where pinning has no meaning next to the value.
+   */
+  readonly pinnable?: boolean;
+  /** A note under the input row (what the field needs): it stays right under the field while the
+   * panel is open. */
+  readonly hint?: ReactNode;
 };
 
 /** The parts of an absolute path with the path up to each part: `/a/b` gives `a`→`/a`, `b`→`/a/b`. */
@@ -55,6 +64,8 @@ export function FolderPicker({
   describedBy,
   initialOpen = false,
   initialListing = null,
+  pinnable = true,
+  hint = null,
 }: Props) {
   const [open, setOpen] = useState(initialOpen);
   const [listing, setListing] = useState<WorkspaceListing | null>(initialListing);
@@ -80,7 +91,9 @@ export function FolderPicker({
     setError(null);
   }, [stationId]);
 
-  const browse = (at: string | null, fallback = false) => {
+  // `enterOnly`: a list of the roots with one root opens that root, so that "Use this folder"
+  // works at once (the Roots crumb still goes up).
+  const browse = (at: string | null, fallback = false, enterOnly = false) => {
     if (list === undefined) return;
     const mine = ++turn.current;
     setBusy(true);
@@ -88,6 +101,14 @@ export function FolderPicker({
     list(stationId, at).then(
       (next) => {
         if (mine !== turn.current) return;
+        const only =
+          enterOnly && next.path === null && next.entries.length === 1
+            ? next.entries[0]
+            : undefined;
+        if (only !== undefined) {
+          browse(only.path);
+          return;
+        }
         setBusy(false);
         setListing(next);
         if (next.path !== null && next.parent === null) setRootPath(next.path);
@@ -96,7 +117,7 @@ export function FolderPicker({
       (e: unknown) => {
         if (mine !== turn.current) return;
         setBusy(false);
-        if (fallback && at !== null) browse(null);
+        if (fallback && at !== null) browse(null, false, enterOnly);
         else setError(message(e));
       },
     );
@@ -107,7 +128,7 @@ export function FolderPicker({
       return;
     }
     setOpen(true);
-    if (listing === null) browse(path.startsWith('/') ? path : null, path.startsWith('/'));
+    if (listing === null) browse(path.startsWith('/') ? path : null, path.startsWith('/'), true);
   };
   // A pinned or recent folder is the choice: the panel closes, as after "Use this folder".
   const pick = (next: string) => {
@@ -134,7 +155,7 @@ export function FolderPicker({
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
         />
-        {path === '' ? null : (
+        {path === '' || !pinnable ? null : (
           <button
             type="button"
             className="fd-iconbtn"
@@ -160,29 +181,37 @@ export function FolderPicker({
           </button>
         )}
       </div>
+      {hint}
       {open && list !== undefined ? (
         <div className="fd-folder-panel" role="region" aria-label="Browse the station">
           {pinned.length === 0 && recent.length === 0 ? null : (
             <div className="fd-folder-quick fd-recent" aria-label="Recent directories">
               <span className="fd-label">{pinned.length > 0 ? 'Pinned and recent' : 'Recent'}</span>
-              {pinned.map((p) => (
-                <button
-                  key={`pin:${p}`}
-                  type="button"
-                  className="fd-chip"
-                  data-pinned
-                  title={p}
-                  onClick={() => pick(p)}
-                >
-                  <Icon of={Pin} size={12} />
-                  {lastParts(p)}
-                </button>
-              ))}
-              {recent.map((p) => (
-                <button key={p} type="button" className="fd-chip" title={p} onClick={() => pick(p)}>
-                  {lastParts(p)}
-                </button>
-              ))}
+              {/* A folder row: its name, then its parent from the root (§5 paths); the full path
+                  is its title. */}
+              <ul className="fd-folder-list">
+                {[
+                  ...pinned.map((p) => ({ p, pin: true })),
+                  ...recent.map((p) => ({ p, pin: false })),
+                ].map(({ p, pin }) => {
+                  const { parent, base } = pathParts(p);
+                  return (
+                    <li key={pin ? `pin:${p}` : p}>
+                      <button
+                        type="button"
+                        data-pinned={pin ? '' : undefined}
+                        title={p}
+                        aria-label={parent + base}
+                        onClick={() => pick(p)}
+                      >
+                        <Icon of={pin ? Pin : Folder} size={14} />
+                        <span className="fd-folder-base">{base}</span>
+                        {parent === '' ? null : <span className="fd-folder-parent">{parent}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
           {listing === null ? (
@@ -247,7 +276,7 @@ export function FolderPicker({
           <div className="fd-folder-foot">
             <button
               type="button"
-              className="fd-primary fd-sm"
+              className="fd-sm"
               disabled={listing?.path == null}
               onClick={() => {
                 if (listing?.path != null) onChange(listing.path);

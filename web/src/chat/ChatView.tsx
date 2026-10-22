@@ -21,11 +21,11 @@ import {
   Workflow,
   Wrench,
 } from '../ui/icons';
+import { addedText, homeShort, homeShortIn, removedText } from '../ui/format';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
 import { clock } from '../sharing/people';
-import { homeShort } from '../session/CopyButton';
-import { argText, homeTilde, runLabel, thinkingText, toolName } from './labels';
+import { argText, runLabel, thinkingText, toolName } from './labels';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
@@ -236,7 +236,7 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
         {target !== '' ? (
           // A home folder reads as `~`, the same as in the prose and the session header.
           <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
-            {isPath ? <PathTail path={homeShort(target)} /> : <bdi>{homeTilde(target)}</bdi>}
+            {isPath ? <PathTail path={homeShort(target)} /> : <bdi>{homeShortIn(target)}</bdi>}
           </span>
         ) : null}
         {shown.map((path) => (
@@ -433,10 +433,10 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
                 {item.diff.files_changed} {item.diff.files_changed === 1 ? 'file' : 'files'} changed
               </span>
               {item.diff.insertions > 0 ? (
-                <span className="fd-add">+{item.diff.insertions}</span>
+                <span className="fd-add">{addedText(item.diff.insertions)}</span>
               ) : null}
               {item.diff.deletions > 0 ? (
-                <span className="fd-del">−{item.diff.deletions}</span>
+                <span className="fd-del">{removedText(item.diff.deletions)}</span>
               ) : null}
               {props.onOpenChanges ? (
                 <button

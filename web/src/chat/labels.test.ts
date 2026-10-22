@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { argText, durationText, homeTilde, thinkingText, toolName } from './labels';
+import { argText, durationText, thinkingText, toolName } from './labels';
 
 describe('toolName', () => {
   test('an MCP tool reads as its tool in sentence case, with its server apart', () => {
@@ -50,19 +50,6 @@ describe('argText', () => {
     expect(argText('{not json')).toBe('{not json');
     expect(argText('{"nested":{"a":1}}')).toBe('{"nested":{"a":1}}');
     expect(argText('')).toBe('');
-  });
-});
-
-describe('homeTilde', () => {
-  test('every home folder of Linux or macOS reads as ~', () => {
-    expect(homeTilde('cat /home/me/notes/a.md > /Users/me/b.md')).toBe('cat ~/notes/a.md > ~/b.md');
-    expect(homeTilde('/home/me/x')).toBe('~/x');
-    expect(homeTilde('open "/Users/me/a b/c"')).toBe('open "~/a b/c"');
-  });
-
-  test('a home folder inside another path, or without a path after it, stays', () => {
-    expect(homeTilde('/srv/home/me/x')).toBe('/srv/home/me/x');
-    expect(homeTilde('ls /home/me')).toBe('ls /home/me');
   });
 });
 

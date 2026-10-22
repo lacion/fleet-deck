@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { usePhoneTitle } from '../app/Layout';
 import { Markdown } from '../chat/Markdown';
 import type { DeckArtifactDetail } from '../gen';
 import { useSettings } from '../settings/context';
@@ -230,6 +231,10 @@ export function ArtifactViewerView({
   deletion,
 }: ViewProps) {
   const wall = useSettings() !== undefined;
+  // §4.8: the phone top bar names the artifact ("Artifact" while it loads).
+  usePhoneTitle(
+    variant === 'page' && data.kind === 'ok' ? data.value.detail.artifact.title : undefined,
+  );
   const back =
     variant === 'page' ? (
       <a className="fd-btn fd-ghost fd-sm fd-art-back" href="#/artifacts">

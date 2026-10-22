@@ -169,9 +169,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await expect(alpha).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
   await expect(
-    page
-      .getByRole('navigation', { name: 'More pages' })
-      .getByRole('link', { name: /^Stations\s*1$/ }),
+    page.getByRole('navigation', { name: 'More pages' }).getByRole('link', { name: 'Stations' }),
   ).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
 });

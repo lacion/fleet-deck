@@ -12,6 +12,7 @@ import { diffReview, type ReviewProps } from '../review/diffReview';
 import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
 import { ReviewBar } from '../review/ReviewBar';
+import { addedText, removedText } from '../ui/format';
 import { ChevronRight, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { BranchesView } from './BranchesView';
@@ -313,8 +314,8 @@ function SinceSpawn({
 function TurnStat({ stat }: { readonly stat: DiffSummary }) {
   return (
     <>
-      {stat.insertions > 0 ? <span className="fd-add">+{stat.insertions}</span> : null}
-      {stat.deletions > 0 ? <span className="fd-del">−{stat.deletions}</span> : null}
+      {stat.insertions > 0 ? <span className="fd-add">{addedText(stat.insertions)}</span> : null}
+      {stat.deletions > 0 ? <span className="fd-del">{removedText(stat.deletions)}</span> : null}
       <span className="fd-turn-files">
         {stat.files_changed} {stat.files_changed === 1 ? 'file' : 'files'}
       </span>

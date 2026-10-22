@@ -17,12 +17,12 @@
   align-items: center;
 }
 
-/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. The rules
-   stop 16 px short of the panel edges, the same as the Automations and Projects lists. */
+/* The library: a plan per row on the canvas (§4.7: lists sit on the page, no box), rows divided
+   by the faintest rule. */
 .fd-plan-list {
   display: grid;
   margin: 0;
-  padding: 0 var(--sp-4);
+  padding: 0;
   list-style: none;
 }
 
@@ -1041,12 +1041,6 @@
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
-  /* The rules stop 12px short of the panel edges, the same as the Automations and Projects
-     lists on a phone. */
-  .fd-plan-list {
-    padding: 0 var(--sp-3);
-  }
-
   /* A plan row: the note that explains Start comes before the actions (the grid of the actions
      is in the 760 px rule above). */
   .fd-plan-list article > .fd-note {

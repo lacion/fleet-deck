@@ -144,22 +144,20 @@ describe('the board copy of the fields', () => {
     expect(html).toContain('<option value="default">Ask</option>');
     expect(html).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
     expect(html).toContain('<option value="dontAsk">Don&#x27;t ask</option>');
+    expect(html).toContain('<option value="">Default (Ask when needed · workspace write)</option>');
     expect(html).toContain(
-      '<option value="">Default (Ask when needed, write in the workspace)</option>',
+      '<option value="untrusted/read-only">Ask for untrusted commands · read only</option>',
     );
     expect(html).toContain(
-      '<option value="untrusted/read-only">Ask for untrusted commands, read only</option>',
+      '<option value="on-request/workspace-write" selected="">Ask when needed · workspace write</option>',
     );
     expect(html).toContain(
-      '<option value="on-request/workspace-write" selected="">Ask when needed, write in the workspace</option>',
-    );
-    expect(html).toContain(
-      '<option value="never/workspace-write">Never ask, write in the workspace</option>',
+      '<option value="never/workspace-write">Never ask · workspace write</option>',
     );
     expect(html).toContain('<option value="">Default (HTTPS)</option>');
     expect(html).toContain('<option value="ssh" selected="">SSH</option>');
     expect(html).toContain('Default: Accept edits.');
-    expect(html).toContain('Default: Ask when needed, write in the workspace.');
+    expect(html).toContain('Default: Ask when needed · workspace write.');
     expect(html).toContain('>Most permissive Claude mode<');
   });
 

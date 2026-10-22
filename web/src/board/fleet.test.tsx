@@ -20,7 +20,7 @@ import {
   usageText,
 } from './fleet';
 import { COLUMNS, columnCards, FleetBoard } from './FleetBoard';
-import { removeCommand, stationActions, worktreeLoader } from './pairing';
+import { stationActions } from './pairing';
 import { loadWidth, StationsPanel, WorktreeRow } from './StationsPanel';
 
 describe('fleet projections', () => {
@@ -446,7 +446,7 @@ describe('repo names, archive and contested sessions', () => {
     expect(repoName(card('a'))).toBe(NO_REPO);
   });
 
-  test('repo names are sorted with "No repository" last', () => {
+  test('repo names are sorted with "Outside a repository" last', () => {
     const cards = [
       card('n'),
       inRepo('b', null, '/w/zeta'),
@@ -605,7 +605,7 @@ describe('fleet cards, DL-141', () => {
     const contested = new Map([['station-a/a', { with: ['b'], files: ['f'] }]]);
     const out = html(cards, { group: 'repo', contested });
     expect(out).toContain('aria-label="Repository alpha"');
-    expect(out).toContain('aria-label="Repository No repository"');
+    expect(out).toContain('aria-label="Repository Outside a repository"');
     expect(out).not.toContain('aria-label="Station Alpha"');
     expect(out).toContain('▲ 1 contested');
     expect(out).toContain('Alpha');
@@ -750,53 +750,5 @@ describe('worktree rows with the trash buttons (DL-150)', () => {
     expect(html).not.toContain('<button');
     expect(row({ trash: trash({ state: 'trashing' }) })).toContain('Moving…');
     expect(row({ trash: trash({ state: 'restoring' }) })).toContain('Restoring…');
-  });
-});
-
-describe('worktree inventory calls (DL-142)', () => {
-  const worktree = (extra: Partial<WorktreeInfo> = {}): WorktreeInfo => ({
-    session_id: 's1',
-    title: null,
-    path: '/w/deck-wt/s1',
-    branch: 'main-fix',
-    main: '/w/deck',
-    exists: true,
-    registered: true,
-    dirty: 0,
-    ignored: 0,
-    unpushed: 0,
-    compared_with: 'remotes',
-    last_commit: null,
-    live: false,
-    verdict: 'clean',
-    note: null,
-    ...extra,
-  });
-
-  test('the remove command quotes the values and deletes only an fd/ branch', () => {
-    expect(removeCommand(worktree())).toBe("git -C '/w/deck' worktree remove '/w/deck-wt/s1'");
-    expect(removeCommand(worktree({ branch: 'fd/s1' }))).toBe(
-      "git -C '/w/deck' worktree remove '/w/deck-wt/s1' && git -C '/w/deck' branch -d 'fd/s1'",
-    );
-    expect(removeCommand(worktree({ path: "/w/it's here", main: "/w/o'k" }))).toBe(
-      "git -C '/w/o'\\''k' worktree remove '/w/it'\\''s here'",
-    );
-  });
-
-  test('there is no command for a missing, live or main-less worktree', () => {
-    expect(removeCommand(worktree({ exists: false }))).toBeNull();
-    expect(removeCommand(worktree({ live: true }))).toBeNull();
-    expect(removeCommand(worktree({ main: null }))).toBeNull();
-  });
-
-  test('the loader reads the station route and checks the list', async () => {
-    const paths: string[] = [];
-    const load = worktreeLoader(async (path) => {
-      paths.push(path);
-      return path.includes('bad') ? { worktrees: 1 } : { worktrees: [worktree()] };
-    });
-    expect((await load('a b')).worktrees).toHaveLength(1);
-    expect(paths).toEqual(['/api/stations/a%20b/worktrees']);
-    await expect(load('bad')).rejects.toThrow('The deck sent an invalid worktree list.');
   });
 });

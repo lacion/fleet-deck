@@ -1,8 +1,8 @@
 // R6.2 (DL-169): the watch page, the first explored form of "watch many sessions" (DL-157).
 // A wall of compact live tiles: the model of one tile and of the page. Nothing here is
 // shared with the rest of the board, so the owner can pick another form later.
-import { repoName, repoNames } from '../board/fleet';
-import { plainLine } from '../ui/format';
+import { isLiveSession as isLive, repoName, repoNames } from '../board/fleet';
+import { homeShortIn, plainLine } from '../ui/format';
 import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { questionForm } from '../session/question';
@@ -18,10 +18,6 @@ export const FOCUS_MS = 20_000;
 export const LINE_CHARS = 140;
 
 export const ALL = '';
-
-/** A session with a live process: a hibernated one has none, so it has no tile. */
-const isLive = (card: DeckSession): boolean =>
-  card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
 
 export type WatchFilter = {
   /** A station id, or `ALL`. */
@@ -73,7 +69,9 @@ function lineOf(item: Item): TileLine | null {
     const name = cut(call.name);
     // A path is never cut at its end: the end names the file (the tile drops leading folders).
     const target =
-      call.form === 'path' ? call.target : cut(call.target, false, LINE_CHARS - name.length - 1);
+      call.form === 'path'
+        ? call.target
+        : cut(homeShortIn(call.target), false, LINE_CHARS - name.length - 1);
     const text = target === '' ? name : `${name}: ${target}`;
     const outcome = item.status === 'failed' || item.status === 'denied' ? item.status : null;
     return {

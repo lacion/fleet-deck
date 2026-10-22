@@ -549,13 +549,21 @@
 .fd-art-chip-line {
   margin: 0;
 }
+/* In its chat line the chip fits the column: a long title ends in an ellipsis. */
 .fd-art-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   background: var(--raised);
   color: var(--dim);
   text-decoration: none;
+}
+.fd-art-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fd-art-chip:hover:not(:disabled) {
   background: var(--raised-hi);

@@ -149,49 +149,58 @@ export function SpacesView({
       <EmptyState
         icon={Layers}
         title="No spaces yet"
-        body="A space is a named set of sessions. Make one, then add sessions to it. One share of a space covers all of them."
+        body="Make a space, then add sessions to it."
+        action={
+          creating ? undefined : (
+            <button type="button" className="fd-primary" onClick={() => setCreating(true)}>
+              <Icon of={Plus} /> New space
+            </button>
+          )
+        }
       />
     );
   } else {
+    // The table sits on the canvas (§4.7: no box inside the page frame).
     body = (
-      <div className="fd-panel fd-tablepanel">
-        <div className="fd-tablewrap">
-          <table className="fd-table" aria-label="Spaces">
-            <thead>
-              <tr>
-                <th scope="col">Space</th>
-                <th scope="col">Sessions</th>
-                <th scope="col">Add</th>
-                <th scope="col">
-                  <span className="fd-vh">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.value.map((space) => (
-                <SpaceCard
-                  key={space.space_id}
-                  space={space}
-                  sessions={sessions}
-                  stations={stations}
-                  busy={busy}
-                  onAdd={(station, session) => onAdd?.(space, station, session)}
-                  onShare={() => onShare?.(space)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="fd-tablewrap">
+        <table className="fd-table" aria-label="Spaces">
+          <thead>
+            <tr>
+              <th scope="col">Space</th>
+              <th scope="col">Sessions</th>
+              <th scope="col">Add</th>
+              <th scope="col">
+                <span className="fd-vh">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.value.map((space) => (
+              <SpaceCard
+                key={space.space_id}
+                space={space}
+                sessions={sessions}
+                stations={stations}
+                busy={busy}
+                onAdd={(station, session) => onAdd?.(space, station, session)}
+                onShare={() => onShare?.(space)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
+  // One primary per screen (§2.2): while the list is empty, the empty state holds New space.
+  const listed = state.kind === 'ok' && state.value.length > 0;
   return (
     <Page
       title="Spaces"
+      back={{ href: '#/shares', label: 'Shares' }}
       wide
       description="A space is a named set of sessions. One share of a space covers all of them, also the ones that you add later."
       actions={
-        creating ? null : (
+        creating || !listed ? null : (
           <button type="button" className="fd-primary" onClick={() => setCreating(true)}>
             <Icon of={Plus} /> New space
           </button>
@@ -262,7 +271,7 @@ export function SpacesPage({ sessions, stations }: Props) {
   const [error, setError] = useState<string | null>(null);
   if (!canShare(people) || calls === undefined) {
     return (
-      <Page title="Spaces">
+      <Page title="Spaces" back={{ href: '#/shares', label: 'Shares' }} wide>
         <p>Only the owner of the deck sees the spaces.</p>
         <a href="#/">Back to the fleet</a>
       </Page>

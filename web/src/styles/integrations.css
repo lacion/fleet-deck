@@ -662,8 +662,11 @@ a.fd-int-prchip:hover {
 
 /* ---------- the project of a session (DL-176) ---------- */
 
+/* A link chip has its Lucide icon (§4.1): folder-git, the icon of Projects. */
 .fd-int-projectchip {
   display: inline-flex;
+  align-items: center;
+  gap: 4px;
   text-decoration: none;
 }
 a.fd-int-projectchip:hover {

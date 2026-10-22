@@ -30,11 +30,6 @@ import { EmptyState, Page } from '../ui/page';
 import { CompactSwitch, MotionSwitch, PrefsRow } from './Prefs';
 
 type Props = {
-  /**
-   * Not shown: a total of machines is nothing to act on (the sidebar shows none either). The
-   * Stations row names the offline stations of `stations`. Kept for the callers.
-   */
-  readonly stationCount?: number;
   /** The stations of the snapshot (the offline badge, the Omarchy select of the Prefs row). */
   readonly stations?: readonly StationView[] | undefined;
   readonly terminalCount: number;

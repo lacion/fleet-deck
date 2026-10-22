@@ -6,6 +6,7 @@ import type { AccountsList, DeckSession, Project, StationView } from '../gen';
 import { useSettings } from '../settings/context';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { PathTail } from '../chat/PathTail';
+import { homeShort } from '../ui/format';
 import {
   Ellipsis,
   FolderGit2,
@@ -259,8 +260,8 @@ export function ProjectsPage({
                       </td>
                       <td data-label="Station">{stationName(p.station_id, stations)}</td>
                       <td className="fd-cell-path" data-label="Folder">
-                        <code className="fd-int-path">
-                          <PathTail path={p.path} />
+                        <code className="fd-int-path" title={p.path}>
+                          <PathTail path={homeShort(p.path)} />
                         </code>
                       </td>
                       <td data-label="Forge">

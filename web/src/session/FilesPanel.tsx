@@ -5,7 +5,7 @@ import { artifactHref, publishable } from '../artifacts/kinds';
 import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { sizeText } from '../ui/format';
+import { addedText, removedText, sizeText } from '../ui/format';
 import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
 import {
   type ChangedFiles,
@@ -125,8 +125,12 @@ function ChangeStat({ change }: { readonly change: FileChange }) {
           <span className="fd-vh">{KIND_NAME[change.kind]}</span>
         </span>
       )}
-      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
-      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
+      {change.insertions > 0 ? (
+        <span className="fd-add">{addedText(change.insertions)}</span>
+      ) : null}
+      {change.deletions > 0 ? (
+        <span className="fd-del">{removedText(change.deletions)}</span>
+      ) : null}
     </span>
   );
 }

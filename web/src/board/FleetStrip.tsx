@@ -11,7 +11,7 @@ import { hasChanges } from '../session/changes';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { archived } from '../ui/archive';
-import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
+import { addedText, isRiskyMode, modelFamily, removedText, shortModel } from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
@@ -184,7 +184,7 @@ export function FleetStrip({
                 <Icon of={Star} size={12} />
               </span>
             ) : null}
-            <UnreadMark count={unreadOf(card)} />
+            <UnreadMark count={unreadOf(card)} dot />
           </span>
           <span
             className="fd-strip-now"
@@ -264,8 +264,8 @@ export function FleetStrip({
         {changed === null ? null : (
           <span className="fd-strip-changes">
             <span className="fd-strip-diff" title="Changed since the session started">
-              <span className="fd-add">+{changed.insertions}</span>{' '}
-              <span className="fd-del">−{changed.deletions}</span>
+              <span className="fd-add">{addedText(changed.insertions)}</span>{' '}
+              <span className="fd-del">{removedText(changed.deletions)}</span>
             </span>
             <span className="fd-strip-files">
               {changed.files_changed === 1 ? '1 file' : `${changed.files_changed} files`}

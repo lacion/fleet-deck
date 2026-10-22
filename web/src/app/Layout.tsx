@@ -1,5 +1,3 @@
-// The person glyph of the owner's avatar; `ui/icons.tsx` does not export it yet.
-import { User } from 'lucide-react';
 import {
   createContext,
   type ReactNode,
@@ -20,6 +18,7 @@ import {
   OctagonAlert,
   PanelLeft,
   Plus,
+  User,
   X,
 } from '../ui/icons';
 import { Mark } from '../ui/Mark';

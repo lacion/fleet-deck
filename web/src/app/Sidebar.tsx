@@ -112,7 +112,7 @@ function Row({
         <span className="fd-srow-title">
           <span className="fd-vh">{statusLabel(card)}: </span>
           {sessionTitle(card)}
-          <UnreadMark count={unreadOf(card)} />
+          <UnreadMark count={unreadOf(card)} dot />
           {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
           {starred ? (
             <span className="fd-srow-star" role="img" aria-label="Starred">

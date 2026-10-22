@@ -241,11 +241,20 @@ export function DeviceLinkDialog({ load, onClose, now = Date.now, initial }: Pro
           } else trapTab(e, root.current);
         }}
       >
-        <h2>Add a device</h2>
+        <div className="fd-dialog-head">
+          <h2>Add a device</h2>
+          <button
+            ref={close}
+            type="button"
+            className="fd-iconbtn"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+          >
+            <Icon of={X} />
+          </button>
+        </div>
         {body}
-        <button ref={close} type="button" className="fd-ghost fd-devlink-close" onClick={onClose}>
-          <Icon of={X} size={14} /> Close
-        </button>
       </div>
     </div>
   );

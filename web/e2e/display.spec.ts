@@ -164,13 +164,16 @@ test.describe('the Displays page', () => {
     page,
   }) => {
     await open(page);
+    await expect(page.getByRole('heading', { name: 'Office wall' })).toBeVisible();
+    // The add form is behind a button; Switch to Mission view is in the card's ellipsis menu.
+    await page.getByRole('button', { name: 'Add a wall display' }).click();
     await expect(page.getByRole('heading', { name: 'Add a wall display' })).toBeVisible();
-    await expect(page.getByText('A wall can be read by programs that run as you')).toBeVisible();
+    await expect(page.getByText('A wall shows the summaries, assistant messages')).toBeVisible();
     const pending = page.getByRole('region', { name: 'Waiting for a code' });
     await expect(pending).toContainText('10.0.0.7');
     await expect(pending).not.toContainText('482913');
-    await expect(page.getByRole('heading', { name: 'Office wall' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Show Mission' })).toBeVisible();
+    await page.locator('summary[aria-label="Display actions"]').click();
+    await expect(page.getByRole('button', { name: 'Switch to Mission view' })).toBeVisible();
     expect(await fitsWidth(page)).toBe(true);
   });
 

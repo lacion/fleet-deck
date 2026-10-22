@@ -237,11 +237,6 @@
   width: max-content;
   max-width: min(360px, calc(100vw - 32px));
 }
-/* The menu scrolls when it is taller than its cap: its rows keep their height (a flex column
-   shrinks its items, and the 28px rows were squeezed to 16px). */
-.fd-sh .fd-menu-body > * {
-  flex: none;
-}
 /* The facts inside the phone menu. */
 .fd-sh-badges {
   display: flex;

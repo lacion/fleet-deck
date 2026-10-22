@@ -10,7 +10,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { PATH_CUT, shortPath } from '../chat/PathTail';
 import { Folder, Icon } from '../ui/icons';
-import { homeShort } from './CopyButton';
+import { homeShort } from '../ui/format';
 
 /** The characters of a mono text that fit `room` px at `advance` px per character; `null` without an advance. */
 export function roomChars(room: number, advance: number): number | null {

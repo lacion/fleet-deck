@@ -238,7 +238,7 @@ export function ShareFields({ request, form, busy, onChange, onSubmit }: FormPro
         </select>
       </label>
       <label>
-        Uses
+        Who can use it
         <select
           value={form.uses}
           onChange={(e) => onChange({ ...form, uses: Number(e.target.value) })}
@@ -353,12 +353,23 @@ export function ShareDialog({
           } else trapTab(e, root.current);
         }}
       >
-        <h2>{title}</h2>
-        {targets === undefined ? (
-          request.label === '' ? null : (
+        <div className="fd-dialog-head">
+          <h2>{title}</h2>
+          {targets === undefined && request.label !== '' ? (
             <p className="fd-note">{request.label}</p>
-          )
-        ) : (
+          ) : null}
+          <button
+            ref={close}
+            type="button"
+            className="fd-iconbtn"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+          >
+            <Icon of={X} />
+          </button>
+        </div>
+        {targets === undefined ? null : (
           <label className="fd-share-target">
             What to share
             <select
@@ -414,9 +425,6 @@ export function ShareDialog({
           </p>
         )}
         {made === null ? null : <ShareResult link={made.link} joinAs={made.role} />}
-        <button ref={close} type="button" className="fd-ghost fd-devlink-close" onClick={onClose}>
-          <Icon of={X} size={14} /> Close
-        </button>
       </div>
       {/* DL-189: beside the dialog, so that its keys do not reach the keys of the share dialog. */}
       {elevationNode}

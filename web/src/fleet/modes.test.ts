@@ -5,9 +5,11 @@ import { ceilingLabel, codexModeLabel } from './modes';
 
 describe('mode ceilings in words', () => {
   test('a Codex mode says its approval policy and its sandbox', () => {
-    expect(codexModeLabel('on-request/workspace-write')).toBe('Ask on request · workspace write');
+    expect(codexModeLabel('on-request/workspace-write')).toBe('Ask when needed · workspace write');
     expect(codexModeLabel('never/read-only')).toBe('Never ask · read only');
-    expect(codexModeLabel('untrusted/danger-full-access')).toBe('Untrusted · full access');
+    expect(codexModeLabel('untrusted/danger-full-access')).toBe(
+      'Ask for untrusted commands · full access',
+    );
   });
 
   test('an unknown Codex id stays as it is', () => {
@@ -16,10 +18,10 @@ describe('mode ceilings in words', () => {
     expect(codexModeLabel('never')).toBe('never');
   });
 
-  test('a Claude mode has its word from ui/format', () => {
+  test('a Claude mode and a Codex mode have their words from ui/format', () => {
     expect(ceilingLabel('acceptEdits')).toBe('Accept edits');
     expect(ceilingLabel('dontAsk')).toBe("Don't ask");
-    expect(ceilingLabel('on-request/read-only')).toBe('Ask on request · read only');
+    expect(ceilingLabel('on-request/read-only')).toBe('Ask when needed · read only');
   });
 
   test('every ceiling of the forms has words', () => {

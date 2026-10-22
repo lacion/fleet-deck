@@ -27,6 +27,10 @@ describe('unread marks', () => {
     expect(renderToStaticMarkup(<UnreadMark count={9} />)).toContain('>9</span>');
     expect(renderToStaticMarkup(<UnreadMark count={10} />)).toContain('>9+</span>');
     expect(renderToStaticMarkup(<UnreadMark count={0} />)).toBe('');
+    const dot = renderToStaticMarkup(<UnreadMark count={3} dot />);
+    expect(dot).toContain('data-shape="dot"');
+    expect(dot).toContain('aria-label="3 unread"');
+    expect(dot).not.toContain('>3</span>');
     expect(unreadOf(card('a'))).toBe(0);
     expect(unreadOf(withUnread(card('a'), 4))).toBe(4);
   });
@@ -36,7 +40,7 @@ describe('unread marks', () => {
     const board = renderToStaticMarkup(
       <FleetBoard sessions={sessions} stations={[station()]} freshness="live" now={NOW} />,
     );
-    expect(board).toContain('class="fd-unread"');
+    expect(board).toContain('class="fd-count fd-unread"');
     expect(board).toContain('aria-label="2 unread"');
     const list = renderToStaticMarkup(
       <Sidebar

@@ -101,8 +101,31 @@ const MODE_LABELS: Readonly<Record<string, string>> = {
   bypassPermissions: 'Bypass permissions',
 };
 
-/** `acceptEdits` → `Accept edits`; a mode outside the list stays as it is. */
-export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;
+/** The words of a Codex mode `<approval policy>/<sandbox>` (crates/fleetdeck-providers codex). */
+const CODEX_APPROVALS: Readonly<Record<string, string>> = {
+  untrusted: 'Ask for untrusted commands',
+  'on-request': 'Ask when needed',
+  never: 'Never ask',
+};
+const CODEX_SANDBOXES: Readonly<Record<string, string>> = {
+  'read-only': 'read only',
+  'workspace-write': 'workspace write',
+  'danger-full-access': 'full access',
+};
+
+/** `on-request/workspace-write` → `Ask when needed · workspace write`; an unknown id stays as it is. */
+export function codexModeLabel(mode: string): string {
+  const [approval, sandbox, ...rest] = mode.split('/');
+  if (approval === undefined || sandbox === undefined || rest.length > 0) return mode;
+  const a = CODEX_APPROVALS[approval];
+  const s = CODEX_SANDBOXES[sandbox];
+  return a === undefined || s === undefined ? mode : `${a} · ${s}`;
+}
+
+/** The one name of a permission mode on every surface (header, Properties, New session, the
+ * fleet access forms, settings): `acceptEdits` → `Accept edits`, `on-request/workspace-write` →
+ * `Ask when needed · workspace write`; a mode outside the lists stays as it is. */
+export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? codexModeLabel(mode);
 
 /** The tools whose input is a command or a path: the wall stream and the Activity page draw that
  * input in mono. A tool with prose input (a task, a search query) is not here. */

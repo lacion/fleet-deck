@@ -78,7 +78,9 @@ function suite() {
     const { state } = await start(page);
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
-    await expect(card).toContainText('This deck on the tailnet: deck.tail1234.ts.net (100.64.0.1)');
+    await expect(card).toContainText('Tailnet name');
+    await expect(card).toContainText('deck.tail1234.ts.net');
+    await expect(card.locator('.fd-tailnet-ips')).toHaveText('100.64.0.1');
     await expect(card).toContainText('127.0.0.1:7420');
     await expect(card).toContainText('100.64.0.1:7421');
     await card.getByRole('button', { name: 'Use tailnet' }).click();
@@ -194,7 +196,15 @@ function suite() {
     };
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
-    const date = await page.evaluate((ms) => new Date(ms).toLocaleDateString(), end);
+    const date = await page.evaluate(
+      (ms) =>
+        new Date(ms).toLocaleDateString(undefined, {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        }),
+      end,
+    );
     await expect(card).toContainText(
       `Trusted certificate for deck.tail1234.ts.net, valid until ${date}`,
     );

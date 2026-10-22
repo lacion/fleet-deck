@@ -1297,11 +1297,6 @@ button.fd-phonebar-back {
   justify-self: start;
 }
 
-.fd-overlay .fd-devlink > .fd-devlink-close {
-  justify-self: end;
-  margin-top: var(--sp-1);
-}
-
 .fd-devlink-qr {
   display: block;
   width: 216px;
@@ -1362,10 +1357,6 @@ button.fd-phonebar-back {
 
 .fd-help-head {
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
   padding: var(--sp-4) var(--sp-3) var(--sp-3) 20px;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -1631,6 +1622,26 @@ button.fd-phonebar-back {
 
   .fd-palette [role="option"] {
     height: var(--tap-min);
+  }
+}
+
+/* A phone (§4.8): a dialog is a bottom sheet, with the close X and the actions in thumb reach.
+   The palette stays at the top, above the keyboard. */
+@media (max-width: 639px) {
+  .fd-overlay:not(:has(> .fd-palette)) {
+    align-items: flex-end;
+    padding: var(--sp-6) 0 0;
+  }
+  .fd-overlay .fd-dialog:not(.fd-palette) {
+    max-height: 85dvh;
+    overscroll-behavior: contain;
+    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  }
+  .fd-overlay .fd-dialog:not(.fd-help, .fd-palette) {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+  .fd-overlay .fd-help-body {
+    padding-bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
   }
 }
 

@@ -9,7 +9,7 @@ import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
 import { digestLines } from '../ui/generated';
 import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
-import { isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
+import { countText, isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
 import { CopyButton } from './CopyButton';
 import { FolderChip } from './PathFit';
@@ -228,7 +228,7 @@ export function Details({
       </div>
       <div>
         <dt>Events</dt>
-        <dd>{s.session_seq.toLocaleString('en-US')}</dd>
+        <dd>{countText(s.session_seq)}</dd>
       </div>
       {fleet == null ? null : (
         <div data-field="fleet">

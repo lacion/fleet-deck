@@ -84,14 +84,6 @@ export function argText(input: string): string {
   return values.length > 0 ? values.join(' · ') : firstLine(input);
 }
 
-/**
- * A command line with every home folder of Linux or macOS as `~`, the way the prose and the
- * session header write it (`cat /home/me/notes/a.md` → `cat ~/notes/a.md`).
- */
-export function homeTilde(text: string): string {
-  return text.replace(/(^|[\s"'=])\/(?:home|Users)\/[^/\s"']+(?=\/)/g, '$1~');
-}
-
 /** A duration in the words of the board (DESIGN-SYSTEM §5): "12 s", "2 min", "3 h". */
 export function durationText(ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000));

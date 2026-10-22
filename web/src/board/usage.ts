@@ -2,6 +2,7 @@
 // reported is "unknown", never zero; a total over sessions with unknown
 // parts says how many sessions it leaves out.
 import type { DeckSession, StationView, Usage } from '../gen';
+import { countText, usdText } from '../ui/format';
 import { stationName } from './fleet';
 
 /** A fleet total of one usage part. */
@@ -48,23 +49,11 @@ export function totalText(t: UsageTotal, format: (n: number) => string): string 
     : `at least ${sum} (${t.unknown} ${t.unknown === 1 ? 'session' : 'sessions'} unknown)`;
 }
 
-export const tokens = (n: number): string => n.toLocaleString('en-US');
+/** A token count with digit groups ("1,500"): `countText` of ui/format (DESIGN-SYSTEM §5). */
+export const tokens = (n: number): string => countText(n);
 
-const usd = (digits: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-const CENTS = usd(2);
-const WHOLE = usd(0);
-
-/** A cost with digit groups: "$1.20", "$812.40"; from $1,000 whole dollars ("$51,736"). */
-export const dollars = (n: number): string => (Math.abs(n) >= 1000 ? WHOLE : CENTS).format(n);
-
-/** A cost to the cent with digit groups ("$51,735.86"): the title of a rounded `dollars`. */
-export const exactDollars = (n: number): string => CENTS.format(n);
+/** A cost with digit groups and cents ("$1.20", "$51,735.86"): `usdText` (§5: one format). */
+export const dollars = (n: number): string => usdText(n);
 
 /**
  * The words of the input token total. Claude reports only the input that the cache did not hold

@@ -243,7 +243,13 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
     >
       <summary className="fd-ghost fd-sm" onClick={place}>
         <Icon of={ListFilter} size={14} />
-        {active > 0 ? `Filters (${active})` : 'Filters'}
+        Filters
+        {active > 0 ? (
+          <>
+            {' '}
+            <span className="fd-count">{active}</span>
+          </>
+        ) : null}
       </summary>
       <div className="fd-menu-body fd-filters" role="group" aria-label="Fleet filters">
         {children}
@@ -542,9 +548,9 @@ export function FleetHome({
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >
-          <option value="station">Group: Station</option>
-          <option value="repo">Group: Repo</option>
-          {hasProjects ? <option value="project">Group: Project</option> : null}
+          <option value="station">Group by station</option>
+          <option value="repo">Group by repository</option>
+          {hasProjects ? <option value="project">Group by project</option> : null}
         </select>
       )}
       {phone ? (

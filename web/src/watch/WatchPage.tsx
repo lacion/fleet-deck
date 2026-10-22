@@ -4,7 +4,7 @@
 import { type FocusEvent, useEffect, useMemo, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename } from '../app/sessions';
-import { NO_REPO, repoName, stationName } from '../board/fleet';
+import { liveSessionsText, NO_REPO, repoName, stationName } from '../board/fleet';
 import { PathTail } from '../chat/PathTail';
 import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -417,7 +417,7 @@ export function WatchPage({
   // The header sentence (DESIGN-SYSTEM §4.3): the live count, then who needs you in --act.
   const summary = (
     <span aria-live="polite">
-      {matching.length === 1 ? '1 live session' : `${matching.length} live sessions`}.{' '}
+      {liveSessionsText(matching.length)}.{' '}
       {needs === 0 ? (
         // The calm state of the fleet header (§4.4): green, the same words.
         <span className="fd-watch-clear">All clear.</span>

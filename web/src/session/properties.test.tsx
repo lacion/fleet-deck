@@ -6,12 +6,12 @@ import type { DeckSession } from '../gen';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { claudeCaps } from '../testing/capabilities';
+import { compactCount } from '../ui/format';
 import { sessionActions } from './commands';
 import { Composer } from './Composer';
 import {
   ChangedList,
   changeTotal,
-  compactCount,
   PROPS_FILES_MAX,
   PropertiesPanel,
   scopeLabel,
@@ -73,9 +73,9 @@ function propsToggle(): () => void {
 describe('properties panel numbers (§4.5)', () => {
   test('compactCount shortens token counts', () => {
     expect(compactCount(950)).toBe('950');
-    expect(compactCount(9400)).toBe('9.4 k');
-    expect(compactCount(182000)).toBe('182 k');
-    expect(compactCount(1250000)).toBe('1.3 M');
+    expect(compactCount(9400)).toBe('9.4K');
+    expect(compactCount(182000)).toBe('182K');
+    expect(compactCount(1250000)).toBe('1.3M');
   });
 
   test('scopeLabel names the window with its provider', () => {

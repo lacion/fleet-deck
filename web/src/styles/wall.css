@@ -927,6 +927,14 @@
   font-size: var(--fs-data);
   font-variant-ligatures: none;
 }
+/* The tool name of a tool row (§4.5: weight 600) and the hazard badge of a failed call. */
+.fd-wall-stream .fd-wall-tool {
+  color: var(--text);
+  font-weight: 600;
+}
+.fd-wall-stream .fd-badge {
+  vertical-align: baseline;
+}
 
 /* ── focus and review: the chat and the changes of one session ────────────────────────────── */
 .fd-wall-focus {

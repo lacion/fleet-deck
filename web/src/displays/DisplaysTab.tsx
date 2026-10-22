@@ -108,7 +108,11 @@ export function DisplaysView({
             onClose={close}
           />
         ) : null}
-        {state.kind === 'loading' ? <p role="status">Loading…</p> : null}
+        {state.kind === 'loading' ? (
+          <p className="fd-note fd-set-loading" role="status">
+            Loading displays…
+          </p>
+        ) : null}
         {state.kind === 'error' ? (
           <p role="alert" className="fd-fielderror">
             {state.text}{' '}

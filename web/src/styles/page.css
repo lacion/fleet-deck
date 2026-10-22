@@ -158,13 +158,34 @@
 }
 
 /* ── the empty state: a 20px icon, a sentence, one button (§4.7) ── */
+/* An empty state has no box (§4.7): it sits on the page, centered. */
 .fd-emptystate {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-1);
-  padding: var(--sp-6) var(--sp-5);
+  max-width: 60ch;
+  margin: 0 auto;
+  padding: var(--sp-6) 0;
   text-align: center;
+}
+/* The way back to the parent list (§4.3): a ghost link above the title; its icon lines up with
+   the title. A phone has Back in its top bar. */
+.fd-page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  margin: 0 0 var(--sp-1) calc(-1 * var(--sp-2));
+  text-decoration: none;
+}
+@media (pointer: coarse) {
+  .fd-page-back {
+    min-height: var(--tap-min);
+  }
+}
+.fd-app[data-layout="phone"] .fd-page-back {
+  display: none;
 }
 .fd-emptystate > .fd-icon {
   margin-bottom: var(--sp-1);
@@ -249,6 +270,96 @@
 .fd-fieldwrap[data-invalid="true"] select,
 .fd-fieldwrap[data-invalid="true"] textarea {
   border-color: var(--hazard);
+}
+/* Field layout="row" (§4.7, the settings field row): the label in a 200px column, the control and
+   its hint in the second. The label of Field wraps the text and the control: display: contents
+   puts both on the grid. */
+.fd-fieldwrap[data-layout="row"] {
+  grid-template-columns: 200px minmax(0, 1fr);
+  column-gap: var(--sp-5);
+  row-gap: var(--sp-1);
+  align-items: start;
+}
+.fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol {
+  display: contents;
+}
+.fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1.25;
+}
+.fd-fieldwrap[data-layout="row"] > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
+.fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol > :not(.fd-fieldlabel) {
+  grid-column: 2;
+  min-width: 0;
+}
+/* A one-value control stays at a readable width; lists and tables use the whole column. */
+.fd-fieldwrap[data-layout="row"]
+  .fd-fieldcontrol
+  > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  width: 100%;
+  max-width: 360px;
+}
+.fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > input[type="number"] {
+  max-width: 160px;
+}
+/* The switch sits in the middle of the control row. */
+.fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+  margin-block: calc((var(--ctl-h) - 18px) / 2);
+}
+@media (pointer: coarse) {
+  .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+    margin-block: calc((var(--ctl-h) - 26px) / 2);
+  }
+}
+.fd-fieldwrap[data-layout="row"] .fd-fieldhint,
+.fd-fieldwrap[data-layout="row"] .fd-fielderror {
+  display: block;
+  max-width: 72ch;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+}
+/* Narrow screens: the label goes above its control. */
+@media (max-width: 720px) {
+  .fd-fieldwrap[data-layout="row"] {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+  .fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+    min-height: 0;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-fieldwrap[data-layout="row"] > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
+  .fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol > :not(.fd-fieldlabel),
+  .fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+    grid-column: 1;
+  }
+  .fd-fieldwrap[data-layout="row"]
+    .fd-fieldcontrol
+    > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+    max-width: none;
+  }
+  .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+    margin-block: 0;
+  }
+  /* A switch field: the switch ends the label row, and the hint takes the line under both. */
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) > .fd-fieldcontrol > .fd-switch {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) > :is(.fd-fieldhint, .fd-fielderror) {
+    grid-column: 1 / -1;
+  }
 }
 .fd-checkrow {
   display: flex;
@@ -555,8 +666,11 @@
   font-size: var(--fs-data);
 }
 .fd-folder-crumbs li:first-child button {
+  padding-left: 0;
+  color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+  font-weight: 600;
 }
 @media (pointer: coarse) {
   .fd-folder-crumbs button {
@@ -568,17 +682,13 @@
     font-size: max(var(--fs-data), var(--fs-field));
   }
 }
+/* The pinned and recent folders: a label and folder rows (the name, then the parent in --faint). */
 .fd-folder-quick {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  gap: var(--sp-1);
 }
-.fd-folder-quick > .fd-chip {
-  background: var(--raised);
-}
-.fd-folder-quick > .fd-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
+.fd-folder-panel .fd-recent .fd-folder-list {
+  max-height: 148px;
 }
 .fd-folder-list {
   display: grid;
@@ -606,6 +716,24 @@
 }
 .fd-folder-list .fd-icon {
   color: var(--faint);
+}
+.fd-folder-list button > .fd-folder-base {
+  flex: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+}
+.fd-folder-list button > .fd-folder-parent {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-folder-list button[data-pinned] .fd-icon {
+  fill: currentColor;
 }
 .fd-folder-foot {
   display: flex;

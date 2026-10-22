@@ -127,12 +127,19 @@ test('the owner revokes a coordinator grant from the phone', async ({ page }) =>
   await logIn(page);
   await openFleet(page);
   await openPanel(page, 'Mail & tasks');
+  // A grant is a row; its Change… opens the Fleet access dialog, where Revoke asks to confirm.
   const grants = page.getByRole('list', { name: 'Coordinator grants' });
-  await expect(grants).toContainText('read, mail: active');
-  await grants.getByRole('button', { name: 'Revoke' }).click();
-  await expect(grants).toContainText('read, mail: revoked');
-  await expect(grants.getByRole('button', { name: 'Revoke' })).toHaveCount(0);
+  await expect(grants).toContainText('Coordinator · active');
+  await grants.getByRole('button', { name: 'Change…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Fleet access' });
+  await expect(dialog).toContainText('read');
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
   expect(await fitsWidth(page)).toBe(true);
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  // A revoked grant leaves the list.
+  await expect(grants).toHaveCount(0);
 });
 
 function sessionIn(id: string, title: string, extra: Partial<DeckSession['summary']> = {}) {
@@ -356,7 +363,9 @@ test('Start over sends to all current targets with new mail ids', async ({ page 
   for (const m of second) expect(firstIds).not.toContain(m.mail_id);
 });
 
-test('Clear hides an ended session and the Archived chip shows it again', async ({ page }) => {
+test('Archive hides an ended session and the Show archived chip shows it again', async ({
+  page,
+}) => {
   const openFilters = () => page.getByText('Filters', { exact: true }).click();
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
@@ -375,11 +384,11 @@ test('Clear hides an ended session and the Archived chip shows it again', async 
   const ended = page.locator('.fd-lane-ended > summary');
   await ended.click();
   await expect(card).toBeVisible();
-  await page.getByRole('button', { name: 'Clear (1)' }).click();
+  await page.getByRole('button', { name: 'Archive 1' }).click();
   await expect(card).toHaveCount(0);
   await openFilters();
   const chip = page.getByRole('group', { name: 'Fleet filters' }).getByRole('button', {
-    name: 'Archived (1)',
+    name: 'Show archived 1',
   });
   await chip.click();
   await expect(chip).toHaveAttribute('aria-pressed', 'true');
@@ -486,7 +495,7 @@ test('a strip shows the mail icon and the touched files from the extras', async 
 test.describe('wide screen', () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
-  test('Group by Repo makes one lane for each repository and the choice stays', async ({
+  test('Group by repository makes one lane for each repository and the choice stays', async ({
     page,
   }) => {
     const deck = new FakeDeck();
@@ -509,7 +518,9 @@ test.describe('wide screen', () => {
     await page.getByLabel('Group by').selectOption('repo');
     await expect(board.getByRole('region', { name: 'Repository org/app' })).toBeVisible();
     await expect(board.getByRole('region', { name: 'Repository lib' })).toBeVisible();
-    await expect(board.getByRole('region', { name: 'Repository No repository' })).toBeVisible();
+    await expect(
+      board.getByRole('region', { name: 'Repository Outside a repository' }),
+    ).toBeVisible();
     await expect(board.getByRole('region', { name: 'Station Alpha' })).toHaveCount(0);
     // the strips show their station in this grouping
     await expect(page.locator('a.fd-strip[data-session="a"]')).toContainText('Alpha');
@@ -520,7 +531,7 @@ test.describe('wide screen', () => {
     await filters.getByRole('button', { name: 'lib', exact: true }).click();
     await expect(page.locator('a.fd-strip')).toHaveCount(1);
     await expect(page.getByText('1 of 3')).toBeVisible();
-    await expect(page.getByText('Filters (1)', { exact: true })).toBeVisible();
+    await expect(page.locator('.fd-filters-menu > summary')).toHaveText('Filters 1');
     // the active-filter chip clears the repo filter
     await page.getByRole('button', { name: 'Repo: lib' }).click();
     await expect(page.locator('a.fd-strip')).toHaveCount(3);

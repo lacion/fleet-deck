@@ -91,7 +91,7 @@ describe('the session rules form', () => {
     // The options say the modes in words; the values stay the ids.
     expect(html).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
     expect(html).toContain(
-      `<option value="${CODEX}" selected="">Ask on request · workspace write</option>`,
+      `<option value="${CODEX}" selected="">Ask when needed · workspace write</option>`,
     );
     expect(html).toContain('Sessions that it starts, resumes or changes never get a higher mode.');
     expect(html).toContain('Save');

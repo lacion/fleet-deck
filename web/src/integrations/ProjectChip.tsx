@@ -2,6 +2,7 @@
 // project list is the owner's, so a login without it shows no chip.
 import { createContext, type ReactNode, useContext } from 'react';
 import type { DeckSession } from '../gen';
+import { FolderGit2, Icon } from '../ui/icons';
 import { useProjects } from './context';
 
 /** The project of the page around the strips: its own chip says nothing there. */
@@ -30,7 +31,7 @@ export function ProjectChip({ card }: { readonly card: DeckSession }) {
       title={`Project ${project.name}`}
       href={`#/project/${encodeURIComponent(project.project_id)}`}
     >
-      {project.name}
+      <Icon of={FolderGit2} size={12} /> {project.name}
     </a>
   );
 }

@@ -1,8 +1,10 @@
 import { useId, useState } from 'react';
+import { PathTail } from '../chat/PathTail';
 import type { DeckSession, StationView } from '../gen';
 import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
-import { lastParts, readPins } from '../spawn/spawn';
+import { readPins } from '../spawn/spawn';
+import { homeShort } from '../ui/format';
 import { FolderOpen, Icon, Pin } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 
@@ -158,7 +160,9 @@ export function FilesPage({
                   onClick={() => open(station, path)}
                 >
                   <Icon of={Pin} size={12} />
-                  {lastParts(path)}
+                  <span className="fd-files-chippath">
+                    <PathTail path={homeShort(path)} />
+                  </span>
                 </button>
               ))}
               {recent.map((path) => (
@@ -169,7 +173,9 @@ export function FilesPage({
                   title={path}
                   onClick={() => open(station, path)}
                 >
-                  {lastParts(path)}
+                  <span className="fd-files-chippath">
+                    <PathTail path={homeShort(path)} />
+                  </span>
                 </button>
               ))}
             </div>

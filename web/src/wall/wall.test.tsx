@@ -10,7 +10,7 @@ import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
 import { StreamArea } from './Areas';
 import { ChatPane } from './ChatPane';
-import { bytesShort, stationStats } from './stationStats';
+import { stationStats } from './stationStats';
 import { WallPage } from './WallPage';
 import {
   ambientCounts,
@@ -377,7 +377,8 @@ describe('a tool row of the stream draws its target as code', () => {
         ]}
       />,
     );
-    expect(html).toContain('Edit <code>src/a.ts</code>');
+    // The tool name in words (weight 600), the target in mono: the Activity page reading.
+    expect(html).toContain('<b class="fd-wall-tool">Edit</b> <code>src/a.ts</code>');
   });
 });
 
@@ -425,16 +426,6 @@ describe('the focus chat pane', () => {
 });
 
 describe('the figures of a station row', () => {
-  test('a size is whole MB under 1 GB, whole GB under 1 TB, then TB with one decimal', () => {
-    expect(bytesShort(340e6)).toBe('340 MB');
-    expect(bytesShort(216.9e9)).toBe('217 GB');
-    expect(bytesShort(999.4e9)).toBe('999 GB');
-    expect(bytesShort(999.6e9)).toBe('1.0 TB');
-    expect(bytesShort(1e12)).toBe('1.0 TB');
-    expect(bytesShort(1204.7e9)).toBe('1.2 TB');
-    expect(bytesShort(2912.5e9)).toBe('2.9 TB');
-  });
-
   test('the CPU is a share of all cores, the memory whole GB, the disk ends in free', () => {
     expect(
       stationStats({

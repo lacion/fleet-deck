@@ -193,6 +193,7 @@ function FolderRows({
             sessions={sessions}
             browseDisabled={disabled}
             label={`${label} ${i + 1}`}
+            pinnable={false}
             onChange={(path) => onChange(rows.map((r, at) => (at === i ? path : r)))}
           />
           <RemoveButton
@@ -448,6 +449,7 @@ export function FieldEditor({
           sessions={sessions}
           browseDisabled={disabled}
           label={meta.label}
+          pinnable={false}
           onChange={onChange}
         />
       );

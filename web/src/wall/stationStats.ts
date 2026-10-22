@@ -1,18 +1,7 @@
 // R13 P1: the figures of a station row on the wall, read across a room: the CPU as a share of all
 // cores, the memory in whole GB, and the free space of the fullest disk.
-import { usedShare } from '../board/resources';
+import { bytesText, usedShare } from '../board/resources';
 import type { StationResources } from '../gen';
-
-/**
- * A size in a few characters: whole MB under 1 GB ("340 MB"), whole GB under 1 TB ("217 GB"),
- * then TB with one decimal ("1.2 TB").
- * The Stations page wants the same rule: `board/resources.ts` should own it (cross-area request).
- */
-export function bytesShort(bytes: number): string {
-  if (bytes < 1e9) return `${Math.round(bytes / 1e6)} MB`;
-  const gb = Math.round(bytes / 1e9);
-  return gb < 1000 ? `${gb} GB` : `${(bytes / 1e12).toFixed(1)} TB`;
-}
 
 type DiskLike = { readonly total_bytes: number; readonly free_bytes: number };
 
@@ -48,6 +37,6 @@ export function stationStats(r: Figures | null | undefined): readonly string[] {
   }
   const disk = fullestDisk(r.disks);
   // The free space only: "free" is the word that a reader needs, so it ends the part.
-  if (disk !== null) out.push(`Disk ${bytesShort(disk.free_bytes)} free`);
+  if (disk !== null) out.push(`Disk ${bytesText(disk.free_bytes)} free`);
   return out;
 }

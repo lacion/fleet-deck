@@ -419,7 +419,7 @@ describe('the Displays page', () => {
     expect(html).toContain(`${ADD_TEXT}</button>`);
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain(COST_TEXT);
-    expect(html).toContain('Loading…');
+    expect(html).toContain('<p class="fd-note fd-set-loading" role="status">Loading displays…</p>');
   });
 
   test('the displays come first, then the pairings that wait', () => {

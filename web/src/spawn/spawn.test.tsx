@@ -569,7 +569,10 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('aria-label="Recent directories"');
     expect(html).toContain('<span class="fd-label">Recent</span>');
     expect(html).toContain('title="/w/two"');
-    expect(html).toContain('>w/two</button>');
+    // A folder row: its name, then its parent from the root.
+    expect(html).toContain(
+      '<span class="fd-folder-base">two</span><span class="fd-folder-parent">/w/</span></button>',
+    );
     expect(html).not.toContain('/w/other');
   });
 

@@ -13,7 +13,7 @@ export const ALL = '';
 export const emptyFilter: FleetFilter = { station: ALL, provider: ALL, repo: ALL, search: '' };
 
 /** The repo name of a session without a repository. */
-export const NO_REPO = 'No repository';
+export const NO_REPO = 'Outside a repository';
 
 /** `git@github.com:org/app.git` and `https://github.com/org/app.git` → `org/app`; no origin → the root's folder. */
 export function repoName(card: DeckSession): string {
@@ -29,7 +29,7 @@ export function repoName(card: DeckSession): string {
   return basename(repo.root);
 }
 
-/** The distinct repo names of `sessions`, sorted, with "No repository" last. */
+/** The distinct repo names of `sessions`, sorted, with "Outside a repository" last. */
 export function repoNames(sessions: readonly DeckSession[]): string[] {
   const names = [...new Set(sessions.map(repoName))];
   return names.sort((a, b) =>

@@ -5,6 +5,7 @@ import { Markdown } from '../chat/Markdown';
 import { pairWaiting } from '../chat/waiting';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
+import { toolText } from '../watch/tooltext';
 import { displayChatLines } from './displayLines';
 
 /** The words that a screen reader says for the node of a call that is not done (the node shape
@@ -39,7 +40,8 @@ function lineOf(item: Item, waiting: ReadonlyMap<string, string>): Line | null {
     case 'message':
       return item.text.trim() === '' ? null : { key: item.key, kind: 'message', text: item.text };
     case 'tool': {
-      const target = item.input.split('\n')[0] ?? '';
+      // The words of the call (watch/tooltext): no raw MCP id, no JSON payload.
+      const call = toolText(item.title, item.input, { kind: item.tool_kind, files: item.files });
       const mark = item.status === 'failed' || item.status === 'denied' ? item.status : undefined;
       const state =
         item.status === 'running'
@@ -52,8 +54,8 @@ function lineOf(item: Item, waiting: ReadonlyMap<string, string>): Line | null {
       return {
         key: item.key,
         kind: 'tool',
-        text: item.title,
-        target: target === '' ? undefined : target,
+        text: call.name,
+        target: call.target === '' ? undefined : call.target,
         mark,
         state,
       };

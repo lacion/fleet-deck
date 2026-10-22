@@ -28,6 +28,7 @@ import {
   Workflow,
   Wrench,
 } from '../ui/icons';
+import { homeShortIn } from '../ui/format';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { type ActivityTool, activityTool, homePath } from '../watch/tooltext';
@@ -132,7 +133,9 @@ function Target({ tool }: { readonly tool: ActivityTool }) {
       </code>
     );
   }
-  if (tool.form === 'code') return <code className="fd-arow-target">{tool.target}</code>;
+  if (tool.form === 'code') {
+    return <code className="fd-arow-target">{homeShortIn(tool.target)}</code>;
+  }
   return <span className="fd-arow-words">{tool.target}</span>;
 }
 

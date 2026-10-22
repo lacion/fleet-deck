@@ -130,7 +130,7 @@ describe('the limits section', () => {
     expect(out).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
     expect(out).toContain('<option value="never/read-only">Never ask · read only</option>');
     expect(out).toContain(
-      '<option value="on-request/workspace-write" selected="">Ask on request · workspace write</option>',
+      '<option value="on-request/workspace-write" selected="">Ask when needed · workspace write</option>',
     );
     expect(out).not.toContain('>acceptEdits<');
     expect(out).toContain('Sessions that it starts, resumes or changes never get a higher mode.');

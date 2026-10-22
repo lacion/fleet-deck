@@ -44,7 +44,7 @@ test('the compact switch sets the density and survives a reload', async ({ page 
   await deck.install(page);
   await logIn(page);
   await openMorePage(page);
-  // The More page has a labelled switch (the sidebar footer has the icon toggle).
+  // The More page has a labelled switch (the desktop has the same switch in the account menu).
   const compact = page.getByRole('switch', { name: 'Compact cards' });
   await expect(compact).not.toBeChecked();
   await compact.click();

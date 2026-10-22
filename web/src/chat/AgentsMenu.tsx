@@ -49,6 +49,7 @@ export function AgentsMenu(props: AgentsMenuProps) {
   return (
     <Menu
       summaryClass="fd-ghost fd-sm"
+      variant="toggle"
       summary={
         <>
           Agents{' '}

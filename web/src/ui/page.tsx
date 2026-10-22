@@ -1,6 +1,6 @@
 // DL-171: the frame of every secondary page of the board and its form parts (UI-DESIGN.md §3.6).
 import { type ReactNode, useId } from 'react';
-import { Icon, type LucideIcon } from './icons';
+import { ChevronLeft, Icon, type LucideIcon } from './icons';
 
 type PageProps = {
   readonly title: string;
@@ -21,6 +21,8 @@ type PageProps = {
    * page, so that its rule has one length (§4.3).
    */
   readonly wide?: boolean;
+  /** A link back to the parent list ('‹ All projects'), above the title (§4.3). */
+  readonly back?: { readonly href: string; readonly label: string } | undefined;
   /** The accessible name of the section; the title by default. */
   readonly label?: string | undefined;
   /** An extra class of the section. */
@@ -40,6 +42,7 @@ export function Page({
   filters,
   actions,
   wide = false,
+  back,
   label,
   className,
   children,
@@ -52,6 +55,11 @@ export function Page({
     >
       <header className="fd-page-head">
         <div className="fd-page-titles">
+          {back === undefined ? null : (
+            <a className="fd-btn fd-ghost fd-sm fd-page-back" href={back.href}>
+              <Icon of={ChevronLeft} size={14} /> {back.label}
+            </a>
+          )}
           <div className="fd-page-titlerow">
             <h1 className="fd-page-title">{title}</h1>
             {count === undefined ? null : <span className="fd-count">{count}</span>}
@@ -93,7 +101,7 @@ export function Section({
   );
 }
 
-/** What an empty list shows: a 20px icon, a title, a sentence and one action (§4.7). */
+/** What an empty list shows, with no box: a 20px icon, a title, a sentence and one action (§4.7). */
 export function EmptyState({
   icon,
   title,
@@ -106,7 +114,7 @@ export function EmptyState({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className="fd-panel fd-emptystate">
+    <div className="fd-emptystate">
       <Icon of={icon} size={20} />
       <p className="fd-emptystate-title">{title}</p>
       <p className="fd-emptystate-body">{body}</p>
@@ -143,6 +151,7 @@ export function Field({
   error,
   span,
   group = false,
+  layout,
   onBlur,
   children,
 }: {
@@ -151,6 +160,8 @@ export function Field({
   readonly error?: string | null | undefined;
   readonly span?: 2;
   readonly group?: boolean;
+  /** `row`: the label in a 200px column at the left of its control (§4.7, the settings rows). */
+  readonly layout?: 'row';
   /** Fired when the focus leaves the field (the form marks it touched). */
   readonly onBlur?: () => void;
   readonly children: ReactNode;
@@ -175,6 +186,7 @@ export function Field({
     // The blur handler only listens: a focus leaving any control of the field marks it touched.
     <div
       className="fd-fieldwrap"
+      data-layout={layout}
       data-span={span}
       data-invalid={failed ? 'true' : undefined}
       role={group ? 'group' : undefined}

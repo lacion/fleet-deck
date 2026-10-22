@@ -7,11 +7,19 @@ import { providerLabel } from '../board/lanes';
 import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
+import {
+  addedText,
+  compactCount,
+  contextLabel,
+  homeShort,
+  isRiskyMode,
+  modeLabel,
+  removedText,
+  shortModel,
+} from '../ui/format';
 import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
-import { homeShort } from './CopyButton';
 import { loadSessionChanges, turnForPath } from './changedFiles';
 import { StatusFact } from './HeaderBadges';
 import { FilePath } from './PathFit';
@@ -44,14 +52,6 @@ export function usePropsOpen(): readonly [boolean, () => void] {
       for (const l of listeners) l();
     },
   ];
-}
-
-/** `182000` → `182 k`, `9400` → `9.4 k`, `1250000` → `1.3 M`. */
-export function compactCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 10_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')} k`;
-  if (n < 1_000_000) return `${Math.round(n / 1000)} k`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')} M`;
 }
 
 /** `five_hour` → `Claude 5-hour window`, `weekly` → `Claude weekly window`; no provider: `Weekly window`. */
@@ -332,6 +332,7 @@ export function PropertiesPanel({
         <Row label="Model">
           <span title={s.model ?? 'default model'}>{shortModel(s.model)}</span>
         </Row>
+        {contextLabel(s.model) === null ? null : <Row label="Context">{contextLabel(s.model)}</Row>}
         {s.provider === null ? null : <Row label="Provider">{providerLabel(s.provider)}</Row>}
         {s.mode ? (
           <Row label="Mode">
@@ -368,8 +369,12 @@ export function PropertiesPanel({
               )
             }
           >
-            {total.insertions > 0 ? <span className="fd-add">+{total.insertions}</span> : null}
-            {total.deletions > 0 ? <span className="fd-del">−{total.deletions}</span> : null}
+            {total.insertions > 0 ? (
+              <span className="fd-add">{addedText(total.insertions)}</span>
+            ) : null}
+            {total.deletions > 0 ? (
+              <span className="fd-del">{removedText(total.deletions)}</span>
+            ) : null}
             <span className="fd-props-aside">
               {total.files_changed} {total.files_changed === 1 ? 'file' : 'files'}
             </span>

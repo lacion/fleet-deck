@@ -1,5 +1,6 @@
-// R12 (DL-165): the chips of the chat. "Artifact: <title> v<n>" opens the viewer; "Keep <file> as
-// artifact" publishes a suggested file and then becomes the published chip.
+// R12 (DL-165): the chips of the chat. "Artifact · <title>" (with "v<n>" from version 2 on) opens
+// the viewer; "Keep <file> as artifact" publishes a suggested file and then becomes the published
+// chip. A long title ends in an ellipsis on its line (artifacts.css).
 import { useState } from 'react';
 import type { ArtifactKind } from '../gen';
 import { Icon, Paperclip } from '../ui/icons';
@@ -13,9 +14,8 @@ export type PublishedChip = {
   readonly artifact_kind: ArtifactKind;
 };
 
-/** The text of the published chip. */
-export const chipText = (chip: Pick<PublishedChip, 'title' | 'version'>): string =>
-  `Artifact: ${chip.title} v${chip.version}`;
+/** The text of the published chip; its version is a badge of its own. */
+export const chipText = (chip: Pick<PublishedChip, 'title'>): string => `Artifact · ${chip.title}`;
 
 /** The chip of a published artifact; it opens the viewer. */
 export function ArtifactChip({
@@ -30,7 +30,11 @@ export function ArtifactChip({
   if (fromEvent && env?.kept?.has(keptKey(chip.artifact_id, chip.version)) === true) return null;
   const content = (
     <>
-      <Icon of={Paperclip} size={12} /> {chipText(chip)}
+      <Icon of={Paperclip} size={12} />
+      <span className="fd-art-chip-text">{chipText(chip)}</span>
+      {chip.version > 1 ? (
+        <span className="fd-badge" data-tone="muted">{`v${chip.version}`}</span>
+      ) : null}
     </>
   );
   if (env?.open !== undefined) {
@@ -116,8 +120,10 @@ export function SuggestedChip({
         disabled={state.kind === 'busy'}
         onClick={() => void keep()}
       >
-        <Icon of={Paperclip} size={12} />{' '}
-        {state.kind === 'busy' ? `Publishing ${name}…` : `Keep ${name} as artifact`}
+        <Icon of={Paperclip} size={12} />
+        <span className="fd-art-chip-text">
+          {state.kind === 'busy' ? `Publishing ${name}…` : `Keep ${name} as artifact`}
+        </span>
       </button>
       {state.kind === 'error' ? (
         <span className="fd-art-error" role="alert">
