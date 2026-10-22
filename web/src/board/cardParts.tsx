@@ -87,7 +87,7 @@ function NoteLine({ card, focus }: { readonly card: DeckSession; readonly focus:
       <span className="fd-card-note">
         <span className="fd-card-ask" data-kind={ask.request_kind}>
           <Icon of={ask.request_kind === 'question' ? MessageSquare : Shield} size={12} />{' '}
-          {ask.title}
+          {ask.request_kind === 'question' ? ask.title : `Permission · ${ask.title}`}
         </span>
       </span>
     );

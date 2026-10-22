@@ -75,11 +75,7 @@ function RadarHead({ count = 0 }: { readonly count?: number }) {
   return (
     <h2 className="fd-ops-h">
       <Icon of={Radar} size={14} /> Conflict radar
-      {count > 0 ? (
-        <span className="fd-badge" data-tone="hazard">
-          {count}
-        </span>
-      ) : null}
+      {count > 0 ? <span className="fd-count">{count}</span> : null}
     </h2>
   );
 }

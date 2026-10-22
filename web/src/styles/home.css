@@ -103,7 +103,15 @@
     width: calc(var(--ctl-h) + 6px);
     transition: width var(--t-move);
   }
+  /* The folded input fills its 34px slot exactly, so the 8px header gap shows before Filters: a
+     flex item with min-width 0, and no right padding while folded (30px for the icon, 10px and
+     the 2px border were 42px). */
+  .fd-home:not([data-layout="phone"]) .fd-home-search > input {
+    width: 100%;
+    min-width: 0;
+  }
   .fd-home:not([data-layout="phone"]) .fd-home-search > input:not(:focus):placeholder-shown {
+    padding-right: 0;
     background: transparent;
     border-color: transparent;
     color: transparent;
@@ -383,6 +391,8 @@
   max-height: 96px;
   padding: 5px var(--sp-3);
   line-height: 18px;
+  /* The ring of a chat code block (§4.5): light --code on the white strip is about 1.09:1. */
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .fd-q-answer {
   display: flex;
@@ -401,10 +411,13 @@
 .fd-q-open {
   margin-left: auto;
 }
-/* The other plain answers sit on the strip fill: one step up, and a control edge on hover. Deny
-   (.fd-danger) keeps its ghost look of base.css (§3); only the phone fills it (concept A). */
+/* The other plain answers sit on the strip fill: one step up, the plain button edge (transparent
+   in dark, --border in light: light --raised-hi on the white strip is 1.07:1), and a control edge
+   on hover. Deny (.fd-danger) keeps its ghost look of base.css (§3); only the phone fills it
+   (concept A). */
 .fd-q-body button:not(.fd-decide, .fd-danger) {
   background: var(--raised-hi);
+  box-shadow: inset 0 0 0 1px var(--btn-edge);
 }
 .fd-q-body button:not(.fd-decide, .fd-danger):hover:not(:disabled) {
   background: var(--raised-hi);
@@ -1213,9 +1226,6 @@
 .fd-ops-h > .fd-icon {
   color: var(--dim);
 }
-.fd-ops-h > .fd-badge {
-  margin-left: auto;
-}
 .fd-glance .fd-ops-h > .fd-icon {
   color: var(--fuel);
 }
@@ -1335,6 +1345,30 @@
   background: var(--hazard);
   border-radius: var(--r-card) 0 0 var(--r-card);
 }
+/* Forced colors drop the fills and the shadows (§6): the lane strips and the conflict cards keep
+   a CanvasText edge (2px for a strip that needs you, in place of its --act-line outline), and
+   the conflict card keeps its hazard holder. */
+@media (forced-colors: active) {
+  .fd-stripwrap {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-stripwrap[data-status="needs_you"] {
+    outline-width: 2px;
+    outline-offset: -2px;
+  }
+  .fd-confstrip-lines
+    > .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(.fd-confstrip-repo) {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-confstrip-lines
+    > .fd-confstrip-line:not(.fd-confstrip-more):not(.fd-confstrip-hd):not(
+      .fd-confstrip-repo
+    )::before {
+    forced-color-adjust: none;
+  }
+}
 .fd-confstrip-line > .fd-icon {
   color: var(--hazard);
 }
@@ -1376,8 +1410,11 @@
   margin-bottom: var(--sp-2);
   color: var(--faint);
 }
+/* A session name in a line of text: an inline control that keeps the line height (the inline
+   exception of WCAG 2.5.8), so the coarse 44px of base.css does not apply. */
 .fd-namebtn {
   height: auto;
+  min-height: 0;
   padding: 0;
   background: none;
   border: 0;

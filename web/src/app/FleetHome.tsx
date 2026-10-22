@@ -585,7 +585,7 @@ export function FleetHome({
   );
   // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
   // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
-  // is open. The phone shows the radar under its header instead, above the lanes.
+  // is open. The phone shows the radar under the Needs you strip instead, above the lanes.
   const ops = (
     <div className="fd-ops" data-tab={openTab ?? undefined}>
       {phone || openTab === 'usage' ? null : <UsageGlance sessions={scoped} stations={stations} />}
@@ -599,9 +599,9 @@ export function FleetHome({
     return (
       <div className="fd-home" data-layout="phone">
         {header}
-        {radar}
         {activeRow}
         {rail('strip')}
+        {radar}
         {empty ?? (
           <FleetBoard
             sessions={visible}

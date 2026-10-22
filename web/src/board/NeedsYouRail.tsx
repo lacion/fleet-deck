@@ -5,6 +5,7 @@ import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { SessionActions } from '../session/commands';
 import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
@@ -259,7 +260,7 @@ export function NeedsYouRail({
                       <button
                         key={o.option_id}
                         type="button"
-                        className={optionClass(question, i, r.options.length)}
+                        className={question ? undefined : approvalClass(o, i)}
                         aria-label={`${o.label}: ${r.title} in ${w.title}`}
                         disabled={busy}
                         onClick={() => answer(actions, r, o.option_id)}
@@ -320,14 +321,6 @@ export function railKeyOption(key: string, n: number): number {
   if (key === 'd') return n >= 2 ? n - 1 : -1;
   if (/^[1-9]$/.test(key)) return Number(key) <= n ? Number(key) - 1 : -1;
   return -1;
-}
-
-/** A permission's first option is the decision primary and its last one denies; a question's
- * options are plain (DESIGN-SYSTEM §4.1). */
-function optionClass(question: boolean, i: number, n: number): string | undefined {
-  if (question) return undefined;
-  if (i === 0) return 'fd-decide';
-  return n >= 2 && i === n - 1 ? 'fd-danger' : undefined;
 }
 
 /** The key hint of option `i` of `n`: first `a`, last `d` (with two or more), the others their number. */
