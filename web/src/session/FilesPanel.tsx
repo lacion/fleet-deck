@@ -5,7 +5,7 @@ import { artifactHref, publishable } from '../artifacts/kinds';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
 import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
-import { type ChangedFiles, loadChanged } from './changedFiles';
+import { type ChangedFiles, type ChangeKind, type FileChange, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
 
@@ -91,6 +91,22 @@ export function FileView({
   );
 }
 
+const KIND_NAME: Record<ChangeKind, string> = { A: 'added', M: 'modified', R: 'renamed' };
+
+/** The change of one file at the right of its row: `+9 −3` and the kind letter (`M`). */
+function ChangeStat({ change }: { readonly change: FileChange }) {
+  return (
+    <span className="fd-files-stat">
+      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
+      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
+      <span className="fd-badge" data-tone="muted" title={KIND_NAME[change.kind]}>
+        <span aria-hidden="true">{change.kind}</span>
+        <span className="fd-vh">{KIND_NAME[change.kind]}</span>
+      </span>
+    </span>
+  );
+}
+
 /** The files changed since the session started; a click opens the file. */
 export function ChangedFilesList({
   changed,
@@ -105,12 +121,14 @@ export function ChangedFilesList({
       <ul>
         {changed.paths.map((path) => {
           const dir = parentPath(path);
+          const change = changed.changes[path];
           return (
             <li key={path}>
               <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
                 <Icon of={FileText} size={14} />
                 <span className="fd-files-name">{path.split('/').pop()}</span>
                 {dir === '' ? null : <span className="fd-files-dir">{dir}</span>}
+                {change === undefined ? null : <ChangeStat change={change} />}
               </button>
             </li>
           );

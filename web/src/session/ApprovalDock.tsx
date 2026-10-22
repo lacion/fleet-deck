@@ -32,8 +32,6 @@ export function optionClass(option: Pick<ApprovalOption, 'kind'>, n: number): st
   return option.kind === 'deny' ? 'fd-danger' : undefined;
 }
 
-/** The key hints of the card (§4.5): `a` on the decision primary, `d` on the deny. */
-
 export function ApprovalDock(props: Props) {
   const now = useNow(undefined, 30000);
   if (props.requests.length === 0) return null;

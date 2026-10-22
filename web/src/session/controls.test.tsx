@@ -667,6 +667,14 @@ describe('composer (DL-140)', () => {
     expect(composer()).toContain('placeholder="Message the agent…"');
   });
 
+  test('the placeholder names the session by its callsign', () => {
+    expect(composer({ callsign: 'otter-n1rr' })).toContain('placeholder="Message otter-n1rr…"');
+    expect(composer({ callsign: 'otter-n1rr', slashCommands: ['init'] })).toContain(
+      'placeholder="Message otter-n1rr… (/ for commands)"',
+    );
+    expect(composer({ callsign: null })).toContain('placeholder="Message the agent…"');
+  });
+
   test('a disabled composer shows its reason instead of the follow-up note', () => {
     const reason = 'A terminal holds this session. Return it to board control to send prompts.';
     const html = composer({ enabled: false, working: true, disabledReason: reason });
@@ -685,6 +693,10 @@ describe('composer (DL-140)', () => {
     expect(working).toContain('Steer now');
     expect(working).toContain('Queue follow-up');
     expect(working).toContain('The station holds a follow-up until the turn ends.');
+    // §4.5: Steer now carries its ⌘↵ hint, the same as Queue follow-up carries ↵.
+    expect(working).toContain(
+      'aria-keyshortcuts="Meta+Enter Control+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">⌘↵</span></button>',
+    );
   });
 });
 
