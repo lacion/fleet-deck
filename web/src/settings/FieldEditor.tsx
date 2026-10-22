@@ -1,9 +1,11 @@
 // DL-172: the control of one settings field, by its kind. It shows the value it is given and
 // reports an edit; the form keeps the edits.
-import type { DeckSession, FieldMeta, MonitorInfo } from '../gen';
+import type { DeckSession, FieldMeta, MonitorInfo, StationView } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, X } from '../ui/icons';
-import { asNumber, asPairs, asStrings, asText, optionLabel } from './model';
+import { defaultOptionLabel, optionLabel } from './copy';
+import { asNumber, asPairs, asStrings, asText } from './model';
+import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
 
 export type EditorProps = {
   readonly meta: FieldMeta;
@@ -17,6 +19,10 @@ export type EditorProps = {
   readonly sessions?: readonly DeckSession[] | undefined;
   /** The monitors that the station reports; `undefined` when it reports no desktop. */
   readonly monitors?: readonly MonitorInfo[] | undefined;
+  /** The paired stations (the stations of a worker grant are picked from them). */
+  readonly stations?: readonly StationView[] | undefined;
+  /** The operating system of the station of this tab (`traits.os`), for the default of `host`. */
+  readonly os?: string | undefined;
 };
 
 /** The remove button of one row: an `x` icon button; its name says which row it removes. */
@@ -343,6 +349,9 @@ export const GROUP_KINDS: readonly FieldMeta['kind'][] = [
   'trackers',
 ];
 
+/** The keys with a control of several parts (a choice and a time, a list of checkboxes). */
+export const GROUP_KEYS: readonly string[] = ['offline_approval_policy', 'worker_grant.stations'];
+
 /** The control of the simple and list kinds. `instances` and `trackers` have their own editors. */
 export function FieldEditor({
   meta,
@@ -353,7 +362,34 @@ export function FieldEditor({
   list,
   sessions,
   monitors,
+  stations,
+  os,
 }: EditorProps) {
+  if (meta.key === 'offline_approval_policy' && meta.kind === 'text') {
+    return <PolicyEditor value={asText(value)} disabled={disabled} onChange={onChange} />;
+  }
+  if (meta.key === 'worker_grant.stations' && meta.kind === 'texts' && stations !== undefined) {
+    return (
+      <StationsEditor
+        value={asStrings(value)}
+        stations={stations}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
+  if (meta.key === 'hibernate_after_min' && meta.kind === 'int') {
+    return (
+      <OffMinutes
+        label={meta.label}
+        value={asNumber(value)}
+        min={meta.min}
+        max={meta.max}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
   switch (meta.kind) {
     case 'bool':
       return (
@@ -385,7 +421,7 @@ export function FieldEditor({
       const text = asText(value);
       return (
         <select value={text} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Default</option>
+          <option value="">{defaultOptionLabel(meta.key, os)}</option>
           {meta.options.map((o) => (
             <option key={o} value={o}>
               {optionLabel(meta.key, o)}

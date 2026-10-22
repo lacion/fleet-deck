@@ -1,7 +1,7 @@
 // DL-172: one settings tab: the deck's own settings or the settings of one station. It loads the
 // view, keeps the edits, saves only the changed keys and shows what the deck answers.
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DeckSession, MonitorInfo, SettingsSaved, SettingsView } from '../gen';
+import type { DeckSession, MonitorInfo, SettingsSaved, SettingsView, StationView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, RefreshCw } from '../ui/icons';
 import { DECK, type SettingsActions, type Target } from './actions';
@@ -9,13 +9,15 @@ import { RestartDialog, RestartOverlay, type RestartView, SecretDialog, waitStep
 import { useElevation } from './elevation';
 import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { describe } from './http';
+import { Loading } from './Loading';
 import { NoticeIcon } from './NoticeIcon';
 import { OmarchyCard } from './OmarchyCard';
 import type { DesktopToolsActions } from './desktopTools';
 import { DesktopToolsCard } from './DesktopToolsCard';
 import type { OmarchyActions } from './omarchy';
-import { asInstances, changedKeys, changesOf, labelOf, type Values } from './model';
-import { SettingsFields } from './SettingsFields';
+import { asInstances, changedKeys, changesOf, labelOf, sectionId, type Values } from './model';
+import { SectionIndex } from './SectionIndex';
+import { type SectionSlot, SettingsFields } from './SettingsFields';
 
 export type NoticeItem = {
   readonly id: 'restart' | 'uncertain' | 'changed' | 'error' | 'secret';
@@ -48,6 +50,12 @@ type Props = {
   readonly omarchy?: OmarchyActions | undefined;
   /** The desktop tools card (BG-1); same condition as the Omarchy card. */
   readonly desktopTools?: DesktopToolsActions | undefined;
+  /** The paired stations (the worker grant stations of the deck tab). */
+  readonly stations?: readonly StationView[] | undefined;
+  /** The operating system of the station (`traits.os`), for the default of `host`. */
+  readonly os?: string | undefined;
+  /** The cards of the page by section title (the Tailnet card of the deck's Network section). */
+  readonly slots?: Readonly<Record<string, SectionSlot>> | undefined;
 };
 
 export function Notice({
@@ -139,6 +147,9 @@ export function SettingsTab({
   initial,
   omarchy,
   desktopTools,
+  stations,
+  os,
+  slots,
 }: Props) {
   const target = useMemo<Target>(
     () => (stationId === null ? DECK : { kind: 'station', id: stationId }),
@@ -158,6 +169,7 @@ export function SettingsTab({
   const { ask, node: elevationNode } = useElevation(actions);
   const turn = useRef(0);
   const noticeTop = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const noticeCount = notices.length;
   // A notice appears at the top of the tab; the page may be scrolled far down.
   useEffect(() => {
@@ -207,15 +219,27 @@ export function SettingsTab({
   }, [waiting, live, load]);
 
   if (view === null) {
-    return loadError === null ? (
-      <p role="status">Loading settings…</p>
-    ) : (
-      <div className="fd-set-notice" data-tone="error" role="alert">
-        <NoticeIcon tone="error" />
-        <span>{loadError}</span>
-        <button type="button" className="fd-sm" onClick={load}>
-          <Icon of={RefreshCw} size={14} /> Try again
-        </button>
+    if (loadError === null) return <Loading text="Loading settings…" />;
+    // The cards of the page have their own reads: they stay when the fields cannot load.
+    return (
+      <div className="fd-set-tab" data-target={key}>
+        <div className="fd-set-notice" data-tone="error" role="alert">
+          <NoticeIcon tone="error" />
+          <span>{loadError}</span>
+          <button type="button" className="fd-sm" onClick={load}>
+            <Icon of={RefreshCw} size={14} /> Try again
+          </button>
+        </div>
+        {Object.entries(slots ?? {}).map(([title, slot]) =>
+          slot.top === undefined ? null : (
+            <section key={title} id={sectionId(title)} className="fd-set-sec" aria-label={title}>
+              <div className="fd-set-sechead-row">
+                <h2 className="fd-set-sechead">{title}</h2>
+              </div>
+              {slot.top}
+            </section>
+          ),
+        )}
       </div>
     );
   }
@@ -389,63 +413,76 @@ export function SettingsTab({
     load();
   };
 
+  // The station cards sit right after the Desktop section, where their settings are.
+  const cards =
+    live && omarchy !== undefined && stationId !== null ? (
+      <>
+        <OmarchyCard station={name} actions={omarchy} ask={ask} />
+        {desktopTools === undefined ? null : (
+          <DesktopToolsCard station={name} actions={desktopTools} ask={ask} />
+        )}
+      </>
+    ) : null;
+  const allSlots: Readonly<Record<string, SectionSlot>> =
+    cards === null ? (slots ?? {}) : { ...slots, Desktop: { ...slots?.['Desktop'], after: cards } };
+
   return (
     <div className="fd-set-tab" data-target={key}>
-      <div ref={noticeTop} className="fd-set-notices">
-        {notices.map((item) => (
-          <Notice
-            key={item.id}
-            item={item}
-            action={
-              item.id === 'restart' ? (
-                <button
-                  type="button"
-                  className="fd-sm"
-                  onClick={() => setRestart({ phase: 'confirm' })}
-                >
-                  Restart {name}…
-                </button>
-              ) : item.id === 'changed' ? (
-                <button type="button" className="fd-sm" onClick={reload}>
-                  Reload
-                </button>
-              ) : undefined
-            }
-          />
-        ))}
-      </div>
-      <SettingsFields
-        view={view}
-        edits={edits}
-        errors={errors}
-        onEdit={edit}
-        stationId={stationId}
-        list={list}
-        sessions={sessions}
-        monitors={monitors}
-        savedIds={savedIds}
-        secretBlocked={secretBlocked}
-        onSecret={(instanceId, varName) =>
-          setSecret({ instanceId, name: varName, busy: false, error: null })
-        }
-      />
-      {changed.length === 0 ? null : (
-        <SaveBar
-          count={changed.length}
-          saving={saving}
-          onDiscard={() => {
-            setEdits({});
-            setErrors({});
-          }}
-          onSave={() => void save()}
+      <div ref={body} className="fd-set-body">
+        <div ref={noticeTop} className="fd-set-notices">
+          {notices.map((item) => (
+            <Notice
+              key={item.id}
+              item={item}
+              action={
+                item.id === 'restart' ? (
+                  <button
+                    type="button"
+                    className="fd-sm"
+                    onClick={() => setRestart({ phase: 'confirm' })}
+                  >
+                    Restart {name}…
+                  </button>
+                ) : item.id === 'changed' ? (
+                  <button type="button" className="fd-sm" onClick={reload}>
+                    Reload
+                  </button>
+                ) : undefined
+              }
+            />
+          ))}
+        </div>
+        <SettingsFields
+          view={view}
+          edits={edits}
+          errors={errors}
+          onEdit={edit}
+          stationId={stationId}
+          list={list}
+          sessions={sessions}
+          monitors={monitors}
+          savedIds={savedIds}
+          secretBlocked={secretBlocked}
+          onSecret={(instanceId, varName) =>
+            setSecret({ instanceId, name: varName, busy: false, error: null })
+          }
+          stations={stations}
+          os={os}
+          slots={allSlots}
         />
-      )}
-      {live && omarchy !== undefined && stationId !== null ? (
-        <OmarchyCard station={name} actions={omarchy} ask={ask} />
-      ) : null}
-      {live && omarchy !== undefined && desktopTools !== undefined && stationId !== null ? (
-        <DesktopToolsCard station={name} actions={desktopTools} ask={ask} />
-      ) : null}
+        {changed.length === 0 ? null : (
+          <SaveBar
+            count={changed.length}
+            saving={saving}
+            onDiscard={() => {
+              setEdits({});
+              setErrors({});
+            }}
+            onSave={() => void save()}
+          />
+        )}
+      </div>
+      <SectionIndex body={body} />
       {secret === null ? null : (
         <SecretDialog
           title={secret.name === null ? 'Add a variable' : `Replace ${secret.name}`}
