@@ -41,6 +41,8 @@ describe('the agents menu', () => {
     expect(html).toContain('data-agent="node-2"');
     expect(html).toContain('data-tone="muted">done<');
     expect(html).not.toContain('running</span>');
+    // Nothing runs: the summary says how many agents the menu lists.
+    expect(html).toContain('Agents <span class="fd-count">1</span>');
   });
 
   test('a running subagent shows the running badge', () => {
@@ -49,6 +51,7 @@ describe('the agents menu', () => {
     const { html } = menu(events);
     expect(html).toContain('1 running');
     expect(html).toContain('data-tone="ok">running<');
+    expect(html).not.toContain('fd-count');
   });
 
   test('the Codex fixture lists its subagents', () => {

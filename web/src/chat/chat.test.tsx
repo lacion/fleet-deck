@@ -259,9 +259,70 @@ describe('ChatView', () => {
     expect(streaming).toContain('fd-chat-streaming');
   });
 
+  test('a tool row names an MCP tool, reads a JSON input as its values and a home folder as ~', () => {
+    const row = (n: number, over: Partial<Extract<Item, { type: 'tool' }>>): Item => ({
+      ...(tool(n) as Extract<Item, { type: 'tool' }>),
+      ...over,
+    });
+    const html = view({
+      items: [
+        row(1, {
+          title: 'mcp__fleetdeck__publish_artifact',
+          tool_kind: 'mcp',
+          input: '/Users/me/project/a.html',
+          files: ['/Users/me/project/a.html'],
+        }),
+        row(2, { title: 'TaskStop', tool_kind: 'other', input: '{"task_id":"bv93ogg6d"}' }),
+        row(3, {
+          title: 'Read',
+          tool_kind: 'read',
+          input: '/home/me/notes/a.md',
+          files: ['/home/me/notes/a.md'],
+        }),
+        row(4, { input: 'cat /home/me/notes/a.md\nwc -l' }),
+      ],
+    });
+    expect(html).toContain(
+      '<span class="fd-chat-tool-title" title="mcp__fleetdeck__publish_artifact">Publish artifact</span><span class="fd-chat-tool-server">fleetdeck</span>',
+    );
+    expect(html).toContain('<bdi>~/project/a.html</bdi>');
+    expect(html).toContain('<bdi>bv93ogg6d</bdi>');
+    expect(html).toContain('<bdi>~/notes/a.md</bdi>');
+    expect(html).toContain('<bdi>cat ~/notes/a.md</bdi>');
+    // A plain tool name has no tooltip; the expanded body keeps the raw input.
+    expect(html).toContain('<span class="fd-chat-tool-title">TaskStop</span>');
+    expect(html).toContain(
+      '<pre class="fd-code">{&quot;task_id&quot;:&quot;bv93ogg6d&quot;}</pre>',
+    );
+    expect(html).toContain('<pre class="fd-code">cat /home/me/notes/a.md\nwc -l</pre>');
+  });
+
+  test('a finished Thinking row says how long it thought', () => {
+    // The times of the first and the last delta (session/timeline.ts).
+    const thought = {
+      type: 'reasoning',
+      key: '1',
+      turn_id: 't',
+      text: 'hmm',
+      done: true,
+      started_at: 1_000,
+      ended_at: 13_000,
+    } as const;
+    expect(view({ items: [thought] })).toContain('>Thinking · 12 s</summary>');
+  });
+
   test('reasoning is closed with a Thinking summary', () => {
-    const items: Item[] = [{ type: 'reasoning', key: '1', turn_id: 't', text: 'hmm', done: true }];
-    const html = view({ items });
+    // One delta: no span of time to show.
+    const thought = {
+      type: 'reasoning',
+      key: '1',
+      turn_id: 't',
+      text: 'hmm',
+      done: true,
+      started_at: 1_000,
+      ended_at: 1_000,
+    } as const;
+    const html = view({ items: [thought] });
     expect(html).toContain('>Thinking</summary>');
     expect(html).not.toContain(' open');
   });

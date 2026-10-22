@@ -18,16 +18,34 @@
 [data-layout="phone"] .fd-chat {
   --chat-gutter: 20px;
 }
+/* The log scrolls up and down only: every wide part (a code block, a table) scrolls in its own
+   box, and the rows below fit the column. `overflow-x: hidden` is the guard, so that a part that
+   still sticks out never lets the log pan sideways under a finger (`clip` next to `auto` computes
+   to `hidden` anyway). */
 .fd-chat-scroll {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 /* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 16px under the
-   tab row, so that a row does not end in a hard cut at the rule (ChatView sets `data-scrolled`).
-   The mask reads only the alpha. */
+   tab row, and with more below it fades out over 16px above the composer, so that a row never
+   ends in a hard cut at an edge (ChatView sets `data-scrolled` and `data-more-below`). The mask
+   reads only the alpha. */
 .fd-chat-scroll[data-scrolled] {
   mask-image: linear-gradient(to bottom, transparent, var(--text) var(--sp-4));
+}
+.fd-chat-scroll[data-more-below] {
+  mask-image: linear-gradient(to top, transparent, var(--text) var(--sp-4));
+}
+.fd-chat-scroll[data-scrolled][data-more-below] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    var(--text) var(--sp-4),
+    var(--text) calc(100% - var(--sp-4)),
+    transparent
+  );
 }
 .fd-chat-scroll:focus-visible,
 .fd-chat summary:focus-visible,
@@ -44,7 +62,9 @@
   margin: 0 auto;
   padding: var(--sp-5) var(--sp-5) var(--sp-4) calc(var(--sp-5) + var(--chat-gutter));
 }
+/* A row never gets wider than the column (a prompt keeps its 75 %, see .fd-chat-run). */
 .fd-chat-column > * {
+  max-width: 100%;
   margin: 0;
 }
 [data-layout="phone"] .fd-chat-column {
@@ -211,11 +231,15 @@
 }
 
 /* ── a tool call: icon, name, mono target, result at the right ───── */
+/* The row never gets wider than the column: what does not fit is clipped at its rounded edge.
+   The status node sits on the flight path outside the row; its containing block is the
+   .fd-chat-tool, so the clip never cuts it. */
 .fd-chat-tool > summary {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   min-height: var(--chat-row);
+  overflow: hidden;
   padding: 0 var(--sp-1) 0 var(--sp-2);
   background: var(--surface);
   border-radius: var(--r-ctl);
@@ -248,6 +272,21 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The server of an MCP tool, after its name (chat/labels.ts toolName). The phone has no room for
+   it: the plug icon already says MCP, and the target matters more. */
+.fd-chat-tool-server {
+  flex: none;
+  max-width: 25%;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-layout="phone"] .fd-chat-tool-server {
+  display: none;
+}
 .fd-chat-tool-arg {
   flex: 1;
   min-width: 0;
@@ -266,6 +305,17 @@
 }
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
+}
+/* The file badges give way before the row gets wider than the column (a phone with three long
+   file names): a file name ends in an ellipsis (the row clips at its edge as the last guard). */
+.fd-chat-tool > summary > .fd-chat-file {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fd-chat-file > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. It takes
    at most 30% of the row, so that the mono target keeps the most of it. */
@@ -417,6 +467,7 @@
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+  overflow-wrap: anywhere; /* a long path in a notice or a request wraps in the column */
 }
 .fd-chat-ask {
   color: var(--act);
@@ -949,11 +1000,19 @@
   left: 0;
   width: min(440px, 90vw);
 }
+/* The phone: Agents (left) and Show (right) share one row (§4.5); on touch the 44px summaries
+   are the height of the row. */
 [data-layout="phone"] .fd-chat-bar {
-  padding: var(--sp-1) var(--sp-3);
+  padding-inline: var(--sp-3);
 }
 [data-layout="phone"] .fd-chat-toolbar {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@media (pointer: coarse) {
+  .fd-chat-bar {
+    padding-block: 0;
+  }
 }
 [data-layout="phone"] .fd-chat-toolbar .fd-menu {
   position: static;
