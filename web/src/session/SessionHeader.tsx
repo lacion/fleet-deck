@@ -1,6 +1,6 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
@@ -17,6 +17,7 @@ import {
   FolderOpen,
   GitCompare,
   Icon,
+  OctagonAlert,
   PanelRight,
   Pencil,
   Play,
@@ -24,12 +25,13 @@ import {
   Search,
   Server,
   Send,
+  Share2,
+  ShieldCheck,
   CircleStop,
   SquareTerminal,
   Star,
   TriangleAlert,
   Undo2,
-  Users,
   X,
 } from '../ui/icons';
 import { canShare, usePeople } from '../sharing/context';
@@ -87,6 +89,10 @@ type Props = {
   readonly fleet?: FleetActions | undefined;
   /** The header puts here the call that opens the menu on its model picker (the composer chip). */
   readonly openModel?: RefObject<(() => void) | null> | undefined;
+  /** The fleet-control fact for the details of the menu (its argument closes the menu); `null`: none. */
+  readonly fleetControl?: ((close: () => void) => ReactNode) | null | undefined;
+  /** The composer shows its Resume bar: the phone header then has no Resume (one primary). */
+  readonly composerResume?: boolean | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -118,6 +124,8 @@ export function SessionHeader({
   onMoveStarted,
   fleet,
   openModel,
+  fleetControl = null,
+  composerResume = false,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -256,7 +264,7 @@ export function SessionHeader({
             disabled={busy !== null}
             onClick={() => setConfirm('kill')}
           >
-            Force stop…
+            <Icon of={OctagonAlert} /> Force stop…
           </button>
         </>
       ) : null}
@@ -332,7 +340,7 @@ export function SessionHeader({
             });
           }}
         >
-          <Icon of={Users} /> Share session…
+          <Icon of={Share2} /> Share session…
         </button>
       ) : null}
       {canMove ? (
@@ -365,7 +373,7 @@ export function SessionHeader({
             setAccessOpen(true);
           }}
         >
-          <Icon of={Users} /> Fleet access…
+          <Icon of={ShieldCheck} /> Fleet access…
         </button>
       ) : null}
       {guest ? null : (
@@ -484,7 +492,7 @@ export function SessionHeader({
               {place}
             </div>
             <div className="fd-menu-sep" />
-            <Details session={session} now={now} />
+            <Details session={session} now={now} fleet={fleetControl?.(close)} />
             <div className="fd-menu-sep" />
             {guest ? null : flags.held && terminal ? (
               <button
@@ -505,7 +513,7 @@ export function SessionHeader({
           </>
         ) : (
           <>
-            <Details session={session} now={now} />
+            <Details session={session} now={now} fleet={fleetControl?.(close)} />
             <div className="fd-menu-sep" />
           </>
         )}
@@ -660,7 +668,7 @@ export function SessionHeader({
               </button>
             )
           ) : null}
-          {flags.canResume && !guest ? (
+          {flags.canResume && !guest && !(phone && composerResume) ? (
             phone ? (
               <button
                 type="button"

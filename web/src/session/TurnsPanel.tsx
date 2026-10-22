@@ -12,10 +12,11 @@ import { diffReview, type ReviewProps } from '../review/diffReview';
 import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
 import { ReviewBar } from '../review/ReviewBar';
-import { ChevronRight, Icon } from '../ui/icons';
+import { ChevronRight, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
 import { BranchesView } from './BranchesView';
 import { allChangedPaths, turnForPath } from './changedFiles';
+import { checkpointText, NOT_A_GIT_WORKTREE, sharedNote, sharedReason } from './checkpoint';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
 import {
@@ -49,7 +50,7 @@ type Props = {
   readonly branchesOffered?: boolean | undefined;
   /** FG-10: the project of the session; the Branches view then shows "Other stations". */
   readonly projectId?: string | undefined;
-  /** §4.5: a changed file of the Properties panel; "Since spawn" shows and scrolls to it. */
+  /** §4.5: a changed file of the Properties panel; "Whole session" shows and scrolls to it. */
   readonly fileRequest?: FileRequest | undefined;
 };
 
@@ -92,7 +93,7 @@ export class DiffFlight {
 type View = 'spawn' | 'turns' | 'branches';
 
 const VIEW_LABEL: Record<View, string> = {
-  spawn: 'Since spawn',
+  spawn: 'Whole session',
   turns: 'By turn',
   branches: 'Branches',
 };
@@ -136,7 +137,7 @@ export function RevertStatus({ summary, actions, live, busy, act }: Props) {
   );
 }
 
-/** The notes above a "Since spawn" diff: a shared folder (DL-159) and a guessed start commit. */
+/** The notes above a "Whole session" diff: a shared folder (DL-159) and a guessed start commit. */
 export function SinceNotes({
   base,
   scope,
@@ -237,18 +238,33 @@ function SinceSpawn({
   }, [diff, shown]);
   return (
     <div className="fd-since" data-view="spawn" ref={box}>
+      {/* One text run (the period stays on the last word), then Refresh at the end of the line. */}
       <p className="fd-note">
-        Since the session started
-        {base ? (
-          <>
-            {' '}
-            from <code>{base.git_ref ?? 'a commit'}</code> <code>{base.oid.slice(0, 8)}</code>
-            {base.inferred ? ' (guessed)' : ''}
-          </>
-        ) : null}
-        .{' '}
-        <button type="button" className="fd-sm" onClick={onRefresh} disabled={!files}>
-          Refresh
+        <span>
+          Changes since the session started
+          {base ? (
+            <>
+              {' from '}
+              {base.git_ref ? (
+                <>
+                  <code>{base.git_ref}</code> at{' '}
+                </>
+              ) : null}
+              <code>{base.oid.slice(0, 8)}</code>
+              {base.inferred ? ' (guessed)' : ''}
+            </>
+          ) : null}
+          .
+        </span>
+        <button
+          type="button"
+          className="fd-iconbtn fd-sm"
+          aria-label="Refresh"
+          title="Load the diff again"
+          onClick={onRefresh}
+          disabled={!files}
+        >
+          <Icon of={RefreshCw} size={14} />
         </button>
       </p>
       <SinceNotes base={base} scope={diff?.scope} />
@@ -356,7 +372,7 @@ export function TurnsPanel(props: Props) {
   const files = actions?.files ?? null;
   const flight = useRef(new DiffFlight());
   const [, setFlights] = useState(0);
-  // A file request of the Properties panel opens "Since spawn" on that file; without a spawn base
+  // A file request of the Properties panel opens "Whole session" on that file; without a spawn base
   // it opens the newest turn diff that lists the file (`targetTurn`).
   const [target, setTarget] = useState<FileRequest>();
   const [targetTurn, setTargetTurn] = useState<string>();
@@ -536,6 +552,11 @@ export function TurnsPanel(props: Props) {
     );
   }
   const caps = summary.capabilities;
+  // No turn has a snapshot: the reason shows once above the list, and the rows that share it
+  // only say "No snapshot" (a folder outside Git explains every row).
+  const shared = sharedReason(turns);
+  const sharedBy = (reason: string) =>
+    shared !== null && (shared === NOT_A_GIT_WORKTREE || reason === shared);
   return (
     <section className="fd-turns" aria-label="Turns">
       {toggle}
@@ -543,6 +564,11 @@ export function TurnsPanel(props: Props) {
       {caps?.rollback === true ? null : (
         <p className="fd-note">
           This provider cannot roll back its conversation, so the board offers no revert.
+        </p>
+      )}
+      {shared === null ? null : (
+        <p className="fd-note" data-note="no-snapshots">
+          {sharedNote(shared)}
         </p>
       )}
       <ol ref={turnsBox}>
@@ -559,7 +585,9 @@ export function TurnsPanel(props: Props) {
                   <TurnStat stat={t.diff} />
                 </span>
               ) : t.end?.state === 'unavailable' ? (
-                <span className="fd-turn-stat">no completion checkpoint: {t.end.reason}</span>
+                <span className="fd-turn-stat" title={t.end.reason}>
+                  {sharedBy(t.end.reason) ? 'No snapshot' : checkpointText(t.end.reason)}
+                </span>
               ) : (
                 <span className="fd-turn-stat">No file changes</span>
               )}

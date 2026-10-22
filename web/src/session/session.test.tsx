@@ -209,7 +209,7 @@ describe('session pane (DL-140)', () => {
     expect(changes).not.toContain('aria-label="Composer"');
   });
 
-  test('the Changes tab badge counts only the turns with changes and is absent for 0', () => {
+  test('the Changes tab badge counts the changed files and is absent for 0', () => {
     const finalized = (turn: string, files: number): Event => ({
       kind: 'turn.finalized',
       turn_id: turn,
@@ -223,7 +223,8 @@ describe('session pane (DL-140)', () => {
     });
     const some = envelopes('nested', [finalized('t1', 1), finalized('t2', 0), finalized('t3', 2)]);
     const html = view(session({ capabilities: codexCaps() }), timeline(some));
-    expect(html).toMatch(/>Changes <span class="fd-count">2<\/span><\/button>/);
+    // No spawn base: the files of the kept turns (1 + 0 + 2), not the count of turns.
+    expect(html).toMatch(/>Changes <span class="fd-count">3<\/span><\/button>/);
     const none = envelopes('nested', [finalized('t1', 0)]);
     const empty = view(session({ capabilities: codexCaps() }), timeline(none));
     expect(empty).toMatch(
@@ -391,15 +392,18 @@ describe('session pane (DL-140)', () => {
   test('a Codex session shows the controls of its capabilities (P5-3)', () => {
     const codex = view(session({ capabilities: codexCaps(), mode: 'untrusted/workspace-write' }));
     expect(codex).toContain('Steer now');
-    expect(codex).toContain('>untrusted/read-only</button>');
-    expect(codex).toContain('aria-pressed="true" disabled="">untrusted/workspace-write</button>');
-    expect(codex).not.toContain('>acceptEdits</button>');
+    // The modes are menu rows: a mode without a name keeps its raw id; the current one is checked.
+    expect(codex).toContain('</span>untrusted/read-only</button>');
+    expect(codex).toMatch(
+      /aria-pressed="true" disabled=""><span class="fd-mode-lead"><\/span>untrusted\/workspace-write<svg[^>]*lucide-check/,
+    );
+    expect(codex).not.toContain('Accept edits</button>');
     // No native follow-up queue: the station holds the follow-up.
     expect(codex).toContain('Queue follow-up');
     expect(codex).toContain('The station holds a follow-up until the turn ends.');
     const claude = view(session({ capabilities: claudeCaps() }));
     expect(claude).not.toContain('The station holds a follow-up');
-    expect(claude).toContain('>acceptEdits</button>');
+    expect(claude).toContain('</span>Accept edits</button>');
   });
 
   test('a provider without optional capabilities gets prompt and follow-up only', () => {

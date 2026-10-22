@@ -109,13 +109,14 @@ const KIND_BADGE: Record<ChangeKind, ReturnType<typeof fileStatusBadge> | null> 
   R: { text: 'renamed', title: 'Renamed file', tone: undefined },
 };
 
-/** The change of one file at the right of its row: `+9 −3` and the badge of its kind. */
+/**
+ * The change of one file at the right of its row: the badge of its kind, then `+9 −3` (the order
+ * of a diff file header, so the counts end on one edge).
+ */
 function ChangeStat({ change }: { readonly change: FileChange }) {
   const badge = KIND_BADGE[change.kind];
   return (
     <span className="fd-files-stat">
-      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
-      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
       {badge === null ? (
         <span className="fd-vh">{KIND_NAME[change.kind]}</span>
       ) : (
@@ -124,6 +125,8 @@ function ChangeStat({ change }: { readonly change: FileChange }) {
           <span className="fd-vh">{KIND_NAME[change.kind]}</span>
         </span>
       )}
+      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
+      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
     </span>
   );
 }

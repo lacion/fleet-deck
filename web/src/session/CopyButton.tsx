@@ -1,22 +1,9 @@
-// The copy button and the path shortener of the session header, moved out
+// The copy button and the home folder shortener of the session header, moved out
 // of `SessionHeader.tsx` for the module size rule.
 import { useEffect, useState } from 'react';
 import { Check, Copy, Icon } from '../ui/icons';
 
 const COPIED_MS = 1500;
-
-/** The longest path the header shows, in characters. */
-export const MAX_PATH_CHARS = 48;
-
-/** A long path loses its middle: `/home/lu…/repo/src`. */
-export function shortenMiddle(text: string, max: number): string {
-  const chars = [...text];
-  if (chars.length <= max) return text;
-  const keep = max - 1;
-  const head = Math.ceil(keep / 2);
-  const tail = keep - head;
-  return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
-}
 
 /** `/home/me/projects/x` → `~/projects/x` (a home folder of Linux or macOS); other paths stay. */
 export function homeShort(path: string): string {

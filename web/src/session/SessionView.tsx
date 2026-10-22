@@ -9,7 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from 'react';
 import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
 import { SessionArtifacts } from '../artifacts/SessionArtifacts';
@@ -35,7 +34,6 @@ import type { ShellActions } from '../shell/shell';
 import type { Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
 import { ApprovalDock } from './ApprovalDock';
-import { hasChanges } from './changes';
 import type { SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
@@ -45,20 +43,23 @@ import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { HoldNotice } from './HoldNotice';
 import { ExecutionDialog } from './ExecutionDialog';
-import { FleetControlChip } from './FleetControlChip';
+import { useFleetControl } from './FleetControlChip';
 import { LandPanel } from './LandPanel';
 import { MoveBanner } from './MoveBanner';
 import { useMove } from './MoveDialog';
 import { CONFIRM_LINE, composerHidden, confirmLineShown } from './moveModel';
-import { PropertiesPanel, usePropsOpen } from './PropertiesPanel';
+import { disabledReason, useFilesOpen, useWide } from './paneLayout';
+import { changeTotal, PropertiesPanel, usePropsOpen, useSessionChanges } from './PropertiesPanel';
 import { SessionHeader } from './SessionHeader';
 import { useTabReserve } from './tabReserve';
-import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
+import { hasAgents, isLive, runningCount, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
-import { finalizedTurns } from './workspace';
+import { finalizedTurns, useDiffTotal } from './workspace';
 import { shortModel } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
+
+export { readFilesOpen } from './paneLayout';
 
 export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
@@ -91,66 +92,6 @@ export type SessionViewProps = {
 const noop = () => {};
 
 const HIGHLIGHT_HOLD_MS = 2500;
-
-const WIDE = '(min-width: 1280px)';
-const PANEL_KEY = 'fd-files-panel';
-
-/** True while the window is at least 1280 px wide (the Files side panel needs it). */
-function useWide(): boolean {
-  return useSyncExternalStore(
-    (notify) => {
-      if (typeof window.matchMedia !== 'function') return () => {};
-      const query = window.matchMedia(WIDE);
-      query.addEventListener('change', notify);
-      return () => query.removeEventListener('change', notify);
-    },
-    () => typeof window.matchMedia !== 'function' || window.matchMedia(WIDE).matches,
-    () => true,
-  );
-}
-
-/** The stored open state of the Files side panel: only a stored `1` opens it; unreadable means closed. */
-export function readFilesOpen(storage: Pick<Storage, 'getItem'>): boolean {
-  try {
-    return storage.getItem(PANEL_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-/** The open state of the Files side panel, kept in `localStorage`; the default is closed. */
-function useFilesOpen(): readonly [boolean, () => void] {
-  const [open, setOpen] = useState(() => {
-    try {
-      return readFilesOpen(localStorage);
-    } catch {
-      return false;
-    }
-  });
-  const toggle = useCallback(() => {
-    setOpen((now) => {
-      try {
-        localStorage.setItem(PANEL_KEY, now ? '0' : '1');
-      } catch {
-        // the choice stays in memory
-      }
-      return !now;
-    });
-  }, []);
-  return [open, toggle];
-}
-
-function disabledReason(
-  flags: { live: boolean; held: boolean; ended: boolean },
-  actions: SessionActions | undefined,
-): string | null {
-  if (!flags.live) return 'Controls are off until the board and the station are live.';
-  if (flags.held)
-    return 'A terminal holds this session. Return it to board control to send prompts.';
-  if (flags.ended) return 'The session ended. Resume it to send prompts.';
-  if (actions?.canDrive !== true) return 'Sending prompts needs the drive scope.';
-  return null;
-}
 
 /** One session: header, tabs, the chat with its approval dock and composer. */
 export function SessionView(props: SessionViewProps) {
@@ -292,7 +233,34 @@ export function SessionView(props: SessionViewProps) {
   const openModel = useRef<(() => void) | null>(null);
   const tabRow = useRef<HTMLDivElement>(null);
   useTabReserve(tabRow);
-  const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
+  // A viewer has no drive scope but sees the files of the shared session.
+  const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
+  const changesRef = sessionRef(session.station_id, s.session_id);
+  const files = actions?.files ?? null;
+  // §4.5: one size of the session's changes on every tab and layout: the Changes tab label (the
+  // changed files) and the Properties Changes row. The session diff loads when the session opens.
+  const hasBase = Boolean(s.base);
+  useSessionChanges(changesRef, filesReady ? files : null, hasBase, turns.length);
+  const total = changeTotal(
+    useDiffTotal(changesRef),
+    turns,
+    hasBase && filesReady && files !== null,
+  );
+  const changedFiles = total?.files_changed ?? 0;
+  const propsShown = propsRail && propsOpen;
+  // ADR-008 §5.3: the fleet-control fact of a coordinator, in Properties or in the session menu.
+  const fleetControl = useFleetControl(
+    guest === null && actions?.canAdmin === true ? actions : null,
+  );
+  // The composer turns into a Resume bar; on the phone the header then shows no Resume of its own.
+  const composerResume =
+    flags.canResume && !wakes && guest === null && actions !== null && actions !== undefined;
+  const resumeBar =
+    composerResume &&
+    tab === 'chat' &&
+    agentSub === undefined &&
+    !composerHidden(s) &&
+    access.composer;
   const order: PaneTab[] = [
     'chat',
     'changes',
@@ -303,9 +271,9 @@ export function SessionView(props: SessionViewProps) {
   const labels: Record<PaneTab, ReactNode> = {
     chat: 'Chat',
     changes:
-      changed > 0 ? (
+      changedFiles > 0 ? (
         <>
-          Changes <span className="fd-count">{changed}</span>
+          Changes <span className="fd-count">{changedFiles}</span>
         </>
       ) : (
         'Changes'
@@ -343,10 +311,6 @@ export function SessionView(props: SessionViewProps) {
     tabs.current[target]?.focus();
   };
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
-  // A viewer has no drive scope but sees the files of the shared session.
-  const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
-  const changesRef = sessionRef(session.station_id, s.session_id);
-  const files = actions?.files ?? null;
   // DL-174: the `@` menu of the composer searches the file names of the session root.
   const searchFiles =
     files !== null && filesReady
@@ -424,6 +388,8 @@ export function SessionView(props: SessionViewProps) {
         onMoveStarted={move.reload}
         fleet={props.fleet}
         openModel={openModel}
+        fleetControl={propsShown ? null : fleetControl.link}
+        composerResume={resumeBar}
       />
       <MoveBanner
         session={session}
@@ -432,7 +398,6 @@ export function SessionView(props: SessionViewProps) {
         owner={moveOwner}
         onChanged={move.reload}
       />
-      {guest === null && actions?.canAdmin === true ? <FleetControlChip actions={actions} /> : null}
       <ArtifactsLink
         dir={s.artifacts_dir}
         events={events}
@@ -442,6 +407,7 @@ export function SessionView(props: SessionViewProps) {
       {checking && actions ? (
         <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
       ) : null}
+      {fleetControl.dialog}
       {hold ? (
         <HoldNotice
           hold={hold}
@@ -636,11 +602,7 @@ export function SessionView(props: SessionViewProps) {
                       onRemoveChip={shellChips.remove}
                       resumeBusy={busy !== null}
                       onResume={
-                        flags.canResume &&
-                        !wakes &&
-                        guest === null &&
-                        actions !== null &&
-                        actions !== undefined
+                        composerResume && actions
                           ? () => controller.act('resume', () => actions.resume())
                           : null
                       }
@@ -649,8 +611,9 @@ export function SessionView(props: SessionViewProps) {
                           ? 'Request to drive to send prompts.'
                           : wakes
                             ? null
-                            : disabledReason(flags, actions)
+                            : disabledReason(flags, s.state === 'lost', actions)
                       }
+                      phone={layout === 'phone'}
                       slashCommands={s.slash_commands ?? slashCommands(events)}
                       skills={s.skills ?? []}
                       searchFiles={searchFiles}
@@ -771,15 +734,18 @@ export function SessionView(props: SessionViewProps) {
             )}
           </aside>
         ) : null}
-        {propsRail && propsOpen ? (
+        {propsShown ? (
           <PropertiesPanel
             session={session}
             stations={stations}
             turns={turns}
-            subagents={tree.subagents.length}
+            total={total}
+            agents={tree.subagents.length}
+            runningAgents={runningCount(tree.subagents, tasks)}
             onOpenChange={onOpenChange}
-            files={filesReady ? files : null}
+            onOpenAll={() => onTab('changes')}
             freshness={freshness}
+            fleet={fleetControl.link?.()}
           />
         ) : null}
       </div>

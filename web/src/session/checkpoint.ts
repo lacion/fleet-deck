@@ -1,0 +1,66 @@
+// DL-084: why a turn has no file snapshot (a checkpoint side is `unavailable` with a reason code of
+// the station, `workspace/boundary.rs`). The board shows plain words, never the code itself; the
+// code stays in the `title` of the row.
+import { hasChanges } from './changes';
+import type { FinalizedTurn } from './workspace';
+
+/** The reason code of a session directory outside Git: no turn of the session can have a snapshot. */
+export const NOT_A_GIT_WORKTREE = 'not_a_git_worktree';
+
+/** The cause after "No snapshot: " for each reason code that the station sends. */
+const CAUSE: Readonly<Record<string, string>> = {
+  turn_running: 'another turn was running',
+  queued_input: 'a queued message started next',
+  background_writers: 'background work was running',
+  provider_initiated: 'the agent started the turn on its own',
+  session_ended: 'the session ended',
+  station_restart: 'the station restarted',
+  [NOT_A_GIT_WORKTREE]: 'the folder is not a Git repository',
+  capture_failed: 'the capture failed',
+};
+
+/** The cause of a reason code in plain words (`background work was running`), or `null`. */
+export function checkpointCause(reason: string): string | null {
+  return CAUSE[reason] ?? null;
+}
+
+/** The text of a turn without a snapshot: `No snapshot: background work was running`. */
+export function checkpointText(reason: string): string {
+  const cause = checkpointCause(reason);
+  return cause === null ? 'No snapshot of the files for this turn' : `No snapshot: ${cause}`;
+}
+
+/**
+ * The reason that the Changes tab says once above the turn list, or `null`: only when two or more
+ * turns are listed and none of them has a snapshot or a change. A folder outside Git explains
+ * every turn, so it wins; else the most frequent reason (the first one on a tie).
+ */
+export function sharedReason(turns: readonly FinalizedTurn[]): string | null {
+  if (turns.length < 2) return null;
+  const counts = new Map<string, number>();
+  for (const t of turns) {
+    if (t.end?.state !== 'unavailable' || hasChanges(t.diff)) return null;
+    counts.set(t.end.reason, (counts.get(t.end.reason) ?? 0) + 1);
+  }
+  if (counts.has(NOT_A_GIT_WORKTREE)) return NOT_A_GIT_WORKTREE;
+  let best: string | null = null;
+  let most = 0;
+  for (const [reason, n] of counts) {
+    if (n > most) {
+      best = reason;
+      most = n;
+    }
+  }
+  return best;
+}
+
+/** The note above a turn list that has no snapshot at all (`sharedReason`). */
+export function sharedNote(reason: string): string {
+  if (reason === NOT_A_GIT_WORKTREE) {
+    return 'The board keeps no file snapshots for this session: the folder is not a Git repository.';
+  }
+  const cause = checkpointCause(reason);
+  return cause === null
+    ? 'The board kept no file snapshots for these turns.'
+    : `The board kept no file snapshots for these turns: ${cause}.`;
+}

@@ -10,6 +10,7 @@ import { sessionActions } from './commands';
 import { Composer } from './Composer';
 import {
   ChangedList,
+  changeTotal,
   compactCount,
   PROPS_FILES_MAX,
   PropertiesPanel,
@@ -17,6 +18,7 @@ import {
   sinceText,
   usePropsOpen,
 } from './PropertiesPanel';
+import type { FinalizedTurn } from './workspace';
 import { openPicker } from './SessionSettings';
 import { SessionView } from './SessionView';
 
@@ -83,15 +85,22 @@ describe('properties panel numbers (§4.5)', () => {
 });
 
 describe('properties panel facts (§4.5)', () => {
-  const panel = (freshness: 'live' | 'stale', reachable = true) =>
+  const panel = (
+    freshness: 'live' | 'stale',
+    reachable = true,
+    extra: Partial<Parameters<typeof PropertiesPanel>[0]> = {},
+  ) =>
     renderToStaticMarkup(
       <PropertiesPanel
         session={session()}
         stations={[station('station-a', { reachable })]}
         turns={[]}
-        subagents={0}
+        total={null}
+        agents={0}
+        runningAgents={0}
         onOpenChange={() => {}}
         freshness={freshness}
+        {...extra}
       />,
     );
 
@@ -118,6 +127,70 @@ describe('properties panel facts (§4.5)', () => {
     expect(html).toContain('offline</span>');
     expect(html).not.toContain('online</span>');
     expect(panel('live', false)).toContain('offline</span>');
+  });
+
+  test('the Changes row: absent while unknown, "No file changes" only for an empty diff', () => {
+    expect(panel('live')).not.toContain('<dt>Changes</dt>');
+    const none = panel('live', true, { total: { files_changed: 0, insertions: 0, deletions: 0 } });
+    // The value starts at the left of the column, as every other value.
+    expect(none).toContain('<dt>Changes</dt><dd><span class="fd-props-aside">No file changes');
+    const some = panel('live', true, { total: { files_changed: 3, insertions: 9, deletions: 0 } });
+    expect(some).toContain('<span class="fd-add">+9</span><span class="fd-props-aside">3 files');
+    expect(some).not.toContain('−0');
+  });
+
+  test('the Agents row counts the Agents bar: its agents and how many run', () => {
+    expect(panel('live')).not.toContain('<dt>Agents</dt>');
+    const html = panel('live', true, { agents: 2, runningAgents: 1 });
+    expect(html).toContain('<dt>Agents</dt><dd>2<span class="fd-props-aside">1 running</span>');
+    expect(html).not.toContain('Subagents');
+    // Only a background command runs: the bar's number, with no count of subagents.
+    expect(panel('live', true, { agents: 0, runningAgents: 1 })).toContain(
+      '<dt>Agents</dt><dd><span class="fd-props-aside">1 running</span></dd>',
+    );
+  });
+
+  test('the fleet-control fact is a row of the panel when given', () => {
+    expect(panel('live')).not.toContain('Fleet control');
+    const html = panel('live', true, { fleet: <button type="button">0 answers</button> });
+    expect(html).toContain('<dt>Fleet control</dt><dd><button type="button">0 answers</button>');
+  });
+
+  test('the folder breaks only after a slash, never inside a name', () => {
+    const html = panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, cwd: '/srv/fleet-deck/v2' } },
+    });
+    expect(html).toContain(
+      '<span class="fd-props-seg">/</span><wbr/><span class="fd-props-seg">srv/</span><wbr/>' +
+        '<span class="fd-props-seg">fleet-deck/</span><wbr/><span class="fd-props-seg">v2</span>',
+    );
+  });
+});
+
+describe('the size of the session changes (§4.5)', () => {
+  const turn = (files: number): FinalizedTurn => ({
+    turnId: `t${files}`,
+    start: null,
+    end: null,
+    diff: { files_changed: files, insertions: files, deletions: 0 },
+    reverted: false,
+  });
+  const loaded = { files_changed: 3, insertions: 1286, deletions: 400 };
+
+  test('the loaded session diff wins; while it loads the size is not known', () => {
+    expect(changeTotal(loaded, [turn(0)], true)).toEqual(loaded);
+    expect(changeTotal(loaded, [turn(0)], false)).toEqual(loaded);
+    // A shared folder: every turn diff is empty, the session diff is not. No "No file changes".
+    expect(changeTotal(undefined, [turn(0)], true)).toBeNull();
+  });
+
+  test('without a session diff, the sum of the kept turns', () => {
+    expect(changeTotal(undefined, [turn(1), turn(2)], false)).toEqual({
+      files_changed: 3,
+      insertions: 3,
+      deletions: 0,
+    });
+    expect(changeTotal(undefined, [], false)).toBeNull();
   });
 });
 
@@ -150,15 +223,37 @@ describe('properties panel changed files (§4.5)', () => {
     expect(list([])).toBe('');
   });
 
-  test('up to five files as buttons with the path, then "+N more"', () => {
+  test('up to five files as buttons with the path of a diff header, then "+N more files"', () => {
     const paths = Array.from({ length: 7 }, (_, i) => `crates/shim/src/f${i}.rs`);
     const html = list(paths);
     expect(html.match(/<button /g)?.length).toBe(PROPS_FILES_MAX);
     expect(html).toContain('title="crates/shim/src/f0.rs"');
-    expect(html).toContain('<bdi>crates/shim/src/f4.rs</bdi>');
+    // The folders and the name are drawn apart; a screen reader reads the path as one text.
+    expect(html).toContain(
+      '<code class="fd-props-file fd-dl-path"><span class="fd-dl-dir" aria-hidden="true"><bdi>' +
+        'crates/shim/src/</bdi></span><span class="fd-dl-base" aria-hidden="true">f4.rs</span>' +
+        '<span class="fd-vh">crates/shim/src/f4.rs</span></code>',
+    );
     expect(html).not.toContain('f5.rs');
-    expect(html).toContain('<li class="fd-props-more">+2 more</li>');
+    expect(html).toContain('<li class="fd-props-more">+2 more files</li>');
     expect(list(paths.slice(0, 5))).not.toContain('more');
+  });
+
+  test('"+N more files" counts the whole diff and opens the Changes tab', () => {
+    const paths = Array.from({ length: 17 }, (_, i) => `src/f${i}.ts`);
+    const html = renderToStaticMarkup(
+      <ChangedList paths={paths} files={121} onOpen={() => {}} onOpenAll={() => {}} />,
+    );
+    expect(html).toContain(
+      '<li class="fd-props-more"><button type="button" class="fd-link fd-props-link">' +
+        '+116 more files</button></li>',
+    );
+    // A file at the root has no folder part.
+    const root = renderToStaticMarkup(<ChangedList paths={['README.md']} onOpen={() => {}} />);
+    expect(root).toContain(
+      '<code class="fd-props-file fd-dl-path"><span class="fd-dl-base" aria-hidden="true">',
+    );
+    expect(root).not.toContain('more');
   });
 
   test('a file that no diff opens is plain text, not a button', () => {
@@ -170,7 +265,9 @@ describe('properties panel changed files (§4.5)', () => {
       />,
     );
     expect(html.match(/<button /g)?.length).toBe(1);
-    expect(html).toContain('<bdi>src/plain.ts</bdi>');
+    expect(html).toContain(
+      '<code class="fd-props-file fd-dl-path" title="src/plain.ts"><span class="fd-dl-dir" aria-hidden="true">',
+    );
     expect(html).toContain('title="src/open.ts"');
   });
 });

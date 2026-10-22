@@ -381,18 +381,19 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   await expect(page.getByRole('alert')).toContainText('Delivery is unknown');
   await page.locator('summary[aria-label="Session menu"]').click();
   const ladder = page.getByRole('group', { name: 'Mode (most restrictive first)' });
+  // The modes are menu rows with their sentence-case names (the title keeps the raw id).
   await expect(ladder.getByRole('button')).toHaveText([
-    'default',
-    'plan',
-    'acceptEdits',
-    'dontAsk',
-    'auto',
+    'Default',
+    'Plan',
+    'Accept edits',
+    "Don't ask",
+    'Auto',
   ]);
-  await expect(ladder.getByRole('button', { name: 'default' })).toHaveAttribute(
+  await expect(ladder.getByRole('button', { name: 'Default' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await ladder.getByRole('button', { name: 'plan' }).click();
+  await ladder.getByRole('button', { name: 'Plan' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
   const model = page.getByRole('form', { name: 'Model' });
   await model.getByLabel('Model (now unknown)').fill(' claude-haiku-4-5 ');

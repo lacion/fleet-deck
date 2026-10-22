@@ -22,6 +22,7 @@ import type {
   SessionSummary,
   TurnDiff,
 } from '../gen';
+import { checkpointCause } from './checkpoint';
 
 type Get = (path: string) => Promise<unknown>;
 
@@ -349,7 +350,8 @@ export function revertBlock(
   if (caps?.rollback !== true) return 'The provider cannot roll back its conversation.';
   if (turn.reverted) return 'The turn is reverted.';
   if (turn.start?.state !== 'available') {
-    return `No start checkpoint${turn.start ? `: ${turn.start.reason}` : ''}.`;
+    const cause = turn.start ? checkpointCause(turn.start.reason) : null;
+    return `No snapshot at the start of this turn${cause === null ? '' : `: ${cause}`}.`;
   }
   if (revertHolds(summary.revert?.state)) return 'Another revert holds the session.';
   if (summary.current_turn !== null || summary.current_run !== null) return 'A turn runs.';
