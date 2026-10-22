@@ -231,7 +231,7 @@ export function ProjectsPage({
                         </td>
                         <td data-label="Station">{stationName(p.station_id, stations)}</td>
                         <td className="fd-cell-path" data-label="Folder">
-                          <code>{p.path}</code>
+                          <code className="fd-int-path">{p.path}</code>
                         </td>
                         <td data-label="Forge">
                           {p.forge === null ? null : (

@@ -51,6 +51,13 @@
   .fd-tablepanel .fd-int-projects td:last-child {
     padding: 0;
   }
+  /* page.css makes every labelled cell a 28px flex row with padding: here the cells sit on
+     one meta line. */
+  .fd-int-projects td[data-label] {
+    display: inline-flex;
+    min-height: 0;
+    padding: 0;
+  }
   .fd-int-projects td[data-label]::before {
     content: none;
   }
@@ -68,9 +75,16 @@
     flex: 0 1 auto;
     min-width: 0;
   }
+  .fd-int-projects .fd-int-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .fd-int-projects td[data-label="Station"] + td[data-label="Folder"]::before {
     content: "·";
     display: inline;
+    flex: none;
+    width: auto;
     margin-right: var(--sp-2);
     color: var(--faint);
     font-family: var(--font-ui);
@@ -681,6 +695,13 @@ a.fd-int-projectchip:hover {
 .fd-secret-crumbs button[aria-current="location"] {
   color: var(--text);
   font-weight: 500;
+}
+/* A touch screen: a crumb is the way up the folder tree, so it keeps the 44px target. */
+@media (pointer: coarse) {
+  .fd-secret-crumbs button {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-2);
+  }
 }
 .fd-secret-entries {
   display: grid;

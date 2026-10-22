@@ -167,68 +167,70 @@ function Loaded({
     const station = a.station_name || stationName(a.station_id, stations);
     return card === undefined ? station : `${station} · ${sessionTitle(card)}`;
   };
+  const filterForm = (
+    <form
+      className="fd-art-filters"
+      aria-label="Filter the artifacts"
+      onSubmit={(e) => e.preventDefault()}
+    >
+      <label className="fd-field fd-art-search">
+        <span className="fd-vh">Search by title</span>
+        <Icon of={Search} size={14} />
+        <input
+          type="search"
+          aria-label="Search by title"
+          placeholder="Search by title"
+          autoComplete="off"
+          value={filters.q}
+          onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+        />
+      </label>
+      <label>
+        <span className="fd-vh">Kind</span>
+        <select
+          value={filters.kind}
+          onChange={(e) => setFilters({ ...filters, kind: e.target.value as Filters['kind'] })}
+        >
+          <option value="all">All kinds</option>
+          {KINDS.map((k) => (
+            <option key={k} value={k}>
+              {KIND_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="fd-vh">Station</span>
+        <select
+          value={filters.station}
+          onChange={(e) => setFilters({ ...filters, station: e.target.value, session: '' })}
+        >
+          <option value="">All stations</option>
+          {stations.map((s) => (
+            <option key={s.station_id} value={s.station_id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="fd-vh">Session</span>
+        <select
+          value={filters.session}
+          onChange={(e) => setFilters({ ...filters, session: e.target.value })}
+        >
+          <option value="">All sessions</option>
+          {stationSessions.map((s) => (
+            <option key={`${s.station_id}/${s.summary.session_id}`} value={s.summary.session_id}>
+              {sessionTitle(s)}
+            </option>
+          ))}
+        </select>
+      </label>
+    </form>
+  );
   return (
-    <Page title="Artifacts" className="fd-art-page" wide>
-      <form
-        className="fd-art-filters"
-        aria-label="Filter the artifacts"
-        onSubmit={(e) => e.preventDefault()}
-      >
-        <label className="fd-field fd-art-search">
-          <span className="fd-vh">Search by title</span>
-          <Icon of={Search} size={14} />
-          <input
-            type="search"
-            aria-label="Search by title"
-            placeholder="Search by title"
-            autoComplete="off"
-            value={filters.q}
-            onChange={(e) => setFilters({ ...filters, q: e.target.value })}
-          />
-        </label>
-        <label>
-          <span className="fd-vh">Kind</span>
-          <select
-            value={filters.kind}
-            onChange={(e) => setFilters({ ...filters, kind: e.target.value as Filters['kind'] })}
-          >
-            <option value="all">All kinds</option>
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABEL[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className="fd-vh">Station</span>
-          <select
-            value={filters.station}
-            onChange={(e) => setFilters({ ...filters, station: e.target.value, session: '' })}
-          >
-            <option value="">All stations</option>
-            {stations.map((s) => (
-              <option key={s.station_id} value={s.station_id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className="fd-vh">Session</span>
-          <select
-            value={filters.session}
-            onChange={(e) => setFilters({ ...filters, session: e.target.value })}
-          >
-            <option value="">All sessions</option>
-            {stationSessions.map((s) => (
-              <option key={`${s.station_id}/${s.summary.session_id}`} value={s.summary.session_id}>
-                {sessionTitle(s)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </form>
+    <Page title="Artifacts" className="fd-art-page" actions={filterForm} wide>
       <ArtifactsListBody
         state={state}
         filtered={filtered}

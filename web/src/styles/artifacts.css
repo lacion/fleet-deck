@@ -20,6 +20,10 @@
 .fd-art-list > li {
   border-bottom: 1px solid var(--border-soft);
 }
+/* The page header already draws a rule over the global list: no second rule. */
+.fd-art-page .fd-art-list {
+  border-top: 0;
+}
 
 /* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns. */
 .fd-art-row {
@@ -101,29 +105,39 @@
   color: var(--dim);
 }
 
-/* The filter bar: the search field, then the three selects. */
+/* The filters sit in the page header at the right of the title (§4.3): the search field, then
+   the three selects. A narrow main column wraps them under the title. */
+.fd-art-page > .fd-page-head {
+  flex-wrap: wrap;
+}
+.fd-art-page > .fd-page-head > .fd-page-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .fd-art-filters {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
   margin: 0;
 }
 .fd-art-filters label {
   display: flex;
+  flex: none;
   min-width: 0;
 }
 .fd-art-filters .fd-art-search {
-  flex: 1 1 260px;
-  max-width: 420px;
+  width: 240px;
 }
-.fd-art-filters input,
-.fd-art-filters select {
+.fd-art-filters input {
   width: 100%;
   min-width: 0;
 }
 .fd-art-filters select {
-  max-width: 220px;
+  min-width: 0;
+  max-width: 200px;
 }
 
 .fd-art-state {
@@ -160,14 +174,19 @@
   .fd-art-row:hover:not(:disabled) {
     background: transparent;
   }
+  .fd-art-filters {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
   .fd-art-filters .fd-art-search {
     flex-basis: 100%;
-    max-width: none;
+    width: auto;
   }
   .fd-art-filters label:not(.fd-art-search) {
     flex: 1 1 0;
   }
   .fd-art-filters select {
+    width: 100%;
     max-width: none;
   }
 }

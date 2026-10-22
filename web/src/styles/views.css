@@ -42,17 +42,21 @@
   margin: 2px 0 0;
 }
 
-/* ── Watch: the filter bar ──────────────────────────────────────── */
-.fd-wbar {
-  display: flex;
+/* ── Watch: the header (§4.3) ───────────────────────────────────── */
+/* The filters sit in the page header at the right of the title; a narrow main column wraps them
+   under the title. */
+.fd-watch > .fd-page-head {
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  margin: 0;
 }
 
-.fd-wbar > .fd-count {
-  margin-left: auto;
+.fd-watch > .fd-page-head > .fd-page-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.fd-watch-needs {
+  color: var(--act);
+  font-weight: 600;
 }
 
 .fd-wfilter {
@@ -466,8 +470,6 @@
   margin: 0;
   padding: 0 var(--sp-4);
   list-style: none;
-  background: var(--surface);
-  border-radius: var(--r-panel);
 }
 
 .fd-auto-list > li + li {
