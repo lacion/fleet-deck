@@ -35,6 +35,23 @@ body {
   font-family: var(--font-data);
   font-variant-ligatures: none;
 }
+/* A fieldset groups fields without a frame (§4.7: no boxed fieldsets, no box in a box), and its
+   legend has the .fd-label look. `min-inline-size: 0` drops the min-content width of the browser,
+   which pushed a narrow column (the ops panel) sideways. Zero specificity: an area rule sets the
+   layout of its own group. */
+:where(fieldset) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+:where(legend) {
+  padding: 0;
+  margin-bottom: var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
 
 /* ── links ──────────────────────────────────────────────────────── */
 /* A link is the focus blue, with no underline; the underline shows on hover and on focus.
@@ -303,6 +320,18 @@ a.fd-btn {
   background: color-mix(in srgb, var(--act-fill) 88%, var(--text));
   border-color: transparent;
 }
+/* A primary that is not ready (Start session before a task, Send before a text): a quiet
+   --badge-bg slab with --faint text (4.5:1) and a hairline, at full opacity. The ink or yellow
+   fill at .45 read as a broken grey slab (2.3:1 light). Forced colors: GrayText (below). */
+.fd-primary:disabled,
+.fd-decide:disabled,
+.fd-menu-body > button.fd-primary:disabled {
+  opacity: 1;
+  background: var(--badge-bg);
+  color: var(--faint);
+  box-shadow: inset 0 0 0 1px var(--border);
+  cursor: not-allowed;
+}
 /* background-color, not the shorthand: a ghost select keeps its chevron (a background image). */
 .fd-ghost,
 .fd-iconbtn {
@@ -393,6 +422,11 @@ select.fd-ghost:focus:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 14%, transparent);
   color: inherit;
 }
+/* The key hint of a primary that is not ready: no slab of its own, the --faint of the button. */
+:is(.fd-primary, .fd-decide):disabled > .fd-kbd {
+  background: transparent;
+  color: var(--faint);
+}
 
 /* ── inputs, select and textarea ────────────────────────────────── */
 :where(
@@ -446,6 +480,17 @@ select.fd-ghost:focus:hover:not(:disabled) {
 :where(input, select, textarea):disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+/* A number field has no spin buttons: Chrome drew them on hover and focus and Firefox at all
+   times, unstyled, inside a 160px field. The arrow keys still step the value. */
+:where(input[type="number"]) {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+:where(input[type="number"])::-webkit-inner-spin-button,
+:where(input[type="number"])::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 /* The select chevron. A <select> has no pseudo-elements, so a mask cannot draw it: two
    1.5px diagonal strokes (linear gradients in --dim) draw Lucide's chevron-down. */
@@ -747,7 +792,8 @@ details[open] > summary[data-variant="toggle"]::after {
 }
 
 /* ── chips ──────────────────────────────────────────────────────── */
-/* A filter toggle. */
+/* A filter toggle. At rest a quiet edge (60 % of --ctl-edge, about 2:1) tells that the label is
+   a control; the pressed chip has the full --ctl-edge, a fill and weight 600. */
 .fd-chip {
   display: inline-flex;
   align-items: center;
@@ -755,7 +801,7 @@ details[open] > summary[data-variant="toggle"]::after {
   height: 24px;
   min-height: 0;
   padding: 0 10px;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--ctl-edge) 60%, transparent);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--dim);
@@ -876,6 +922,29 @@ details[open] > summary[data-variant="toggle"]::after {
 .fd-count[data-tone="act"] {
   background: var(--act-fill);
   color: var(--act-ink);
+}
+/* `info`: news that is not a request (unread messages of a session): --focus on --focus-bg. */
+.fd-count[data-tone="info"] {
+  background: var(--focus-bg);
+  color: var(--focus);
+}
+/* `data-shape="dot"`: the count as a 6px dot where a number would read as another count (an
+   unread mark in a sidebar session row). It keeps role="img" and a name ("3 unread"). */
+.fd-count[data-shape="dot"] {
+  min-width: 0;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  font-size: 0;
+}
+.fd-count[data-tone="info"][data-shape="dot"] {
+  background: var(--focus);
+}
+/* A badge or a key hint on a selected row (a nav row, a pressed segment, a selected option):
+   --badge-bg is the --selected-bg of the dark theme (1:1), and the pill vanished. */
+:is([aria-current="page"], [aria-current="true"], [aria-selected="true"], [aria-pressed="true"])
+:is(.fd-count:not([data-tone]), .fd-kbd) {
+  background: var(--badge-on-selected);
 }
 
 /* The account avatar (§4.2, §4.8): a 24px circle with the initials of the login. The fill is
@@ -1230,6 +1299,11 @@ details[open] > summary[data-variant="toggle"]::after {
   border-radius: var(--r-panel);
   box-shadow: var(--shadow-pop);
 }
+/* A long menu scrolls: its rows keep their 28px (44px on touch). The flex items shrank to their
+   min-content height (about 16px) when the menu was taller than its max-height. */
+.fd-menu-body > * {
+  flex-shrink: 0;
+}
 .fd-menu-body > button {
   width: 100%;
   height: var(--ctl-h);
@@ -1284,6 +1358,35 @@ details[open] > summary[data-variant="toggle"]::after {
   background: var(--surface);
   border: 0;
   border-radius: var(--r-panel);
+}
+/* The head of a dialog (§4.7): the title (15px weight 640), an optional --dim description under
+   it, and the Close icon button (`.fd-iconbtn`, aria-label "Close") at the right, centered on the
+   title line. Every dialog closes the same way. The button overhangs the title line (negative
+   block margins), so that the title starts at the padding edge of the dialog. */
+.fd-dialog-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-1);
+}
+.fd-dialog-head > :is(h1, h2, h3) {
+  grid-area: 1 / 1;
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+  font-weight: 640;
+  line-height: 1.15;
+}
+.fd-dialog-head > :not(h1, h2, h3, .fd-iconbtn) {
+  grid-column: 1;
+  margin: 0;
+  color: var(--dim);
+}
+.fd-dialog-head > .fd-iconbtn {
+  grid-area: 1 / 2;
+  margin-block: calc((1.15 * var(--fs-heading) - var(--ctl-h)) / 2);
+  margin-inline-end: calc((16px - var(--ctl-h)) / 2);
 }
 .fd-code {
   margin: 0;
@@ -1525,6 +1628,17 @@ details[open] > summary[data-variant="toggle"]::after {
     forced-color-adjust: none;
     color: ButtonFace;
     outline-color: ButtonFace;
+  }
+  /* A primary that is not ready: the GrayText of a disabled control, on the Canvas. */
+  :is(.fd-primary, .fd-decide):disabled,
+  .fd-menu-body > button.fd-primary:disabled {
+    background: Canvas;
+    color: GrayText;
+    border-color: GrayText;
+  }
+  :is(.fd-primary, .fd-decide):disabled > .fd-kbd {
+    color: GrayText;
+    outline-color: GrayText;
   }
   /* A ghost select has no edge at rest: forced colors give it the edge of a control. */
   select.fd-ghost {
