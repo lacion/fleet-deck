@@ -221,11 +221,41 @@ async function edgeless(page: Page, seen: { inputs: number; switches: number; se
   return [...fields, ...switches, ...segs].filter((e) => !e.edge).map((e) => e.name);
 }
 
-/** Forced colors on, the scene in place, and the media query matches. */
-async function forcedColors(page: Page) {
-  await page.emulateMedia({ forcedColors: 'active' });
+/**
+ * Forced colors on, the scene in place, and the media query matches. `mixed` sets a system color
+ * scheme and a stored board theme that differ (a dark system with the light theme, or the
+ * reverse); the page must follow the system scheme.
+ */
+async function forcedColors(
+  page: Page,
+  mixed?: { readonly scheme: 'light' | 'dark'; readonly theme: 'light' | 'dark' },
+) {
+  if (mixed === undefined) {
+    await page.emulateMedia({ forcedColors: 'active' });
+  } else {
+    await page.addInitScript((theme) => localStorage.setItem('fd-theme', theme), mixed.theme);
+    await page.emulateMedia({ forcedColors: 'active', colorScheme: mixed.scheme });
+  }
   await setUp(page);
   expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+  if (mixed !== undefined) {
+    // In forced colors the page takes the OS color scheme, not the stored theme (§6,
+    // resolvedTheme()): the kept glyph colors are made for their own theme.
+    await expect(page.locator('html')).toHaveAttribute('data-theme', mixed.scheme);
+  }
+}
+
+/** The unselected tabs that draw a bottom rule: in forced colors only the selected tab has one. */
+async function ruledTabs(page: Page): Promise<string[]> {
+  return page.locator('[role="tab"][aria-selected="false"]').evaluateAll((els) =>
+    els
+      .filter((el) => el.checkVisibility({ visibilityProperty: true }))
+      .filter((el) => {
+        const s = getComputedStyle(el);
+        return s.borderBottomStyle !== 'none' && parseFloat(s.borderBottomWidth) > 0;
+      })
+      .map((el) => el.getAttribute('aria-label') ?? el.textContent?.trim() ?? el.tagName),
+  );
 }
 
 test('4a: in forced colors the home renders and its controls keep an edge', async ({ page }) => {
@@ -263,6 +293,9 @@ test('4b: in forced colors the session renders and its controls keep an edge', a
     dock.some((e) => e.edge),
     'the composer has no border or outline',
   ).toBe(true);
+  // The session tabs: the selected tab has the rule, an unselected tab has none.
+  await expect(page.locator('[role="tab"][aria-selected="false"]').first()).toBeVisible();
+  expect(await ruledTabs(page)).toEqual([]);
   // The phone permission sheet: forced colors drop its fill and shadow, so it needs an edge.
   if (test.info().project.name === 'phone') {
     const sheet = page.locator('.fd-q-dock').first();
@@ -274,6 +307,37 @@ test('4b: in forced colors the session renders and its controls keep an edge', a
     expect(edge, 'the permission sheet has no outline and no top border').toBe(true);
   }
 });
+
+for (const mixed of [
+  { scheme: 'dark', theme: 'light' },
+  { scheme: 'light', theme: 'dark' },
+] as const) {
+  test(`4h: forced colors with a ${mixed.scheme} system and the ${mixed.theme} theme: the home and the session keep their edges`, async ({
+    page,
+  }) => {
+    await forcedColors(page, mixed);
+    const seen = { inputs: 0, switches: 0, segs: 0 };
+    if (test.info().project.name === 'phone') {
+      const list = page.getByRole('complementary', { name: 'Sessions' });
+      await expect(list.getByRole('region', { name: 'Needs you' })).toBeVisible();
+    } else {
+      await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+    }
+    await screenshot(page, `forced-colors-${mixed.scheme}-${mixed.theme}-home`);
+    expect(await edgeless(page, seen)).toEqual([]);
+    expect(await ruledTabs(page)).toEqual([]);
+    expect(seen.inputs).toBeGreaterThan(0);
+    await goTo(page, `#/s/${LIGHTING}/${OTTER}`);
+    const pane = page.getByRole('region', { name: 'Session' });
+    await expect(pane.getByRole('heading', { level: 2 })).toHaveText('Fix flaky shim test');
+    await expect(page.locator('#fd-composer-text')).toBeVisible();
+    await screenshot(page, `forced-colors-${mixed.scheme}-${mixed.theme}-session`);
+    const others = await edgeless(page, seen);
+    expect(others.filter((name) => name !== COMPOSER)).toEqual([]);
+    await expect(page.locator('[role="tab"][aria-selected="false"]').first()).toBeVisible();
+    expect(await ruledTabs(page)).toEqual([]);
+  });
+}
 
 test('4d: in forced colors the active palette option has a Highlight outline', async ({ page }) => {
   desktopOnly();
@@ -359,26 +423,19 @@ test('4g: in forced colors the phone Fleet page and its needs-you rail render', 
   expect(await edgeless(page, seen)).toEqual([]);
 });
 
-test('5: the model "Other…" shows the free-text model input next to the pills', async ({
-  page,
-}) => {
+test('5: without a model list the model is a text pill in the row of pills', async ({ page }) => {
   await setUp(page);
   await goTo(page, '#/new');
   const form = page.getByRole('region', { name: 'New session' });
   const model = form.getByLabel('Model (optional)');
+  // No reported list: no "Other…" step, the owner types the model at once.
   await expect(form.getByLabel('Model id or alias')).toHaveCount(0);
-  await model.selectOption({ label: 'Other…' });
-  const typed = form.getByLabel('Model id or alias');
-  await expect(typed).toBeVisible();
-  // The input is a pill of the same row of pills as the model and the permission mode.
   const pills = form.locator('.fd-spawn-pills');
-  await expect(pills.getByLabel('Model id or alias')).toBeVisible();
   await expect(pills.getByLabel('Model (optional)')).toBeVisible();
   await expect(pills.getByLabel('Permission mode')).toBeVisible();
-  await typed.fill('claude-opus-4-1');
-  await expect(typed).toHaveValue('claude-opus-4-1');
-  await expect(model).toHaveValue('__other__');
-  const box = await typed.boundingBox();
+  await model.fill('claude-opus-4-1');
+  await expect(model).toHaveValue('claude-opus-4-1');
+  const box = await model.boundingBox();
   const width = page.viewportSize()?.width ?? 0;
   expect(box).not.toBeNull();
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(width);

@@ -81,13 +81,19 @@
 .fd-tailnet > button {
   justify-self: start;
 }
-/* The two settings of the card: sections under a faint rule. */
+/* A plain button on the page --bg keeps the light hairline, the same as Browse… in a settings
+   folder row (settings.css .fd-set-grid .fd-folder-row > button). */
+.fd-tailnet > button:not([class]),
+.fd-tailnet > button:not([class]):hover:not(:disabled) {
+  border-color: var(--btn-edge);
+}
+/* The two settings of the card: fields of one section, without a rule between them (like the
+   fields of a station tab section); the .fd-tailnet grid gap spaces them as .fd-set-grid rows. */
 .fd-tailnet-auto,
 .fd-tailnet-cert {
   display: grid;
   gap: var(--sp-1);
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-soft);
+  padding-top: 0;
 }
 /* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The row names take the
    label column of the field grid, so that "Board address" starts on the switch column; the

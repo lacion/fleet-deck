@@ -5,8 +5,8 @@ import { artifactHref, publishable } from '../artifacts/kinds';
 import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { sizeText } from '../spawn/nativeSessions';
-import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
+import { sizeText } from '../ui/format';
+import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
 import { type ChangedFiles, type ChangeKind, type FileChange, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import {
@@ -307,35 +307,38 @@ export function FilesPanel({
       </div>
       {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
-        <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
-          <Icon of={Folder} size={14} />
-          {root ? (
-            <>
-              {folderName(root)}
-              <span className="fd-vh">, root folder</span>
-            </>
-          ) : (
-            'Root folder'
-          )}
-        </button>
+        {/* A path, not an entry: the open folder icon, and a "/" after each folder. */}
+        <span className="fd-files-crumb-item">
+          <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
+            <Icon of={FolderOpen} size={14} />
+            {root ? (
+              <>
+                {folderName(root)}
+                <span className="fd-vh">, root folder</span>
+              </>
+            ) : (
+              'Root folder'
+            )}
+          </button>
+          <span className="fd-files-sep" aria-hidden="true">
+            /
+          </span>
+        </span>
         {segments.map((segment, n) => {
           const path = segments.slice(0, n + 1).join('/');
           return (
             <span key={path} className="fd-files-crumb-item">
-              <span className="fd-files-sep" aria-hidden="true">
-                /
-              </span>
               <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
                 {segment}
               </button>
+              <span className="fd-files-sep" aria-hidden="true">
+                /
+              </span>
             </span>
           );
         })}
         {fileName !== null ? (
           <span className="fd-files-crumb-item">
-            <span className="fd-files-sep" aria-hidden="true">
-              /
-            </span>
             <span className="fd-files-file">{fileName}</span>
           </span>
         ) : null}

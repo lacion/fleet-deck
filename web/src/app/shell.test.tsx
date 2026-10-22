@@ -13,11 +13,17 @@ describe('preferences row (DL-141)', () => {
   test('three theme buttons and a compact switch, each with a name and a pressed state', () => {
     const html = renderToStaticMarkup(<PrefsRow />);
     expect(html).toContain('role="group" aria-label="Theme"');
-    for (const name of ['Light theme', 'Dark theme', 'System theme', 'Compact cards']) {
+    for (const name of [
+      'Light theme',
+      'Dark theme',
+      'System theme',
+      'Compact cards',
+      'Reduce motion',
+    ]) {
       expect(html).toContain(`aria-label="${name}"`);
       expect(html).toContain(`title="${name}"`);
     }
-    expect(html.match(/aria-pressed/g)?.length).toBe(4);
+    expect(html.match(/aria-pressed/g)?.length).toBe(5);
     expect(html).toContain('aria-pressed="true" aria-label="System theme"');
   });
 
@@ -54,7 +60,7 @@ describe('preferences row (DL-141)', () => {
 
   test('the theme icons are 14px in the sidebar and 16px in the touch rows of More', () => {
     const sidebar = renderToStaticMarkup(<PrefsRow />);
-    expect(sidebar.match(/width="14"/g)?.length).toBe(4);
+    expect(sidebar.match(/width="14"/g)?.length).toBe(5);
     const more = renderToStaticMarkup(<More stationCount={0} terminalCount={0} />);
     const prefs = more.slice(more.indexOf('class="fd-sidebar-prefs"'));
     expect(prefs.slice(0, prefs.indexOf('</div></div>')).match(/width="16"/g)?.length).toBe(3);
@@ -65,6 +71,17 @@ describe('preferences row (DL-141)', () => {
     expect(html).not.toContain('fd-sidebar-density');
     expect(html).toMatch(
       /<label class="fd-more-row fd-more-switch">.*Compact cards<\/span><input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/,
+    );
+  });
+
+  test('Reduce motion: a toggle in the sidebar row, a switch on the More page (WCAG 2.2.2)', () => {
+    expect(renderToStaticMarkup(<PrefsRow />)).toContain(
+      'class="fd-iconbtn fd-sm fd-sidebar-motion" aria-pressed="false" aria-label="Reduce motion"',
+    );
+    const html = renderToStaticMarkup(<More stationCount={0} terminalCount={0} />);
+    expect(html).not.toContain('fd-sidebar-motion');
+    expect(html).toMatch(
+      /<label class="fd-more-row fd-more-switch">.*Reduce motion<\/span><input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/,
     );
   });
 });

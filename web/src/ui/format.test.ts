@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { errorSentence, isRiskyMode, modelFamily, plainLine, shortModel } from './format';
+import { errorSentence, isRiskyMode, modelFamily, plainLine, shortModel, sizeText } from './format';
 
 describe('shortModel', () => {
   test('a Claude id becomes the family and the version', () => {
@@ -89,4 +89,12 @@ describe('isRiskyMode (DL-171)', () => {
       expect(isRiskyMode(m)).toBe(false);
     }
   });
+});
+
+test('sizeText uses decimal units', () => {
+  expect(sizeText(512)).toBe('512 B');
+  expect(sizeText(3200)).toBe('3.2 KB');
+  expect(sizeText(12_345)).toBe('12.3 KB');
+  expect(sizeText(4_500_000)).toBe('4.5 MB');
+  expect(sizeText(1_200_000_000)).toBe('1.2 GB');
 });

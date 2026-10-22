@@ -5,6 +5,7 @@ import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
+import { PathTail } from '../chat/PathTail';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
@@ -146,7 +147,7 @@ export function ChangedList({
         <li key={path}>
           <button type="button" className="fd-ghost" title={path} onClick={() => onOpen(path)}>
             <code className="fd-props-file">
-              <bdi>{path}</bdi>
+              <PathTail path={path} />
             </code>
             <Icon of={ChevronRight} size={14} />
           </button>

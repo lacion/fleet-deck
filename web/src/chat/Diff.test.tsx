@@ -61,7 +61,7 @@ describe('Diff', () => {
   test('a file is a header row: the path and its +/−, without the git plumbing', () => {
     const html = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
     expect(html).toContain(
-      '<span class="fd-dl-path"><span class="fd-dl-dir">src/</span><span class="fd-dl-base">a.ts</span></span>',
+      '<span class="fd-dl-path"><span class="fd-dl-dir"><bdi>src/</bdi></span><span class="fd-dl-base">a.ts</span></span>',
     );
     expect(html).toContain('<span data-sign="add">+1</span><span data-sign="del">−1</span>');
     expect(html).not.toContain('fd-dl-file');
@@ -100,7 +100,7 @@ describe('Diff', () => {
       <Diff patch={patch} truncated={false} id="t1" onOpenFile={() => {}} />,
     );
     expect(html).toContain(
-      '<button type="button" class="fd-dl-file" aria-label="src/a.ts"><span class="fd-dl-dir">src/</span><span class="fd-dl-base">a.ts</span></button>',
+      '<button type="button" class="fd-dl-file" aria-label="src/a.ts"><span class="fd-dl-dir"><bdi>src/</bdi></span><span class="fd-dl-base">a.ts</span></button>',
     );
     // only the file header has a button
     expect(html.match(/fd-dl-file/g)).toHaveLength(1);

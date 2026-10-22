@@ -592,9 +592,11 @@ export function Sidebar({
             icon and "/" until it has the focus or a text; then New session folds to its icon. */}
         <div className="fd-sidebar-actions" data-query={query === '' ? undefined : 'true'}>
           {full && !guest ? (
+            // On #/new the button is the current nav row, not a second general primary (§2.2).
             <button
               type="button"
-              className="fd-primary fd-newbtn"
+              className={route.name === 'new' ? 'fd-newbtn fd-selbar' : 'fd-primary fd-newbtn'}
+              aria-current={route.name === 'new' ? 'page' : undefined}
               onClick={() => onNavigate({ name: 'new' })}
             >
               <Icon of={Plus} /> <span className="fd-newbtn-text">New session</span>{' '}

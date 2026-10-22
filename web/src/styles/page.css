@@ -6,7 +6,7 @@
 /* ── the page frame ─────────────────────────────────────────────── */
 .fd-page {
   --page-w: 1040px;
-  --page-pad: var(--sp-6);
+  --page-pad: var(--sp-5);
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr);

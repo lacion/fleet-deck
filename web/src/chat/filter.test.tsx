@@ -305,7 +305,7 @@ describe('the bar and the compact row', () => {
   test('the bar is a Show menu with the group inside, and counts the hidden kinds', () => {
     const all = view([message, read(1)], DEFAULT_FILTER);
     expect(all).toContain('<details class="fd-menu fd-chat-show">');
-    expect(all).toMatch(/<summary class="fd-ghost fd-sm">Show<\/summary>/);
+    expect(all).toMatch(/<summary class="fd-ghost fd-sm" data-variant="toggle">Show<\/summary>/);
     expect(all).toMatch(
       /<div class="fd-menu-body" role="group" aria-label="Chat filters">.*Compact tools/,
     );
@@ -313,7 +313,9 @@ describe('the bar and the compact row', () => {
       ...DEFAULT_FILTER,
       show: { ...DEFAULT_FILTER.show, reads: false, thinking: false },
     });
-    expect(hidden).toMatch(/<summary class="fd-ghost fd-sm">Show \(2 hidden\)<\/summary>/);
+    expect(hidden).toMatch(
+      /<summary class="fd-ghost fd-sm" data-variant="toggle">Show \(2 hidden\)<\/summary>/,
+    );
   });
 
   test('there is no bar for an empty chat', () => {

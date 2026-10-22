@@ -1,7 +1,7 @@
-import { Icon, type LucideIcon, Monitor, Moon, Rows3, Sun } from '../ui/icons';
+import { CirclePause, Icon, type LucideIcon, Monitor, Moon, Rows3, Sun } from '../ui/icons';
 import { useDensity } from '../ui/density';
 import type { StationView } from '../gen';
-import { type ThemeChoice, useTheme } from '../ui/theme';
+import { type ThemeChoice, useReduceMotion, useTheme } from '../ui/theme';
 import { type GetPalette, OmarchyThemeSelect } from './OmarchyTheme';
 
 const THEMES: readonly {
@@ -33,6 +33,7 @@ export function PrefsRow({
   const [theme, setTheme] = useTheme();
   const [density, setDensity] = useDensity();
   const compact = density === 'compact';
+  const [reduce, setReduce] = useReduceMotion();
   return (
     <div className="fd-sidebar-prefs">
       <div className="fd-seg" role="group" aria-label="Theme">
@@ -63,6 +64,19 @@ export function PrefsRow({
           <Icon of={Rows3} size={iconSize} />
         </button>
       ) : null}
+      {/* Reduce motion stops the needs-you glow and the working arc (WCAG 2.2.2). */}
+      {withDensity ? (
+        <button
+          type="button"
+          className="fd-iconbtn fd-sm fd-sidebar-motion"
+          aria-pressed={reduce}
+          aria-label="Reduce motion"
+          title="Reduce motion"
+          onClick={() => setReduce(!reduce)}
+        >
+          <Icon of={CirclePause} size={iconSize} />
+        </button>
+      ) : null}
       {getPalette === undefined ? null : (
         <OmarchyThemeSelect stations={stations} getPalette={getPalette} />
       )}
@@ -87,6 +101,30 @@ export function CompactSwitch() {
         aria-checked={compact}
         checked={compact}
         onChange={(e) => setDensity(e.target.checked ? 'compact' : 'cozy')}
+      />
+    </label>
+  );
+}
+
+/**
+ * The Reduce motion switch of the More page (WCAG 2.2.2): it stops the needs-you glow and the
+ * working arc on this browser, also without the OS setting.
+ */
+export function MotionSwitch() {
+  const [reduce, setReduce] = useReduceMotion();
+  return (
+    <label className="fd-more-row fd-more-switch">
+      <span className="fd-more-rowlabel">
+        <Icon of={CirclePause} />
+        Reduce motion
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        className="fd-switch"
+        aria-checked={reduce}
+        checked={reduce}
+        onChange={(e) => setReduce(e.target.checked)}
       />
     </label>
   );

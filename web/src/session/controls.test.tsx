@@ -1,10 +1,10 @@
-// DL-140: the session controls (controller flags, header, approval dock, composer, slash menu).
+// DL-140: the session controls (controller flags, header, composer, slash menu); the approval
+// dock is in approvalDock.test.tsx.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckSession, ModelChoice, OpenRequest } from '../gen';
+import type { DeckSession, ModelChoice } from '../gen';
 import { claudeCaps, minimalCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
-import { ApprovalDock } from './ApprovalDock';
 import { matchAt } from './at';
 import { sessionActions } from './commands';
 import { Composer, ComposerMenu, searchFailure } from './Composer';
@@ -603,53 +603,6 @@ describe('session header (DL-140)', () => {
     expect(text(5 * 60_000 + 30_000)).toContain('slow down · retry in 6 min');
     expect(text(40_000)).toMatch(/slow down · retry in \d+ s/);
     expect(text(-1000)).not.toContain('retry in');
-  });
-});
-
-function request(id: string): OpenRequest {
-  return {
-    request_id: id,
-    node_id: null,
-    request_kind: 'tool',
-    title: `Run ${id}`,
-    details: 'rm -rf dist',
-    input: null,
-    options: [
-      { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
-      { option_id: 'deny', label: 'Deny', kind: 'reject_once' },
-    ],
-    response: 'rpc_reply',
-    requested_at: 1,
-  } as unknown as OpenRequest;
-}
-
-describe('approval dock (DL-140)', () => {
-  const dock = (requests: OpenRequest[], answerable = true, enabled = true) =>
-    renderToStaticMarkup(
-      <ApprovalDock
-        requests={requests}
-        answerable={answerable}
-        enabled={enabled}
-        busy={false}
-        onAnswer={() => {}}
-      />,
-    );
-
-  test('no request renders nothing', () => {
-    expect(dock([])).toBe('');
-  });
-
-  test('two requests show the count and one primary option each', () => {
-    const html = dock([request('r1'), request('r2')]);
-    expect(html).toContain('Needs you · 2');
-    expect(html).toContain('aria-label="Needs you"');
-    expect(html.match(/class="fd-decide"/g)).toHaveLength(2);
-    expect(html).toContain('Deny');
-  });
-
-  test('without the approvals capability or the scope it says why', () => {
-    expect(dock([request('r1')], false)).toContain('This provider has no approval controls.');
-    expect(dock([request('r1')], true, false)).toContain('Answering needs the approve scope.');
   });
 });
 

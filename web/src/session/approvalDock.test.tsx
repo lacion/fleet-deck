@@ -1,0 +1,73 @@
+// DL-140: the approval dock of a session (moved out of controls.test.tsx, which passed 800 lines).
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { OpenRequest } from '../gen';
+import { ApprovalDock } from './ApprovalDock';
+
+function request(id: string, extra: Partial<OpenRequest> = {}): OpenRequest {
+  return {
+    request_id: id,
+    node_id: null,
+    request_kind: 'tool',
+    title: `Run ${id}`,
+    details: 'rm -rf dist',
+    input: null,
+    options: [
+      { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+      { option_id: 'deny', label: 'Deny', kind: 'deny' },
+    ],
+    response: 'rpc_reply',
+    requested_at: 1,
+    ...extra,
+  };
+}
+
+describe('approval dock (DL-140)', () => {
+  const dock = (requests: OpenRequest[], answerable = true, enabled = true) =>
+    renderToStaticMarkup(
+      <ApprovalDock
+        requests={requests}
+        answerable={answerable}
+        enabled={enabled}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+
+  test('no request renders nothing', () => {
+    expect(dock([])).toBe('');
+  });
+
+  test('two requests show the count and one primary option each', () => {
+    const html = dock([request('r1'), request('r2')]);
+    expect(html).toContain('Needs you · 2');
+    expect(html).toContain('aria-label="Needs you"');
+    expect(html.match(/class="fd-decide"/g)).toHaveLength(2);
+    expect(html).toContain('Deny');
+  });
+
+  test('a deny option is a danger button', () => {
+    expect(dock([request('r1')])).toContain(
+      '<button type="button" class="fd-danger">Deny</button>',
+    );
+  });
+
+  test('a permission request names its kind and its age', () => {
+    const html = dock([request('r1', { requested_at: Date.now() - 5 * 60_000 })]);
+    expect(html).toContain('Permission request');
+    expect(html).toContain('<span class="fd-q-dock-age">5 min</span>');
+  });
+
+  test('the reason line shows the text of input.description, and only a text', () => {
+    const reason = dock([request('r1', { input: { description: 'Runs the test suite' } })]);
+    expect(reason).toContain('<p class="fd-q-dock-reason">Runs the test suite</p>');
+    for (const input of [{ description: '' }, { description: '   ' }, 'Runs', ['Runs'], null]) {
+      expect(dock([request('r1', { input })])).not.toContain('fd-q-dock-reason');
+    }
+  });
+
+  test('without the approvals capability or the scope it says why', () => {
+    expect(dock([request('r1')], false)).toContain('This provider has no approval controls.');
+    expect(dock([request('r1')], true, false)).toContain('Answering needs the approve scope.');
+  });
+});

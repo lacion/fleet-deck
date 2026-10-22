@@ -177,6 +177,12 @@ export function PlanLibrary({
           {plans.map((p) => {
             const title = planTitle(p.markdown);
             const proposer = p.status === 'proposed' ? liveProposer(p, sessions) : undefined;
+            // The session link names the session by its callsign: its title is often the plan
+            // title (the heading above). The full title stays in the tooltip.
+            const sessionLabel = p.session_title ?? p.session_id;
+            const callsign = sessions.find(
+              (c) => c.station_id === p.station_id && c.summary.session_id === p.session_id,
+            )?.summary.callsign;
             return (
               <li key={p.id} data-plan-status={p.status}>
                 <article aria-label={`Plan ${title}`}>
@@ -195,9 +201,14 @@ export function PlanLibrary({
                     <button
                       type="button"
                       className="fd-link"
+                      title={sessionLabel}
                       onClick={() => onOpen({ station_id: p.station_id, session_id: p.session_id })}
                     >
-                      {p.session_title ?? p.session_id}
+                      {callsign == null ? (
+                        sessionLabel
+                      ) : (
+                        <span className="fd-callsign">{callsign}</span>
+                      )}
                     </button>
                   </p>
                   <details className="fd-plan-fold">

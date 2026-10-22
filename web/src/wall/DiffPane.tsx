@@ -21,7 +21,11 @@ function PathText({ path }: { readonly path: string }) {
   const cut = path.lastIndexOf('/') + 1;
   return (
     <>
-      {cut > 0 ? <span className="fd-dl-dir">{path.slice(0, cut)}</span> : null}
+      {cut > 0 ? (
+        <span className="fd-dl-dir">
+          <bdi>{path.slice(0, cut)}</bdi>
+        </span>
+      ) : null}
       <span className="fd-dl-base">{path.slice(cut)}</span>
     </>
   );

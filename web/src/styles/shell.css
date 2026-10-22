@@ -199,6 +199,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: auto;
 }
 
+/* On the New session route the button is the current nav row, not a second general primary
+   (§2.2): the --selected-bg fill and the 2px --focus bar of .fd-selbar. */
+.fd-newbtn[aria-current="page"],
+.fd-newbtn[aria-current="page"]:hover:not(:disabled) {
+  background: var(--selected-bg);
+  border-color: transparent;
+  box-shadow: var(--selected-lift);
+  color: var(--text);
+}
+
 .fd-newbtn-text {
   min-width: 0;
   overflow: hidden;
@@ -972,6 +982,7 @@ button.fd-phonebar-back {
   .fd-notice,
   .fd-hintnotice {
     border-left: 3px solid CanvasText;
+    border-radius: 0 var(--r-card) var(--r-card) 0;
   }
 }
 

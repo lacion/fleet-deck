@@ -173,8 +173,7 @@ test('08b new session other model', async ({ page }) => {
   await goTo(page, '#/new');
   const form = page.getByRole('region', { name: 'New session' });
   await expect(form).toBeVisible();
-  await form.getByLabel('Model (optional)').selectOption('__other__');
-  await form.getByLabel('Model id or alias').fill('sonnet');
+  await form.getByLabel('Model (optional)').fill('sonnet');
   await themed(page, '08b', 'new-session-other-model');
 });
 

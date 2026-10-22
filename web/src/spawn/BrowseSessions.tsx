@@ -7,6 +7,7 @@ import { formatHash } from '../app/routes';
 import { HistoryItemView } from '../chat/HistoryBlock';
 import { historyStateLine } from '../chat/history';
 import type { NativePreview, NativeSession, NativeSessionList, StationProvider } from '../gen';
+import { sizeText } from '../ui/format';
 import { Icon, X } from '../ui/icons';
 import {
   ageText,
@@ -22,7 +23,6 @@ import {
   type NativeRow,
   nativeError,
   previewQuery,
-  sizeText,
   unverifiedNote,
 } from './nativeSessions';
 

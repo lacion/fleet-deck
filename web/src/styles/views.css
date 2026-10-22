@@ -855,28 +855,3 @@
     flex: 1 1 100%;
   }
 }
-
-/* ── the Files panel: the files changed since the session started ── */
-.fd-files-changed {
-  display: grid;
-  gap: 4px;
-}
-
-.fd-files-changed h4 {
-  margin: 0;
-}
-
-.fd-files-changed .fd-files-name {
-  flex: 0 0 auto;
-  max-width: 100%;
-}
-
-.fd-files-changed .fd-files-dir {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dim);
-  font-size: var(--fs-data);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}

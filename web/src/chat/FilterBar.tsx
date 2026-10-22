@@ -32,7 +32,7 @@ export function FilterBar(props: {
         onKeyDown={onKeyDown}
         onToggle={(event) => setOpen(event.currentTarget.open)}
       >
-        <summary className="fd-ghost fd-sm">
+        <summary className="fd-ghost fd-sm" data-variant="toggle">
           {hidden > 0 ? `Show (${hidden} hidden)` : 'Show'}
         </summary>
         <div className="fd-menu-body" role="group" aria-label="Chat filters">

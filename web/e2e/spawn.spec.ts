@@ -108,8 +108,7 @@ test('a session starts from the form with a picked directory and opens', async (
   const form = page.getByRole('region', { name: 'New session' });
   await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
   await form.getByLabel('Permission mode').selectOption('plan');
-  await form.getByLabel('Model (optional)').selectOption('__other__');
-  await form.getByLabel('Model id or alias').fill('sonnet');
+  await form.getByLabel('Model (optional)').fill('sonnet');
   await form.getByLabel('Title (optional)').fill('Fix the login');
   await form.getByLabel('What should the agent do? (optional)').fill('Find the bug in login.ts');
   expect(await fitsWidth(page)).toBe(true);

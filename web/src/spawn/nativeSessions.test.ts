@@ -14,7 +14,6 @@ import {
   nativeActions,
   nativeError,
   previewQuery,
-  sizeText,
   unverifiedNote,
 } from './nativeSessions';
 
@@ -182,10 +181,6 @@ describe('the list view model (B7)', () => {
     expect(ageText(1_000_000, 1_000_000 + 5 * 60_000)).toBe('5 min ago');
     expect(ageText(1_000_000, 1_000_000 + 2 * 86_400_000)).toBe('2 d ago');
     expect(ageText(1_000_000, 1_000_000 + 1000)).toBe('now');
-    expect(sizeText(512)).toBe('512 B');
-    expect(sizeText(12_345)).toBe('12.3 KB');
-    expect(sizeText(4_500_000)).toBe('4.5 MB');
-    expect(sizeText(1_200_000_000)).toBe('1.2 GB');
   });
 });
 

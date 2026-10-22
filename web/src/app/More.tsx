@@ -25,7 +25,7 @@ import type { StationView } from '../gen';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { Page } from '../ui/page';
-import { CompactSwitch, PrefsRow } from './Prefs';
+import { CompactSwitch, MotionSwitch, PrefsRow } from './Prefs';
 
 type Props = {
   readonly stationCount: number;
@@ -178,6 +178,9 @@ export function More({
         </li>
         <li>
           <CompactSwitch />
+        </li>
+        <li>
+          <MotionSwitch />
         </li>
         {chrome?.addDevice === undefined ? null : (
           <li>

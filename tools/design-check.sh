@@ -120,7 +120,8 @@ BEGIN { nallow = split(ALLOW, allow, "|") }
 #   .fd-cchip               a comment reference chip inside chat prose (session.css)
 #   .fd-plan-meta .fd-link  a text button inside the meta line of a plan (stations.css)
 #   .fd-dl-n                the line-number comment button in a diff gutter (session.css, chat.css)
-tap_allow='.fd-cchip|.fd-plan-meta .fd-link|.fd-dl-n'
+#   .fd-namebtn             a session name button inside a line of text (home.css: radar, activity feed)
+tap_allow='.fd-cchip|.fd-plan-meta .fd-link|.fd-dl-n|.fd-namebtn'
 tap_out=""
 for f in $(find "$styles" -name '*.css' ! -name 'base.css' ! -name 'tokens.css' | sort); do
     tap_out="$tap_out$(awk -v ALLOW="$tap_allow" "$tap_awk" "$f")

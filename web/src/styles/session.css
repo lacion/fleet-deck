@@ -2045,10 +2045,11 @@ button.fd-cchip:hover:not(:disabled) {
   border-color: transparent;
   color: var(--text);
 }
-/* The root crumb is the folder's name: a path in the mono of the other crumbs and the entries,
-   in --text and 600 so that it reads as the root. */
+/* The root crumb is the folder's name: a path in the mono of the other crumbs, in the --dim of
+   the path (not the --text of the entries under it) with an open folder icon and a "/", so that
+   it reads as the path of the list, not as one more entry. */
 .fd-files-crumb.fd-files-root {
-  color: var(--text);
+  color: var(--dim);
   font-weight: 600;
 }
 .fd-files-root > .fd-icon {

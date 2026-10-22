@@ -252,3 +252,43 @@ test('a file name of a diff opens the file in the Files tab', async ({ page }) =
   expect(deck.calls.filter((c) => c.path === `/api/stations/${ST}/files/list`)).toHaveLength(0);
   expect(await fitsWidth(page)).toBe(true);
 });
+
+test('the turn diff button loads, shows and hides the diff of its turn', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.sessions = [session(1)];
+  const path = `/api/stations/${ST}/sessions/s1/turns/t2/diff`;
+  deck.on(path, () => ({
+    status: 200,
+    body: {
+      session_id: 's1',
+      turn_id: 't2',
+      from_commit: 't2-start',
+      to_commit: 't2-end',
+      summary: { files_changed: 1, insertions: 1, deletions: 0 },
+      patch: '+edited',
+      truncated: false,
+    },
+  }));
+  // The first load waits until the test releases it: the button shows its loading state.
+  const release = deck.hold(path);
+  const view = await setUp(page, deck);
+  await view.getByRole('tab', { name: /^Changes/ }).click();
+  const t2 = view.getByRole('region', { name: 'Turns' }).locator('[data-turn="t2"]');
+  const button = t2.locator('button.fd-turn-diff');
+  await expect(button).toHaveText('Show the diff');
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  await button.click();
+  await expect(button).toHaveText('Loading…');
+  await expect(button).toHaveAttribute('aria-busy', 'true');
+  await expect(t2.locator('[data-diff="t2"]')).toHaveCount(0);
+  release();
+  await expect(button).toHaveText('Hide the diff');
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
+  await expect(button).not.toHaveAttribute('aria-busy');
+  await expect(t2.locator('[data-diff="t2"]')).toHaveText('+edited');
+  // A second press hides the diff.
+  await button.click();
+  await expect(button).toHaveText('Show the diff');
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  await expect(t2.locator('[data-diff="t2"]')).toHaveCount(0);
+});

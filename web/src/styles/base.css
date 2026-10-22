@@ -1470,6 +1470,12 @@ details[open] > summary[data-variant="toggle"]::after {
   .fd-meter > * {
     forced-color-adjust: none;
   }
+  /* The group edge of a segmented control: forced colors drop the --surface fill of the track,
+     and the unpressed segments looked like plain text. */
+  .fd-seg {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
   /* A selection drawn by a fill or a box-shadow (a pressed segment or chip, the selected tab, the
      current nav row or session row) gets a Highlight ring; the focus ring stays outside it. */
   .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
