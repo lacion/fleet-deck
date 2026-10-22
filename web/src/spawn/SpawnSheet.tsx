@@ -1,7 +1,7 @@
 // The presentational parts of the New session sheet (DESIGN-SYSTEM.md §4.6): the breadcrumb head,
 // the segmented radio controls, the station pills, the clone fields and the footer. Moved out of
 // `SpawnForm.tsx` for the module size rule; the form keeps every state and every handler.
-import { type ReactNode, useId } from 'react';
+import { type ReactNode, useEffect, useId, useState } from 'react';
 import type { StationView } from '../gen';
 import { ChevronRight, Icon, Server } from '../ui/icons';
 import { submitKeyHint } from './keyHint';
@@ -77,7 +77,7 @@ function freeSlots(station: StationView): number | null {
 
 /**
  * The stations as radio pills (name, reach, "9 free"), and "Auto (best station)" after them when
- * the deck places (FG-6). The chosen pill is `--raised-hi` with a `--focus` ring.
+ * the deck places (FG-6). The chosen pill has the pressed `.fd-seg` look.
  */
 export function StationPills({
   targets,
@@ -205,6 +205,29 @@ export function CloneFields({
 }
 
 /**
+ * True while the page can scroll further down. On a phone the page scrolls under the sticky footer
+ * of the sheet; the footer then fades the form above its rule (`data-more`, spawn.css).
+ */
+function usePageMoreBelow(): boolean {
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const page = document.documentElement;
+    const update = () => setMore(window.scrollY + window.innerHeight < page.scrollHeight - 1);
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    sizes?.observe(document.body);
+    return () => {
+      window.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      sizes?.disconnect();
+    };
+  }, []);
+  return more;
+}
+
+/**
  * The footer of the sheet, one line: the Batch switch at the left; the outcome, and the missing
  * steps that have no field of their own to show them; Cancel and the primary start button (kbd ⌘↵
  * or Ctrl+↵). On a phone the directory note (`need`) sits here too, in view above the sticky
@@ -241,8 +264,9 @@ export function SpawnFoot({
   readonly disabled: boolean;
   readonly label: string;
 }) {
+  const more = usePageMoreBelow();
   return (
-    <div className="fd-spawn-foot">
+    <div className="fd-spawn-foot" data-more={more ? 'true' : undefined}>
       {batchShown ? (
         <label className="fd-spawn-batch">
           <input

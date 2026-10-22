@@ -1,10 +1,13 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import type { ModelChoice } from '../gen';
 import { Icon, type LucideIcon, Sparkles } from '../ui/icons';
 
 const OTHER = '__other__';
 
-/** Where the list of models comes from: the title of the select. */
+/**
+ * Where the list of models comes from: the tooltip of the select and, for a touch screen and a
+ * screen reader, its accessible description (a hidden note).
+ */
 const FROM = 'From the last session of this provider on this station.';
 
 /**
@@ -39,6 +42,7 @@ export function ModelField(props: {
   onChange: (model: string) => void;
 }) {
   const { value, models, onChange } = props;
+  const noteId = useId();
   // A value that is not in the list (typed before a station change) stays visible under "Other…".
   const [other, setOther] = useState(
     () => value !== '' && !(models ?? []).some((m) => m.value === value),
@@ -50,6 +54,7 @@ export function ModelField(props: {
           aria-label="Model (optional)"
           className="fd-spawn-pill"
           title={models === null ? 'Model' : FROM}
+          aria-describedby={models === null ? undefined : noteId}
           value={other ? OTHER : value}
           onChange={(event) => {
             const next = event.target.value;
@@ -71,6 +76,11 @@ export function ModelField(props: {
           <option value={OTHER}>Other…</option>
         </select>
       </PillWrap>
+      {models === null ? null : (
+        <span id={noteId} className="fd-vh">
+          {FROM}
+        </span>
+      )}
       {other ? (
         <input
           className="fd-spawn-pill fd-spawn-model"
