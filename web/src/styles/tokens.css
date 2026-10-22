@@ -186,6 +186,8 @@
   --fs-page: 20px; /* page title (wide, weight 640) */
   --fs-hero: 26px; /* phone large title */
   --fs-display: 56px; /* display numbers read across a room: wall ambient counts, the pairing code */
+  --fs-sheet-title: 18px; /* the title field of the New session sheet (§4.6) */
+  --fs-sheet-task: 15px; /* the task field of the New session sheet (§4.6): max(it, --fs-field) */
   --fs-12: 12px; /* kept for old CSS */
   --fs-13: 13px;
   --fs-15: 15px;
