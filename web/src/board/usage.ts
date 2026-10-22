@@ -49,7 +49,34 @@ export function totalText(t: UsageTotal, format: (n: number) => string): string 
 }
 
 export const tokens = (n: number): string => n.toLocaleString('en-US');
-export const dollars = (n: number): string => `$${n.toFixed(2)}`;
+
+const usd = (digits: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+const CENTS = usd(2);
+const WHOLE = usd(0);
+
+/** A cost with digit groups: "$1.20", "$812.40"; from $1,000 whole dollars ("$51,736"). */
+export const dollars = (n: number): string => (Math.abs(n) >= 1000 ? WHOLE : CENTS).format(n);
+
+/** A cost to the cent with digit groups ("$51,735.86"): the title of a rounded `dollars`. */
+export const exactDollars = (n: number): string => CENTS.format(n);
+
+/**
+ * The words of the input token total. Claude reports only the input that the cache did not hold
+ * (its cache reads and writes are other counts), so a fleet of Claude sessions says "new input
+ * tokens"; Codex counts the cached input too.
+ */
+export function inputLabel(sessions: readonly DeckSession[]): string {
+  const known = sessions.filter((s) => s.summary.usage.input_tokens !== null);
+  return known.length > 0 && known.every((s) => s.summary.provider === 'claude')
+    ? 'new input tokens'
+    : 'input tokens';
+}
 
 /** The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); `null` when unknown. */
 export function costText(usage: Usage, format: (n: number) => string = dollars): string | null {

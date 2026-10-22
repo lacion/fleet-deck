@@ -3,11 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import type { DeckSession } from '../gen';
 import { card, station } from '../testing/fleet';
+import { UsageGlance } from './UsageGlance';
 import { UsageMeters } from './UsageMeters';
 import {
   costText,
   dollars,
+  exactDollars,
   fleetUsage,
+  inputLabel,
   instanceLimit,
   limitChip,
   limitSuffix,
@@ -195,5 +198,43 @@ describe('usage meters (DL-303)', () => {
       <UsageMeters sessions={[sessions[1] as DeckSession]} stations={[]} now={NOW} />,
     );
     expect(reported).toContain('<dd>$1.20</dd>');
+  });
+});
+
+describe('the usage glance totals (live UI audit)', () => {
+  const big = (id: string, provider: 'claude' | 'codex' = 'claude') =>
+    card(id, 'working', 'station-a', {
+      provider,
+      usage: {
+        input_tokens: 1550,
+        output_tokens: 750_000,
+        cost_usd: 25_867.93,
+        cost_inferred: false,
+      },
+    });
+
+  test('a cost has digit groups, whole dollars from $1,000, and its cents in the exact form', () => {
+    expect(dollars(1.2)).toBe('$1.20');
+    expect(dollars(812.4)).toBe('$812.40');
+    expect(dollars(51_735.86)).toBe('$51,736');
+    expect(dollars(1_234_567.8)).toBe('$1,234,568');
+    expect(exactDollars(51_735.86)).toBe('$51,735.86');
+    expect(exactDollars(0)).toBe('$0.00');
+  });
+
+  test('Claude counts only new input: a Claude fleet says "new input tokens"', () => {
+    expect(inputLabel([big('a'), big('b')])).toBe('new input tokens');
+    expect(inputLabel([big('a'), big('c', 'codex')])).toBe('input tokens');
+    expect(inputLabel([])).toBe('input tokens');
+  });
+
+  test('the glance says its scope and keeps the exact values as titles', () => {
+    const html = renderToStaticMarkup(
+      <UsageGlance sessions={[big('a'), big('b')]} stations={[station()]} now={NOW} />,
+    );
+    expect(html).toContain('<p class="fd-glance-span">2 sessions · all time</p>');
+    expect(html).toContain('<dd title="$51,735.86">$51,736</dd>');
+    expect(html).toContain('<dd title="1,500,000">1.5 M</dd>');
+    expect(html).toContain('<dt>new input tokens</dt>');
   });
 });

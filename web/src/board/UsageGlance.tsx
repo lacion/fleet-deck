@@ -4,7 +4,17 @@
 import type { DeckSession, StationView } from '../gen';
 import { Fuel, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
-import { dollars, fleetUsage, rateMeters, resetsText, scopeText, WARN_PERCENT } from './usage';
+import {
+  dollars,
+  exactDollars,
+  fleetUsage,
+  inputLabel,
+  rateMeters,
+  resetsText,
+  scopeText,
+  tokens,
+  WARN_PERCENT,
+} from './usage';
 
 /** How many windows the glance shows (the tightest first). */
 const SHOWN = 3;
@@ -34,13 +44,16 @@ export function UsageGlance({
   // The station name tells two accounts apart only when several stations report limits.
   const manyStations = new Set(known.map((m) => m.stationId)).size > 1;
   const usage = fleetUsage(sessions);
+  const approx = usage.costInferred ? '≈ ' : '';
+  // Each total has its exact value as its title: the row shows it short ("1.5 M", "$51,736").
   const totals = [
-    { label: 'input tokens', value: usage.input.known, text: compactCount },
-    { label: 'output tokens', value: usage.output.known, text: compactCount },
+    { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
+    { label: 'output tokens', value: usage.output.known, text: compactCount, exact: tokens },
     {
       label: 'cost',
       value: usage.cost.known,
-      text: (n: number) => `${usage.costInferred ? '≈ ' : ''}${dollars(n)}`,
+      text: (n: number) => `${approx}${dollars(n)}`,
+      exact: (n: number) => `${approx}${exactDollars(n)}`,
     },
   ].filter((t) => t.value !== null);
   if (meters.length === 0 && totals.length === 0) return null;
@@ -76,14 +89,22 @@ export function UsageGlance({
         </ul>
       )}
       {totals.length === 0 ? null : (
-        <dl className="fd-glance-totals">
-          {totals.map((t) => (
-            <div key={t.label}>
-              <dt>{t.label}</dt>
-              <dd>{t.value === null ? null : t.text(t.value)}</dd>
-            </div>
-          ))}
-        </dl>
+        <>
+          {/* The scope of the totals: the shown sessions, since they started. */}
+          <p className="fd-glance-span">
+            {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} · all time
+          </p>
+          <dl className="fd-glance-totals">
+            {totals.map((t) => (
+              <div key={t.label}>
+                <dt>{t.label}</dt>
+                <dd title={t.value === null ? undefined : t.exact(t.value)}>
+                  {t.value === null ? null : t.text(t.value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
     </div>
   );

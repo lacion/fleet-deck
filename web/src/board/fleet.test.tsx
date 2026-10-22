@@ -45,8 +45,10 @@ describe('fleet projections', () => {
       <FleetBoard sessions={cards} stations={[]} freshness="live" />,
     );
     // the card shows the deck status, not the activity "working" of the summary
+    expect(html).toMatch(/data-session="v"[^>]*data-status="verifying"/);
+    // A verifying strip has no "Verifying" note: its holder and glyph say it (§1 rule 7).
+    expect(html).not.toContain('data-note="verifying"');
     for (const [id, status, note] of [
-      ['v', 'verifying', 'Verifying'],
       ['u', 'unreachable', 'Station unreachable'],
       ['l', 'lost', 'Lost'],
     ])
@@ -544,7 +546,10 @@ describe('fleet cards, DL-141', () => {
     ]);
     expect(out.match(/fd-card-error">Try later\.</g)).toHaveLength(1);
     expect(out).toMatch(/data-session="i"[\s\S]*?fd-card-error/);
-    expect(out).toContain('Working</span>');
+    // A working strip without a tool, a focus line or a digest has an empty now field: the
+    // holder and the glyph already say "Working".
+    expect(out).toMatch(/data-session="w"[\s\S]*?<span class="fd-strip-now"><\/span>/);
+    expect(out).not.toContain('Working</span>');
   });
 
   test('a starred card sorts first in its column and shows a star', () => {
@@ -564,22 +569,26 @@ describe('fleet cards, DL-141', () => {
     expect(out.match(/class="fd-card-star"/g)).toHaveLength(1);
   });
 
-  test('the offline tools row shows Resume all and Clear; a cleared strip shows its Archived icon', () => {
+  test('the ended tools row shows Resume all and Archive; a cleared strip shows its Archived icon', () => {
     const ended = card('e', 'ended');
     const none = html([card('a')]);
     expect(none).not.toContain('Resume all');
-    expect(none).not.toContain('Offline sessions');
+    expect(none).not.toContain('All ended');
     const out = html([ended]);
-    expect(out).toContain('<span class="fd-label">Offline sessions</span>');
-    expect(out).toContain('Resume all (0)');
-    expect(out).toContain('Clear (1)');
+    // "All ended" (the Ended rows of the lanes); Archive is the word of the archived state; the
+    // counts are pills.
+    expect(out).toContain('<span class="fd-label">All ended</span>');
+    expect(out).toContain('</svg> Resume all <span class="fd-count">0</span></button>');
+    expect(out).toContain('</svg> Archive <span class="fd-count">1</span></button>');
+    expect(out).not.toContain('Clear');
+    expect(out).not.toContain('Offline sessions');
     expect(out).not.toContain('Restore all');
     archived.add(['station-a/e']);
     const shown = html([ended]);
     archived.remove(['station-a/e']);
     expect(shown).toContain('data-archived="true"');
     expect(shown).toContain('data-ico="archived" title="Archived"');
-    expect(shown).toContain('Clear (0)');
+    expect(shown).toContain('Archive <span class="fd-count">0</span>');
     expect(shown).toContain('Restore all');
   });
 

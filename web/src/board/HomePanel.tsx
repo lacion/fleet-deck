@@ -1,8 +1,10 @@
 // The secondary part of the fleet home's ops panel (DL-141, DESIGN-SYSTEM §4.4): Activity, Mail &
 // tasks, Assign and Usage. From 1280 px (the wide ops column) Mail & tasks is an always-visible
 // section, and Activity, Assign and All usage are ghost buttons in a foot row that open their panel above
-// it. Under 1280 px and on the phone the panel folds under the board as tabs.
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+// it: the sections scroll in `.fd-ops-body`, and the foot is the second row of the column, outside
+// the scroller, so it is always in view. Under 1280 px and on the phone the panel folds under the
+// board as tabs.
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
 import type { FleetActions } from '../fleet/fleet';
@@ -107,6 +109,7 @@ export function HomePanel({
   onState,
   wide = false,
   waiting = [],
+  lead,
 }: {
   hasAssign: boolean;
   /** A guest has no mail and no assign tab (the deck refuses the calls). */
@@ -126,6 +129,9 @@ export function HomePanel({
   wide?: boolean | undefined;
   /** The waiting mail rows of the Mail & tasks section (wide). */
   waiting?: readonly MailWaiting[] | undefined;
+  /** Wide: the sections above Mail & tasks (the usage glance, the conflict radar), at the top of
+   * the scrolling body of the column. */
+  lead?: ReactNode;
 }) {
   const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
   const seen = useRef<number | null>(null);
@@ -180,19 +186,22 @@ export function HomePanel({
   if (wide) {
     return (
       <>
-        {guest ? null : (
-          <div className="fd-ops-mail" ref={mailRef}>
-            <FleetPanel
-              actions={fleet}
-              sessions={sessions}
-              stations={stations}
-              layout="section"
-              version={fleetVersion(sessions)}
-              composeSeq={composeSeq}
-              waiting={waiting}
-            />
-          </div>
-        )}
+        <div className="fd-ops-body">
+          {lead}
+          {guest ? null : (
+            <div className="fd-ops-mail" ref={mailRef}>
+              <FleetPanel
+                actions={fleet}
+                sessions={sessions}
+                stations={stations}
+                layout="section"
+                version={fleetVersion(sessions)}
+                composeSeq={composeSeq}
+                waiting={waiting}
+              />
+            </div>
+          )}
+        </div>
         <section
           className="fd-homepanel"
           data-wide="true"

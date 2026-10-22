@@ -27,6 +27,7 @@ import {
   Layers,
   Mail,
   Paperclip,
+  Plus,
   RotateCcw,
   Star,
   TriangleAlert,
@@ -67,14 +68,21 @@ type Props = {
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
   /**
    * DESIGN-SYSTEM §4.2, §4.4: the ended and lost strips of each lane fold into a collapsed
-   * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Clear,
-   * and the lane count is the shown live strips. The board-wide offline row then shows only while
-   * two or more lanes have ended or lost sessions (one Resume all, Clear and Restore all for every
-   * lane).
+   * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Archive,
+   * and the lane count is the shown live strips. The board-wide "All ended" row then shows only
+   * while two or more lanes have ended or lost sessions (one Resume all, Archive and Restore all
+   * for every lane).
    * Off: the ended strips stay in their lane, the lane count is every strip, and one offline row
    * for the ended, lost and unreachable sessions closes the board.
    */
   readonly foldEnded?: boolean | undefined;
+  /**
+   * A station board without a filter: every online station has a lane, also one without a session
+   * (its head and "No sessions.", with New session when `onSpawnAt` is given).
+   */
+  readonly emptyLanes?: boolean | undefined;
+  /** Opens New session with this station picked (the New session of an empty lane). */
+  readonly onSpawnAt?: ((stationId: string) => void) | undefined;
 };
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
@@ -343,8 +351,9 @@ const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
 const RESUMED_MS = 6000;
 
 /**
- * The offline tools: Resume all, Clear, and Restore all (DL-141). `row`: the labelled row at the
- * end of the board; `lane`: the buttons inside a lane's Ended group.
+ * The offline tools: Resume all, Archive, and Restore all (DL-141). `row`: the labelled row at the
+ * end of the board ("All ended", the ended sessions of every lane); `lane`: the buttons inside a
+ * lane's Ended group. The counts are `.fd-count` pills (as "Ended 2").
  */
 export function OfflineTools({
   cards,
@@ -390,7 +399,7 @@ export function OfflineTools({
   };
   return (
     <div className="fd-offline-tools" data-variant={variant}>
-      {variant === 'lane' ? null : <span className="fd-label">Offline sessions</span>}
+      {variant === 'lane' ? null : <span className="fd-label">All ended</span>}
       <button
         type="button"
         className="fd-ghost fd-sm"
@@ -398,7 +407,13 @@ export function OfflineTools({
         onClick={() => void resumeAll()}
       >
         <Icon of={RotateCcw} size={12} />{' '}
-        {running ? 'Resuming…' : `Resume all (${resumable.length})`}
+        {running ? (
+          'Resuming…'
+        ) : (
+          <>
+            Resume all <span className="fd-count">{resumable.length}</span>
+          </>
+        )}
       </button>
       {report === null ? null : (
         <span className="fd-offline-report" role="status">
@@ -411,7 +426,7 @@ export function OfflineTools({
         disabled={clearable.length === 0}
         onClick={() => archived.add(refsOf(clearable))}
       >
-        <Icon of={Archive} size={12} /> Clear ({clearable.length})
+        <Icon of={Archive} size={12} /> Archive <span className="fd-count">{clearable.length}</span>
       </button>
       {restorable.length === 0 ? null : (
         <button
@@ -468,6 +483,20 @@ function lanesOf(
       cards: sessions.filter((s) => s.station_id === id),
     };
   });
+}
+
+/**
+ * The lanes of the online stations (at their last report: a stale board keeps it) that have no
+ * session: after the other lanes, in the deck's station order.
+ */
+export function emptyStationLanes(
+  lanes: readonly { readonly id: string }[],
+  stations: readonly StationView[],
+): Lane[] {
+  const taken = new Set(lanes.map((l) => l.id));
+  return stations
+    .filter((s) => s.reachable && !taken.has(s.station_id))
+    .map((s) => ({ id: s.station_id, name: s.name, label: `Station ${s.name}`, cards: [] }));
 }
 
 /** A lane with only ended or lost sessions goes after the lanes with a live session. */
@@ -563,13 +592,19 @@ export function FleetBoard({
   sessionActions,
   extras,
   foldEnded = false,
+  emptyLanes = false,
+  onSpawnAt,
 }: Props) {
   const now = useNow(given, 30000);
   const starred = priority.use();
   const projects = useProjects();
   const batches = batchCounts(sessions);
   const all = lanesOf(sessions, stations, group, projects);
-  const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
+  const lanes = [
+    ...all.filter((l) => !settled(l)),
+    ...all.filter(settled),
+    ...(emptyLanes && group === 'station' ? emptyStationLanes(all, stations) : []),
+  ];
   const offline = foldEnded ? boardEnded(lanes) : sessions.filter(isOffline);
   const strip = (card: DeckSession) => (
     <FleetStrip
@@ -631,6 +666,21 @@ export function FleetBoard({
               {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
             </div>
             {live.length === 0 ? null : <ul className="fd-strips">{live.map(strip)}</ul>}
+            {lane.cards.length > 0 ? null : (
+              <div className="fd-lane-none">
+                <p className="fd-note">No sessions.</p>
+                {onSpawnAt === undefined ? null : (
+                  <button
+                    type="button"
+                    className="fd-ghost fd-sm"
+                    aria-label={`New session on ${lane.name}`}
+                    onClick={() => onSpawnAt(lane.id)}
+                  >
+                    <Icon of={Plus} size={12} /> New session
+                  </button>
+                )}
+              </div>
+            )}
             {done.length === 0 ? null : (
               <details className="fd-lane-ended">
                 <summary>

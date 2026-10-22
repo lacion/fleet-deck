@@ -6,7 +6,7 @@ import type { GrantView } from '../gen';
 import { card, station } from '../testing/fleet';
 import type { FleetActions } from './fleet';
 import { accessValues, START_LIVE } from './GrantAccess';
-import { SessionAccessBody, sessionGrant } from './SessionAccess';
+import { dialogGrant, SessionAccessBody, sessionGrant } from './SessionAccess';
 
 const grant: GrantView = {
   grant_id: 'g',
@@ -54,6 +54,7 @@ const body = (extra: Partial<Body> = {}): ReactElement => (
     onCancelEdit={() => {}}
     onSave={() => {}}
     onClose={() => {}}
+    onChanged={() => {}}
     {...extra}
   />
 );
@@ -119,10 +120,50 @@ describe('the dialog body', () => {
     ];
     const out = html({ grant: wide, stations });
     expect(out).toContain('<dt>Stations</dt><dd>Alpha, Beta</dd>');
-    expect(out).toContain('<dt>Highest modes</dt><dd>Claude plan · Codex never/read-only</dd>');
+    // The modes in words, not the protocol ids.
+    expect(out).toContain(
+      '<dt>Highest modes</dt><dd>Claude: Plan · Codex: Never ask · read only</dd>',
+    );
     const plain = html({ grant: { ...grant, classes: ['read', 'mail', 'drive'] } });
     expect(plain).not.toContain('Sessions started');
     expect(plain).not.toContain('Highest modes');
+  });
+
+  test('the dialog shows the grant of its row by id, also without its session', () => {
+    const other: GrantView = { ...grant, grant_id: 'other', session_id: 'gone' };
+    const revoked: GrantView = { ...grant, grant_id: 'old', state: 'revoked' };
+    expect(dialogGrant([grant, other], undefined, 'other')).toBe(other);
+    expect(dialogGrant([revoked], session, 'old')).toBeUndefined();
+    expect(dialogGrant([other], undefined, undefined)).toBeUndefined();
+    const out = html({ session: undefined, grant: other });
+    expect(out).toContain('<p class="fd-access-sub">Coordinator gone · Alpha</p>');
+    expect(out).toContain('>Revoke<');
+    // After a revoke the outcome stays in view.
+    const after = html({
+      session: undefined,
+      grant: undefined,
+      result: { ok: true, text: 'Grant revoked.' },
+    });
+    expect(after).toContain('<p class="fd-note" role="status">Grant revoked.</p>');
+    expect(after).toContain('This session has no fleet access.');
+  });
+
+  test('the session rules and the desktop limits of the grant are in the dialog', () => {
+    const spawn = html({ grant: { ...grant, classes: ['read', 'mail', 'drive', 'spawn'] } });
+    expect(spawn).toContain('<div class="fd-access-more">');
+    expect(spawn).toContain('>Change session rules</button>');
+    expect(spawn).not.toContain('Desktop operations');
+    const desk = html({
+      grant: { ...grant, classes: ['read', 'desktop'], desktop_cap: 5, desktop_used: 1 },
+    });
+    expect(desk).toContain('>Desktop operations</button>');
+    expect(desk).not.toContain('Change session rules');
+    const plain = html({ grant: { ...grant, classes: ['read', 'mail', 'drive'] } });
+    expect(plain).not.toContain('fd-access-more');
+    const revoked = html({
+      grant: { ...grant, state: 'revoked', classes: ['read', 'spawn'], desktop_cap: 5 },
+    });
+    expect(revoked).not.toContain('fd-access-more');
   });
 
   test('a grant that is not live has no Change permissions', () => {
@@ -202,7 +243,7 @@ describe('the dialog body', () => {
     expect(out).not.toContain('Codex sees the change');
     expect(out).toContain('type="submit" class="fd-primary">Give access<');
     expect(out).toContain('type="button" class="fd-ghost">Close<');
-    expect(out).toContain('<h4 class="fd-access-h">Stations</h4>');
+    expect(out).toContain('<h4 class="fd-label fd-access-h">Stations</h4>');
   });
 
   test('the give form lists the other stations to pick', () => {
@@ -212,7 +253,9 @@ describe('the dialog body', () => {
     ];
     const out = html({ stations, picked: ['station-b'] });
     expect(out).toContain('Beta');
-    expect(out).toMatch(/<input type="checkbox" checked=""\/><span class="fd-access-title">Beta/);
+    expect(out).toMatch(
+      /<span class="fd-access-title">Beta<\/span><\/span><input type="checkbox" role="switch" class="fd-switch" aria-checked="true" checked=""\/>/,
+    );
   });
 
   test('Give access is disabled for a limit problem', () => {

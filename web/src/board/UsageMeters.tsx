@@ -5,6 +5,7 @@ import {
   assistText,
   costTotalText,
   fleetUsage,
+  inputLabel,
   meterText,
   rateMeters,
   tokens,
@@ -18,6 +19,8 @@ type Props = {
   readonly now?: number | undefined;
 };
 
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
 /** Fleet usage totals and provider rate-limit meters (DL-303). */
 export function UsageMeters({ sessions, stations, now: given }: Props) {
   const now = useNow(given, 30000);
@@ -29,7 +32,7 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
       <h2 className="fd-vh">Usage</h2>
       <dl className="fd-usage-stats">
         <div className="fd-usage-stat">
-          <dt className="fd-label">Input tokens</dt>
+          <dt className="fd-label">{sentence(inputLabel(sessions))}</dt>
           <dd>{totalText(usage.input, tokens)}</dd>
         </div>
         <div className="fd-usage-stat">

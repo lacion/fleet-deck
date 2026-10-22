@@ -93,6 +93,15 @@ export function stationName(id: string, stations: readonly StationView[]): strin
   return stations.find((station) => station.station_id === id)?.name ?? id;
 }
 
+/** A live session runs or can run now: not ended, not lost, and its station is reachable (the
+ * Watch rule, `watch/tiles.ts`). */
+export const isLiveSession = (card: DeckSession): boolean =>
+  card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
+
+/** The count of the header sentences (fleet home, Watch): "1 live session", "4 live sessions". */
+export const liveSessionsText = (n: number): string =>
+  n === 1 ? '1 live session' : `${n} live sessions`;
+
 /** Changes when any session changes, so derived panels load again. */
 export function fleetVersion(sessions: readonly DeckSession[]): string {
   let newest = 0;
