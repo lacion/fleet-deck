@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionDiff } from '../gen';
-import { CHANGED_FILES_MAX, changedPaths, loadChanged } from './changedFiles';
+import { CHANGED_FILES_MAX, changedFiles, changedPaths, loadChanged } from './changedFiles';
 import { ChangedFilesList } from './FilesPanel';
 import type { FileActions } from './workspace';
 
@@ -71,10 +71,31 @@ describe('changed paths of a patch', () => {
   });
 });
 
+describe('the change of each file', () => {
+  test('the kind and the line counts; the --- and +++ header lines do not count', () => {
+    expect(changedFiles(patch).changes).toEqual({
+      'src/a.ts': { kind: 'M', insertions: 1, deletions: 1 },
+      'docs/new.md': { kind: 'A', insertions: 1, deletions: 0 },
+      'moved/name.rs': { kind: 'R', insertions: 0, deletions: 0 },
+    });
+  });
+
+  test('a removed line that starts with --- counts as a deletion inside a hunk', () => {
+    const text = `${header('a.md')}--- a/a.md\n+++ b/a.md\n@@ -1,2 +1 @@\n---- old rule\n+new\n same\n`;
+    expect(changedFiles(text).changes['a.md']).toEqual({ kind: 'M', insertions: 1, deletions: 1 });
+  });
+
+  test('a deleted file has no change entry', () => {
+    const text = `${header('gone.rs')}deleted file mode 100644\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n`;
+    expect(changedFiles(text)).toEqual({ paths: [], changes: {} });
+  });
+});
+
 describe('loadChanged', () => {
-  test('the paths and the cut flag of the session diff', async () => {
+  test('the paths, their changes and the cut flag of the session diff', async () => {
     expect(await loadChanged(actions(async () => diff({ truncated: true })))).toEqual({
       paths: ['src/a.ts', 'docs/new.md', 'moved/name.rs'],
+      changes: changedFiles(patch).changes,
       truncated: true,
     });
   });
@@ -95,7 +116,14 @@ describe('the changed files section', () => {
   const html = (truncated: boolean) =>
     renderToStaticMarkup(
       <ChangedFilesList
-        changed={{ paths: ['src/a.ts', 'README.md'], truncated }}
+        changed={{
+          paths: ['src/a.ts', 'README.md'],
+          changes: {
+            'src/a.ts': { kind: 'M', insertions: 9, deletions: 3 },
+            'README.md': { kind: 'A', insertions: 4, deletions: 0 },
+          },
+          truncated,
+        }}
         onOpen={() => {}}
       />,
     );
@@ -108,6 +136,20 @@ describe('the changed files section', () => {
     expect(out).toContain('<span class="fd-files-dir">src</span>');
     expect(out).toContain('<span class="fd-files-name">README.md</span>');
     expect(out.match(/<button/g)).toHaveLength(2);
+  });
+
+  test('each row shows its +/− counts and its change kind at the right', () => {
+    const out = html(false);
+    expect(out).toContain(
+      '<span class="fd-files-stat"><span class="fd-add">+9</span><span class="fd-del">−3</span>' +
+        '<span class="fd-badge" data-tone="muted" title="modified"><span aria-hidden="true">M</span>' +
+        '<span class="fd-vh">modified</span></span></span>',
+    );
+    // No deletions: no −0.
+    expect(out).toContain(
+      '<span class="fd-files-stat"><span class="fd-add">+4</span><span class="fd-badge"',
+    );
+    expect(out).not.toContain('−0');
   });
 
   test('a file at the root has no folder', () => {

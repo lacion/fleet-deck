@@ -472,13 +472,17 @@
 }
 
 /* ── tabs (§4.5): 36px, the selected one with a 2px ink underline ── */
+/* The chat Show menu sits at the right end of the tab row (chat.css). The row keeps room for it:
+   --fd-tab-reserve is the measured width of the menu and the row end after it (tabReserve.ts),
+   so the tabs end (and scroll) clear of it, also when it reads "Show (2 hidden)". */
 .fd-pane-tabs {
   display: flex;
   flex: none;
   gap: var(--sp-1);
   height: 36px;
   margin-top: var(--sp-1);
-  padding: 0 var(--sp-4);
+  padding: 0 max(var(--sp-4), var(--fd-tab-reserve, 0px)) 0 var(--sp-4);
+  scroll-padding-inline-end: var(--fd-tab-reserve, 0px);
   overflow-x: auto;
   border-bottom: 1px solid var(--border-soft);
   scrollbar-width: none;
@@ -512,14 +516,7 @@
 }
 .fd-pane[data-layout="phone"] .fd-pane-tabs {
   margin-top: 0;
-  padding: 0 var(--sp-2);
-}
-/* The chat Show menu sits at the right end of the tab row (chat.css): the tabs scroll
-   clear of it, also when it reads "Show (2 hidden)". */
-.fd-pane[data-layout="phone"]:has(.fd-pane-chat > .fd-chat:first-child > .fd-chat-filters)
-.fd-pane-tabs {
-  padding-right: 136px;
-  scroll-padding-inline-end: 136px;
+  padding: 0 max(var(--sp-2), var(--fd-tab-reserve, 0px)) 0 var(--sp-2);
 }
 @media (pointer: coarse) {
   .fd-pane-tabs {
@@ -1228,6 +1225,24 @@ button.fd-composer-model > .fd-icon {
 .fd-pane-body > :not(.fd-art-viewer) {
   max-width: var(--chat-w);
 }
+/* The Changes tab uses the whole main width (a 24px inset): a diff is wide content. Only the chat
+   keeps the reading column. */
+.fd-pane-body[data-tab="changes"] > * {
+  max-width: none;
+}
+/* The Artifacts tab (§4.7, concept B list rows): the kind badge and the version follow the title,
+   the age stays at the right. Only separators between the rows: no rule above the first row and
+   none under the last, so that one artifact is not a box. */
+.fd-pane-body[data-tab="artifacts"] .fd-art-row:not(:has(> .fd-art-where)) {
+  grid-template-columns: 14px auto auto auto minmax(0, 1fr) 48px;
+  grid-template-areas: "icon title kind version . age";
+}
+.fd-pane-body[data-tab="artifacts"] .fd-art-list {
+  border-top: 0;
+}
+.fd-pane-body[data-tab="artifacts"] .fd-art-list > li:last-child {
+  border-bottom: 0;
+}
 .fd-pane[data-layout="phone"] .fd-pane-body {
   padding: var(--sp-3);
 }
@@ -1318,6 +1333,13 @@ button.fd-composer-model > .fd-icon {
   margin: 0;
   color: var(--faint);
   font-size: var(--fs-meta);
+}
+/* The counts of a turn and of the session diff: `+9 −3 1 file`, the parts spaced by the gap. */
+.fd-turns li > .fd-turn-stat,
+.fd-since[data-view="spawn"] > .fd-turn-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
 }
 .fd-turn-stat .fd-add,
 .fd-turn-stat .fd-del {
@@ -1450,6 +1472,20 @@ span.fd-dl-n {
   background: none;
   color: var(--text);
 }
+/* Touch: the line-number comment targets are 24px tall and 24px apart, and at least 4ch wide
+   (WCAG 2.5.8). The gutter grows with them. */
+@media (pointer: coarse) {
+  .fd-diff {
+    line-height: 24px;
+  }
+  .fd-diff .fd-dl-g {
+    min-width: 4ch;
+  }
+  .fd-diff .fd-dl-g > .fd-dl-n {
+    min-width: 4ch;
+    min-height: 24px;
+  }
+}
 
 /* ── review comments on a diff (DL-179) ─────────────────────────── */
 .fd-diffwrap {
@@ -1484,11 +1520,18 @@ span.fd-dl-n {
 .fd-turns li > .fd-diffwrap > :not(.fd-diff) {
   margin-inline: var(--sp-4) var(--sp-2);
 }
-/* The turn strip is not a panel: its plain buttons keep the hairline edge that a panel gives
-   them (a white button on the white light strip). */
+/* A plain button on the --raised turn strip ("Hide the diff", "Revert to here", Cancel) is one
+   fill step up (--raised-hi), so that it shows on the strip in the dark theme, where --btn-edge is
+   transparent; the light theme also keeps the hairline edge that a panel gives it. Hover steps
+   once more toward the text. */
 .fd-turns li > button.fd-sm:not(.fd-danger),
 .fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger) {
+  background: var(--raised-hi);
   border-color: var(--btn-edge);
+}
+.fd-turns li > button.fd-sm:not(.fd-danger):hover:not(:disabled),
+.fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--raised-hi) 88%, var(--text));
 }
 .fd-thread-list {
   display: flex;
@@ -1834,15 +1877,50 @@ button.fd-cchip:hover:not(:disabled) {
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
-/* The crumbs: the root icon on the column of the row icons. */
+/* "Changed since the session started": one column as wide as the panel, so that a long folder
+   ellipsizes and the change at the right of the row stays in view (a phone). */
+.fd-files .fd-files-changed,
+.fd-files .fd-files-changed > ul {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* The change of a file in "Changed since the session started": `+9 −3` and the kind letter at
+   the right of its row (the Properties panel order). */
+.fd-files-stat {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: var(--sp-1);
+  margin-left: auto;
+  padding-left: var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.fd-files-stat > .fd-add {
+  color: var(--ok);
+  font-weight: 600;
+}
+.fd-files-stat > .fd-del {
+  color: var(--hazard);
+  font-weight: 600;
+}
+.fd-files-stat > .fd-badge {
+  align-self: center;
+  justify-content: center;
+  min-width: 2ch;
+  padding: 0;
+}
+/* The crumbs: the root icon on the column of the row icons. The row is one list row high (the
+   same rhythm as the file rows under it: --row-h, 44px on touch) and has the same divider. */
 .fd-files-crumbs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  min-height: var(--ctl-h-sm);
+  min-height: var(--row-h);
   padding: 0 var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
@@ -1963,8 +2041,9 @@ button.fd-cchip:hover:not(:disabled) {
   cursor: default;
 }
 @media (pointer: coarse) {
-  .fd-files-row {
-    min-height: var(--tap-min);
+  .fd-files-row,
+  .fd-files-crumbs {
+    min-height: var(--row-h-touch, var(--tap-min));
   }
   .fd-files-go {
     width: var(--tap-min);

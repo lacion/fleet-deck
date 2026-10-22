@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Diff } from '../chat/Diff';
-import type { RevertResolution, SessionBase, SessionDiff, SessionSummary, TurnDiff } from '../gen';
+import type {
+  DiffSummary,
+  RevertResolution,
+  SessionBase,
+  SessionDiff,
+  SessionSummary,
+  TurnDiff,
+} from '../gen';
 import { diffReview, type ReviewProps } from '../review/diffReview';
 import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
@@ -201,19 +208,7 @@ function SinceSpawn({
       {diff !== null && diff.patch.trim() !== '' ? (
         <>
           <p className="fd-turn-stat">
-            {diff.summary.files_changed} {diff.summary.files_changed === 1 ? 'file' : 'files'}
-            {diff.summary.insertions > 0 ? (
-              <>
-                {' '}
-                <span className="fd-add">+{diff.summary.insertions}</span>
-              </>
-            ) : null}
-            {diff.summary.deletions > 0 ? (
-              <>
-                {' '}
-                <span className="fd-del">−{diff.summary.deletions}</span>
-              </>
-            ) : null}
+            <TurnStat stat={diff.summary} />
           </p>
           <Diff
             patch={diff.patch}
@@ -230,6 +225,22 @@ function SinceSpawn({
   );
 }
 
+/**
+ * The counts of a diff, the same order as the properties panel: `+9 −3 1 file`. The parent
+ * (`.fd-turn-stat`) is an inline flex row, so its gap spaces the parts.
+ */
+function TurnStat({ stat }: { readonly stat: DiffSummary }) {
+  return (
+    <>
+      {stat.insertions > 0 ? <span className="fd-add">+{stat.insertions}</span> : null}
+      {stat.deletions > 0 ? <span className="fd-del">−{stat.deletions}</span> : null}
+      <span className="fd-turn-files">
+        {stat.files_changed} {stat.files_changed === 1 ? 'file' : 'files'}
+      </span>
+    </>
+  );
+}
+
 /** `turn:<from>..<to>` as its two commits; `null` for another text. */
 function parseTurnSnapshot(snapshot: string): { from: string; to: string } | null {
   const [from, to, ...rest] = snapshot.replace(/^turn:/, '').split('..');
@@ -237,12 +248,20 @@ function parseTurnSnapshot(snapshot: string): { from: string; to: string } | nul
 }
 
 /** A turn diff that the Changes tab loaded; `snapshot` is set when its comments are available. */
-type LoadedDiff = {
+export type LoadedDiff = {
   readonly diff: TurnDiff;
   readonly snapshot: string | null;
   /** The comments of this turn could not be loaded: the plain diff shows with a note. */
   readonly fellBack: boolean;
 };
+
+/**
+ * The turn diff shows (the button hides it). A failed load (an error text) is not open: the
+ * button says "Show the diff" and a press loads again.
+ */
+export function diffOpen(diff: LoadedDiff | string | undefined): boolean {
+  return diff !== undefined && typeof diff !== 'string';
+}
 
 /** The review bar of the Changes tab. */
 function Bar({ review }: { readonly review: ReviewProps | undefined }) {
@@ -418,24 +437,13 @@ export function TurnsPanel(props: Props) {
         {turns.map((t, i) => {
           const block = revertBlock(t, summary, caps);
           const diff = diffs[t.turnId];
+          const loaded = diffOpen(diff);
           return (
             <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
               <span className="fd-turn-name">Turn {i + 1}</span>
               {t.diff && hasChanges(t.diff) ? (
                 <span className="fd-turn-stat">
-                  {t.diff.files_changed} {t.diff.files_changed === 1 ? 'file' : 'files'}
-                  {t.diff.insertions > 0 ? (
-                    <>
-                      {' '}
-                      <span className="fd-add">+{t.diff.insertions}</span>
-                    </>
-                  ) : null}
-                  {t.diff.deletions > 0 ? (
-                    <>
-                      {' '}
-                      <span className="fd-del">−{t.diff.deletions}</span>
-                    </>
-                  ) : null}
+                  <TurnStat stat={t.diff} />
                 </span>
               ) : t.end?.state === 'unavailable' ? (
                 <span className="fd-turn-stat">no completion checkpoint: {t.end.reason}</span>
@@ -447,11 +455,11 @@ export function TurnsPanel(props: Props) {
                 <button
                   type="button"
                   className="fd-sm fd-turn-diff"
-                  aria-expanded={diff !== undefined}
-                  onClick={() => (diff === undefined ? showDiff(t.turnId) : hideDiff(t.turnId))}
+                  aria-expanded={loaded}
+                  onClick={() => (loaded ? hideDiff(t.turnId) : showDiff(t.turnId))}
                 >
                   <Icon of={ChevronRight} size={14} />
-                  {diff === undefined ? 'Show the diff' : 'Hide the diff'}
+                  {loaded ? 'Hide the diff' : 'Show the diff'}
                 </button>
               ) : null}
               {caps?.rollback === true && !t.reverted ? (

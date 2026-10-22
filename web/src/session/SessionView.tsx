@@ -52,6 +52,7 @@ import { useMove } from './MoveDialog';
 import { CONFIRM_LINE, composerHidden, confirmLineShown } from './moveModel';
 import { PropertiesPanel, usePropsOpen } from './PropertiesPanel';
 import { SessionHeader } from './SessionHeader';
+import { useTabReserve } from './tabReserve';
 import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
@@ -296,6 +297,8 @@ export function SessionView(props: SessionViewProps) {
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const paneEl = useRef<HTMLElement>(null);
+  const tabRow = useRef<HTMLDivElement>(null);
+  useTabReserve(tabRow);
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
   const order: PaneTab[] = [
     'chat',
@@ -443,6 +446,7 @@ export function SessionView(props: SessionViewProps) {
         />
       ) : null}
       <div
+        ref={tabRow}
         className="fd-pane-tabs"
         role="tablist"
         aria-label="Session views"
@@ -647,6 +651,7 @@ export function SessionView(props: SessionViewProps) {
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
                       model={shortModel(s.model)}
+                      callsign={s.callsign}
                       {...(guest === null && caps?.set_model === true
                         ? { onModel: () => openModelPicker(paneEl.current) }
                         : {})}

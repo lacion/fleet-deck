@@ -52,6 +52,8 @@ type Props = {
   readonly model?: string;
   /** Opens the model picker of the session menu; absent: the chip only shows the model. */
   readonly onModel?: () => void;
+  /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
+  readonly callsign?: string | null;
 };
 
 /** The most rows the text box grows to. */
@@ -205,6 +207,8 @@ export function Composer(props: Props) {
     empty ||
     (problem !== null && !bangOn) ||
     (meaning.kind === 'shell' && (props.working || meaning.command === ''));
+  // "Steer now" is offered: a turn runs, the provider can steer, the text is a prompt.
+  const steerable = props.working && props.steer && !bangOn;
   const commands = props.slashCommands ?? [];
   const hasCommands = commands.length > 0;
   const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
@@ -392,15 +396,22 @@ export function Composer(props: Props) {
     const force = event.ctrlKey || event.metaKey;
     if (!force && (event.shiftKey || coarsePointer())) return;
     event.preventDefault();
+    // §4.5: ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer.
+    if (force && steerable) {
+      if (!blocked) send('steer');
+      return;
+    }
     submit();
   };
 
   const reason = !props.enabled && props.disabledReason ? props.disabledReason : null;
+  // The placeholder names the session, so that the owner sees where the text goes.
+  const target = props.callsign ? props.callsign : 'the agent';
   const placeholder = bangOn
     ? 'Shell command (runs in the session folder)'
     : hasCommands
-      ? 'Message the agent… (/ for commands)'
-      : 'Message the agent…';
+      ? `Message ${target}… (/ for commands)`
+      : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
     return (
@@ -545,14 +556,18 @@ export function Composer(props: Props) {
             </button>
           ) : props.working ? (
             <>
-              {props.steer ? (
+              {steerable ? (
                 <button
                   type="button"
                   className="fd-ghost"
                   disabled={blocked}
+                  aria-keyshortcuts="Meta+Enter Control+Enter"
                   onClick={() => send('steer')}
                 >
                   Steer now
+                  <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
+                    ⌘↵
+                  </span>
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>

@@ -9,7 +9,7 @@ import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
 import { type PaneTab, SessionView } from './SessionView';
-import { SinceNotes } from './TurnsPanel';
+import { diffOpen, SinceNotes } from './TurnsPanel';
 import {
   artifactFiles,
   fileActions,
@@ -155,7 +155,7 @@ describe('turns and reverts (DL-097)', () => {
     const html = view(codex(), [finalized('t1'), finalized('t2', ok('s'), gone('queued_input'))]);
     expect(html).toContain('aria-label="Turns"');
     expect(html).toMatch(
-      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat">1 file <span class="fd-add">\+2<\/span> <span class="fd-del">−1<\/span><\/span>/,
+      /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat"><span class="fd-add">\+2<\/span><span class="fd-del">−1<\/span><span class="fd-turn-files">1 file<\/span><\/span>/,
     );
     expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
     expect(html).toContain(
@@ -167,6 +167,17 @@ describe('turns and reverts (DL-097)', () => {
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('the diff button: a loaded diff hides; nothing or a failed load shows (and retries)', () => {
+    const loaded = {
+      diff: { turn_id: 't1', patch: '', truncated: false } as never,
+      snapshot: null,
+      fellBack: false,
+    };
+    expect(diffOpen(undefined)).toBe(false);
+    expect(diffOpen('The diff request failed.')).toBe(false);
+    expect(diffOpen(loaded)).toBe(true);
   });
 
   test('a turn without file changes says so and has no Show the diff', () => {
@@ -183,7 +194,9 @@ describe('turns and reverts (DL-097)', () => {
     const html = view(codex(), [
       finalized('t1', ok('s'), ok('e'), { files_changed: 2, insertions: 0, deletions: 0 }),
     ]);
-    expect(html).toContain('<span class="fd-turn-stat">2 files</span>');
+    expect(html).toContain(
+      '<span class="fd-turn-stat"><span class="fd-turn-files">2 files</span></span>',
+    );
     expect(html).toContain('Show the diff');
   });
 
