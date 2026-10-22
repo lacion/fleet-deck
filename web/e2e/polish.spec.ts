@@ -136,7 +136,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   ).toBeVisible();
   await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station start');
   await dialog.getByRole('button', { name: /A computer on my tailnet/ }).click();
-  await expect(dialog.getByRole('button', { name: '← Back' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
   await dialog
     .locator('[data-device="lab-box.tail1234.ts.net"]')
     .getByRole('button', { name: 'Add' })
@@ -146,7 +146,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   await expect(dialog.getByRole('button', { name: 'Stop' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Choose another computer' })).toBeVisible();
   await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station run step');
-  await expectTall(dialog.getByRole('button', { name: '← Back' }), 'Add station back');
+  await expectTall(dialog.getByRole('button', { name: 'Back', exact: true }), 'Add station back');
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
 

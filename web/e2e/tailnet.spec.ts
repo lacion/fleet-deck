@@ -349,7 +349,7 @@ function suite() {
     await expect(dialog).toContainText('lab-box was not added.');
     expect(state.posted.some((p) => p.path === '/api/pairing/requests/req-1/deny')).toBe(true);
     await dialog.getByRole('button', { name: 'Back to the list' }).click();
-    await dialog.getByRole('button', { name: '← Back' }).click();
+    await dialog.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(dialog).toContainText('Where is the new station?');
   });
 
