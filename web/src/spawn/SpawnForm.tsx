@@ -23,6 +23,7 @@ import {
   NO_FLEET,
   showFleetFields,
 } from './fleetControl';
+import { CoordinatorOption, ImportField } from './OptionFields';
 import { KindChoice, PlacementFields, StationChoice, TypedDirectory } from './PlacementFields';
 import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
@@ -74,12 +75,12 @@ const NEED_ID = 'fd-spawn-need';
 
 /** The workspace choices: a short segment, the full sentence as its tooltip (DL-144). */
 const PLACES: readonly SegOption<'here' | 'worktree' | 'clone'>[] = [
-  { value: 'here', label: 'This directory', title: 'Work in this directory' },
+  { value: 'here', label: 'This folder', title: 'Work in this folder' },
   { value: 'worktree', label: 'New worktree', title: 'A new worktree on its own branch' },
   {
     value: 'clone',
     label: 'Clone repository',
-    title: 'Clone a repository into a new directory here',
+    title: 'Clone a repository into a new folder here',
   },
 ];
 
@@ -332,8 +333,8 @@ export function SpawnForm({
           canDrive || scopeNote ? null : 'your login needs the drive scope',
           auto || station !== undefined ? null : 'choose a station',
           hasTarget || (!auto && station === undefined) ? null : 'choose a provider',
-          cwdOk || dirNote !== null ? null : 'choose a directory',
-          cloneReady || repoError !== null ? null : 'enter the new directory name',
+          cwdOk || dirNote !== null ? null : 'choose a folder',
+          cloneReady || repoError !== null ? null : 'enter the new folder name',
         ]
   ).filter((m): m is string => m !== null);
   const describedBy =
@@ -356,7 +357,7 @@ export function SpawnForm({
 
   return (
     <section className="fd-spawn" aria-label="New session">
-      <SheetHead station={auto ? undefined : station} />
+      <SheetHead station={station} auto={auto} />
       {notesInFoot
         ? null
         : topNotes.map((note) => (
@@ -687,68 +688,54 @@ export function SpawnForm({
               hint={optionsHint({ batch: batchInOptions, setup: setupShown })}
               onToggle={() => setOptionsUser(!optionsOpen)}
             />
-            {batchInOptions ? <BatchSwitch on={batch} onChange={setBatch} /> : null}
-            {setupShown ? (
-              <SetupField
-                value={setupCmd}
-                remember={setupRemember}
-                onValue={(v) => {
-                  setupEdited.current = true;
-                  setSetupCmd(v);
-                }}
-                onRemember={setSetupRemember}
-              />
-            ) : null}
-            <label className="fd-spawn-opt">
-              <input
-                type="checkbox"
-                checked={coordinator}
-                onChange={(event) => {
-                  setCoordinator(event.target.checked);
-                  if (!event.target.checked) {
+            {/* One grid for the groups: Chrome puts every child after the summary in the
+                ::details-content box, so the grid of the fold spaces only the summary. */}
+            <div className="fd-spawn-options-body">
+              {batchInOptions ? <BatchSwitch on={batch} onChange={setBatch} /> : null}
+              {setupShown ? (
+                <SetupField
+                  value={setupCmd}
+                  remember={setupRemember}
+                  onValue={(v) => {
+                    setupEdited.current = true;
+                    setSetupCmd(v);
+                  }}
+                  onRemember={setSetupRemember}
+                />
+              ) : null}
+              <CoordinatorOption
+                on={coordinator}
+                onChange={(on) => {
+                  setCoordinator(on);
+                  if (!on) {
                     setFleet(NO_FLEET);
                     setPickedTargets([]);
                   }
                 }}
-              />
-              Coordinator: this session may read the fleet, send mail and drive the sessions it
-              starts
-            </label>
-            {fleetShown ? <FleetControlFields fleet={fleet} onChange={setFleet} /> : null}
-            {fleetShown ? (
-              <TargetStations
-                stations={stations}
-                ownId={stationId}
-                picked={targetIds}
-                onChange={setPickedTargets}
-              />
-            ) : null}
-            <label>
-              Import CLI session id (optional)
-              <input
+              >
+                {fleetShown ? (
+                  <>
+                    <FleetControlFields fleet={fleet} onChange={setFleet} />
+                    <TargetStations
+                      stations={stations}
+                      ownId={stationId}
+                      picked={targetIds}
+                      onChange={setPickedTargets}
+                    />
+                  </>
+                ) : null}
+              </CoordinatorOption>
+              <ImportField
                 value={importId}
-                spellCheck={false}
-                autoCapitalize="off"
-                data-native-pin={
-                  importPin === null ? undefined : `${importPin.dev}/${importPin.ino}`
-                }
-                onChange={(event) => {
-                  setImportId(event.target.value);
+                pin={importPin}
+                onChange={(id) => {
+                  setImportId(id);
                   setImportPin(null);
                 }}
+                onBrowse={browse === null ? null : () => setBrowsing(true)}
+                problem={importProblem}
               />
-            </label>
-            {browse === null ? null : (
-              <button type="button" className="fd-spawn-browse" onClick={() => setBrowsing(true)}>
-                Browse sessions on this station
-              </button>
-            )}
-            <p className="fd-note">
-              Continue a Claude or Codex session that you started in a terminal. Close it there
-              first. An import runs in the chosen directory and ignores the workspace and batch
-              choices.
-            </p>
-            {importProblem === null ? null : <p role="alert">{importProblem}</p>}
+            </div>
           </details>
           <SpawnFoot
             batchShown={batchShown && !batchInOptions}

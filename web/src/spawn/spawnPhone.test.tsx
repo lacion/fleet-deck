@@ -70,7 +70,7 @@ describe('the New session sheet on a phone', () => {
       // row of buttons.
       expect(foot).not.toContain('Batch');
       expect(html).toMatch(
-        /<details class="fd-spawn-options"><summary class="fd-label"><span>More options<\/span><span class="fd-spawn-options-hint">Batch, coordinator, import<\/span><\/summary><label class="fd-spawn-batch">/,
+        /<details class="fd-spawn-options"><summary class="fd-label"><span>More options<\/span><span class="fd-spawn-options-hint">Batch, coordinator, import<\/span><\/summary><div class="fd-spawn-options-body"><label class="fd-spawn-batch">/,
       );
       // Each note shows once: not also at the top of the sheet.
       expect(html.match(/id="fd-spawn-live"/g)).toHaveLength(1);

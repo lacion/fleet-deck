@@ -50,11 +50,19 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     expect(pills([station('a', { info: info({}) })], 'a')).not.toContain('Auto');
   });
 
-  test('the head is a breadcrumb with the chosen station; without one, the title only', () => {
-    const head = renderToStaticMarkup(<SheetHead station={station('a', { name: 'Lighting' })} />);
+  test('the head is a breadcrumb with the chosen station or Auto; without one, the title only', () => {
+    const head = renderToStaticMarkup(
+      <SheetHead station={station('a', { name: 'Lighting' })} auto={false} />,
+    );
     expect(head).toMatch(/<span class="fd-badge">.*Lighting<\/span>/);
     expect(head).toContain('<h2>New session</h2>');
-    expect(renderToStaticMarkup(<SheetHead station={undefined} />)).toBe(
+    // Auto keeps the badge and the chevron, so that "New session" does not move.
+    const auto = renderToStaticMarkup(<SheetHead station={undefined} auto />);
+    expect(auto).toMatch(
+      /^<div class="fd-spawn-head"><span class="fd-badge"><svg[^>]*>.*<\/svg>Auto<\/span><span class="fd-spawn-crumb" aria-hidden="true">.*<h2>New session<\/h2><\/div>$/,
+    );
+    expect(auto).not.toContain('Lighting');
+    expect(renderToStaticMarkup(<SheetHead station={undefined} auto={false} />)).toBe(
       '<div class="fd-spawn-head"><h2>New session</h2></div>',
     );
   });
