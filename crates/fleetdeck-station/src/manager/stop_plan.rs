@@ -67,7 +67,7 @@ impl SessionManager {
         (self.boot_reader())().ok().filter(|b| !b.is_empty())
     }
 
-    /// Before the decision of a `Resume`, a `ReconcileExecution` or a
+    /// Before the decision of a `Resume`, a `UsageRecount`, a `ReconcileExecution` or a
     /// `StopExecution`: the lock of the session (rule 1: these operations
     /// and the plan never run together) and, for a stop, its facts.
     pub(super) async fn stop_prepare(
@@ -76,6 +76,7 @@ impl SessionManager {
     ) -> (Option<OwnedMutexGuard<()>>, Option<StopFacts>) {
         let (session, stop) = match command {
             SessionCommand::Resume { session_id }
+            | SessionCommand::UsageRecount { session_id }
             | SessionCommand::ReconcileExecution { session_id, .. } => (session_id, None),
             SessionCommand::StopExecution {
                 session_id,

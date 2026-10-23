@@ -23,6 +23,7 @@ pub mod locate;
 pub mod parse;
 pub mod subagent;
 pub mod trust;
+pub mod usage_record;
 
 #[cfg(test)]
 mod tests;

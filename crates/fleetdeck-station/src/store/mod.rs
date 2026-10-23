@@ -99,6 +99,7 @@ pub mod subagent_logs;
 pub mod terminal;
 pub mod transcripts;
 mod turn_checkpoints;
+pub mod usage_recount;
 pub mod worktree_ops;
 
 use std::path::Path;

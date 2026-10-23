@@ -203,29 +203,7 @@ impl Store {
                 )
                 .optional()?
                 .flatten();
-            let first: Option<(String, String)> = conn
-                .query_row(
-                    "SELECT kind, payload FROM effects WHERE session_id = ?1
-                       AND kind IN ('start', 'resume') ORDER BY seq LIMIT 1",
-                    params![session_id.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            let first_effect = match first {
-                Some((kind, _)) if kind == "start" => FirstEffect::Start,
-                Some((kind, payload)) if kind == "resume" => {
-                    let import = serde_json::from_str::<serde_json::Value>(&payload)?
-                        .get("import")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false);
-                    if import {
-                        FirstEffect::Import
-                    } else {
-                        FirstEffect::Unknown
-                    }
-                }
-                _ => FirstEffect::Unknown,
-            };
+            let first_effect = first_effect(conn, &session_id)?;
             Ok(Some(HistoryFacts {
                 provider,
                 provider_instance,
@@ -237,6 +215,38 @@ impl Store {
         })
         .await
     }
+}
+
+/// The first `start` or `resume` effect of a session by `seq`: how the
+/// session began its conversation. The history and the usage recount share
+/// this rule (B20).
+///
+/// # Errors
+/// A database or JSON error.
+pub(super) fn first_effect(conn: &rusqlite::Connection, session: &SessionId) -> Result<FirstEffect> {
+    let first: Option<(String, String)> = conn
+        .query_row(
+            "SELECT kind, payload FROM effects WHERE session_id = ?1
+               AND kind IN ('start', 'resume') ORDER BY seq LIMIT 1",
+            params![session.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match first {
+        Some((kind, _)) if kind == "start" => FirstEffect::Start,
+        Some((kind, payload)) if kind == "resume" => {
+            let import = serde_json::from_str::<serde_json::Value>(&payload)?
+                .get("import")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if import {
+                FirstEffect::Import
+            } else {
+                FirstEffect::Unknown
+            }
+        }
+        _ => FirstEffect::Unknown,
+    })
 }
 
 #[cfg(test)]
