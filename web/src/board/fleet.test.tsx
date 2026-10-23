@@ -155,7 +155,7 @@ describe('station projections', () => {
             direction: 'deck_dials',
             dial_url: '127.0.0.1:443',
             cursor: 7,
-            last_seen: 0,
+            linked_at: 0,
           }),
           station('station-b', { reachable: false }),
         ]}
@@ -177,7 +177,7 @@ describe('station projections', () => {
     // (principle 7), only the one of the station that the deck dials.
     expect(html.match(/<dt>Link address<\/dt>/g)?.length).toBe(1);
     expect(html).not.toContain('Not stored');
-    // An online station shows no "Last seen": `last_seen` is the time its link came up, so it is
+    // An online station shows no "Last seen": `linked_at` is the start of its link, so it is
     // the Linked fact in Details (the ISO time above is its tooltip). A station that was never
     // seen shows neither (principle 7).
     expect(html).not.toContain('Last seen');

@@ -14,9 +14,12 @@ const panel = (stations: readonly StationView[], freshness: 'live' | 'stale' = '
   renderToStaticMarkup(<StationsPanel stations={stations} sessions={[]} freshness={freshness} />);
 
 describe('the station header meta', () => {
-  // `last_seen` is the time the last link came up: on an online station it is the link age.
+  // `linked_at` is the start of the current link (the Linked fact); `last_seen` is the last
+  // frame the deck heard, shown as "Last seen" only for a station that is offline.
   test('an online station never shows "Last seen": the link age is the Linked fact', () => {
-    const html = panel([station('station-a', { last_seen: Date.now() - HOURS_8 })]);
+    const html = panel([
+      station('station-a', { linked_at: Date.now() - HOURS_8, last_seen: Date.now() }),
+    ]);
     expect(html).not.toContain('Last seen');
     expect(html).toContain('<dt>Linked</dt>');
     expect(html).toMatch(/<dd class="fd-facts-text" title="[^"]+">8 h ago<\/dd>/);
@@ -27,6 +30,35 @@ describe('the station header meta', () => {
     ]);
     expect(html).toContain('Last seen 8 h ago');
     expect(html).not.toContain('<dt>Linked</dt>');
+  });
+  test('an online station from an older deck (no linked_at) shows no Linked fact and no "Last seen"', () => {
+    const html = panel([station('station-a', { last_seen: Date.now() - HOURS_8 })]);
+    expect(html).not.toContain('Last seen');
+    expect(html).not.toContain('<dt>Linked</dt>');
+  });
+  test('an offline station shows "Last seen" from last_seen, not from linked_at', () => {
+    const html = panel([
+      station('station-a', {
+        reachable: false,
+        last_seen: Date.now() - 5 * 60_000,
+        linked_at: Date.now() - HOURS_8,
+      }),
+    ]);
+    expect(html).toContain('Last seen 5 min ago');
+    expect(html).not.toContain('<dt>Linked</dt>');
+  });
+  test('a stale status shows no "Last seen" for a station last reported online', () => {
+    const html = panel([station('station-a', { last_seen: Date.now() - HOURS_8 })], 'stale');
+    expect(html).toContain('Last reported: online.');
+    expect(html).not.toContain('Last seen');
+  });
+  test('a stale status keeps "Last seen" for a station last reported offline', () => {
+    const html = panel(
+      [station('station-a', { reachable: false, last_seen: Date.now() - HOURS_8 })],
+      'stale',
+    );
+    expect(html).toContain('Last seen 8 h ago');
+    expect(html).toContain('Last reported: offline.');
   });
   test('a station that was never seen shows no "Last seen" and no Linked fact', () => {
     const html = panel([station('station-a'), station('station-b', { reachable: false })]);
