@@ -35,8 +35,8 @@ export type AgentsMenuProps = {
   readonly running?: number | undefined;
 };
 
-/** "1 command", "33 commands": the background commands next to the subagent count (the Agents
-    summary and the Properties panel say it the same way). */
+/** "1 command", "33 commands": the background commands in words (the Agents row of the Properties
+    panel; the summary of the Agents menu shows them as "Commands" with a count pill). */
 export const commandsText = (n: number): string =>
   `${countText(n)} ${n === 1 ? 'command' : 'commands'}`;
 
@@ -124,20 +124,26 @@ const GroupHead = ({ label, count }: { label: string; count: number }) => (
   </p>
 );
 
+/** A label with its count pill in the summary of the menu (§5: one notation for a count). */
+const Part = ({ label, count }: { label: string; count: number }) => (
+  <span className="fd-agents-part">
+    {label} <span className="fd-count">{countText(count)}</span>
+  </span>
+);
+
 /**
- * The summary of the menu. The pill counts the subagents (the Properties panel shows the same
- * number), the background commands follow in quiet words, and what runs now (both kinds) ends it
- * with the working glyph. A session with commands only says "Commands" and their count.
+ * The summary of the menu: "Agents" with the count of the subagents and "Commands" with the count
+ * of the background commands (each only when it has one; the Properties panel shows the same
+ * numbers), then what runs now (both kinds) with the working glyph.
  */
 function Summary(props: { subagents: number; commands: number; running: number }) {
   const { subagents, commands, running } = props;
   return (
     <>
-      {subagents > 0 ? 'Agents' : 'Commands'}{' '}
-      <span className="fd-count">{countText(subagents > 0 ? subagents : commands)}</span>
-      {subagents > 0 && commands > 0 ? (
-        <span className="fd-agents-more">{`· ${commandsText(commands)}`}</span>
-      ) : null}
+      {subagents > 0 ? <Part label="Agents" count={subagents} /> : null}
+      {commands > 0 ? <Part label="Commands" count={commands} /> : null}
+      {/* The agents of the summary that started before the loaded history: the menu keeps a name. */}
+      {subagents === 0 && commands === 0 ? 'Agents' : null}
       {running > 0 ? (
         <span className="fd-agents-running">
           <span className="fd-dot" data-status="working" aria-hidden="true" />

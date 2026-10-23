@@ -13,6 +13,7 @@ import {
   Globe,
   Icon,
   type LucideIcon,
+  MessageSquare,
   Pencil,
   Plug,
   Search,
@@ -22,10 +23,14 @@ import {
   Wrench,
 } from '../ui/icons';
 import { addedText, homeShort, homeShortIn, removedText } from '../ui/format';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
 import { clock } from '../sharing/people';
-import { argText, runLabel, thinkingText, toolName } from './labels';
+import { argText, requestTitle, runLabel, thinkingText, toolName } from './labels';
+import { NoticeLine, TurnAlert } from './ChatAlert';
+import { type NoticeItem, pairTurnErrors } from './notices';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
@@ -95,6 +100,11 @@ const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
   other: Wrench,
 };
 
+/** The icon of a tool row: a Claude question has the question glyph of the board (the Needs you
+    rail, Watch, the fleet cards), every other call the icon of its kind. */
+const toolIcon = (tool: Tool): LucideIcon =>
+  tool.title === 'AskUserQuestion' ? MessageSquare : KIND_ICON[tool.tool_kind];
+
 /**
  * The node of a finished tool call on the flight path (DESIGN-SYSTEM §4.5): its shape and color
  * come from `data-status` (chat.css); a running call shows the working glyph instead.
@@ -153,10 +163,16 @@ const NO_TASKS: ReadonlyMap<string, TaskState> = new Map();
 
 function Items(props: ItemsProps): ReactNode {
   const { compact, provider, onOpenChanges, review, loadSubagent, tasks, shell } = props;
+  // §4.7: a failed turn shows the provider error of its last agent text; the text is not repeated.
+  const turnErrors = pairTurnErrors(props.items);
+  const items =
+    turnErrors.hidden.size === 0
+      ? props.items
+      : props.items.filter((item) => !turnErrors.hidden.has(item.key));
   // B8: a shell card is never folded.
-  const rows = unfoldShells(compactRuns(props.items, compact, provider), compact, provider);
+  const rows = unfoldShells(compactRuns(items, compact, provider), compact, provider);
   // §4.5: a call that waits for an answer shows it in its own row.
-  const waiting = pairWaiting(props.items);
+  const waiting = pairWaiting(items);
   return rows.map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -172,6 +188,7 @@ function Items(props: ItemsProps): ReactNode {
         key={row.item.key}
         item={row.item}
         waiting={waiting}
+        turnErrors={turnErrors.detail}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ),
@@ -244,9 +261,10 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <StatusMark status={tool.status} />
         )}
         <span className="fd-chat-kind" title={tool.tool_kind}>
-          <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
+          <Icon of={toolIcon(tool)} size={14} />
         </span>
-        <span className="fd-chat-tool-title" title={server === null ? undefined : tool.title}>
+        {/* A name in words (an MCP tool, a built-in tool) keeps the raw id in its tooltip. */}
+        <span className="fd-chat-tool-title" title={name === tool.title ? undefined : tool.title}>
           {name}
         </span>
         {server === null ? null : <span className="fd-chat-tool-server">{server}</span>}
@@ -269,7 +287,7 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
         {waitingFor !== undefined ? (
           // The phone row shows the short label (chat.css); the approval sheet says the rest.
           <span className="fd-chat-tool-result" data-tone="act">
-            <span className="fd-vh">{`${WAITING_LABEL} · ${waitingFor}`}</span>
+            <span className="fd-vh">{`${WAITING_LABEL} · ${requestTitle(waitingFor)}`}</span>
             <span className="fd-chat-wait-long" aria-hidden="true">
               {WAITING_LABEL}
             </span>
@@ -331,7 +349,14 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent; waiti
   );
 }
 
-function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Waiting }) {
+function ItemView(
+  props: Omit<ItemsProps, 'items'> & {
+    item: Item;
+    waiting?: Waiting;
+    /** The raw provider error of each failed turn of the list, by turn key (`pairTurnErrors`). */
+    turnErrors?: ReadonlyMap<string, string>;
+  },
+) {
   const { item } = props;
   switch (item.type) {
     case 'run': {
@@ -372,6 +397,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
           ) : (
             <PromptBubble
               text={item.text ?? item.input}
+              author={name}
               known={props.review?.known}
               onOpen={props.review?.onOpen}
             />
@@ -398,7 +424,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
     case 'reasoning':
       return (
         <details className="fd-chat-reasoning">
-          <summary className={item.done ? undefined : 'fd-chat-pulse'}>
+          <summary>
             <Icon of={ChevronRight} size={12} />
             {thinkingText(item)}
           </summary>
@@ -419,11 +445,11 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
           <Icon of={TriangleAlert} size={14} />
-          {`${WAITING_LABEL} · ${item.title}`}
+          {`${WAITING_LABEL} · ${requestTitle(item.title)}`}
         </p>
       ) : (
         <p className="fd-chat-line" data-state={item.state}>
-          {`${item.title} · ${item.outcome ?? 'expired'}`}
+          {`${requestTitle(item.title)} · ${item.outcome ?? 'expired'}`}
           {item.answered_by !== undefined && memberName(item.answered_by) !== null
             ? ` · answered by ${memberName(item.answered_by)}`
             : ''}
@@ -441,7 +467,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return (
         <div className="fd-chat-turn">
           {item.status !== 'done' ? (
-            <p className="fd-chat-line" data-status={item.status}>{`Turn ${item.status}`}</p>
+            <TurnAlert status={item.status} detail={props.turnErrors?.get(item.key)} />
           ) : null}
           {item.diff && hasChanges(item.diff) ? (
             <div className="fd-chat-diff">
@@ -473,11 +499,8 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
     case 'suggestion':
       return <SuggestedChip path={item.path} />;
     case 'notice':
-      return (
-        <p className={item.tone === 'error' ? 'fd-chat-line fd-chat-error' : 'fd-chat-line'}>
-          {item.text}
-        </p>
-      );
+      // The raw text of the station and the repeats are optional fields (`NoticeExtra`).
+      return <NoticeLine item={item as NoticeItem} />;
   }
 }
 
@@ -590,19 +613,19 @@ export function ChatView(props: ChatViewProps) {
   };
 
   const last = shown.at(-1);
-  // A session that waits for your answer is not working (§4.5: one state per row).
+  // A session that waits for your answer is not working (§4.5: one state per row), and a running
+  // call at the end shows the working glyph already: one working mark for one state.
   const showWorking =
-    working && !(last?.type === 'message' && !last.done) && !hasOpenRequest(items);
+    working &&
+    !(last?.type === 'message' && !last.done) &&
+    !(last?.type === 'tool' && last.status === 'running') &&
+    !hasOpenRequest(items);
 
   let body: ReactNode;
-  if (!ready) body = <p className="fd-chat-state">Loading the conversation…</p>;
-  else if (error) {
-    body = (
-      <p className="fd-chat-state fd-chat-error" role="alert">
-        {error}
-      </p>
-    );
-  } else if (items.length === 0) {
+  // §4.7: the quiet loading line and the error notice of every panel.
+  if (!ready) body = <Loading text="Loading the conversation…" />;
+  else if (error) body = <ErrorNotice text={error} />;
+  else if (items.length === 0) {
     // DL-189: with earlier history above, the empty text would be wrong.
     body =
       historyCount > 0 ? null : (
@@ -667,12 +690,8 @@ export function ChatView(props: ChatViewProps) {
           {body}
           {ready && !error && showWorking ? (
             <p className="fd-chat-working">
+              <span className="fd-dot" data-status="working" aria-hidden="true" />
               Working
-              <span className="fd-chat-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
             </p>
           ) : null}
           {props.footer}

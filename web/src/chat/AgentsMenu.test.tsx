@@ -140,13 +140,16 @@ describe('the agents menu', () => {
     expect(html).toContain('<span class="fd-agent-dim">all good</span>');
     expect(html).not.toMatch(/<button[^>]*data-task="t1"[^>]*disabled/);
     // Commands only: the summary names them, and what runs.
-    expect(html).toContain('Commands <span class="fd-count">3</span>');
+    expect(html).toContain(
+      '<span class="fd-agents-part">Commands <span class="fd-count">3</span></span>',
+    );
+    expect(html).not.toContain('Agents <span class="fd-count">');
     expect(html).toContain('2 running</span>');
     expect(html).toContain('Background commands <span class="fd-count">3</span></p>');
     expect(html).not.toContain('fd-agents-more');
   });
 
-  test('subagents and commands: two groups, the commands in quiet words in the summary', () => {
+  test('subagents and commands: two groups, and two label-and-pill counts in the summary', () => {
     const events = envelopes('s', [
       agent('a1', 'Read the docs'),
       shell('b1', 'sleep 60'),
@@ -155,9 +158,11 @@ describe('the agents menu', () => {
       task('t2', 'completed', { node_id: 'b2' }),
     ]);
     const { html } = menu(events);
+    // §5: a count after a label is a pill, for the commands too (never "· 2 commands").
     expect(html).toContain(
-      'Agents <span class="fd-count">1</span><span class="fd-agents-more">· 2 commands</span>',
+      '<span class="fd-agents-part">Agents <span class="fd-count">1</span></span><span class="fd-agents-part">Commands <span class="fd-count">2</span></span>',
     );
+    expect(html).not.toContain('fd-agents-more');
     const agents = html.indexOf('fd-agent-group">Agents');
     const commands = html.indexOf('fd-agent-group">Background commands');
     expect(agents).toBeGreaterThan(html.indexOf('Main chat'));

@@ -176,9 +176,13 @@ describe('compactRuns', () => {
       tool(20, 'mcp__a__b', 'mcp'),
       tool(21, 'mcp__a__c', 'mcp'),
     ];
-    expect(foldSummary(tools)).toBe('12 tool calls · 7 reads, 3 commands, 2 MCP');
+    expect(foldSummary(tools)).toBe('12 tool calls · 7 reads, 3 commands, 2 MCP calls');
     expect(foldSummary([say(1), say(2), say(3), say(4), say(5), ...tools])).toBe(
-      '12 tool calls · 5 notes · 7 reads, 3 commands, 2 MCP',
+      '12 tool calls · 5 notes · 7 reads, 3 commands, 2 MCP calls',
+    );
+    // Every kind has its noun: "1 other tool", never "1 other".
+    expect(foldSummary([read(1), tool(2, 'TodoWrite', 'other'), tool(3, 'mcp__a__b', 'mcp')])).toBe(
+      '3 tool calls · 1 read, 1 MCP call, 1 other tool',
     );
     expect(foldSummary([say(1), read(1), read(2)])).toBe('2 tool calls · 1 note · 2 reads');
   });

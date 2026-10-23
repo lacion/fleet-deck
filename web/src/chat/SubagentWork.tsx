@@ -68,7 +68,7 @@ export function SubagentWorkView({
         log.items.length > 0 ? (
           <div className="fd-subagent-work" role="log" aria-label="Subagent work">
             {log.items.map((item) => (
-              <HistoryItemView key={item.id} item={item} />
+              <HistoryItemView key={item.id} item={item} sender={false} />
             ))}
           </div>
         ) : log.state.kind === 'empty' ? (
