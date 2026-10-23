@@ -117,7 +117,7 @@ async fn without_a_changed_boot_id_the_session_needs_the_owner_check_and_reconci
         .await;
     assert!(d.events.iter().any(|e| matches!(
         &e.event,
-        EventBody::Known(Event::ExecutionReconciled { shim_id: id }) if *id == shim_id
+        EventBody::Known(Event::ExecutionReconciled { shim_id: id, .. }) if *id == shim_id
     )));
     let row = st.store.shim(shim_id.clone()).await.unwrap().unwrap();
     assert_eq!(row.proof.as_deref(), Some("reconciled_by_owner"));

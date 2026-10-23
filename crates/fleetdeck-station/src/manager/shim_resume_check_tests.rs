@@ -86,13 +86,13 @@ async fn a_hibernation_stops_the_running_execution_but_not_behind_an_unresolved_
 // --- the owner's check and reconciliation (tests 8, 19, 20) -------------
 
 /// A provider group: the leader is dead, a member (`sleep`) lives on in it.
-struct Orphan {
-    identity: ProviderIdentity,
+pub(super) struct Orphan {
+    pub(super) identity: ProviderIdentity,
     member: Option<std::process::Child>,
 }
 
 impl Orphan {
-    fn start() -> Self {
+    pub(super) fn start() -> Self {
         use std::os::unix::process::CommandExt as _;
         let sleep = |group: i32| {
             Command::new("sleep")
@@ -195,7 +195,7 @@ async fn the_owner_check_lists_what_still_runs_and_the_reconciliation_waits_for_
     // The receipt, the event and the proof; state and reason stay.
     assert!(d.events.iter().any(|e| matches!(
         &e.event,
-        EventBody::Known(Event::ExecutionReconciled { shim_id }) if shim_id == "gone"
+        EventBody::Known(Event::ExecutionReconciled { shim_id, .. }) if shim_id == "gone"
     )));
     let row = &rig.rows(&session).await[0];
     assert_eq!(row.proof.as_deref(), Some("reconciled_by_owner"));
@@ -282,14 +282,15 @@ async fn the_reconciliation_refuses_a_running_row_a_foreign_origin_and_unknown_n
 async fn a_legacy_clean_exit_is_unverified_and_one_complete_check_makes_it_resumable() {
     let mut rig = Rig::direct(None).await;
     let session = rig.ended("claude").await;
-    // `exited/exited` without the inspection version (test 19).
+    // `exited/exited` without the inspection version (test 19), of another
+    // boot: the station's own settle (DL-432) proves only the same boot.
     rig.row(
         &session,
         "legacy",
         ShimState::Exited,
         "exited",
         0,
-        Some(dead_identity(&real_boot())),
+        Some(dead_identity("an-older-boot")),
     )
     .await;
     let (code, message) = rig.refused(resume(&session)).await;
@@ -299,10 +300,7 @@ async fn a_legacy_clean_exit_is_unverified_and_one_complete_check_makes_it_resum
         "{message}"
     );
     let check = rig.manager.execution_check(&session).await.unwrap();
-    assert!(
-        check.complete && check.same_boot && !check.still_runs(),
-        "{check:?}"
-    );
+    assert!(check.complete && !check.still_runs(), "{check:?}");
     rig.accepted(reconcile(&session, "legacy")).await;
     rig.accepted(resume(&session)).await;
     rig.manager.shutdown(StopMode::Kill).await;

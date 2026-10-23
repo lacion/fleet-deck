@@ -301,6 +301,7 @@ fn samples() -> Vec<Event> {
         },
         Event::ExecutionReconciled {
             shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
+            by: Some(ReconciledBy::Station),
         },
         Event::WorkspaceBaseStale {
             code: "fetch_failed".into(),

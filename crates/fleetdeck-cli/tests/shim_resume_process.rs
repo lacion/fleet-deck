@@ -230,6 +230,8 @@ async fn a_detached_descendant_does_not_make_a_clean_exit_unproven_and_the_check
         launch_boot_id: Some(real_boot()),
         native_target: None,
         created_at: 1,
+        station_proof: None,
+        station_proof_at: None,
     };
     let reader: BootIdReader = Arc::new(|| Ok(real_boot()));
     let check = shims::check_row(&reader, &row);

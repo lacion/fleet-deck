@@ -598,7 +598,19 @@ CREATE TABLE session_transcripts (
 /// `fleetdeck-link` (G1).
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![
+    Migrations::new(all())
+}
+
+/// The first `version` migrations only: the list of an older build.
+#[cfg(test)]
+pub(crate) fn migrations_upto(version: usize) -> Migrations<'static> {
+    let mut list = all();
+    list.truncate(version);
+    Migrations::new(list)
+}
+
+fn all() -> Vec<M<'static>> {
+    vec![
         M::up(V1),
         M::up(V2),
         M::up(V3),
@@ -642,5 +654,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::schema_v41::V41),
         M::up(super::schema_v42::V42),
         M::up(super::schema_v43::V43),
-    ])
+        M::up(super::schema_v44::V44),
+    ]
 }

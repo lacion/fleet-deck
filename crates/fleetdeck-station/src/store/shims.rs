@@ -116,6 +116,11 @@ pub struct ShimRow {
     pub native_target: Option<String>,
     /// The creation time (Unix ms): the order of the executions.
     pub created_at: i64,
+    /// `checked_after_exit`: the station's own check found nothing of the
+    /// run (DL-432).
+    pub station_proof: Option<String>,
+    /// When the station recorded `station_proof` (Unix ms).
+    pub station_proof_at: Option<i64>,
 }
 
 impl ShimRow {
@@ -147,7 +152,8 @@ pub enum OutputCommit {
 
 pub(super) const COLUMNS: &str = "shim_id, session_id, incarnation, state, owner_generation,
     socket_path, provider_identity, cursor, next_write_seq, reason, inspection_version, shim_pid,
-    proof, proof_boot_id, launch_boot_id, native_target, created_at";
+    proof, proof_boot_id, launch_boot_id, native_target, created_at, station_proof,
+    station_proof_at";
 
 pub(super) fn row(r: &Row<'_>) -> rusqlite::Result<ShimRowRaw> {
     Ok(ShimRowRaw {
@@ -168,6 +174,8 @@ pub(super) fn row(r: &Row<'_>) -> rusqlite::Result<ShimRowRaw> {
         launch_boot_id: r.get(14)?,
         native_target: r.get(15)?,
         created_at: r.get(16)?,
+        station_proof: r.get(17)?,
+        station_proof_at: r.get(18)?,
     })
 }
 
@@ -189,6 +197,8 @@ pub(super) struct ShimRowRaw {
     launch_boot_id: Option<String>,
     native_target: Option<String>,
     created_at: i64,
+    station_proof: Option<String>,
+    station_proof_at: Option<i64>,
 }
 
 impl ShimRowRaw {
@@ -218,6 +228,8 @@ impl ShimRowRaw {
             launch_boot_id: self.launch_boot_id,
             native_target: self.native_target,
             created_at: self.created_at,
+            station_proof: self.station_proof,
+            station_proof_at: self.station_proof_at,
         })
     }
 }

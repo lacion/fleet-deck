@@ -352,11 +352,18 @@ pub enum Event {
     /// shows the session as hibernated and resumes it on the next input.
     #[serde(rename = "session.hibernated")]
     SessionHibernated { after_min: u32 },
-    /// The owner marked the previous run of the session (shim `shim_id`) as
-    /// ended after the station checked its processes (DL-182). Older peers
-    /// decode this kind as unknown.
+    /// The previous run of the session (shim `shim_id`) was marked as ended
+    /// after the station checked its processes (DL-182). Older peers decode
+    /// this kind as unknown.
     #[serde(rename = "session.execution_reconciled")]
-    ExecutionReconciled { shim_id: String },
+    ExecutionReconciled {
+        shim_id: String,
+        /// Who proved the end: absent for the owner (older stations),
+        /// `station` for the station's own check (DL-432).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        by: Option<ReconciledBy>,
+    },
     /// The station's model help named the session (DL-167, R10.1). It
     /// follows the internal `session.renamed` that set `title`; the fold
     /// marks the title as generated while the title is still the same.
@@ -516,6 +523,18 @@ pub enum Event {
     },
 }
 
+/// Who proved the end of a previous run in `session.execution_reconciled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum ReconciledBy {
+    Owner,
+    Station,
+    /// A value of a newer peer.
+    #[serde(other)]
+    Unknown,
+}
+
 #[path = "event_kinds.rs"]
 mod kinds;
 
@@ -528,3 +547,7 @@ pub use tasks::{BackgroundTask, RunOrigin, input_text_of};
 #[cfg(test)]
 #[path = "event_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "event_reconciled_tests.rs"]
+mod reconciled_tests;
