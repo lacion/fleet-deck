@@ -93,6 +93,21 @@ export function stationName(id: string, stations: readonly StationView[]): strin
   return stations.find((station) => station.station_id === id)?.name ?? id;
 }
 
+/** The systems whose 64-bit ARM machines the owner knows as "arm64": Apple says arm64, and so does
+ * the Linux kernel (`arch/arm64`); only `uname -m` says aarch64. */
+const ARM64_SYSTEMS: ReadonlySet<string> = new Set(['macos', 'darwin', 'linux', 'omarchy']);
+
+/**
+ * The CPU architecture of a station as the owner reads it: `aarch64` (the Rust target name) is
+ * `arm64` on macOS and Linux; any other value stays as the station sends it (`x86_64`).
+ */
+export function archLabel(os: string, arch: string): string {
+  const cpu = arch.toLowerCase();
+  return ARM64_SYSTEMS.has(os.toLowerCase()) && (cpu === 'aarch64' || cpu === 'arm64')
+    ? 'arm64'
+    : arch;
+}
+
 /** A live session runs or can run now: not ended, not lost, and its station is reachable (the
  * Watch rule, `watch/tiles.ts`). */
 export const isLiveSession = (card: DeckSession): boolean =>

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import type { DeckSession } from '../gen';
 import { card, station } from '../testing/fleet';
-import { UsageGlance } from './UsageGlance';
+import { sessionsText, UsageGlance } from './UsageGlance';
 import { UsageMeters } from './UsageMeters';
 import {
   costText,
@@ -230,13 +230,32 @@ describe('the usage glance totals (live UI audit)', () => {
     const html = renderToStaticMarkup(
       <UsageGlance sessions={[big('a'), big('b')]} stations={[station()]} now={NOW} />,
     );
-    expect(html).toContain('<p class="fd-glance-span">2 sessions on the board</p>');
-    expect(html).toContain('<dd title="$51,735.86">$51,735.86</dd>');
+    expect(html).toContain('<p class="fd-glance-span">2 live sessions</p>');
     expect(html).toContain('<dd title="1,500,000">1.5M</dd>');
     // One-line labels, the words of the Properties panel ("682 input · 309K output").
     expect(html).toContain('<dt>new input</dt>');
     expect(html).toContain('<dt>output</dt>');
-    expect(html).toContain('<dt>cost</dt>');
+    // The cost is the price at the API rates: named so, and explained in the title.
+    const about =
+      'What the tokens of these sessions cost at the provider&#x27;s API prices, cached input included. A subscription does not bill it.';
+    expect(html).toContain(`<dt title="${about}">at API prices</dt>`);
+    expect(html).toContain(`<dd title="$51,735.86\n${about}">$51,735.86</dd>`);
+    expect(html).not.toContain('>cost<');
+  });
+
+  test('the scope names the live and the ended sessions, as the header counts them', () => {
+    const live = card('a');
+    const ended = card('e', 'ended');
+    expect(sessionsText([live])).toBe('1 live session');
+    expect(sessionsText([live, card('b', 'idle')])).toBe('2 live sessions');
+    expect(sessionsText([live, card('b'), ended, card('l', 'lost')])).toBe(
+      '2 live and 2 ended sessions',
+    );
+    expect(sessionsText([live, card('b'), ended])).toBe('2 live and 1 ended session');
+    expect(sessionsText([live, card('u', 'unreachable'), ended])).toBe(
+      '1 live, 1 unreachable and 1 ended session',
+    );
+    expect(sessionsText([ended])).toBe('1 ended session');
   });
 
   test('the All usage tab keeps the unit in its labels: New input tokens, Output tokens', () => {
@@ -245,5 +264,8 @@ describe('the usage glance totals (live UI audit)', () => {
     );
     expect(html).toContain('<dt class="fd-label">New input tokens</dt>');
     expect(html).toContain('<dt class="fd-label">Output tokens</dt>');
+    expect(html).toMatch(
+      /<dt class="fd-label" title="What the tokens of this session[^"]*">At API prices<\/dt>/,
+    );
   });
 });

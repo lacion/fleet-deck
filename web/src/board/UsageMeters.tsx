@@ -1,6 +1,8 @@
 import type { DeckSession, StationView } from '../gen';
 import { useNow } from '../ui/useNow';
 import {
+  API_PRICES,
+  apiPricesTitle,
   assistMeters,
   assistText,
   costTotalText,
@@ -40,7 +42,9 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
           <dd>{totalText(usage.output, tokens)}</dd>
         </div>
         <div className="fd-usage-stat">
-          <dt className="fd-label">Cost</dt>
+          <dt className="fd-label" title={apiPricesTitle(sessions.length)}>
+            {sentence(API_PRICES)}
+          </dt>
           <dd>{costTotalText(usage)}</dd>
         </div>
       </dl>

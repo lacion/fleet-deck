@@ -114,6 +114,24 @@
     width: 180px;
   }
 }
+/* At rest the search is a ghost, as every other control of the title row (Filters, Group by,
+   Share board, the bell): the magnifier and the --faint placeholder name it, and an empty field
+   box pulled the eye from the page title. A hover shows the field; the focus or a text keep the
+   field look. (A narrow board folds it to its icon, below.) */
+.fd-home:not([data-layout="phone"]) .fd-home-search > input:not(:focus):placeholder-shown {
+  background: transparent;
+  border-color: transparent;
+}
+@media (hover: hover) {
+  @container fleet (min-width: 1101px) {
+    .fd-home:not([data-layout="phone"])
+      .fd-home-search:hover
+      > input:not(:focus):placeholder-shown {
+      background: var(--raised);
+      border-color: var(--ctl-edge);
+    }
+  }
+}
 /* Share board: its full label, and "Share" on a narrow board (its accessible name stays
    "Share board…"). */
 .fd-home-share-short {
@@ -522,6 +540,14 @@
 .fd-lane-conf > .fd-icon {
   flex: none;
 }
+/* A phone-width lane head keeps the name, the count and the slots on one line: a warning (a
+   shared bypass mode, low resources, contested) takes the line under it. */
+@container fleet (max-width: 480px) {
+  .fd-lane-head > :is(.fd-lane-warn, .fd-lane-conf) {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
 .fd-lane-slots {
   display: inline-flex;
   align-items: center;
@@ -669,9 +695,12 @@
 }
 /* The where column of every strip of the board (--fd-where-w): 168px, wider on a wide board
    (16% of the fleet column, at most 260px), so a long branch shows. Every strip of the board has
-   the same container width, so the columns stay aligned. */
+   the same container width, so the columns stay aligned. The changes column (--fd-changes-w) holds
+   a diff of 12 characters ("+12,345 −678") and "1,286 files" inside its 12px sides; a longer
+   diff takes its short form ("+18K −6.4K", FleetStrip diffTexts). */
 .fd-board {
   --fd-where-w: 168px;
+  --fd-changes-w: 112px;
 }
 @container fleet (min-width: 721px) {
   .fd-board {
@@ -680,7 +709,9 @@
 }
 .fd-strip {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w, 168px) 88px 64px;
+  grid-template-columns:
+    104px minmax(0, 1fr) auto var(--fd-where-w, 168px) var(--fd-changes-w, 112px)
+    64px;
   align-items: stretch;
   min-height: var(--strip-h);
   padding-left: 3px;
@@ -792,8 +823,9 @@
   gap: var(--sp-2);
   color: var(--dim);
 }
-/* No fact to show: no padding (the project label shows only on a narrow strip). */
-.fd-strip-meta:not(:has(> :not(.fd-strip-proj))) {
+/* No fact to show: no padding (the project label shows only on a narrow strip; a mode that the
+   lane head names keeps only its words for screen readers). */
+.fd-strip-meta:not(:has(> :not(.fd-strip-proj, .fd-vh))) {
   padding: 0;
 }
 .fd-strip-proj {
@@ -855,31 +887,37 @@
 .fd-strip[data-nochanges="true"] > .fd-strip-where {
   grid-column: span 2;
 }
-/* A board where no strip has changes drops the changes column: the main cells get its 88px, and
-   the ages stay in one column. It is a choice of the board, not of each lane, so the columns of
-   every lane line up. The chip line of the where cell then starts at where + age from the right
-   edge. */
+/* A board that has shown no changes yet drops the changes column: the main cells get its
+   --fd-changes-w, and the ages stay in one column. It is a choice of the board, not of each lane,
+   so the columns of every lane line up; once a strip showed changes, the column stays until the
+   page reloads (FleetBoard `data-changes`), so a live event never moves every where cell. The chip
+   line of the where cell then starts at where + age from the right edge. */
 @container fleet (min-width: 721px) {
-  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
+  .fd-board:not([data-changes]) .fd-strip {
     grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w, 168px) 64px;
   }
-  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
+  .fd-board:not([data-changes]) .fd-strip > .fd-strip-where {
     grid-column: auto;
   }
-  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
+  .fd-board:not([data-changes]) .fd-stripwrap > .fd-strip-links {
     left: calc(100% - var(--fd-where-w, 168px) - 64px + var(--sp-3));
     max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   }
 }
+/* The last guard of the column: a diff never runs through the rule into the age cell. */
 .fd-strip > .fd-strip-changes {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
+  overflow: hidden;
   font-size: var(--fs-meta);
 }
 .fd-strip-diff {
+  max-width: 100%;
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fd-add {
@@ -899,7 +937,7 @@
 }
 /* The chips that are links of their own (PR, issue, project, compare) lie in the strip row: the
    second line of the where cell (as the PR chip of concept A). The where column starts at where
-   + changes 88 + age 64 from the right edge. */
+   + changes (--fd-changes-w) + age 64 from the right edge. */
 .fd-strip-links {
   display: flex;
   flex-wrap: nowrap;
@@ -920,12 +958,12 @@
   z-index: 1;
   pointer-events: none;
   bottom: 3px;
-  left: calc(100% - var(--fd-where-w, 168px) - 88px - 64px + var(--sp-3));
+  left: calc(100% - var(--fd-where-w, 168px) - var(--fd-changes-w, 112px) - 64px + var(--sp-3));
   max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   overflow: hidden;
 }
 .fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
-  max-width: calc(var(--fd-where-w, 168px) + 88px - 2 * var(--sp-3));
+  max-width: calc(var(--fd-where-w, 168px) + var(--fd-changes-w, 112px) - 2 * var(--sp-3));
 }
 .fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer)) > .fd-strip > .fd-strip-where {
   align-items: flex-start;
@@ -1036,6 +1074,13 @@
     grid-area: call;
     font-size: var(--fs-ui);
     color: var(--dim);
+  }
+  /* The status glyph hangs in a column of its own: the title and the first cell of the second line
+     (the callsign; in a repo or project lane the station) start at one x (the 12px .fd-dot, its 2px
+     margin and the gap of the title). */
+  .fd-strip:not([data-showstation="true"]) .fd-strip-call,
+  .fd-strip[data-showstation="true"] > .fd-strip-where > .fd-strip-station {
+    margin-inline-start: calc(12px + 2px + var(--sp-1));
   }
   .fd-strip-title {
     grid-area: title;
@@ -1217,6 +1262,23 @@
 .fd-glance .fd-ops-h > .fd-icon {
   color: var(--fuel);
 }
+/* The first section of the wide ops column starts with the title row of the page header (§4.3,
+   concept B): its heading is a --header-h row under the 8px top padding of the header, so it
+   centers on the page title; a scope line right under it ("7 live and 2 ended sessions") moves up
+   by the same 8px as the header sentence and sits on its line (after the glance rules). */
+.fd-ops[data-wide="true"] > .fd-ops-body > :first-child:not(.fd-ops-mail),
+.fd-ops[data-wide="true"] > .fd-ops-body > .fd-ops-mail:first-child > :first-child {
+  padding-top: var(--sp-2);
+}
+.fd-ops[data-wide="true"] > .fd-ops-body > :first-child:not(.fd-ops-mail) > .fd-ops-h:first-child,
+.fd-ops[data-wide="true"]
+  > .fd-ops-body
+  > .fd-ops-mail:first-child
+  > :first-child
+  > .fd-ops-h:first-child {
+  min-height: var(--header-h);
+  margin-bottom: 0;
+}
 
 /* Usage glance */
 .fd-glance-meters {
@@ -1260,7 +1322,7 @@
   color: var(--faint);
   font-size: var(--fs-meta);
 }
-/* The scope of the totals ("6 sessions · all time"), then the totals. */
+/* The scope of the totals ("7 live and 2 ended sessions"), then the totals. */
 .fd-glance-span {
   margin: var(--sp-5) 0 var(--sp-2);
   color: var(--dim);
@@ -1268,6 +1330,10 @@
 }
 .fd-ops-h + .fd-glance-span {
   margin-top: 0;
+}
+/* The first section of the wide ops column: the scope line sits on the header sentence (above). */
+.fd-ops[data-wide="true"] > .fd-ops-body > .fd-glance:first-child > .fd-ops-h + .fd-glance-span {
+  margin-top: calc(-1 * var(--sp-2));
 }
 /* The cost keeps its whole value ("$1,730.38", cents everywhere, §5): its column is as wide as its
    value, and the token columns share the rest. */
@@ -1277,8 +1343,8 @@
   gap: var(--sp-2);
   margin: 0;
 }
-/* The value over its one-line label ("new input", "output", "cost"): the labels start at one
-   height under the values. */
+/* The value over its one-line label ("new input", "output", "at API prices"): the labels start at
+   one height under the values. */
 .fd-glance-totals > div {
   display: flex;
   flex-direction: column-reverse;
@@ -2148,7 +2214,7 @@
     top: 50%;
     bottom: auto;
     left: auto;
-    right: calc(88px + 64px + var(--sp-3));
+    right: calc(var(--fd-changes-w, 112px) + 64px + var(--sp-3));
     transform: translateY(-50%);
   }
   :root[data-density="compact"]
@@ -2163,10 +2229,7 @@
     align-items: center;
     padding-top: 0;
   }
-  :root[data-density="compact"]
-    .fd-board:not(:has(.fd-strip:not([data-nochanges="true"])))
-    .fd-stripwrap
-    > .fd-strip-links {
+  :root[data-density="compact"] .fd-board:not([data-changes]) .fd-stripwrap > .fd-strip-links {
     left: auto;
   }
   /* The chips sit at the right end, not after the station name. */
