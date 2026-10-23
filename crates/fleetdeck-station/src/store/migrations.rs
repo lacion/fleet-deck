@@ -642,5 +642,6 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::schema_v41::V41),
         M::up(super::schema_v42::V42),
         M::up(super::schema_v43::V43),
+        M::up(super::schema_v46::V46),
     ])
 }

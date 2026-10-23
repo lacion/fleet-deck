@@ -8,6 +8,8 @@ pub mod host {
     pub use fleetdeck_providers::host::*;
 }
 
+/// MCP Apps: the capture of an app after a tool call (B15).
+pub mod apps;
 /// The connected GitHub, GitLab, Jira and Linear accounts (DL-173).
 pub mod accounts;
 /// Artifacts: versioned files that a session or a person publishes (R12).
