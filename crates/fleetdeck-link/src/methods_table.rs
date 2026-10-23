@@ -30,7 +30,7 @@ const fn drive(name: &'static str) -> MethodSpec {
 use Callers::DeckToStation;
 
 /// The first rows of [`METHODS`].
-const HEAD: [MethodSpec; 89] = [
+const HEAD: [MethodSpec; 91] = [
     m("station.info", DeckToStation, Scope::Read, None, false),
     m("session.list", DeckToStation, Scope::Read, None, false),
     m("events.replay", DeckToStation, Scope::Read, None, false),
@@ -285,6 +285,22 @@ const HEAD: [MethodSpec; 89] = [
         DeckToStation,
         Scope::Read,
         Some(feature::SUBAGENT),
+        false,
+    ),
+    // The workflow projection of a session in pages, and the transcript of one
+    // workflow agent (B12).
+    m(
+        "session.workflows",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::WORKFLOWS),
+        false,
+    ),
+    m(
+        "session.workflow_agent",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::WORKFLOWS),
         false,
     ),
     // The native sessions of the station's provider homes, and the preview of

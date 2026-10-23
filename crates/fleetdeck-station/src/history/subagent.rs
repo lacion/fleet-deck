@@ -360,7 +360,7 @@ impl Ring {
 /// # Errors
 /// [`Fail::Unavailable`] with `not_trusted` when a record names another
 /// session or agent; the deadline; a read error.
-pub(super) fn read_log(
+pub(crate) fn read_log(
     file: &File,
     size: u64,
     native: &str,

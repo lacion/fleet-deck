@@ -141,7 +141,7 @@ pub struct HistoryError {
 }
 
 impl HistoryError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -237,7 +237,7 @@ impl History {
     }
 
     /// The user id that must own a transcript.
-    fn uid(&self) -> u32 {
+    pub(crate) fn uid(&self) -> u32 {
         self.shared
             .seams
             .uid
@@ -250,7 +250,7 @@ impl History {
     /// Runs `work` on the blocking pool under the budget. The permit moves
     /// into the worker, so it is released only when the worker returns, also
     /// after the deadline answered `busy`.
-    async fn run<T: Send + 'static>(
+    pub(crate) async fn run<T: Send + 'static>(
         &self,
         deadline: Instant,
         work: impl FnOnce(Instant) -> Result<T, Fail> + Send + 'static,
@@ -501,11 +501,11 @@ fn parse_cursor(text: &str) -> Option<(String, u64)> {
     Some((hash.to_owned(), number.parse().ok()?))
 }
 
-fn busy() -> HistoryError {
+pub(crate) fn busy() -> HistoryError {
     HistoryError::new(code::BUSY, "the history took too long")
 }
 
-fn internal(e: impl std::fmt::Display) -> HistoryError {
+pub(crate) fn internal(e: impl std::fmt::Display) -> HistoryError {
     HistoryError::new("internal", e.to_string())
 }
 
