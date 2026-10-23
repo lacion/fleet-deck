@@ -235,6 +235,25 @@ export function pathParts(path: string): { readonly parent: string; readonly bas
   return { parent: short.slice(0, cut + 1), base: short.slice(cut + 1) };
 }
 
+// ── platforms (DESIGN-SYSTEM §5): the names that owners know, not the target names of Rust ──
+
+/** The owner's name of an architecture: `aarch64` → `arm64`, `amd64` → `x86_64`. */
+const ARCH_LABELS: Readonly<Record<string, string>> = {
+  aarch64: 'arm64',
+  arm64: 'arm64',
+  x86_64: 'x86_64',
+  amd64: 'x86_64',
+};
+
+/**
+ * The architecture of a station for a person: `aarch64` (the Rust target name of an Apple
+ * silicon Mac) → `arm64`, `amd64` → `x86_64`; any other value stays as it is. The `title` of the
+ * line keeps the raw value.
+ */
+export function archLabel(arch: string): string {
+  return ARCH_LABELS[arch.toLowerCase()] ?? arch;
+}
+
 /** A size in decimal units: `512 B`, `12.3 KB`, `4.5 MB`, `1.2 GB`. */
 export function sizeText(bytes: number): string {
   if (bytes < 1000) return `${bytes} B`;
