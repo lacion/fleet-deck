@@ -177,17 +177,20 @@ describe('properties panel facts (§4.5)', () => {
   });
 
   test('the tokens say "new input": the station counts the input outside the prompt cache only', () => {
-    expect(tokensText(682, 309_000)).toBe('682 new input · 309K output');
-    expect(tokensText(null, 309_000)).toBe('309K output');
-    expect(tokensText(1200, null)).toBe('1.2K new input');
+    // A part keeps one line (no-break spaces): a narrow panel breaks the fact at the "·".
+    const words = (text: string) => text.replaceAll('\u00a0', ' ');
+    expect(words(tokensText(682, 309_000))).toBe('682 new input · 309K output');
+    expect(tokensText(682, 309_000)).toBe('682\u00a0new\u00a0input · 309K\u00a0output');
+    expect(words(tokensText(null, 309_000))).toBe('309K output');
+    expect(words(tokensText(1200, null))).toBe('1.2K new input');
     // A Codex session counts the cached input too (the ops glance says "input").
-    expect(tokensText(1200, 5, 'input')).toBe('1.2K input · 5 output');
+    expect(words(tokensText(1200, 5, 'input'))).toBe('1.2K input · 5 output');
     const usage = { input_tokens: 682, output_tokens: 309_000, cost_usd: 1, cost_inferred: false };
     const html = panel('live', true, {
       session: { ...session(), summary: { ...session().summary, usage } },
     });
     expect(html).toContain(
-      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682 new input · 309K output</span>`,
+      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682\u00a0new\u00a0input · 309K\u00a0output</span>`,
     );
   });
 

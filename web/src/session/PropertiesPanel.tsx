@@ -191,10 +191,13 @@ export type ModeControl = {
 /** The title of the token count: the input that the station counts leaves the prompt cache out. */
 export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached context is not counted';
 
+/** A part of a fact that keeps one line: its spaces do not break (the 280px row breaks at "·"). */
+const keep = (text: string): string => text.replaceAll(' ', '\u00a0');
+
 /**
  * The token fact in the words of the ops usage glance (`inputLabel`): a Claude session counts the
  * input outside the prompt cache only, "new input" (a bare "682 in" next to a large cost read as a
- * bug); then the "output".
+ * bug); then the "output". A narrow panel breaks the line at the "·", never inside a part.
  */
 export function tokensText(
   input: number | null,
@@ -202,8 +205,8 @@ export function tokensText(
   inputWord = 'new input',
 ): string {
   return [
-    input === null ? null : `${compactCount(input)} ${inputWord}`,
-    output === null ? null : `${compactCount(output)} output`,
+    input === null ? null : keep(`${compactCount(input)} ${inputWord}`),
+    output === null ? null : keep(`${compactCount(output)} output`),
   ]
     .filter((part) => part !== null)
     .join(' · ');
