@@ -18,6 +18,7 @@ import type {
 import {
   answeredText,
   effortNotice,
+  effortSetNotice,
   errorNotice,
   expiredText,
   modeNotice,
@@ -528,6 +529,11 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         }
         effortReported = true;
         lastEffort = e.effort;
+        break;
+      }
+      case 'effort.set_result': {
+        const notice = effortSetNotice(event as Extract<Event, { kind: 'effort.set_result' }>);
+        if (notice !== null) add(root, { type: 'notice', key, ...notice });
         break;
       }
       case 'session.output_gap': {

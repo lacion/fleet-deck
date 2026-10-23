@@ -3,6 +3,7 @@
 // the `title` of the notice. The timeline (session/timeline.ts) builds its notices with these, so
 // that the chat and the wall say the same.
 import type { Item } from '../session/timeline';
+import type { Event } from '../gen';
 import { contextLabel, modeLabel, shortModel } from '../ui/format';
 
 /** A notice as the chat shows it: its words, and the raw text for its `title`. */
@@ -88,6 +89,38 @@ export const effortNotice = (effort: string): NoticeText => ({
   text: `Effort changed to ${effort}`,
   title: `Reasoning effort: ${effort}`,
 });
+
+/**
+ * The notice of an `effort.set_result` (B18 Phase 2). `accepted`, `applied` and `superseded` add
+ * none: an `effort.changed` notice shows a real change. `adjusted` and `unverified` are `info`; a
+ * refusal is an `error`, as a refused interrupt.
+ */
+export function effortSetNotice(
+  e: Extract<Event, { kind: 'effort.set_result' }>,
+): (NoticeText & { readonly tone: 'info' | 'error' }) | null {
+  switch (e.outcome) {
+    case 'adjusted':
+      return {
+        text:
+          e.effort === null
+            ? 'This model does not use an effort setting'
+            : `Effort is ${e.effort}, not ${e.requested}`,
+        tone: 'info',
+      };
+    case 'unverified':
+      return {
+        text: `Effort set to ${e.requested}; the provider does not report it`,
+        tone: 'info',
+      };
+    case 'refused':
+      return {
+        text: e.message ? `Effort not changed: ${e.message}` : 'Effort not changed.',
+        tone: 'error',
+      };
+    default:
+      return null;
+  }
+}
 
 /** A permission mode change, with the one name of the mode (§5 Modes). */
 export const modeNotice = (mode: string): NoticeText => ({

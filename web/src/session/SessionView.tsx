@@ -38,6 +38,7 @@ import type { SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
 import { useSessionController } from './controller';
+import { composerModelChoice } from './effortChoice';
 import { useArtifactRows } from './artifactRows';
 import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
@@ -647,12 +648,7 @@ export function SessionView(props: SessionViewProps) {
                       busy === null &&
                       layout !== 'phone'
                         ? {
-                            modelChoice: {
-                              current: s.model,
-                              models: s.models ?? sessionModels(events),
-                              onSet: (m: string) =>
-                                actions && controller.act('model', () => actions.setModel(m)),
-                            },
+                            modelChoice: composerModelChoice(s, events, actions, controller),
                           }
                         : {})}
                     />

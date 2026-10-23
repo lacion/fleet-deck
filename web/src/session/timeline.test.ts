@@ -665,3 +665,82 @@ describe('effort notices (B18)', () => {
     ).toEqual(['Model changed to Sonnet 5.5', 'Effort changed to low']);
   });
 });
+
+describe('effort.set_result notices (B18 Phase 2)', () => {
+  const result = (
+    outcome: Extract<Event, { kind: 'effort.set_result' }>['outcome'],
+    extra: { effort?: string | null; message?: string } = {},
+  ): Event => ({
+    kind: 'effort.set_result',
+    control_id: 'fx-1',
+    requested: 'max',
+    effort: extra.effort ?? null,
+    outcome,
+    ...(extra.message === undefined ? {} : { message: extra.message }),
+  });
+  const items = (event: Event) => buildTimeline(envelopes('e', [event])).items;
+
+  test('accepted, applied and superseded add no notice', () => {
+    expect(items(result('accepted'))).toEqual([]);
+    expect(items(result('applied', { effort: 'max' }))).toEqual([]);
+    expect(items(result('superseded'))).toEqual([]);
+  });
+
+  test('adjusted names the level that runs', () => {
+    expect(items(result('adjusted', { effort: 'high' }))).toEqual([
+      expect.objectContaining({
+        type: 'notice',
+        text: 'Effort is high, not max',
+        tone: 'info',
+      }),
+    ]);
+  });
+
+  test('adjusted with no level says that the model has no effort setting', () => {
+    expect(items(result('adjusted'))).toEqual([
+      expect.objectContaining({
+        type: 'notice',
+        text: 'This model does not use an effort setting',
+        tone: 'info',
+      }),
+    ]);
+  });
+
+  test('unverified says that the provider does not report the level', () => {
+    expect(items(result('unverified'))).toEqual([
+      expect.objectContaining({
+        type: 'notice',
+        text: 'Effort set to max; the provider does not report it',
+        tone: 'info',
+      }),
+    ]);
+  });
+
+  test('refused is an error, with the message when there is one', () => {
+    expect(items(result('refused', { message: 'not offered' }))).toEqual([
+      expect.objectContaining({
+        type: 'notice',
+        text: 'Effort not changed: not offered',
+        tone: 'error',
+      }),
+    ]);
+    expect(items(result('refused'))).toEqual([
+      expect.objectContaining({ type: 'notice', text: 'Effort not changed.', tone: 'error' }),
+    ]);
+  });
+
+  test('a result adds no effort.changed state: a later change still notices against the last report', () => {
+    const changed = (effort: string): Event => ({ kind: 'effort.changed', effort });
+    const tree = buildTimeline(
+      envelopes('e', [
+        changed('high'),
+        result('accepted'),
+        result('applied', { effort: 'low' }),
+        changed('low'),
+      ]),
+    );
+    expect(tree.items.map((i) => (i.type === 'notice' ? i.text : i.type))).toEqual([
+      'Effort changed to low',
+    ]);
+  });
+});
