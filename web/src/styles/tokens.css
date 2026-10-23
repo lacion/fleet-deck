@@ -37,6 +37,10 @@
   --knob-shadow: 0 0 0 0 transparent; /* shadow of the switch knob (the light theme only) */
   --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
   --selected-lift: 0 0 0 0 transparent; /* lift of the selected row (the light theme only) */
+  /* hover of a nav or index row on --bg or --surface: one step under --selected-bg (#1c2532) */
+  --hover-bg: var(--raised);
+  --seg-track: var(--surface); /* track of a .fd-seg segmented control */
+  --panel-bg: var(--surface); /* fill of a .fd-panel (with --shadow-lift, the zero shadow here) */
 
   /* semantic colors: the jersey colors (§2.2) */
   --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
@@ -110,6 +114,13 @@
   --knob-shadow: 0 1px 2px rgba(17, 24, 33, 0.25);
   --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
   --selected-lift: var(--shadow-lift);
+  /* a grey tint (#e4e9f0) a step under --bg: the selected row is white and lifted, so a hover in
+     --raised looked selected */
+  --hover-bg: var(--border-soft);
+  /* a visible grey track (#e4e9f0): the white pressed segment with --shadow-lift stands on it
+     (--surface was 1.04:1 on --bg) */
+  --seg-track: var(--badge-bg);
+  --panel-bg: var(--raised); /* a white panel with --shadow-lift (--surface was 1.04:1 on --bg) */
 
   --act: #7f5c00; /* 4.5:1 also on --badge-bg and the add/del diff fills */
   --act-fill: #ffd43b;

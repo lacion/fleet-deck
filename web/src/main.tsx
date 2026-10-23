@@ -37,6 +37,22 @@ import './styles/displays.css';
 
 initTheme();
 initDensity();
+// The last kind of input on `<html data-modality>`: `pointer` after a press of a mouse, a pen or a
+// finger, `keyboard` after a key. Chromium matches :focus-visible on a <select> picked with the
+// pointer, so the quiet ghost select (base.css `select.fd-ghost`, DESIGN-SYSTEM §3) reads this to
+// keep its focus edge for the keyboard only. A key press brings the edge back at once.
+for (const [type, modality] of [
+  ['pointerdown', 'pointer'],
+  ['keydown', 'keyboard'],
+] as const) {
+  document.addEventListener(
+    type,
+    () => {
+      document.documentElement.dataset['modality'] = modality;
+    },
+    { capture: true, passive: true },
+  );
+}
 const root = document.getElementById('root');
 if (root === null) {
   throw new Error('index.html has no #root element');
