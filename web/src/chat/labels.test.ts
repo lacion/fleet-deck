@@ -36,13 +36,43 @@ describe('argText', () => {
 
   test('a JSON object that the station cut at 200 characters reads as the values before the cut', () => {
     expect(
-      argText(`{"name":"audit","script":"export const meta = {\\n  name: 'x',\\n  desc…`),
-    ).toBe("audit · export const meta = { name: 'x', desc…");
+      argText(`{"args":{"n":1},"script":"export const meta = {\\n  name: 'x',\\n  desc…`),
+    ).toBe("export const meta = { name: 'x', desc…");
     // A cut in the middle of an escape drops the broken escape.
     expect(argText('{"a":"one\\…')).toBe('one…');
     // A cut in a key, or right after it, adds nothing.
     expect(argText('{"a":"one","descri…')).toBe('one');
     expect(argText('{"a":"one","b":…')).toBe('one');
+  });
+
+  test('a description, a name or a title names the call: the other values go', () => {
+    expect(
+      argText(`{"name":"audit","script":"export const meta = {\\n  name: 'x',\\n  desc…`),
+    ).toBe('audit');
+    expect(argText('{"content":"# Report","kind":"report","title":"Weekly audit"}')).toBe(
+      'Weekly audit',
+    );
+    // A description comes before a name, a name before a title.
+    expect(argText('{"description":"Fix the flaky test","name":"fix","title":"T"}')).toBe(
+      'Fix the flaky test',
+    );
+    expect(argText('{"title":"T","name":"fix"}')).toBe('fix');
+    // A name inside a nested object does not count.
+    expect(argText('{"args":{"name":"x"},"id":"w1"}')).toBe('w1');
+  });
+
+  test('a path in the folder of the agent (~/.claude) reads as its file name', () => {
+    // A Workflow call: the script that the session wrote under its transcript folder.
+    expect(
+      argText(
+        '{"args":{"phase":2},"scriptPath":"/home/me/.claude/projects/-home-me-projects-reggio/05492400-1b42-48a1-86f0-5b1e2c3d4e5f/workflows/fix-schema.js"}',
+      ),
+    ).toBe('fix-schema.js');
+    expect(argText('{"path":"/Users/ana/.claude/agents/review.md","depth":2}')).toBe(
+      'review.md · 2',
+    );
+    // A path elsewhere stays whole.
+    expect(argText('{"path":"/home/me/app/src/a.ts"}')).toBe('/home/me/app/src/a.ts');
   });
 
   test('any other input is its first line', () => {

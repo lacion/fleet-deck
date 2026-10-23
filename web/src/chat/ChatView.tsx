@@ -121,6 +121,23 @@ function markEdges(el: HTMLElement) {
   el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
 }
 
+/**
+ * The room that the scrollbar of the log takes at its start and its end (`scrollbar-gutter:
+ * stable both-edges` keeps half of it at each side; a phone keeps it at the end only; an overlay
+ * scrollbar takes none), as `--chat-sb-start` and `--chat-sb-end` on the chat: the Agents bar
+ * above the log keeps the same room, so that its menus start and end on the edges of the prose.
+ */
+function markGutter(el: HTMLElement, chat: HTMLElement) {
+  const room = Math.max(0, el.offsetWidth - el.clientWidth);
+  const start = getComputedStyle(el).scrollbarGutter.includes('both-edges') ? room / 2 : 0;
+  for (const [name, px] of [
+    ['--chat-sb-start', start],
+    ['--chat-sb-end', room - start],
+  ] as const) {
+    if (chat.style.getPropertyValue(name) !== `${px}px`) chat.style.setProperty(name, `${px}px`);
+  }
+}
+
 type ItemsProps = {
   items: readonly Item[];
   onOpenChanges: OpenChanges;
@@ -467,6 +484,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
 export function ChatView(props: ChatViewProps) {
   const { items, working, ready, error } = props;
   const provider = props.provider ?? null;
+  const chat = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
   const stick = useRef(true); // the user is near the bottom
@@ -544,12 +562,16 @@ export function ChatView(props: ChatViewProps) {
   }, [items, shown, working]);
 
   // The log also changes its height without a scroll (new rows, an opened row, a filter, a
-  // resized window): the fades follow it.
+  // resized window): the fades follow it, and the bar above it keeps the room of its scrollbar.
   useEffect(() => {
     const el = scroller.current;
     const body = column.current;
-    if (!el || !body || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => markEdges(el));
+    const root = chat.current;
+    if (!el || !body || !root || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      markEdges(el);
+      markGutter(el, root);
+    });
     observer.observe(el);
     observer.observe(body);
     return () => observer.disconnect();
@@ -613,7 +635,7 @@ export function ChatView(props: ChatViewProps) {
     ) : null;
 
   return (
-    <section className="fd-chat" aria-label="Conversation">
+    <section className="fd-chat" aria-label="Conversation" ref={chat}>
       {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
           end of the session tab row (chat.css), out of the transcript. */}
       {toolbar ? (

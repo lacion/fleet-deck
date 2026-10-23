@@ -10,10 +10,12 @@ const md = (text: string) => renderToStaticMarkup(<Markdown text={text} />);
 
 describe('Markdown', () => {
   test('renders a GFM table and a task list', () => {
-    const html = md('| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo\n');
+    const html = md('| a | b |\n|---|---|\n| x | 2 |\n\n- [x] done\n- [ ] todo\n');
     expect(html).toContain('<div class="fd-md">');
     expect(html).toContain('<div class="fd-md-table"><table>');
-    expect(html).toContain('<td>1</td>');
+    expect(html).toContain('<td>x</td>');
+    // A column of numbers aligns right (tableNumbers.ts).
+    expect(html).toContain('<td data-num="">2</td>');
     expect(html).toContain('type="checkbox"');
   });
 

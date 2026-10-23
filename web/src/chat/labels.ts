@@ -1,3 +1,5 @@
+import { homeShort, pathParts } from '../ui/format';
+
 /** Who started a run; `continuation` is the station's restart input (ADR-007 §2.5). */
 export function runLabel(origin: string): string {
   if (origin === 'provider') return 'Provider turn';
@@ -36,20 +38,23 @@ function unescapeJson(body: string): string {
 }
 
 /**
- * The plain values (strings, numbers, booleans) at the top level of a JSON object text, in their
- * order. The station cuts a long input at 200 characters (`…`): such a text gives the values
- * before the cut, the last one with its `…`. Nested objects and arrays are left out.
+ * The plain values (strings, numbers, booleans) at the top level of a JSON object text, with
+ * their keys, in their order. The station cuts a long input at 200 characters (`…`): such a text
+ * gives the values before the cut, the last one with its `…`. Nested objects and arrays are left
+ * out.
  */
-function topValues(text: string): string[] {
-  const values: string[] = [];
+function topValues(text: string): { readonly key: string; readonly value: string }[] {
+  const values: { key: string; value: string }[] = [];
   let depth = 0;
   let value = false; // after a `:` at the top level
+  let key = ''; // the last key at the top level
   for (let i = 0; i < text.length; i++) {
     const c = text[i] ?? '';
     if (c === '"') {
       let end = i + 1;
       while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
-      if (depth === 1 && value) values.push(unescapeJson(text.slice(i + 1, end)));
+      if (depth === 1 && value) values.push({ key, value: unescapeJson(text.slice(i + 1, end)) });
+      else if (depth === 1) key = text.slice(i + 1, end);
       value = false;
       i = end;
     } else if (c === '{' || c === '[') {
@@ -63,7 +68,7 @@ function topValues(text: string): string[] {
       value = false;
     } else if (depth === 1 && value && /[-\w.]/.test(c)) {
       const token = /^[-\w.+]+/.exec(text.slice(i))?.[0] ?? c;
-      if (token !== 'null') values.push(token);
+      if (token !== 'null') values.push({ key, value: token });
       value = false;
       i += token.length - 1;
     }
@@ -71,17 +76,36 @@ function topValues(text: string): string[] {
   return values;
 }
 
+/** The keys whose value names a call for the owner, in the order of preference. */
+const NAME_KEYS = ['description', 'name', 'title'];
+
+/**
+ * A value as the row shows it: a path in the folder of the agent CLI (`~/.claude/…`: a workflow
+ * script, a transcript) is its file name; the folders there are ids, not words.
+ */
+function shownValue(value: string): string {
+  const path = homeShort(value);
+  return /^~\/\.claude\/\S+$/.test(path) ? pathParts(path).base : value;
+}
+
 /**
  * The input of a tool call as one row. A JSON object (whole, or cut by the station) reads as its
- * plain values (`{"task_id":"bv93ogg6d"}` → "bv93ogg6d"); any other input is its first line. The
- * expanded row keeps the raw input.
+ * name (a `description`, `name` or `title` value), else as its plain values
+ * (`{"task_id":"bv93ogg6d"}` → "bv93ogg6d"); any other input is its first line. The expanded row
+ * keeps the raw input.
  */
 export function argText(input: string): string {
   if (!input.trimStart().startsWith('{')) return firstLine(input);
   const values = topValues(input)
-    .map((v) => v.replace(/\s+/g, ' ').trim())
-    .filter((v) => v !== '');
-  return values.length > 0 ? values.join(' · ') : firstLine(input);
+    .map(({ key, value }) => ({ key, value: value.replace(/\s+/g, ' ').trim() }))
+    .filter(({ value }) => value !== '');
+  for (const name of NAME_KEYS) {
+    const named = values.find(({ key }) => key === name);
+    if (named !== undefined) return shownValue(named.value);
+  }
+  return values.length > 0
+    ? values.map(({ value }) => shownValue(value)).join(' · ')
+    : firstLine(input);
 }
 
 /** A duration in the words of the board (DESIGN-SYSTEM §5): "12 s", "2 min", "3 h". */
