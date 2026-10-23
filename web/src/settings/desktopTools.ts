@@ -214,6 +214,75 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
 export const toolName = (id: string): string =>
   Object.hasOwn(TOOL_NAMES, id) ? (TOOL_NAMES[id] ?? id) : id;
 
+/** The tools that are applications with a product name (sans): every other tool is a command. */
+const APPS: readonly string[] = ['hyprland', 'chromium'];
+
+/** A tool is a command that the owner types (mono, §1.5), not a product name. */
+export const isCommand = (id: string): boolean => !APPS.includes(id);
+
+/**
+ * The language of the common XKB layouts (xkb `base.lst`). A layout code is mostly a country code,
+ * and many of them are also the code of another language (`se` Northern Sami, `ca` Catalan, `br`
+ * Breton): only a layout of this list gets a name; any other shows its code alone.
+ */
+const LAYOUT_LANGUAGES: Readonly<Record<string, string>> = {
+  us: 'en-US',
+  gb: 'en-GB',
+  de: 'de',
+  at: 'de-AT',
+  ch: 'de-CH',
+  es: 'es',
+  latam: 'es-419',
+  fr: 'fr',
+  ca: 'fr-CA',
+  it: 'it',
+  pt: 'pt',
+  br: 'pt-BR',
+  nl: 'nl',
+  se: 'sv',
+  no: 'nb',
+  dk: 'da',
+  fi: 'fi',
+  is: 'is',
+  ie: 'ga',
+  pl: 'pl',
+  cz: 'cs',
+  sk: 'sk',
+  hu: 'hu',
+  ro: 'ro',
+  si: 'sl',
+  hr: 'hr',
+  rs: 'sr',
+  bg: 'bg',
+  gr: 'el',
+  tr: 'tr',
+  ru: 'ru',
+  ua: 'uk',
+  by: 'be',
+  ee: 'et',
+  lv: 'lv',
+  lt: 'lt',
+  il: 'he',
+  ara: 'ar',
+  ir: 'fa',
+  in: 'hi',
+  th: 'th',
+  vn: 'vi',
+  id: 'id',
+  jp: 'ja',
+  kr: 'ko',
+  cn: 'zh',
+};
+
+const LANGUAGES = new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' });
+
+/** A keyboard layout in words with its code: `es` → `Spanish (es)`; another code stays as it is. */
+export function layoutText(code: string): string {
+  const tag = Object.hasOwn(LAYOUT_LANGUAGES, code) ? LAYOUT_LANGUAGES[code] : undefined;
+  const name = tag === undefined ? undefined : LANGUAGES.of(tag);
+  return name === undefined || name === '' ? code : `${name} (${code})`;
+}
+
 export const UNSUPPORTED_TEXT = "This station's build cannot install desktop tools from the board.";
 export const LOADING_TEXT = 'Loading the desktop tools…';
 export const READ_ERROR_TEXT = 'The desktop tools could not be read.';
@@ -242,10 +311,14 @@ export function probeText(fact: ToolFact): string {
   }
 }
 
-/** The state of a tool with its version when there is one: `Installed · 0.4`. */
+/**
+ * The state of a tool with its version when there is one: `Installed · 0.4`. A version read from
+ * the package database, not from the program, says so: `Installed · 0.4 (package)`.
+ */
 export function toolState(fact: ToolFact): string {
   const state = probeText(fact);
-  return fact.version !== null && state === 'Installed' ? `${state} · ${fact.version}` : state;
+  if (fact.version === null || state !== 'Installed') return state;
+  return `${state} · ${fact.version}${fact.version_source === 'package' ? ' (package)' : ''}`;
 }
 
 export const PACKAGE_MISMATCH_TEXT = 'A different program with this name is used on the desktop.';
@@ -254,7 +327,7 @@ export const PACKAGE_MISMATCH_TEXT = 'A different program with this name is used
 export function keyboardState(keyboard: KeyboardFacts): string {
   switch (keyboard.status) {
     case 'ok':
-      return keyboard.layouts.length === 0 ? 'None' : keyboard.layouts.join(', ');
+      return keyboard.layouts.length === 0 ? 'None' : keyboard.layouts.map(layoutText).join(', ');
     case 'unavailable':
       return 'Not available';
     case 'failed':
@@ -291,7 +364,7 @@ export function toolRows(tools: StationTools): ToolRow[] {
     return {
       key: fact.id,
       name: toolName(fact.id),
-      code: true,
+      code: isCommand(fact.id),
       state,
       status: state.startsWith('Installed') ? 'online' : 'idle',
     };

@@ -9,7 +9,7 @@ import { ElevationDialog, RestartDialog, RestartOverlay, SecretDialog, waitStep 
 import { elevate, keysOfError, relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { FIELDS, meta, VALUES, view } from './fixtures';
 import { DeckError } from './http';
-import { changedKeys, changesOf, groupFields } from './model';
+import { CARD_KEYS, changedKeys, changesOf, groupFields } from './model';
 import { Notice, noticesOfSaved, SaveBar, SettingsTab } from './SettingsTab';
 import { SettingsFields } from './SettingsFields';
 
@@ -109,19 +109,22 @@ describe('the sections of the page (DL-172)', () => {
   });
 
   test('a hidden field and a key of the Tailnet card are left out, also from Other', () => {
-    // The Tailnet card of the Network section shows and saves tailnet_auto and tailscale_cert:
-    // the field list does not show them a second time.
-    const groups = groupFields([
+    // While the Tailnet card has its view it shows and saves tailnet_auto and tailscale_cert
+    // (`omit`); when it cannot read Tailscale, the fields stay, so the keys can still change.
+    const all = [
       meta('listen', 'Listen', 'addresses'),
       meta('tailnet_auto', 'Use Tailscale automatically', 'bool'),
       meta('tailscale_cert', 'Trusted certificate from Tailscale', 'bool'),
       meta('tailnet_auto_listen', 'Added automatically', 'addresses', { hidden: true }),
       meta('zz_hidden', 'Hidden future key', 'text', { hidden: true }),
       meta('zz_shown', 'Shown future key', 'text', { hidden: false }),
-    ]);
+    ];
+    const groups = groupFields(all, [], CARD_KEYS);
     expect(groups.map((g) => g.title)).toEqual(['Network', 'Other']);
     expect(groups[0]?.fields.map((f) => f.key)).toEqual(['listen']);
     expect(groups[1]?.fields.map((f) => f.key)).toEqual(['zz_shown']);
+    const failed = groupFields(all).find((g) => g.title === 'Network');
+    expect(failed?.fields.map((f) => f.key)).toEqual(['listen', 'tailnet_auto', 'tailscale_cert']);
   });
 
   test('a kept section shows without a field, in its place', () => {
@@ -182,7 +185,7 @@ describe('field rendering for each kind', () => {
     // The host options show words; the values stay the same.
     expect(html).toContain('<option value="direct">Directly</option>');
     expect(html).toContain(
-      '<option value="shim" selected="">In a shim (survives restarts)</option>',
+      '<option value="shim" selected="">Apart from the station (survives restarts)</option>',
     );
     // The provider of model help shows its name, and the empty option says what it means.
     expect(html).toContain('<option value="claude">Claude</option>');
@@ -216,7 +219,9 @@ describe('field rendering for each kind', () => {
     expect(html).toContain('aria-label="Trackers from the config file"');
     expect(html).toContain('acme.atlassian.net');
     expect(html).toContain('env JIRA_TOKEN');
-    expect(html).toContain('From station.toml. Connect accounts in the Accounts tab.');
+    expect(html).toContain(
+      'From the config file of this station. Connect accounts in the Accounts tab.',
+    );
   });
 
   test('the instances table has a row with the env variables as "set"', () => {
@@ -441,7 +446,7 @@ describe('the save outcomes', () => {
     expect(html).toContain('These settings changed since you opened them.');
     expect(html).toContain('>Reload</button>');
     expect(html).toContain('The disk did not confirm the write; check the disk.');
-    expect(html).toContain('1 changed');
+    expect(html).toContain('Unsaved changes <span class="fd-count">1</span>');
     expect(html).toContain('>Discard</button>');
     expect(html).toContain('>Save</button>');
     // No edit: no bar.
@@ -454,7 +459,7 @@ describe('the save outcomes', () => {
         initial={{ view: view(), edits: { name: 'Alpha' } }}
       />,
     );
-    expect(clean).not.toContain('changed</span>');
+    expect(clean).not.toContain('fd-set-bar');
     expect(clean).not.toContain('Unsaved changes');
   });
 
@@ -462,7 +467,7 @@ describe('the save outcomes', () => {
     const bar = renderToStaticMarkup(
       <SaveBar count={3} saving={false} onDiscard={noop} onSave={noop} />,
     );
-    expect(bar).toContain('3 changed');
+    expect(bar).toContain('Unsaved changes <span class="fd-count">3</span>');
     expect(bar).toContain('fd-ghost');
     expect(bar).toContain('fd-primary');
     expect(

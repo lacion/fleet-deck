@@ -113,7 +113,8 @@ export function actionLabel(action: OmarchyAction): string {
     case 'install':
       return 'Install';
     case 'uninstall':
-      return 'Uninstall';
+      // It asks for the password and removes the integration: the ellipsis says that more comes.
+      return 'Uninstall…';
     case 'screensaver_on':
       return 'Turn the screensaver on';
     case 'screensaver_off':
@@ -187,77 +188,127 @@ const stoppedText = (code: string): string =>
     ? `Provisioning stopped: ${TERMINAL_TEXTS[code]}`
     : `Provisioning stopped: ${code}.`;
 
-const RETRY_TEXTS: Readonly<Record<string, string>> = {
-  running: 'running',
-  complete: 'complete',
-  terminal: 'stopped with an error',
-  timeout: 'timed out',
-  failed: 'failed',
+/** The glyph of a fact (`.fd-dot`): there or on, off or absent, broken, or running now. */
+export type FactStatus = 'online' | 'idle' | 'unreachable' | 'working';
+
+/** One fact of the card: a glyph, a name and a state in words (the Desktop tools grid). */
+export type CardFact = {
+  readonly name: string;
+  readonly state: string;
+  readonly status: FactStatus;
+};
+
+/** What the card shows of a status: the version for its heading, the facts, then the notes. */
+export type CardView = {
+  /** `Omarchy 4.0.0`, after the heading; `null` when the station does not know the version. */
+  readonly version: string | null;
+  readonly facts: readonly CardFact[];
+  /** The sentences under the facts: what is wrong and what to do. */
+  readonly notes: readonly string[];
+};
+
+/** The steps of provisioning in words. */
+const PHASE_TEXTS: Readonly<Record<string, string>> = {
+  preparing: 'Preparing',
+  paired: 'Paired',
+  link: 'Linking',
+  integration: 'Installing the integration',
+};
+
+/** The state of a fact: its words and its glyph. */
+type FactState = Omit<CardFact, 'name'>;
+
+const ON: FactState = { state: 'On', status: 'online' };
+const OFF: FactState = { state: 'Off', status: 'idle' };
+const BLOCKED: FactState = { state: 'On, blocked', status: 'unreachable' };
+const ADDED: FactState = { state: 'Added', status: 'online' };
+const MISSING: FactState = { state: 'Missing', status: 'idle' };
+
+/** The last retry of provisioning: its words and its glyph. */
+const RETRY_FACTS: Readonly<Record<string, FactState>> = {
+  running: { state: 'Running', status: 'working' },
+  complete: { state: 'Complete', status: 'online' },
+  terminal: { state: 'Stopped with an error', status: 'unreachable' },
+  timeout: { state: 'Timed out', status: 'unreachable' },
+  failed: { state: 'Failed', status: 'unreachable' },
 };
 
 const filesBad = (i: OmarchyInstall): number => i.files_changed + i.files_missing;
 
-function integrationLine(i: OmarchyInstall): string {
-  if (!i.installed) return 'Integration: not installed';
+function installFacts(i: OmarchyInstall): CardFact[] {
   const n = filesBad(i);
-  return n === 0
-    ? 'Integration: installed'
-    : `Integration: installed, ${n} files changed or missing`;
-}
-
-function installLines(i: OmarchyInstall): string[] {
-  const out = [
-    integrationLine(i),
-    `Plugin: ${i.plugin_enabled ? 'on' : 'off'}`,
-    `Hyprland line: ${i.hyprland_line ? 'present' : 'missing'}`,
-  ];
-  if (i.outdated) out.push(OUTDATED_TEXT);
-  return out;
-}
-
-function screensaverLine(s: OmarchyScreensaver): string {
-  if (s.enabled) {
-    return s.blocked === null
-      ? 'Screensaver: on'
-      : 'Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.';
+  let integration: FactState = { state: 'Not installed', status: 'idle' };
+  if (i.installed) {
+    integration =
+      n === 0
+        ? { state: 'Installed', status: 'online' }
+        : { state: `Installed, ${n} files changed or missing`, status: 'unreachable' };
   }
-  return s.file_restored === false
-    ? 'Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.'
-    : 'Screensaver: off';
+  return [
+    { name: 'Integration', ...integration },
+    { name: 'Fleet plugin', ...(i.plugin_enabled ? ON : OFF) },
+    { name: 'Hyprland config line', ...(i.hyprland_line ? ADDED : MISSING) },
+  ];
 }
 
-function provisionLines(p: ProvisionView): string[] {
-  const out = [`Provisioning: ${p.phase ?? 'unknown'}`];
-  if (p.error !== null) out.push(stoppedText(p.error));
-  if (p.bootstrap_running) out.push('Provisioning is running');
-  else if (p.error === null && p.phase !== 'complete') out.push('Provisioning did not finish');
-  if (p.last_retry !== null) out.push(`Last retry: ${RETRY_TEXTS[p.last_retry] ?? 'unknown'}`);
-  return out;
+function provisionFact(p: ProvisionView): CardFact {
+  const phase = p.phase === null ? null : (PHASE_TEXTS[p.phase] ?? p.phase);
+  if (p.error !== null) return { name: 'Provisioning', state: 'Stopped', status: 'unreachable' };
+  if (p.bootstrap_running) {
+    return { name: 'Provisioning', state: `${phase ?? 'Running'}…`, status: 'working' };
+  }
+  if (p.phase === 'complete') return { name: 'Provisioning', state: 'Complete', status: 'online' };
+  return {
+    name: 'Provisioning',
+    state: phase === null ? 'Did not finish' : `${phase}, did not finish`,
+    status: 'idle',
+  };
 }
 
-/** The lines of the card, in order (design §5; the brief's item 3). */
-export function cardLines(status: OmarchyStatus): string[] {
+/** The card for a status, in order (design §5; the brief's item 3). Never "unknown" (§1.7). */
+export function cardView(status: OmarchyStatus): CardView {
   const { omarchy, install, screensaver, provision, running } = status;
-  const out: string[] = [];
-  if (!omarchy.present) out.push('Omarchy was not found on this station.');
-  else
-    out.push(omarchy.version === null ? 'Omarchy (version unknown)' : `Omarchy ${omarchy.version}`);
-  if (omarchy.present && install !== null) out.push(...installLines(install));
-  if (screensaver !== null) out.push(screensaverLine(screensaver));
-  if (provision !== null) out.push(...provisionLines(provision));
-  if (running !== null) out.push(WORKING_TEXT);
-  return out;
+  const facts: CardFact[] = [];
+  const notes: string[] = [];
+  if (!omarchy.present) notes.push('Omarchy was not found on this station.');
+  if (omarchy.present && install !== null) {
+    facts.push(...installFacts(install));
+    if (install.outdated) notes.push(OUTDATED_TEXT);
+  }
+  if (screensaver !== null) {
+    const blocked = screensaver.enabled && screensaver.blocked !== null;
+    facts.push({ name: 'Screensaver', ...(blocked ? BLOCKED : screensaver.enabled ? ON : OFF) });
+    if (blocked) {
+      notes.push('The original screensaver that Fleet Deck kept differs from the current file.');
+    } else if (!screensaver.enabled && screensaver.file_restored === false) {
+      notes.push(
+        'The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.',
+      );
+    }
+  }
+  if (provision !== null) {
+    facts.push(provisionFact(provision));
+    const retry = provision.last_retry === null ? undefined : RETRY_FACTS[provision.last_retry];
+    if (retry !== undefined) facts.push({ name: 'Last retry', ...retry });
+    if (provision.error !== null) notes.push(stoppedText(provision.error));
+  }
+  if (running !== null) notes.push(WORKING_TEXT);
+  return {
+    version: omarchy.present && omarchy.version !== null ? `Omarchy ${omarchy.version}` : null,
+    facts,
+    notes,
+  };
 }
 
 export type CardButton = { readonly action: OmarchyAction; readonly label: string };
 
 const RETRY_PHASES: readonly string[] = ['paired', 'link', 'integration'];
 
+/** The integration actions: the safe ones first, the one that removes (Uninstall…) last. */
 function integrationActions(install: OmarchyInstall, screensaver: OmarchyScreensaver | null) {
   const out: OmarchyAction[] = [];
   const ready = install.installed && !install.outdated;
   if (!install.installed || filesBad(install) > 0 || install.outdated) out.push('install');
-  if (ready) out.push('uninstall');
   if (ready && screensaver !== null) {
     if (!screensaver.enabled) out.push('screensaver_on');
     if (screensaver.enabled) out.push('screensaver_off');
@@ -272,13 +323,14 @@ const retryAllowed = (p: ProvisionView | null): boolean =>
   RETRY_PHASES.includes(p.phase) &&
   (p.error !== null || !p.bootstrap_running);
 
-/** The buttons that the card shows, in order. None while an action runs. */
+/** The buttons that the card shows, in order; Uninstall… is the last. None while an action runs. */
 export function buttons(status: OmarchyStatus): CardButton[] {
   const { omarchy, install, screensaver, provision, running } = status;
   if (running !== null) return [];
-  const out: OmarchyAction[] =
-    omarchy.present && install !== null ? integrationActions(install, screensaver) : [];
+  const present = omarchy.present && install !== null;
+  const out: OmarchyAction[] = present ? integrationActions(install, screensaver) : [];
   if (retryAllowed(provision)) out.push('provision_retry');
+  if (present && install.installed && !install.outdated) out.push('uninstall');
   return out.map((action) => ({ action, label: actionLabel(action) }));
 }
 

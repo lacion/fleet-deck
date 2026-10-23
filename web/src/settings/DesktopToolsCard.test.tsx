@@ -113,12 +113,12 @@ describe('the card', () => {
     expect(html).toContain('<p class="fd-dt-summary">1 of 2 tools installed.</p>');
     const row = (status: string, name: string, state: string) =>
       `<li><span class="fd-dot" data-status="${status}" aria-hidden="true"></span>${name}<span class="fd-note">${state}</span></li>`;
-    expect(html).toContain(row('online', '<code>wtype</code>', 'Installed · 0.4'));
+    expect(html).toContain(row('online', '<code>wtype</code>', 'Installed · 0.4 (package)'));
     expect(html).toContain(row('idle', '<code>wf-recorder</code>', 'Not installed'));
     expect(html.indexOf('<code>wtype</code>')).toBeLessThan(
       html.indexOf('<code>wf-recorder</code>'),
     );
-    expect(html).toContain(row('online', '<span>Keyboard layouts</span>', 'us'));
+    expect(html).toContain(row('online', '<span>Keyboard layouts</span>', 'American English (us)'));
     expect(html).toContain(row('online', '<span>Fleet plugin</span>', 'Installed'));
     expect(html).not.toContain('<details');
     expect(html).toContain('Refresh diagnostics');
@@ -271,7 +271,7 @@ describe('the Installations list', () => {
         run({ maintenance_id: 'e'.repeat(32), state: 'lost' }),
       ],
     });
-    expect(html).toContain('<h3>Installations</h3>');
+    expect(html).toContain('class="fd-fieldlabel">Installations</span>');
     // The month is a word, so that the date cannot read two ways.
     expect(html).toContain(new Date(1_792_400_000_000).toLocaleString(undefined, RUN_DATE));
     expect(html).toContain('wtype, wf-recorder');

@@ -56,6 +56,8 @@ type Props = {
   readonly os?: string | undefined;
   /** The cards of the page by section title (the Tailnet card of the deck's Network section). */
   readonly slots?: Readonly<Record<string, SectionSlot>> | undefined;
+  /** The keys that a card shows now: the field list leaves them out (SettingsFields). */
+  readonly omit?: readonly string[] | undefined;
 };
 
 export function Notice({
@@ -78,7 +80,10 @@ export function Notice({
   );
 }
 
-/** The bar at the bottom of the page while there are changes. */
+/**
+ * The bar at the bottom of the page while there are changes: the words, then the count as a
+ * `.fd-count` pill (§5: a count after a label), then Discard and Save.
+ */
 export function SaveBar({
   count,
   saving,
@@ -92,7 +97,9 @@ export function SaveBar({
 }) {
   return (
     <div className="fd-set-bar" role="region" aria-label="Unsaved changes">
-      <span className="fd-count">{count} changed</span>
+      <span className="fd-set-bar-label">
+        Unsaved changes <span className="fd-count">{count}</span>
+      </span>
       <div className="fd-set-bar-actions">
         <button type="button" className="fd-ghost" disabled={saving} onClick={onDiscard}>
           Discard
@@ -150,6 +157,7 @@ export function SettingsTab({
   stations,
   os,
   slots,
+  omit,
 }: Props) {
   const target = useMemo<Target>(
     () => (stationId === null ? DECK : { kind: 'station', id: stationId }),
@@ -469,6 +477,7 @@ export function SettingsTab({
           stations={stations}
           os={os}
           slots={allSlots}
+          omit={omit}
         />
         {changed.length === 0 ? null : (
           <SaveBar

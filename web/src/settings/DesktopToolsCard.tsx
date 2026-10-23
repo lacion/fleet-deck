@@ -21,6 +21,7 @@ import {
   toolRows,
   toolsSummary,
   CONFIRM_TEXT,
+  isCommand,
 } from './desktopTools';
 import type { ElevationAsk } from './elevation';
 import { DeckError } from './http';
@@ -29,6 +30,7 @@ import { MaintenancePanel } from './MaintenancePanel';
 import { sectionId } from './model';
 import { NoticeIcon } from './NoticeIcon';
 import { guarded } from './OmarchyCard';
+import { CardRow } from './CardRow';
 
 export type ToolsState =
   | { readonly kind: 'loading' }
@@ -117,7 +119,8 @@ export function FactsView({ tools }: { readonly tools: StationTools }) {
       )}
       {mismatch.map((f) => (
         <p className="fd-note" key={f.id}>
-          <code>{toolName(f.id)}</code>: {PACKAGE_MISMATCH_TEXT}
+          {isCommand(f.id) ? <code>{toolName(f.id)}</code> : toolName(f.id)}:{' '}
+          {PACKAGE_MISMATCH_TEXT}
         </p>
       ))}
       {tools.passwordless_sudo === 'on' ? (
@@ -244,11 +247,11 @@ export function InstallationsView({
       </ul>
     );
   }
+  // A row of the card: "Installations" in the label column, the list in the control column.
   return (
-    <section className="fd-dt-installations" aria-label="Installations">
-      <h3>Installations</h3>
+    <CardRow label="Installations" className="fd-dt-installations">
       {body}
-    </section>
+    </CardRow>
   );
 }
 
@@ -304,10 +307,10 @@ export function DesktopToolsView(props: ViewProps) {
           />
         )}
         {props.panel ?? null}
-        <InstallationsView state={props.runs} onOpen={props.onOpenRun} />
       </>
     );
   }
+  // The card keeps the columns of the page: the tools in a "Tools" row, then the Installations row.
   return (
     <section
       id={sectionId('Desktop tools')}
@@ -315,7 +318,10 @@ export function DesktopToolsView(props: ViewProps) {
       aria-label="Desktop tools"
     >
       <h2>Desktop tools</h2>
-      {body}
+      <CardRow label="Tools">{body}</CardRow>
+      {tools.kind === 'ready' ? (
+        <InstallationsView state={props.runs} onOpen={props.onOpenRun} />
+      ) : null}
     </section>
   );
 }

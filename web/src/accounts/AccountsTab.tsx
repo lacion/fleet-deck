@@ -1,11 +1,13 @@
 // DL-173: the Accounts tab of the settings: GitHub and GitLab by the CLI device login, Jira and
 // Linear by OAuth with an app of the owner, and the token fallback. The station holds every
-// credential; the board shows metadata and sends a secret once.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// credential; the board shows metadata and sends a secret once. The two groups are sections of
+// the settings page (a heading and a rule, no panel): a table on the canvas, then a row of
+// connect actions (§4.7).
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountKind, AccountsList, AccountView, StationView } from '../gen';
 import type { Navigate } from '../app/routes';
 import { useLoad } from '../integrations/useLoad';
-import { Section } from '../ui/page';
+import { Icon, RefreshCw } from '../ui/icons';
 import type { AccountActions } from './actions';
 import { AppDialog, TokenDialog } from './AccountDialogs';
 import { AccountTable } from './AccountTable';
@@ -38,7 +40,23 @@ type Props = {
   readonly initial?: AccountsList;
 };
 
-const TRACKERS: readonly TrackerKind[] = ['jira', 'linear'];
+/** A group of accounts: a section of the settings page (its heading, then its table). */
+function AccountSection({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section className="fd-set-sec fd-acc-sec" aria-label={label}>
+      <div className="fd-set-sechead-row">
+        <h2 className="fd-set-sechead">{label}</h2>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 /** The warning for token variables in the station environment. */
 export const envTokenText = (names: readonly string[]): string =>
@@ -208,7 +226,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
           <NoticeIcon tone="error" />
           <span>{state.text}</span>
           <button type="button" className="fd-sm" onClick={reload}>
-            Try again
+            <Icon of={RefreshCw} size={14} /> Try again
           </button>
         </div>
       ) : null}
@@ -220,51 +238,43 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
               <span>{envTokenText(list.env_tokens)}</span>
             </div>
           )}
-          <Section label="GitHub and GitLab">
-            <div className="fd-set-forges">
-              <AccountTable
-                label="GitHub and GitLab accounts"
-                accounts={forgeAccounts(list.accounts)}
-                busy={busy}
-                onLogout={(a) => void logout(a)}
-              />
-              <div className="fd-set-connectrow">
-                {(['github', 'gitlab'] as const).map((kind) => (
-                  <ForgeConnect
-                    key={kind}
-                    kind={kind}
-                    station={station}
-                    actions={actions}
-                    connected={list.accounts.some((a) => a.kind === kind)}
-                    onConnected={reload}
-                    onToken={(account, host) => setDialog({ kind: 'token', account, site: host })}
-                  />
-                ))}
-              </div>
-            </div>
-          </Section>
-          <Section label="Jira and Linear">
-            <div className="fd-set-trackerlist">
-              {TRACKERS.map((kind) => (
-                <TrackerBlock
+          <AccountSection label="GitHub and GitLab">
+            <AccountTable
+              label="GitHub and GitLab accounts"
+              accounts={forgeAccounts(list.accounts)}
+              busy={busy}
+              onLogout={(a) => void logout(a)}
+            />
+            <div className="fd-set-connectrow">
+              {(['github', 'gitlab'] as const).map((kind) => (
+                <ForgeConnect
                   key={kind}
                   kind={kind}
-                  app={appOf(kind)}
-                  accounts={list.accounts.filter((a) => a.kind === kind)}
-                  linearBuiltin={list.linear_builtin === true}
-                  origin={boardOrigin}
-                  busy={busy}
-                  waiting={waiting?.kind === kind}
-                  authorizeUrl={waiting?.kind === kind ? waiting.url : null}
-                  onSetup={() => setDialog({ kind: 'app', account: kind })}
-                  onConnect={() => void connect(kind)}
-                  onToken={() => setDialog({ kind: 'token', account: kind, site: '' })}
-                  onReconnect={reconnect}
-                  onLogout={(a) => void logout(a)}
+                  station={station}
+                  actions={actions}
+                  connected={list.accounts.some((a) => a.kind === kind)}
+                  onConnected={reload}
+                  onToken={(account, host) => setDialog({ kind: 'token', account, site: host })}
                 />
               ))}
             </div>
-          </Section>
+          </AccountSection>
+          <AccountSection label="Jira and Linear">
+            <TrackerBlock
+              apps={list.apps}
+              accounts={list.accounts.filter((a) => a.kind === 'jira' || a.kind === 'linear')}
+              linearBuiltin={list.linear_builtin === true}
+              origin={boardOrigin}
+              busy={busy}
+              waiting={waiting?.kind ?? null}
+              authorizeUrl={waiting?.url ?? null}
+              onSetup={(kind) => setDialog({ kind: 'app', account: kind })}
+              onConnect={(kind) => void connect(kind)}
+              onToken={(kind) => setDialog({ kind: 'token', account: kind, site: '' })}
+              onReconnect={reconnect}
+              onLogout={(a) => void logout(a)}
+            />
+          </AccountSection>
         </>
       )}
       {dialog?.kind === 'token' ? (

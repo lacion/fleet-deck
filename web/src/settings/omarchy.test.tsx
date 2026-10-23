@@ -6,7 +6,7 @@ import {
   actionLabel,
   buttons,
   type CardState,
-  cardLines,
+  cardView,
   ELEVATION_HEADER,
   errorText,
   type OmarchyActions,
@@ -73,102 +73,100 @@ const withProvision = (extra: Partial<NonNullable<OmarchyStatus['provision']>>):
 
 const labels = (s: OmarchyStatus) => buttons(s).map((b) => b.label);
 
-describe('cardLines', () => {
-  test('a healthy station', () => {
-    expect(cardLines(status())).toEqual([
-      'Omarchy 3.1.0',
-      'Integration: installed',
-      'Plugin: on',
-      'Hyprland line: present',
-      'Screensaver: on',
-      'Provisioning: complete',
+describe('cardView', () => {
+  const fact = (s: OmarchyStatus, name: string) =>
+    cardView(s).facts.find((f) => f.name === name) ?? null;
+  const pair = (s: OmarchyStatus, name: string) => {
+    const f = fact(s, name);
+    return f === null ? null : [f.state, f.status];
+  };
+
+  test('a healthy station: the version for the heading, a glyph and words for each fact', () => {
+    const v = cardView(status());
+    expect(v.version).toBe('Omarchy 3.1.0');
+    expect(v.facts.map((f) => [f.name, f.state, f.status])).toEqual([
+      ['Integration', 'Installed', 'online'],
+      ['Fleet plugin', 'On', 'online'],
+      ['Hyprland config line', 'Added', 'online'],
+      ['Screensaver', 'On', 'online'],
+      ['Provisioning', 'Complete', 'online'],
+    ]);
+    expect(v.notes).toEqual([]);
+  });
+
+  test('Omarchy absent: a note, the screensaver and provisioning only', () => {
+    const v = cardView(
+      status({
+        omarchy: { present: false, version: null },
+        install: null,
+        screensaver: null,
+        provision: { phase: 'link', error: null, bootstrap_running: true, last_retry: null },
+      }),
+    );
+    expect(v.version).toBeNull();
+    expect(v.notes).toEqual(['Omarchy was not found on this station.']);
+    expect(v.facts.map((f) => [f.name, f.state, f.status])).toEqual([
+      ['Provisioning', 'Linking…', 'working'],
     ]);
   });
 
-  test('Omarchy absent: only its line, the screensaver and provisioning', () => {
-    const s = status({
-      omarchy: { present: false, version: null },
-      install: null,
-      screensaver: null,
-      provision: { phase: 'link', error: null, bootstrap_running: true, last_retry: null },
-    });
-    expect(cardLines(s)).toEqual([
-      'Omarchy was not found on this station.',
-      'Provisioning: link',
-      'Provisioning is running',
+  test('a version that the station does not know: no note, never "unknown"', () => {
+    expect(cardView(status({ omarchy: { present: true, version: null } })).version).toBeNull();
+  });
+
+  test('not installed, changed files, outdated', () => {
+    const none = withInstall({ installed: false, plugin_enabled: false, hyprland_line: false });
+    expect(pair(none, 'Integration')).toEqual(['Not installed', 'idle']);
+    expect(pair(none, 'Fleet plugin')).toEqual(['Off', 'idle']);
+    expect(pair(none, 'Hyprland config line')).toEqual(['Missing', 'idle']);
+    expect(pair(withInstall({ files_changed: 2, files_missing: 1 }), 'Integration')).toEqual([
+      'Installed, 3 files changed or missing',
+      'unreachable',
     ]);
-  });
-
-  test('the version is unknown', () => {
-    expect(cardLines(status({ omarchy: { present: true, version: null } }))[0]).toBe(
-      'Omarchy (version unknown)',
-    );
-  });
-
-  test('not installed', () => {
-    const lines = cardLines(
-      withInstall({ installed: false, plugin_enabled: false, hyprland_line: false }),
-    );
-    expect(lines).toContain('Integration: not installed');
-    expect(lines).toContain('Plugin: off');
-    expect(lines).toContain('Hyprland line: missing');
-  });
-
-  test('changed and missing files add up', () => {
-    expect(cardLines(withInstall({ files_changed: 2, files_missing: 1 }))).toContain(
-      'Integration: installed, 3 files changed or missing',
-    );
-  });
-
-  test('outdated adds the update line after the install lines', () => {
-    const lines = cardLines(withInstall({ outdated: true }));
-    expect(lines[4]).toBe('Update the integration first: press Install, then wait two minutes.');
+    expect(cardView(withInstall({ outdated: true })).notes).toEqual([
+      'Update the integration first: press Install, then wait two minutes.',
+    ]);
   });
 
   test('each screensaver state', () => {
-    expect(cardLines(withScreensaver({ enabled: true }))).toContain('Screensaver: on');
-    expect(cardLines(withScreensaver({ enabled: true, blocked: 'differs' }))).toContain(
-      'Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.',
-    );
-    expect(cardLines(withScreensaver({ enabled: false, file_restored: false }))).toContain(
-      'Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.',
-    );
-    expect(cardLines(withScreensaver({ enabled: false, file_restored: true }))).toContain(
-      'Screensaver: off',
-    );
-    expect(cardLines(withScreensaver({ enabled: false, file_restored: null }))).toContain(
-      'Screensaver: off',
-    );
-    expect(cardLines(status({ screensaver: null })).some((l) => l.startsWith('Screensaver'))).toBe(
-      false,
-    );
+    expect(pair(withScreensaver({ enabled: false, file_restored: true }), 'Screensaver')).toEqual([
+      'Off',
+      'idle',
+    ]);
+    const blocked = withScreensaver({ enabled: true, blocked: 'differs' });
+    expect(pair(blocked, 'Screensaver')).toEqual(['On, blocked', 'unreachable']);
+    expect(cardView(blocked).notes).toEqual([
+      'The original screensaver that Fleet Deck kept differs from the current file.',
+    ]);
+    expect(cardView(withScreensaver({ enabled: false, file_restored: false })).notes).toEqual([
+      'The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.',
+    ]);
+    expect(cardView(withScreensaver({ enabled: false, file_restored: null })).notes).toEqual([]);
+    expect(fact(status({ screensaver: null }), 'Screensaver')).toBeNull();
   });
 
   test('each provisioning state', () => {
     const p = (extra: Partial<NonNullable<OmarchyStatus['provision']>>) =>
-      cardLines(withProvision(extra)).slice(5);
-    expect(p({ phase: null })).toEqual(['Provisioning: unknown', 'Provisioning did not finish']);
-    expect(p({ phase: 'paired' })).toEqual(['Provisioning: paired', 'Provisioning did not finish']);
-    expect(p({ phase: 'link', bootstrap_running: true })).toEqual([
-      'Provisioning: link',
-      'Provisioning is running',
-    ]);
+      pair(withProvision(extra), 'Provisioning');
+    expect(p({ phase: null })).toEqual(['Did not finish', 'idle']);
+    expect(p({ phase: 'paired' })).toEqual(['Paired, did not finish', 'idle']);
+    expect(p({ phase: 'link', bootstrap_running: true })).toEqual(['Linking…', 'working']);
     expect(p({ phase: 'integration', error: 'paired_elsewhere' })).toEqual([
-      'Provisioning: integration',
-      'Provisioning stopped: The station is already paired with a deck that has another fingerprint.',
+      'Stopped',
+      'unreachable',
     ]);
-    expect(p({ phase: 'link', error: 'something_new' })).toEqual([
-      'Provisioning: link',
+    expect(cardView(withProvision({ phase: 'link', error: 'something_new' })).notes).toEqual([
       'Provisioning stopped: something_new.',
     ]);
-    expect(cardLines(status({ provision: null })).some((l) => l.startsWith('Provisioning'))).toBe(
-      false,
-    );
+    expect(fact(status({ provision: null }), 'Provisioning')).toBeNull();
   });
 
   test('the owner text of every terminal code is the cause cell of operations.md 15.3', () => {
     const text = (code: string) =>
-      cardLines(withProvision({ phase: 'link', error: code })).at(-1) as string;
+      cardView(withProvision({ phase: 'link', error: code })).notes.at(-1) as string;
+    expect(text('paired_elsewhere')).toBe(
+      'Provisioning stopped: The station is already paired with a deck that has another fingerprint.',
+    );
     expect(text('station_identity_changed')).toBe(
       'Provisioning stopped: The station key is not the key that the bootstrap saved first.',
     );
@@ -186,46 +184,45 @@ describe('cardLines', () => {
     expect(text('constructor')).toBe('Provisioning stopped: constructor.');
   });
 
-  test('the last retry', () => {
-    const last = (value: string) =>
-      cardLines(withProvision({ last_retry: value })).at(-1) as string;
-    expect(last('running')).toBe('Last retry: running');
-    expect(last('complete')).toBe('Last retry: complete');
-    expect(last('terminal')).toBe('Last retry: stopped with an error');
-    expect(last('timeout')).toBe('Last retry: timed out');
-    expect(last('failed')).toBe('Last retry: failed');
-    expect(last('other')).toBe('Last retry: unknown');
+  test('the last retry is a fact; a value that the board does not know shows none', () => {
+    const last = (value: string) => pair(withProvision({ last_retry: value }), 'Last retry');
+    expect(last('running')).toEqual(['Running', 'working']);
+    expect(last('complete')).toEqual(['Complete', 'online']);
+    expect(last('terminal')).toEqual(['Stopped with an error', 'unreachable']);
+    expect(last('timeout')).toEqual(['Timed out', 'unreachable']);
+    expect(last('failed')).toEqual(['Failed', 'unreachable']);
+    expect(last('other')).toBeNull();
   });
 
-  test('an action that runs adds Working… as the last line', () => {
-    expect(cardLines(status({ running: 'install' })).at(-1)).toBe('Working…');
+  test('an action that runs adds Working… as the last note', () => {
+    expect(cardView(status({ running: 'install' })).notes.at(-1)).toBe('Working…');
   });
 });
 
 describe('buttons', () => {
-  test('a healthy station with the screensaver on', () => {
-    expect(labels(status())).toEqual(['Uninstall', 'Turn the screensaver off']);
+  test('a healthy station with the screensaver on: the safe action first, Uninstall… last', () => {
+    expect(labels(status())).toEqual(['Turn the screensaver off', 'Uninstall…']);
   });
 
   test('the screensaver off', () => {
     expect(labels(withScreensaver({ enabled: false, file_restored: true }))).toEqual([
-      'Uninstall',
       'Turn the screensaver on',
+      'Uninstall…',
     ]);
   });
 
   test('the screensaver off and the restored file changed: no off button', () => {
     expect(labels(withScreensaver({ enabled: false, file_restored: false }))).toEqual([
-      'Uninstall',
       'Turn the screensaver on',
+      'Uninstall…',
     ]);
   });
 
   test('blocked: the rebaseline button', () => {
     expect(labels(withScreensaver({ enabled: true, blocked: 'differs' }))).toEqual([
-      'Uninstall',
       'Turn the screensaver off',
       'Use the current screensaver as the original',
+      'Uninstall…',
     ]);
   });
 
@@ -236,8 +233,8 @@ describe('buttons', () => {
   test('changed or missing files: Install and Uninstall', () => {
     expect(labels(withInstall({ files_changed: 1 }))).toEqual([
       'Install',
-      'Uninstall',
       'Turn the screensaver off',
+      'Uninstall…',
     ]);
     expect(labels(withInstall({ files_missing: 1 }))[0]).toBe('Install');
   });
@@ -272,7 +269,7 @@ describe('buttons', () => {
 
   test('the label of each action', () => {
     expect(actionLabel('install')).toBe('Install');
-    expect(actionLabel('uninstall')).toBe('Uninstall');
+    expect(actionLabel('uninstall')).toBe('Uninstall…');
     expect(actionLabel('screensaver_on')).toBe('Turn the screensaver on');
     expect(actionLabel('screensaver_off')).toBe('Turn the screensaver off');
     expect(actionLabel('screensaver_rebaseline')).toBe(
@@ -554,7 +551,7 @@ describe('watchStatus (the refresh of a mounted card)', () => {
   test('a blocked state that appears in a later read is shown with its button', async () => {
     const r = await watch(status(), [status(), blocked], { reads: 2 });
     const html = card({ kind: 'ready', status: r.shown() });
-    expect(html).toContain('Screensaver: on, but blocked');
+    expect(html).toContain('On, blocked');
     expect(html).toContain('>Use the current screensaver as the original</button>');
     expect(html).not.toContain('disabled');
   });
@@ -563,7 +560,7 @@ describe('watchStatus (the refresh of a mounted card)', () => {
     const outdated = withInstall({ outdated: true });
     expect(labels(outdated)).toEqual(['Install']);
     const r = await watch(outdated, [status()], { reads: 1 });
-    expect(labels(r.shown())).toContain('Uninstall');
+    expect(labels(r.shown())).toContain('Uninstall…');
     expect(card({ kind: 'ready', status: r.shown() })).not.toContain('Update the integration');
   });
 
@@ -723,17 +720,17 @@ describe('OmarchyView', () => {
     expect(card({ kind: 'hidden' })).toBe('');
   });
 
-  test('another error: the text and a Retry button', () => {
+  test('another error: the text and a Try again button', () => {
     const html = card({ kind: 'error' });
     expect(html).toContain('The Omarchy state could not be read.');
-    expect(html).toContain('Retry');
+    expect(html).toContain('Try again</button>');
   });
 
   test('ready: the lines and the buttons', () => {
     const html = card({ kind: 'ready', status: status() });
-    expect(html).toContain('Omarchy 3.1.0');
-    expect(html).toContain('Integration: installed');
-    expect(html).toContain('>Uninstall</button>');
+    expect(html).toContain('<span class="fd-set-secnote">Omarchy 3.1.0</span>');
+    expect(html).toContain('<span>Integration</span><span class="fd-note">Installed</span>');
+    expect(html).toContain('class="fd-danger fd-sm">Uninstall…</button>');
     expect(html).not.toContain('disabled');
     expect(html).not.toContain('Working…');
   });

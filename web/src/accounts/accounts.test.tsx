@@ -121,7 +121,8 @@ describe('the built-in Linear app (DL-185)', () => {
   test('without an owner Linear app the section says so and Connect is on', () => {
     // ON has a Jira app only.
     const html = tabAt('https://127.0.0.1:7420', ON);
-    expect(html).toContain('Not connected. Uses the built-in Fleet Deck app.');
+    expect(html).toContain('Uses the built-in Fleet Deck app.');
+    expect(html).toContain('aria-label="Linear not connected"');
     expect(html).toContain('Set up your own OAuth app…');
     expect(html).not.toContain('Set up the OAuth app first. Then you can connect.');
     expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
@@ -152,10 +153,10 @@ describe('the built-in Linear app (DL-185)', () => {
       expect(html).not.toContain('Uses the built-in Fleet Deck app.');
       expect(html).not.toContain(NOTE);
       // One line says what to do; there is no disabled Connect button until an app exists.
-      expect(html).toContain('Not connected. Set up an OAuth app, or use an API token.');
+      expect(html).toContain('Set up an OAuth app or use an API token.');
       expect(html).not.toContain('No OAuth app yet.');
       expect(html).not.toContain('Set up the OAuth app first.');
-      expect(html).toContain('Set up the OAuth app…');
+      expect(html).toContain('Set up OAuth app…');
       expect(html).not.toContain('Set up your own OAuth app…');
       expect(html).not.toContain('Connect Linear');
     }
@@ -234,8 +235,8 @@ describe('the Accounts tab (DL-173)', () => {
     expect(html).toContain('github.com');
     expect(html).toContain('>Log out<');
     // GitHub has an account: no Connect button next to it, only "Connect another…".
-    expect(html).toContain(
-      '<button type="button" class="fd-ghost fd-sm" aria-expanded="false">Connect another GitHub account…</button>',
+    expect(html).toMatch(
+      /<button type="button" class="fd-sm" aria-expanded="false"><svg[^>]*>[\s\S]*?<\/svg>Connect another GitHub account…<\/button>/,
     );
     expect(html).not.toContain('>Connect GitHub<');
     // GitLab has none: its server field and its Connect button.
@@ -246,43 +247,55 @@ describe('the Accounts tab (DL-173)', () => {
     expect(html).not.toContain('GitLab host');
   });
 
-  test('a tracker with an account: the table first, the ways to connect folded', () => {
-    const html = tab();
-    const jira =
-      /<div class="fd-set-tracker" role="group" aria-label="Jira">[\s\S]*?<\/div><div class="fd-set-tracker"/.exec(
-        html,
-      )?.[0];
-    expect(jira).toBeDefined();
-    const table = jira?.indexOf('aria-label="Jira accounts"') ?? -1;
+  test('one table for the trackers: an account row, a Not connected row, the folds after it', () => {
+    const trackers = tab().slice(tab().indexOf('aria-label="Jira and Linear"'));
+    const table = trackers.indexOf('aria-label="Jira and Linear accounts"');
     expect(table).toBeGreaterThan(-1);
-    expect(table).toBeLessThan(jira?.indexOf('Connect another account…') ?? -1);
-    expect(jira).not.toContain('OAuth app: client id');
-    expect(jira).not.toContain('>Connect Jira<');
-    expect(jira).not.toContain('Not connected');
-    expect(jira).not.toContain('No account connected.');
+    // The Jira account, then Linear without an account: the same structure as GitHub and GitLab.
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeGreaterThan(table);
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeLessThan(
+      trackers.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(trackers.indexOf('aria-label="Linear not connected"')).toBeLessThan(
+      trackers.indexOf('Connect another Jira account…'),
+    );
+    expect(trackers).not.toContain('OAuth app <code>abc123</code>');
+    expect(trackers).not.toContain('>Connect Jira<');
+    expect(trackers).not.toContain('No account connected.');
+    expect(trackers).not.toContain('fd-set-trackerhead');
   });
 
   test('a tracker without an account but with an app: Connect is on', () => {
     const html = tab({}, { ...LIST, accounts: [] });
-    expect(html).toContain('Not connected.');
-    expect(html).toContain('OAuth app: client id');
-    expect(html).toContain('abc123');
-    expect(html).toContain('secret set');
-    expect(html).toContain('Set up the OAuth app…');
-    expect(html).toMatch(/<button type="button">Connect Jira<\/button>/);
-    expect(html).toContain('Use an API token instead');
-    // A tracker block says "Not connected." in its own words, not the line of the table.
-    const trackers = html.slice(html.indexOf('aria-label="Jira and Linear"'));
-    expect(trackers).not.toContain('No account connected.');
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('<span class="fd-dot" data-status="idle" aria-hidden="true"></span>');
+    expect(jira).toContain('Not connected');
+    expect(jira).toContain('OAuth app <code>abc123</code>');
+    expect(jira).toContain('secret set');
+    expect(jira).toContain('Set up OAuth app…');
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Connect Jira<\/button>/);
+    expect(jira).toContain('Use an API token…');
+    // The row says "Not connected" in its own words, not the line of an empty table.
+    expect(html.slice(html.indexOf('aria-label="Jira and Linear"'))).not.toContain(
+      'No account connected.',
+    );
   });
 
   test('Jira without an owner app has no built-in app (DL-185)', () => {
     const html = tab({}, { ...LIST, accounts: [], apps: [] });
-    const jira = html.slice(html.indexOf('aria-label="Jira"'), html.indexOf('aria-label="Linear"'));
-    expect(jira).toContain('Not connected. Set up an OAuth app, or use an API token.');
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('Set up an OAuth app or use an API token.');
     expect(jira).not.toContain('Connect Jira');
-    expect(jira).toContain('Set up the OAuth app…');
-    expect(jira).toContain('Use an API token instead');
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Set up OAuth app…<\/button>/);
+    expect(jira).toMatch(
+      /<button type="button" class="fd-ghost fd-sm">Use an API token…<\/button>/,
+    );
   });
 
   test('the account rows: the method and the status in words, the site without its scheme', () => {

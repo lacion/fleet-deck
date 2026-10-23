@@ -11,7 +11,7 @@ import { sectionId } from './model';
 import {
   buttons,
   type CardState,
-  cardLines,
+  cardView,
   errorText,
   LOADING_TEXT,
   type OmarchyAction,
@@ -26,6 +26,7 @@ import {
   UNSUPPORTED_TEXT,
   WORKING_TEXT,
 } from './omarchy';
+import { CardRow, FactList } from './CardRow';
 import {
   FileLines,
   type PlanLoad,
@@ -234,6 +235,7 @@ export function OmarchyView({
 }: ViewProps) {
   if (state.kind === 'hidden') return null;
   let body: React.ReactNode;
+  let version: string | null = null;
   if (state.kind === 'loading') {
     body = <Loading text={LOADING_TEXT} />;
   } else if (state.kind === 'unsupported') {
@@ -244,12 +246,13 @@ export function OmarchyView({
         <NoticeIcon tone="error" />
         <span>{READ_ERROR_TEXT}</span>
         <button type="button" className="fd-sm" onClick={onRetryRead}>
-          <Icon of={RefreshCw} size={14} /> Retry
+          <Icon of={RefreshCw} size={14} /> Try again
         </button>
       </div>
     );
   } else {
-    const lines = cardLines(state.status);
+    const view = cardView(state.status);
+    version = view.version;
     const shown = buttons(state.status);
     const working = busy || state.status.running !== null;
     // The review needs the feature: it shows once the repairs were read, and a 501 hides it.
@@ -258,7 +261,8 @@ export function OmarchyView({
       reviewVisible(state.status, refused);
     body = (
       <>
-        {lines.map((line) => (
+        {view.facts.length === 0 ? null : <FactList facts={view.facts} />}
+        {view.notes.map((line) => (
           <p className="fd-note" key={line}>
             {line}
           </p>
@@ -282,7 +286,8 @@ export function OmarchyView({
               <button
                 key={b.action}
                 type="button"
-                className="fd-sm"
+                // Uninstall… removes the integration: the danger look, apart from the safe actions.
+                className={b.action === 'uninstall' ? 'fd-danger fd-sm' : 'fd-sm'}
                 disabled={working}
                 onClick={() => onAct(b.action)}
               >
@@ -311,10 +316,15 @@ export function OmarchyView({
       </>
     );
   }
+  // The card keeps the columns of the page: its state in a "Status" row; the version of Omarchy
+  // after the heading, when the station knows it.
   return (
     <section id={sectionId('Omarchy')} className="fd-set-sec fd-omarchy" aria-label="Omarchy">
-      <h2>Omarchy</h2>
-      {body}
+      <div className="fd-set-sechead-row">
+        <h2 className="fd-set-sechead">Omarchy</h2>
+        {version === null ? null : <span className="fd-set-secnote">{version}</span>}
+      </div>
+      <CardRow label="Status">{body}</CardRow>
     </section>
   );
 }

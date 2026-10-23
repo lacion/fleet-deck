@@ -196,7 +196,10 @@ export function StationsEditor({
 
 // --- a number of minutes where 0 turns the feature off ---
 
-/** An empty field writes 0 (off); 0 shows as the empty field with the placeholder "Off". */
+/**
+ * An empty field writes 0 (off); 0 shows as the empty field with the placeholder "Never". The unit
+ * hides while the field is empty (settings.css), so that it never reads "Never min".
+ */
 export function OffMinutes({
   label,
   value,
@@ -218,10 +221,10 @@ export function OffMinutes({
       <input
         type="number"
         inputMode="numeric"
-        className="fd-set-num fd-set-minutes"
+        className="fd-set-unitnum fd-set-minutes"
         aria-label={label}
         value={value === null || value === 0 ? '' : value}
-        placeholder="Off"
+        placeholder="Never"
         min={min === null ? undefined : Math.max(min, 1)}
         max={max ?? undefined}
         disabled={disabled}

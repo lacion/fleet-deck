@@ -246,13 +246,19 @@ describe('the tool texts', () => {
     expect(toolState(fact({ probe: 'failed', version: null }))).toBe('Check failed');
   });
 
-  test('the version follows an installed tool', () => {
-    expect(toolState(fact())).toBe('Installed · 0.4');
+  test('the version follows an installed tool, with its source when it is the package', () => {
+    expect(toolState(fact())).toBe('Installed · 0.4 (package)');
     expect(toolState(fact({ version_source: 'executable' }))).toBe('Installed · 0.4');
   });
 
   test('the keyboard and plugin states', () => {
-    expect(keyboardState({ status: 'ok', layouts: ['us', 'de'] })).toBe('us, de');
+    // A layout in words with its code; a code outside the known layouts stays as it is.
+    expect(keyboardState({ status: 'ok', layouts: ['es', 'de'] })).toBe(
+      'Spanish (es), German (de)',
+    );
+    expect(keyboardState({ status: 'ok', layouts: ['us', 'se', 'xx'] })).toBe(
+      'American English (us), Swedish (se), xx',
+    );
     expect(keyboardState({ status: 'unavailable', layouts: [] })).toBe('Not available');
     expect(keyboardState({ status: 'failed', layouts: [] })).toBe('Check failed');
     expect(pluginState('valid')).toBe('Installed');
@@ -272,10 +278,16 @@ describe('the tool texts', () => {
       }),
     );
     expect(rows.map((r) => [r.name, r.state, r.status, r.code])).toEqual([
-      ['wtype', 'Installed · 0.4', 'online', true],
+      ['wtype', 'Installed · 0.4 (package)', 'online', true],
       ['wf-recorder', 'Not installed', 'idle', true],
-      ['Keyboard layouts', 'us, de', 'online', false],
+      ['Keyboard layouts', 'American English (us), German (de)', 'online', false],
       ['Fleet plugin', 'Not valid', 'lost', false],
+    ]);
+    // An application is a product name (sans), not a command.
+    const apps = toolRows(tools({ tools: [fact({ id: 'hyprland' }), fact({ id: 'jq' })] }));
+    expect(apps.map((r) => [r.name, r.code]).slice(0, 2)).toEqual([
+      ['Hyprland', false],
+      ['jq', true],
     ]);
   });
 
