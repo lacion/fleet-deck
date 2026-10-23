@@ -28,6 +28,14 @@
   }
 }
 
+/* The row menus float over the page, so the wrapper must not clip them (`overflow-x: auto` makes
+   the vertical overflow clip too). A phone shows cards that never overflow sideways. Above 640px
+   the folder column gives way (ellipsis) and the actions column is narrow, so the table fits its
+   width there as well. */
+.fd-int-projectswrap {
+  overflow: visible;
+}
+
 /* The whole row opens the project: the name link covers it (::after); the row menu sits above the
    cover. The name is the row's title, not a blue link: the row hover and the pointer say it opens. */
 .fd-int-projects tbody tr {

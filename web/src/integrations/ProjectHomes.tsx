@@ -1,6 +1,6 @@
 // FG-5 (design §8.8): the "Homes" section of the project page: one row for each home, "Retry" for a
 // failed home, "Remove" for a home when the project has more than one, and "Add home".
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { stationName } from '../board/fleet';
 import type { Project, ProjectHome, StationView } from '../gen';
 import { PathTail } from '../chat/PathTail';
@@ -13,6 +13,12 @@ import { message } from './useLoad';
 
 /** How often the list is read again while a home is cloning. */
 export const HOMES_POLL_MS = 5_000;
+
+/** True while a home of the project is cloning: the project page reads the list again then. */
+export function homesCloning(project: Pick<Project, 'homes'> | undefined): boolean {
+  const homes = project?.homes;
+  return Array.isArray(homes) && homes.some((h) => h.state === 'cloning');
+}
 
 /**
  * The folder name of a project (mirror of `home_folder_name` in `fleetdeck-core`): every character
@@ -259,13 +265,6 @@ export function ProjectHomes({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const homes = project.homes;
-  const cloning = Array.isArray(homes) && homes.some((h) => h.state === 'cloning');
-  const reload = env?.reload;
-  useEffect(() => {
-    if (!cloning || reload === undefined) return undefined;
-    const timer = setInterval(reload, HOMES_POLL_MS);
-    return () => clearInterval(timer);
-  }, [cloning, reload]);
   if (env === undefined || !Array.isArray(homes) || homes.length === 0) return null;
   const { actions } = env;
   const admin = actions.canAdmin;

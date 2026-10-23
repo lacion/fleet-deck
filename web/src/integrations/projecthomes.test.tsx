@@ -11,6 +11,8 @@ import {
   AddHomeDialog,
   homeCandidates,
   homeFolderName,
+  HOMES_POLL_MS,
+  homesCloning,
   homeText,
   ProjectHomes,
 } from './ProjectHomes';
@@ -48,6 +50,24 @@ const section = (extra: Parameters<typeof project>[0] = {}, canAdmin = true) =>
       <ProjectHomes project={project(extra)} stations={stations} />
     </IntegrationsProvider>,
   );
+
+// The test setup renders to static markup and runs no effects, so the interval of the project page
+// is tested through the helper that decides whether it runs.
+describe('the polling of a cloning home', () => {
+  test('the project page polls while a home is cloning, and stops when none is', () => {
+    expect(HOMES_POLL_MS).toBe(5_000);
+    expect(homesCloning(project({ homes: [home({ state: 'cloning' })] }))).toBe(true);
+    expect(homesCloning(project({ homes: [home(), home({ state: 'cloning' })] }))).toBe(true);
+    expect(homesCloning(project({ homes: [home(), home({ state: 'failed' })] }))).toBe(false);
+    expect(homesCloning(project({ homes: [] }))).toBe(false);
+  });
+
+  test('an older deck without homes, or no project, does not poll', () => {
+    const old = { ...project(), homes: undefined } as unknown as ReturnType<typeof project>;
+    expect(homesCloning(old)).toBe(false);
+    expect(homesCloning(undefined)).toBe(false);
+  });
+});
 
 describe('the text of a home row', () => {
   test('each state has the text of the design, with the station first', () => {
