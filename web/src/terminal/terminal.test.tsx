@@ -380,6 +380,27 @@ describe('startHandover', () => {
 });
 
 describe('returnToBoard', () => {
+  test('a pending resume keeps its follow-up', async () => {
+    const f = fixture({ state: 'exited', terminal: hold });
+    const result = await returnToBoard({
+      watch: f.watch,
+      shellLive: async () => false,
+      close: async () => {},
+      resume: async () => ({
+        ok: true,
+        text: 'Sent. The station has not confirmed it yet.',
+        later: async () => ({ ok: false, text: 'Refused: x' }),
+      }),
+    });
+    expect(result.text).toBe(
+      'Back under board control. The station has not confirmed the resume yet.',
+    );
+    expect(await result.later?.(new AbortController().signal)).toEqual({
+      ok: false,
+      text: 'Returned, but the resume failed: Refused: x',
+    });
+  });
+
   test('a live shell is closed, the hold awaited, then the session resumed', async () => {
     const f = fixture({ state: 'exited', terminal: hold });
     const calls: string[] = [];

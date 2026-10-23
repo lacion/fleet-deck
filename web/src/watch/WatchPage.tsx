@@ -7,6 +7,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { formatHash } from '../app/routes';
@@ -216,6 +217,13 @@ export function Tile({
   const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const life = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const c = new AbortController();
+    life.current = c;
+    return () => c.abort();
+  }, []);
+  const signal = () => life.current?.signal ?? AbortSignal.abort();
   // A wall display gets its own event type (R13 §5D item 7).
   const shown = timeline?.display ?? [];
   const tool = s.running_tools[0];
@@ -267,6 +275,12 @@ export function Tile({
       (o) => {
         setBusy(false);
         setNote(o.ok ? null : o.text);
+        // G4: a pending answer is followed; a final refusal is the tile note.
+        if (o.later !== undefined) {
+          void o.later(signal()).then((final) => {
+            if (final !== null && !final.ok) setNote(final.text);
+          });
+        }
       },
       (e: unknown) => {
         setBusy(false);

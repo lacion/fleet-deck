@@ -12,6 +12,8 @@ type Props = {
   readonly answerable: boolean;
   readonly enabled: boolean;
   readonly busy: boolean;
+  /** G4: the refusal line of a request, by request id (`dockRefusals`). */
+  readonly refusals?: Readonly<Record<string, string>> | undefined;
   readonly onAnswer: (request: string, option: string, reply: Reply | null) => void;
 };
 
@@ -94,6 +96,11 @@ export function ApprovalDock(props: Props) {
                   ) : null}
                 </div>
               ) : null}
+              {props.refusals?.[r.request_id] === undefined ? null : (
+                <p className="fd-q-error" role="alert">
+                  {props.refusals[r.request_id]}
+                </p>
+              )}
             </li>
           );
         })}

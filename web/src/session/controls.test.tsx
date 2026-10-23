@@ -321,6 +321,7 @@ const idle: Controller = {
   flags: sessionFlags(session(), 'live', drive),
   busy: null,
   outcome: null,
+  refusals: {},
   act: () => {},
   dismiss: () => {},
 };

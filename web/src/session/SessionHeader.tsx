@@ -43,7 +43,7 @@ import { sessionKey } from '../runtime/state';
 import { priority, sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import type { Outcome, SessionActions } from './commands';
-import type { Controller } from './controller';
+import { headerOutcome, shownText, type Controller } from './controller';
 import { useIntegrations, useProjects } from '../integrations/context';
 import { GitPullRequest } from '../integrations/icons';
 import { projectOfSession } from '../integrations/model';
@@ -181,7 +181,7 @@ export function SessionHeader({
       {...(phone ? {} : { session })}
     />
   );
-  const outcome = controller.outcome;
+  const outcome = headerOutcome(controller, s.open_requests);
   const now = useNow(undefined, 30000);
   const ref = sessionRef(session.station_id, s.session_id);
   const starred = priority.use().has(ref);
@@ -750,7 +750,7 @@ export function SessionHeader({
       {outcome ? (
         <div role={outcome.ok ? 'status' : 'alert'} className="fd-sh-outcome" data-ok={outcome.ok}>
           <Icon of={outcome.ok ? Check : TriangleAlert} size={14} />
-          <span>{outcome.text}</span>
+          <span>{shownText(outcome)}</span>
           <button
             type="button"
             className="fd-iconbtn fd-sm"

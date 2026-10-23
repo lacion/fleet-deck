@@ -1,7 +1,7 @@
 // B8: `!command` in the composer, the shell card in the chat, and the Claude result chip that
 // goes with the next prompt, against the scripted deck.
 import { expect, type Page, test } from '@playwright/test';
-import type { DeckSession, Event } from '../src/gen';
+import type { DeckCommand, DeckSession, Event } from '../src/gen';
 import { summary } from '../src/testing/summary';
 import { claudeCapabilities, envelopes } from '../src/testing/timeline';
 import { FakeDeck, fitsWidth, logIn, openSession, stationView } from './fake-deck';
@@ -190,4 +190,102 @@ test('on an ended session the owner releases the folder after a question', async
   expect(sent.map((c) => (c.body as { command: unknown }).command)).toEqual([
     { op: 'release_shell', session_id: ID, effect_id: 'e2' },
   ]);
+});
+
+/** A command as the deck answers it (`done` with a refusal text, or `pending`). */
+function receipt(
+  command_id: string,
+  state: DeckCommand['state'],
+  reject: string | null = null,
+): DeckCommand {
+  return {
+    command_id,
+    station_id: ST,
+    method: 'session.x',
+    origin: 'board',
+    envelope: null,
+    retry_until: 0,
+    state,
+    attempts: 1,
+    sent_at: 1,
+    receipt:
+      state === 'done'
+        ? {
+            command_id,
+            state: reject === null ? 'accepted' : 'rejected',
+            station_seq: null,
+            result: null,
+            reject:
+              reject === null
+                ? null
+                : { code: 'invalid_state', message: reject, unsupported: null },
+            at: 1,
+          }
+        : null,
+    reason: null,
+    created_at: 1,
+    updated_at: 1,
+  };
+}
+
+test('a pending prompt that the station refuses keeps its shell chip', async ({ page }) => {
+  const { deck, view } = await setUp(page);
+  deck.on('/api/commands/session.prompt', (b) => ({
+    status: 200,
+    body: receipt(idOf(b), 'pending'),
+  }));
+  deck.route('GET', /^\/api\/commands\/([^/]+)$/, (m) => ({
+    status: 200,
+    body: receipt(m[1] ?? '', 'done', 'the session is busy'),
+  }));
+  deck.emit(ST, ID, envelopes(ID, shellEvents('pwd', '/home/me/app\n')));
+  const composer = view.getByRole('form', { name: 'Composer' });
+  await expect(composer.getByText('Includes the output of')).toBeVisible();
+  await composer.getByLabel('Message').fill('what did it print?');
+  await composer.getByRole('button', { name: 'Send' }).click();
+  await expect(view.getByRole('alert')).toContainText('Refused: the session is busy', {
+    timeout: 5_000,
+  });
+  await expect(composer.getByText('Includes the output of')).toBeVisible();
+  deck.on('/api/commands/session.prompt', accepted('session.prompt'));
+  await composer.getByLabel('Message').fill('again');
+  await composer.getByRole('button', { name: 'Send' }).click();
+  await expect(composer.getByText('Includes the output of')).toHaveCount(0);
+  const prompts = deck.calls.filter((c) => c.path === '/api/commands/session.prompt');
+  const last = prompts[prompts.length - 1];
+  expect((last?.body as { command: unknown } | undefined)?.command).toEqual({
+    op: 'prompt',
+    session_id: ID,
+    input: { text: 'again', shell_results: ['e1'] },
+  });
+});
+
+test('a pending release that the station refuses stays in the dialog', async ({ page }) => {
+  const deck = new FakeDeck();
+  const ended = session();
+  ended.summary.state = 'exited';
+  deck.sessions = [ended];
+  deck.stations = [stationView(ST, 'Alpha')];
+  deck.on('/api/commands/session.release_shell', (b) => ({
+    status: 200,
+    body: receipt(idOf(b), 'pending'),
+  }));
+  deck.route('GET', /^\/api\/commands\/([^/]+)$/, (m) => ({
+    status: 200,
+    body: receipt(m[1] ?? '', 'done', 'the command still runs'),
+  }));
+  await deck.install(page);
+  await logIn(page);
+  await openSession(page, 'Fix the docs');
+  deck.emit(ST, ID, envelopes(ID, running()));
+  const view = page.getByRole('region', { name: 'Session' });
+  const card = view.locator('[data-node="shell-e2"]');
+  await card.getByRole('button', { name: 'Release the folder' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Release this folder' });
+  await dialog.getByRole('button', { name: 'Release', exact: true }).click();
+  await expect(dialog).toContainText('Sent. The station has not confirmed it yet.');
+  await expect(dialog).toContainText('Refused: the command still runs', { timeout: 5_000 });
+  await expect(dialog).toHaveCount(1);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
 });

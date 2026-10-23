@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import type { ProviderKind } from '../gen';
-import type { Outcome } from '../session/commands';
+import { finalOutcome, type Outcome } from '../session/commands';
 import type { Item } from '../session/timeline';
 import { Icon, SquareTerminal } from '../ui/icons';
 import { ErrorNotice } from '../ui/page';
@@ -83,6 +83,22 @@ export function releaseOffered(tool: Tool, env: ShellEnv | undefined, stale: boo
   );
 }
 
+/** G4: the text when the station did not confirm the release while the board followed it. */
+export const RELEASE_UNCONFIRMED =
+  'The station did not confirm the release in time. Check the command card again.';
+
+/** G4: the release, followed while it is pending: the final outcome, or a refusal with
+ *  RELEASE_UNCONFIRMED when the follow stops. Only an `ok` result closes the dialog. */
+export async function releaseFollowed(
+  onRelease: () => Promise<Outcome>,
+  signal: AbortSignal,
+  onPending: (text: string) => void,
+): Promise<Outcome> {
+  const sent = await onRelease();
+  if (sent.later !== undefined) onPending(sent.text);
+  return (await finalOutcome(sent, signal)) ?? { ok: false, text: RELEASE_UNCONFIRMED };
+}
+
 type DialogProps = {
   readonly command: string;
   readonly onRelease: () => Promise<Outcome>;
@@ -97,19 +113,31 @@ export function ReleaseDialog({ command, onRelease, onClose }: DialogProps) {
   useOverlay();
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const alive = useRef(true);
+  const life = useRef<AbortController | null>(null);
   useEffect(() => {
     alive.current = true;
+    const c = new AbortController();
+    life.current = c;
     return () => {
       alive.current = false;
+      c.abort();
     };
   }, []);
   const release = async () => {
     setBusy(true);
     setRefusal(null);
-    const outcome = await onRelease();
+    const outcome = await releaseFollowed(
+      onRelease,
+      life.current?.signal ?? AbortSignal.abort(),
+      (text) => {
+        if (alive.current) setNote(text);
+      },
+    );
     if (!alive.current) return;
     setBusy(false);
+    setNote(null);
     if (outcome.ok) onClose();
     else setRefusal(outcome.text);
   };
@@ -140,6 +168,11 @@ export function ReleaseDialog({ command, onRelease, onClose }: DialogProps) {
           example after a reboot or after you checked the processes).
         </p>
         {refusal === null ? null : <ErrorNotice text={refusal} />}
+        {note === null ? null : (
+          <p className="fd-note" role="status">
+            {note}
+          </p>
+        )}
         <div className="fd-chat-shell-actions">
           <button
             type="button"

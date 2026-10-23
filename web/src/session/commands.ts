@@ -26,7 +26,16 @@ import { artifactFiles, type FileActions, fileActions } from './workspace';
 type Post = (path: string, body: unknown) => Promise<unknown>;
 type Get = (path: string) => Promise<unknown>;
 
-export type Outcome = { readonly ok: boolean; readonly text: string };
+export type Outcome = {
+  readonly ok: boolean;
+  readonly text: string;
+  /**
+   * G4: set when the deck answered `pending`. Such an outcome is provisional: `ok` says only that
+   * the deck stored the command. It reads the command until the station decides and resolves with
+   * that outcome, or with `null` when it stops (aborted, 120 s, 3 failed reads). It never rejects.
+   */
+  readonly later?: (signal: AbortSignal) => Promise<Outcome | null>;
+};
 export type InputKind = 'prompt' | 'steer' | 'follow_up';
 
 export type SessionActions = {
@@ -170,6 +179,72 @@ export function outcomeOf(v: unknown): Outcome {
   }
 }
 
+/** G4: the waits before each read of a pending command: 1 s for the first 10 reads, then 5 s. */
+export const FOLLOW_FAST_MS = 1_000;
+export const FOLLOW_FAST_READS = 10;
+export const FOLLOW_SLOW_MS = 5_000;
+/** G4: the board stops following a command 120 s after the first wait. */
+export const FOLLOW_LIMIT_MS = 120_000;
+/** G4: the board stops after this many failed reads in a row. */
+export const FOLLOW_MAX_ERRORS = 3;
+
+const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+/** G4: reads `GET /api/commands/<id>` until the command is not `pending`; `null` when it stops. */
+export async function followCommand(
+  get: Get,
+  id: string,
+  signal: AbortSignal,
+  wait: (ms: number) => Promise<void> = sleep,
+  now: () => number = Date.now,
+): Promise<Outcome | null> {
+  const start = now();
+  let errors = 0;
+  for (let n = 0; ; n += 1) {
+    await wait(n < FOLLOW_FAST_READS ? FOLLOW_FAST_MS : FOLLOW_SLOW_MS);
+    if (signal.aborted || now() - start > FOLLOW_LIMIT_MS) return null;
+    let v: unknown;
+    try {
+      v = await get(`/api/commands/${encodeURIComponent(id)}`);
+      errors = 0;
+    } catch {
+      errors += 1;
+      if (errors >= FOLLOW_MAX_ERRORS) return null;
+      continue;
+    }
+    if (signal.aborted) return null;
+    if (record(v) && v['state'] === 'pending') continue;
+    return outcomeOf(v);
+  }
+}
+
+/** G4: the final outcome of `o`: `o` when it has no follow-up, else the follow-up's outcome, or
+ *  `null` when the follow stops. */
+export async function finalOutcome(o: Outcome, signal: AbortSignal): Promise<Outcome | null> {
+  if (o.later === undefined) return o;
+  return o.later(signal).catch(() => null);
+}
+
+/** G4 (revision 3): runs `done` once `o` is a confirmed success: now for a final `ok`, else when
+ *  its follow-up resolves `ok` and the follow was not aborted. A refusal or a stopped follow
+ *  (`null`) never runs it. Returns the outcome to hand on: `o` itself when it is final, else `o`
+ *  with a wrapped follow-up (the same final outcome). */
+export function onConfirmed(o: Outcome, done: () => void): Outcome {
+  const later = o.later;
+  if (later === undefined) {
+    if (o.ok) done();
+    return o;
+  }
+  return {
+    ...o,
+    later: async (signal) => {
+      const final = await later(signal);
+      if (final !== null && final.ok && !signal.aborted) done();
+      return final;
+    },
+  };
+}
+
 /** BG-4 (design `board-gaps.md` §5.5): the six codes of a refused plan or a stop, with the board texts. */
 export const STOP_TEXTS: Readonly<Record<string, string>> = {
   identity_unproven:
@@ -241,7 +316,15 @@ export function sessionActions(
         command,
         ...(elevation === undefined ? {} : { elevation }),
       };
-      return outcomeOf(await post(`/api/commands/${METHODS[command.op]}`, body));
+      const reply = await post(`/api/commands/${METHODS[command.op]}`, body);
+      const outcome = outcomeOf(reply);
+      const pendingId =
+        record(reply) && reply['state'] === 'pending' && typeof reply['command_id'] === 'string'
+          ? reply['command_id']
+          : null;
+      return pendingId !== null && get !== null
+        ? { ...outcome, later: (signal) => followCommand(get, pendingId, signal) }
+        : outcome;
     } catch (error) {
       // R11.7: in mob mode a member who does not drive is refused.
       if (error instanceof ApiError && error.code === 'not_driver') {

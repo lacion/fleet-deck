@@ -6,7 +6,7 @@ import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import type { ExecutionCheck } from '../gen';
 import { Icon, X } from '../ui/icons';
-import type { SessionActions } from './commands';
+import { finalOutcome, type SessionActions } from './commands';
 import { ESCAPED_TITLE, ExecutionStop, stillRuns } from './ExecutionStop';
 
 type ProcessList = { readonly title: string; readonly rows: readonly string[] };
@@ -60,6 +60,28 @@ export function executionView(check: ExecutionCheck): ExecutionView {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
 
+/** G4: the text when the station did not confirm the mark while the board followed it. */
+export const MARK_UNCONFIRMED =
+  'The station did not confirm the mark in time. Check the processes again.';
+
+export type MarkResult =
+  | { readonly marked: true }
+  | { readonly marked: false; readonly text: string };
+
+/** G4: "Mark as ended": the command, followed while it is pending. Only a confirmed mark marks. */
+export async function markEnded(
+  actions: Pick<SessionActions, 'reconcileExecution'>,
+  shimId: string,
+  signal: AbortSignal,
+  onPending: (text: string) => void,
+): Promise<MarkResult> {
+  const sent = await actions.reconcileExecution(shimId);
+  if (sent.later !== undefined) onPending(sent.text);
+  const final = await finalOutcome(sent, signal);
+  if (final === null) return { marked: false, text: MARK_UNCONFIRMED };
+  return final.ok ? { marked: true } : { marked: false, text: final.text };
+}
+
 type Props = {
   readonly actions: SessionActions;
   readonly onClose: () => void;
@@ -77,11 +99,16 @@ export function ExecutionDialog({ actions, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [marked, setMarked] = useState(false);
   const [markError, setMarkError] = useState<string | null>(null);
+  const [markNote, setMarkNote] = useState<string | null>(null);
   const alive = useRef(true);
+  const life = useRef<AbortController | null>(null);
   useEffect(() => {
     alive.current = true;
+    const c = new AbortController();
+    life.current = c;
     return () => {
       alive.current = false;
+      c.abort();
     };
   }, []);
 
@@ -108,11 +135,19 @@ export function ExecutionDialog({ actions, onClose }: Props) {
   const mark = async (shimId: string) => {
     setBusy(true);
     setMarkError(null);
-    const outcome = await actions.reconcileExecution(shimId);
+    const result = await markEnded(
+      actions,
+      shimId,
+      life.current?.signal ?? AbortSignal.abort(),
+      (text) => {
+        if (alive.current) setMarkNote(text);
+      },
+    );
     if (!alive.current) return;
     setBusy(false);
-    if (outcome.ok) setMarked(true);
-    else setMarkError(outcome.text);
+    setMarkNote(null);
+    if (result.marked) setMarked(true);
+    else setMarkError(result.text);
   };
 
   const view = check === null ? null : executionView(check);
@@ -193,6 +228,11 @@ export function ExecutionDialog({ actions, onClose }: Props) {
                 >
                   {busy ? 'Marking…' : 'Mark as ended'}
                 </button>
+                {markNote === null ? null : (
+                  <p className="fd-note" role="status">
+                    {markNote}
+                  </p>
+                )}
                 {markError === null ? null : (
                   <p className="fd-note" role="alert">
                     {markError}

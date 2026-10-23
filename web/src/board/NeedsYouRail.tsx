@@ -6,8 +6,8 @@ import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, OpenRequest, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { optionClass as approvalClass } from '../session/ApprovalDock';
-import type { SessionActions } from '../session/commands';
-import { sessionFlags } from '../session/controller';
+import type { Outcome, SessionActions } from '../session/commands';
+import { nextShown, type Shown, sessionFlags, shownText } from '../session/controller';
 import { questionForm } from '../session/question';
 import { shortModel } from '../ui/format';
 import {
@@ -51,6 +51,21 @@ type Props = {
   readonly bellRow?: boolean | undefined;
 };
 
+/** G4: the rail key of a request: station, session and request id (DL-402). */
+export const railKey = (key: SessionKey, requestId: string): string =>
+  `${key.station_id}/${key.session_id}/${requestId}`;
+
+/** G4: the rail errors after an outcome of the answer `k`: a refusal counts against the last
+ *  refusal of `k`; a success or a provisional outcome changes nothing. */
+export function railErrors(
+  errors: Readonly<Record<string, Shown>>,
+  k: string,
+  o: Outcome,
+): Readonly<Record<string, Shown>> {
+  if (o.ok) return errors;
+  return { ...errors, [k]: nextShown(errors[k] ?? null, 'answer', k, o) };
+}
+
 /** Where a request's session works: its branch, else its folder. */
 function placeOf(card: DeckSession): { readonly text: string; readonly branch: boolean } | null {
   const s = card.summary;
@@ -84,7 +99,7 @@ export function NeedsYouRail({
     .sort((a, b) => a.request.requested_at - b.request.requested_at);
   const [notify, setNotify] = useState(notifyEnabled);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
+  const [errors, setErrors] = useState<Readonly<Record<string, Shown>>>({});
   const [picked, setPicked] = useState(0);
   useNotifications(sessions, notify, onOpen);
   const answerableOf = (w: (typeof waiting)[number]) => {
@@ -102,23 +117,45 @@ export function NeedsYouRail({
   // one, stays inside the list when the list shrinks, and leaves a request that became
   // unanswerable.
   const selected = railCursor(answerable, picked);
-  const settle = (requestId: string) =>
+  const life = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const c = new AbortController();
+    life.current = c;
+    return () => c.abort();
+  }, []);
+  const signal = () => life.current?.signal ?? AbortSignal.abort();
+  const settle = (k: string) =>
     setPending((p) => {
       const next = new Set(p);
-      next.delete(requestId);
+      next.delete(k);
       return next;
     });
-  const answer = (actions: SessionActions, request: OpenRequest, optionId: string) => {
-    const id = request.request_id;
-    setPending((p) => new Set(p).add(id));
-    actions.answer(id, optionId, null).then(
+  const answer = (
+    actions: SessionActions,
+    key: SessionKey,
+    request: OpenRequest,
+    optionId: string,
+  ) => {
+    const k = railKey(key, request.request_id);
+    setPending((p) => new Set(p).add(k));
+    actions.answer(request.request_id, optionId, null).then(
       (outcome) => {
-        settle(id);
-        if (!outcome.ok) setErrors((e) => ({ ...e, [id]: outcome.text }));
+        settle(k);
+        setErrors((e) => railErrors(e, k, outcome));
+        if (outcome.later !== undefined) {
+          void outcome.later(signal()).then((final) => {
+            if (final !== null) setErrors((e) => railErrors(e, k, final));
+          });
+        }
       },
       (e: unknown) => {
-        settle(id);
-        setErrors((all) => ({ ...all, [id]: e instanceof Error ? e.message : 'Request failed' }));
+        settle(k);
+        setErrors((all) =>
+          railErrors(all, k, {
+            ok: false,
+            text: e instanceof Error ? e.message : 'Request failed',
+          }),
+        );
       },
     );
   };
@@ -147,11 +184,11 @@ export function NeedsYouRail({
     if (item === undefined) return;
     const actions = answerableOf(item);
     const options = item.request.options;
-    if (actions === null || pending.has(item.request.request_id)) return;
+    if (actions === null || pending.has(railKey(item.key, item.request.request_id))) return;
     const option = options[railKeyOption(e.key, options.length)];
     if (option === undefined) return;
     e.preventDefault();
-    answer(actions, item.request, option.option_id);
+    answer(actions, item.key, item.request, option.option_id);
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => keys.current(e);
@@ -203,8 +240,8 @@ export function NeedsYouRail({
         {waiting.map((w, index) => {
           const r = w.request;
           const actions = answerableOf(w);
-          const busy = pending.has(r.request_id);
-          const error = errors[r.request_id];
+          const busy = pending.has(railKey(w.key, r.request_id));
+          const error = errors[railKey(w.key, r.request_id)];
           const question = r.request_kind === 'question';
           const place = placeOf(w.card);
           return (
@@ -266,7 +303,7 @@ export function NeedsYouRail({
                         className={question ? undefined : approvalClass(o, i)}
                         aria-label={`${o.label}: ${r.title} in ${w.title}`}
                         disabled={busy}
-                        onClick={() => answer(actions, r, o.option_id)}
+                        onClick={() => answer(actions, w.key, r, o.option_id)}
                       >
                         {o.label}
                         {hint(i, r.options.length) === null ? null : (
@@ -287,7 +324,7 @@ export function NeedsYouRail({
                 )}
                 {error === undefined ? null : (
                   <p className="fd-q-error" role="alert">
-                    {error}
+                    {shownText(error)}
                   </p>
                 )}
               </div>

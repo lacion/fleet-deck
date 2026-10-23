@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Event } from '../gen';
-import { sessionActions } from '../session/commands';
+import { type Outcome, sessionActions } from '../session/commands';
 import { buildTimeline, type Item } from '../session/timeline';
 import { envelopes } from '../testing/timeline';
 import { applyChatFilter, compactRuns, DEFAULT_FILTER } from './filter';
@@ -11,7 +11,9 @@ import { ChatView } from './ChatView';
 import {
   effectIdOf,
   isShellTool,
+  RELEASE_UNCONFIRMED,
   ReleaseDialog,
+  releaseFollowed,
   releaseOffered,
   type ShellEnv,
   ShellCard,
@@ -357,5 +359,38 @@ describe('the actions', () => {
       { text: 'go' },
       { text: 'go' },
     ]);
+  });
+});
+
+describe('the release follows a pending command (G4)', () => {
+  const P: Outcome = { ok: true, text: 'Sent. The station has not confirmed it yet.' };
+  const D: Outcome = { ok: true, text: 'Done.' };
+  const signal = new AbortController().signal;
+
+  test('a pending release is followed until the station refuses it', async () => {
+    const texts: string[] = [];
+    const result = await releaseFollowed(
+      async () => ({
+        ...P,
+        later: async () => ({ ok: false, text: 'Refused: the command still runs' }),
+      }),
+      signal,
+      (t) => texts.push(t),
+    );
+    expect(result).toEqual({ ok: false, text: 'Refused: the command still runs' });
+    expect(texts).toEqual(['Sent. The station has not confirmed it yet.']);
+  });
+
+  test('only a confirmed release closes the dialog', async () => {
+    const texts: string[] = [];
+    const onPending = (t: string) => texts.push(t);
+    expect(await releaseFollowed(async () => D, signal, onPending)).toEqual(D);
+    expect(texts).toEqual([]);
+    expect(
+      await releaseFollowed(async () => ({ ...P, later: async () => D }), signal, onPending),
+    ).toEqual(D);
+    expect(
+      await releaseFollowed(async () => ({ ...P, later: async () => null }), signal, onPending),
+    ).toEqual({ ok: false, text: RELEASE_UNCONFIRMED });
   });
 });

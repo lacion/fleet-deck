@@ -189,6 +189,33 @@ const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
 /** How long the Resume all result stays on the screen. */
 const RESUMED_MS = 6000;
 
+/** G4: resumes each session in turn. A resume counts as confirmed only with a final `ok`; a
+ *  pending one counts apart (its card shows when it resumes). A failure counts as neither. */
+export async function resumeEach(
+  targets: readonly (Pick<SessionActions, 'resume'> | null)[],
+): Promise<{ readonly confirmed: number; readonly pending: number }> {
+  let confirmed = 0;
+  let pending = 0;
+  for (const actions of targets) {
+    try {
+      const o = await actions?.resume();
+      if (o?.ok === true) {
+        if (o.later === undefined) confirmed += 1;
+        else pending += 1;
+      }
+    } catch {
+      // A failed resume counts as not resumed.
+    }
+  }
+  return { confirmed, pending };
+}
+
+/** G4: the report of "Resume all". */
+export function resumeReport(confirmed: number, pending: number, total: number): string {
+  const head = `Resumed ${confirmed} of ${total}`;
+  return pending === 0 ? head : `${head}. ${pending} not confirmed yet`;
+}
+
 /**
  * The offline tools: Resume all, Archive, and Restore all (DL-141). `row`: the labelled row at the
  * end of the board ("All ended", the ended sessions of every lane); `lane`: the buttons inside a
@@ -223,16 +250,9 @@ export function OfflineTools({
     const targets = resumable.map((c) => actionsOf(c));
     setRunning(true);
     setReport(null);
-    let ok = 0;
-    for (const actions of targets) {
-      try {
-        if ((await actions?.resume())?.ok === true) ok += 1;
-      } catch {
-        // A failed resume counts as not resumed.
-      }
-    }
+    const { confirmed, pending } = await resumeEach(targets);
     setRunning(false);
-    setReport(`Resumed ${ok} of ${targets.length}`);
+    setReport(resumeReport(confirmed, pending, targets.length));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setReport(null), RESUMED_MS);
   };
