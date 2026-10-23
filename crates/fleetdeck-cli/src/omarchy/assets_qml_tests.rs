@@ -114,7 +114,7 @@ fn every_text_sink_is_plain_text() {
             );
         }
     }
-    assert!(text_blocks(text("Widget.qml")).len() >= 2);
+    assert!(!text_blocks(text("Widget.qml")).is_empty());
     assert!(text_blocks(text("Panel.qml")).len() >= 8);
 }
 
@@ -387,4 +387,27 @@ fn model_js_parses_bounds_and_rejects_with_a_javascript_runtime() {
 
     assert_eq!(got[7], unknown());
     assert_eq!(got[8], unknown());
+}
+
+#[test]
+fn the_widget_draws_the_board_mark() {
+    let brand = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/src/ui/brand.ts"
+    ))
+    .expect("read brand.ts");
+    let after = &brand[brand.find("MARK_PATH =").expect("MARK_PATH") + "MARK_PATH =".len()..];
+    let open = after.find('\'').expect("opening quote") + 1;
+    let close = open + after[open..].find('\'').expect("closing quote");
+    let path = &after[open..close];
+    let qml = text("Widget.qml");
+    assert!(qml.contains(&format!("PathSvg {{ path: \"{path}\" }}")));
+    for needed in [
+        "import QtQuick.Shapes",
+        "fillColor: root.tint",
+        "fillRule: ShapePath.OddEvenFill",
+    ] {
+        assert!(qml.contains(needed), "{needed}");
+    }
+    assert!(!qml.contains("\\uf0e8"));
 }

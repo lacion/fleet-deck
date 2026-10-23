@@ -1,4 +1,9 @@
-# Fleet Deck
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/v2/assets/brand/lockup-dark.png">
+    <img alt="Fleet Deck" src="docs/v2/assets/brand/lockup-light.png" width="320" height="64">
+  </picture>
+</h1>
 
 **One control deck that drives Claude Code and Codex sessions on many machines.**
 

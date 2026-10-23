@@ -1,9 +1,10 @@
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 
-// The bar widget of Fleet Deck: a glyph and `<working> · ⚠<needs_you>`.
+// The bar widget of Fleet Deck: the mark and `<working> · ⚠<needs_you>`.
 // It uses core Quickshell and QtQuick types only. The live smoke of
 // omarchy-p4.md section 5 confirms the host types, the properties that the bar
 // sets (`bar`, `moduleName`, `settings`) and the click handling.
@@ -34,12 +35,20 @@ Item {
     anchors.centerIn: parent
     spacing: Style.space(6)
 
-    Text {
-      textFormat: Text.PlainText
-      text: "\uf0e8"
-      color: root.tint
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.icon
+    // The Fleet Deck mark (web/src/ui/brand.ts MARK_PATH), in the tint of the widget.
+    Shape {
+      id: mark
+      width: Style.font.icon
+      height: Style.font.icon
+      anchors.verticalCenter: parent.verticalCenter
+      preferredRendererType: Shape.CurveRenderer
+      ShapePath {
+        fillColor: root.tint
+        fillRule: ShapePath.OddEvenFill
+        strokeWidth: -1
+        scale: Qt.size(mark.width / 24, mark.height / 24)
+        PathSvg { path: "M10.5 2H13.5A2 2 0 0 1 15.5 4V7A2 2 0 0 1 13.5 9H10.5A2 2 0 0 1 8.5 7V4A2 2 0 0 1 10.5 2ZM5.6 10H7.9A1.6 1.6 0 0 1 9.5 11.6V13.9A1.6 1.6 0 0 1 7.9 15.5H5.6A1.6 1.6 0 0 1 4 13.9V11.6A1.6 1.6 0 0 1 5.6 10ZM16.1 10H18.4A1.6 1.6 0 0 1 20 11.6V13.9A1.6 1.6 0 0 1 18.4 15.5H16.1A1.6 1.6 0 0 1 14.5 13.9V11.6A1.6 1.6 0 0 1 16.1 10ZM2 17H4A1.5 1.5 0 0 1 5.5 18.5V20.5A1.5 1.5 0 0 1 4 22H2A1.5 1.5 0 0 1 0.5 20.5V18.5A1.5 1.5 0 0 1 2 17ZM20 17H22A1.5 1.5 0 0 1 23.5 18.5V20.5A1.5 1.5 0 0 1 22 22H20A1.5 1.5 0 0 1 18.5 20.5V18.5A1.5 1.5 0 0 1 20 17Z" }
+      }
     }
 
     Text {
