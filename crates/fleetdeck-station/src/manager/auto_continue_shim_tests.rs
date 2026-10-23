@@ -418,16 +418,15 @@ async fn auto_continue_settles_an_unverified_exit_of_the_same_boot() {
         .events(&s)
         .await
         .into_iter()
-        .filter(|e| matches!(e, Event::ExecutionReconciled { .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ExecutionReconciled { .. } | Event::ExecutionSettled { .. }
+            )
+        })
         .collect();
     assert_eq!(reconciled.len(), 1, "{reconciled:?}");
-    assert!(matches!(
-        &reconciled[0],
-        Event::ExecutionReconciled {
-            by: Some(fleetdeck_proto::event::ReconciledBy::Station),
-            ..
-        }
-    ));
+    assert!(matches!(&reconciled[0], Event::ExecutionSettled { .. }));
     assert_eq!(rig.resumes(&s).await.len(), 1);
 }
 

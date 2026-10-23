@@ -233,7 +233,6 @@ export * from "./event/OutputGapReason";
 export * from "./event/ProviderKind";
 export * from "./event/RateLimit";
 export * from "./event/RawRef";
-export * from "./event/ReconciledBy";
 export * from "./event/RequestKind";
 export * from "./event/ResolvedBy";
 export * from "./event/ResponseChannel";

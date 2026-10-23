@@ -4,18 +4,16 @@
 //! owner's check.
 
 use fleetdeck_proto::command::{SessionCommand, StopMode, UserInput};
-use fleetdeck_proto::event::{ReconciledBy, SessionState};
+use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::{Event, RejectCode, SessionId};
 
 use crate::manager::shim_resume_check_tests::Orphan;
 use crate::manager::shim_resume_rig::*;
 use crate::store::ShimState;
 
-/// The station proofs and the reconciliation events of `session`.
-async fn settled(
-    rig: &Rig,
-    session: &SessionId,
-) -> (Vec<Option<String>>, Vec<Option<ReconciledBy>>) {
+/// The station proofs and the kinds of the reconciliation events of
+/// `session` (the owner's and the station's).
+async fn settled(rig: &Rig, session: &SessionId) -> (Vec<Option<String>>, Vec<&'static str>) {
     let proofs = rig
         .rows(session)
         .await
@@ -27,7 +25,9 @@ async fn settled(
         .await
         .into_iter()
         .filter_map(|e| match e {
-            Event::ExecutionReconciled { by, .. } => Some(by),
+            Event::ExecutionReconciled { .. } | Event::ExecutionSettled { .. } => {
+                Some(e.kind_name())
+            }
             _ => None,
         })
         .collect();
@@ -79,7 +79,7 @@ async fn a_resume_after_an_unverified_exit_with_nothing_alive_is_admitted_and_re
         (ShimState::Exited, Some("exit_unverified"))
     );
     let (_, events) = settled(&rig, &session).await;
-    assert_eq!(events, vec![Some(ReconciledBy::Station)]);
+    assert_eq!(events, vec!["session.execution_settled"]);
     rig.manager.shutdown(StopMode::Kill).await;
 }
 
@@ -142,7 +142,7 @@ async fn a_legacy_exit_without_inspection_is_settled() {
     rig.accepted(resume(&session)).await;
     let (proofs, events) = settled(&rig, &session).await;
     assert_eq!(proofs, vec![Some("checked_after_exit".to_owned())]);
-    assert_eq!(events, vec![Some(ReconciledBy::Station)]);
+    assert_eq!(events, vec!["session.execution_settled"]);
     rig.manager.shutdown(StopMode::Kill).await;
 }
 
@@ -165,13 +165,13 @@ async fn a_prompt_to_a_hibernated_session_settles_and_resumes() {
     .await;
     let (proofs, events) = settled(&rig, &session).await;
     assert_eq!(proofs, vec![Some("checked_after_exit".to_owned())]);
-    assert_eq!(events, vec![Some(ReconciledBy::Station)]);
+    assert_eq!(events, vec!["session.execution_settled"]);
     rig.wait_state(&session, SessionState::Running).await;
     rig.manager.shutdown(StopMode::Kill).await;
 }
 
 #[tokio::test]
-async fn the_owner_reconcile_still_writes_no_by_field() {
+async fn the_owner_reconcile_keeps_its_kind_and_wire() {
     let mut rig = Rig::direct(None).await;
     let row = (ShimState::Lost, "execution_unknown", 0);
     let session = with_row(&mut rig, row, &real_boot()).await;
@@ -201,6 +201,9 @@ async fn the_owner_reconcile_still_writes_no_by_field() {
         json,
         serde_json::json!({"kind": "session.execution_reconciled", "shim_id": "run"})
     );
-    assert_eq!(settled(&rig, &session).await.0, vec![None]);
+    assert_eq!(
+        settled(&rig, &session).await,
+        (vec![None], vec!["session.execution_reconciled"])
+    );
     rig.manager.shutdown(StopMode::Kill).await;
 }

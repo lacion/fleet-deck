@@ -21,7 +21,7 @@
 //! provider, so a resume could run a second execution of one conversation.
 
 use fleetdeck_proto::SessionId;
-use fleetdeck_proto::event::{Event, ProviderKind, ReconciledBy};
+use fleetdeck_proto::event::{Event, ProviderKind};
 use rusqlite::{Connection, OptionalExtension as _};
 
 use super::Result;
@@ -585,7 +585,7 @@ impl super::Store {
 
     /// DL-432: records that the station checked an unverified exit and found
     /// nothing of the run (`station_proof`), and appends the event
-    /// `session.execution_reconciled { by: station }` in the same
+    /// `session.execution_settled` (not the owner's kind) in the same
     /// transaction. `false` when the row is not eligible any more.
     ///
     /// # Errors
@@ -604,10 +604,7 @@ impl super::Store {
                 rusqlite::params![shim_id, session.as_str(), now],
             )?;
             if n == 1 {
-                let event = Event::ExecutionReconciled {
-                    shim_id,
-                    by: Some(ReconciledBy::Station),
-                };
+                let event = Event::ExecutionSettled { shim_id };
                 out.push(log::append_one(conn, &session, event.into(), now)?);
             }
             Ok(n == 1)

@@ -246,7 +246,7 @@ pub async fn shim_settle(&self, session: SessionId, shim_id: String) -> Result<b
 //  WHERE shim_id = ?1 AND session_id = ?2 AND state = 'exited' AND proof IS NULL
 //    AND station_proof IS NULL
 //    AND (reason = 'exit_unverified' OR (reason = 'exited' AND inspection_version < 1))
-// then, when one row changed, append Event::ExecutionReconciled { shim_id, by: Some(ReconciledBy::Station) }
+// then, when one row changed, append Event::ExecutionSettled { shim_id }
 ```
 
 - `proves_end` (`store/resumes.rs:51-57`): `ShimState::Exited | ShimState::Lost => row.proof.is_some() || row.station_proof.is_some() || clean_exit(row)`.
@@ -265,32 +265,16 @@ ALTER TABLE shims ADD COLUMN station_proof_at INTEGER;
 
 `ShimRow` gets `pub station_proof: Option<String>` and `pub station_proof_at: Option<i64>`; `COLUMNS` and the decode add them.
 
-**The event.** `Event::ExecutionReconciled` (`fleetdeck-proto/src/event.rs:359`) gets an optional field:
+**The event.** A new kind next to `Event::ExecutionReconciled` (`fleetdeck-proto/src/event.rs:359`), which stays the owner's event without change (build answer 1):
 
 ```rust
-#[serde(rename = "session.execution_reconciled")]
-ExecutionReconciled {
-    shim_id: String,
-    /// Who proved the end: absent for the owner (older stations), `station`
-    /// for the station's own check (DL-432).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    by: Option<ReconciledBy>,
-},
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "event/")]
-pub enum ReconciledBy {
-    Owner,
-    Station,
-    /// A value of a newer peer.
-    #[serde(other)]
-    Unknown,
-}
+/// The station proved by its own check that the previous run of the
+/// session (shim `shim_id`) ended after an unverified exit (DL-432).
+#[serde(rename = "session.execution_settled")]
+ExecutionSettled { shim_id: String },
 ```
 
-TypeScript (generated): `{ "kind": "session.execution_reconciled", shim_id: string, by?: ReconciledBy }` and `type ReconciledBy = "owner" | "station" | "unknown"`. The owner path keeps `by: None` (the wire of today). The fold ignores the event (`fold.rs:330`). The board does not render it (§8).
+`Event::KINDS` adds `"session.execution_settled"` after `"session.execution_reconciled"`. TypeScript (generated): `{ "kind": "session.execution_settled", shim_id: string, }`. The owner path keeps `session.execution_reconciled { shim_id }` (the wire of today). The fold ignores both events (`fold.rs:330`). The board does not render them (§8).
 
 **Log.** `tracing::info!(session, shim, "the station proved the end of an unverified exit")`; a check that does not prove: `tracing::info!` with the reason (incomplete, a live process, another boot).
 
@@ -367,8 +351,8 @@ const resume = async (): Promise<Outcome> => {
 | New station, shim that an older build launched (still running at the upgrade) | That shim keeps the bug: its exit gives `exit_unverified`. The settle check of §3.3 proves it at the next resume. |
 | New shim, older station | The report is the same wire. The older station gets `exited` with `Some(0)` more often. Nothing else changes. |
 | An older station binary after V44 | It does not start: `DbError::TooNew` (§1.2 fact 13). There is no in-place binary rollback. The supported recovery is the one of `operations.md` §13.6: (1) forward repair, the normal path: install a fixed newer build; (2) only when the new build has not written data that matters: stop the service, restore `<data>/backups/station-v43-to-v44-<unix ms>.db` as `station.db` (the caution of §13.6: every station write since the upgrade is lost), start the older binary. Never lower `user_version` by hand. The live smoke (§5) checks that the upgrade on Lighting wrote this backup at V43. |
-| Older deck | The deck passes `by` through (unknown fields are kept, `event.rs:6-8`). |
-| Older board | It ignores `by`. Without the board task, the owner still gets the settle at resume (no dialog). |
+| Older deck | The deck keeps `session.execution_settled` as an unknown kind and stores it verbatim (`event.rs:6-8`); after the deck upgrade the stored row reads as the station's proof. It never becomes the owner's `session.execution_reconciled`. |
+| Older board | It ignores the unknown kind (`timeline.ts` default branch). Without the board task, the owner still gets the settle at resume (no dialog). |
 | macOS station | The shim host refuses on macOS (DL-182 status line); the settle check is incomplete there (`check_row`, `NO_INSPECTION`): nothing changes. |
 | Older Linux kernel | The pin of the leader uses `waitid(P_PID, WNOWAIT)` (Linux 2.6.9), so the sweep runs on every supported kernel. Only the signals to session members in other groups need `pidfd_open` (Linux 5.3); without it those members are not signalled and stay in the count (`exited_descendants_remaining`, owner path). The leader pidfd of the state `Unpinned` is optional too. |
 
@@ -404,7 +388,7 @@ No feature flag is needed: the station decides alone, and the wire change is one
 | The sweep kills something that the owner wanted to keep (a dev server that the agent started) | A process of the agent's session ends with the agent. Today the shim already kills the leader's group at every exit (`server.rs:419`); only session members in other groups survived. A process that must outlive the agent must leave the session (`setsid`); then it is an escaped descendant and is not touched. Owner question 1. |
 | A long exit path blocks the station | The longest path is about 6.3 s and runs on a blocking thread of the shim; the station waits for the report as it does for any exit. A takeover during the path attaches as today. |
 | An automatic proof for a session that the owner did not resume (auto-continue at the start) | The settle at the start runs only for sessions with auto-continue on, state `lost` and a lost turn, on a shim host, and records only the same proof as a resume. The auto-continue rules (`ineligible`) still decide; a session that they skip keeps a true proof and no intent. |
-| A wrong automatic proof cannot be undone | The proof is a separate column; state and reason stay as evidence. An audit row (the event with `by: station`) names the row. |
+| A wrong automatic proof cannot be undone | The proof is a separate column; state and reason stay as evidence. An audit row (the event `session.execution_settled`) names the row. |
 | Rollback | An older station binary does not start on the V44 database (`DbError::TooNew`). Recovery is forward repair or the restore of the V43 pre-upgrade backup (§3.5, `operations.md` §13.6); the restore loses station writes since the upgrade, so forward repair is the default. |
 | Denial of resume by a process that never ends | The owner path stays (BG-4 stop, Mark as ended), now offered in the refusal dialog. |
 
@@ -457,10 +441,10 @@ Workers run with the AGENTS.md rules (every heavy command through `umask 022 && 
 
 ### T3. The station settle check at resume and at auto-continue (backend, ~520 lines)
 
-- **Owned files:** `crates/fleetdeck-proto/src/event.rs`, `crates/fleetdeck-proto/src/event_tests.rs`, `web/src/gen/event/Event.ts`, `web/src/gen/event/ReconciledBy.ts` (new, generated), `web/src/gen/index.ts` (only when the generator adds the export), `crates/fleetdeck-station/src/store/schema_v44.rs` (new), `crates/fleetdeck-station/src/store/mod.rs` (only the `mod schema_v44;` line), `crates/fleetdeck-station/src/store/migrations.rs`, `crates/fleetdeck-station/src/store/shims.rs`, `crates/fleetdeck-station/src/store/resumes.rs`, `crates/fleetdeck-station/src/store/resumes_tests.rs`, `crates/fleetdeck-station/src/manager/manager_execution.rs`, `crates/fleetdeck-station/src/manager/mod.rs`, `crates/fleetdeck-station/src/manager/shims.rs`, `crates/fleetdeck-station/src/manager/auto_continue.rs`, `crates/fleetdeck-station/src/manager/auto_continue_shim_tests.rs`, `crates/fleetdeck-station/src/manager/shim_settle_tests.rs` (new), `crates/fleetdeck-station/src/manager/shim_resume_check_tests.rs`, `crates/fleetdeck-cli/tests/shim_resume_recovery.rs`.
+- **Owned files:** `crates/fleetdeck-proto/src/event.rs`, `crates/fleetdeck-proto/src/event_tests.rs`, `web/src/gen/event/Event.ts`, `crates/fleetdeck-station/src/store/schema_v44.rs` (new), `crates/fleetdeck-station/src/store/mod.rs` (only the `mod schema_v44;` line), `crates/fleetdeck-station/src/store/migrations.rs`, `crates/fleetdeck-station/src/store/shims.rs`, `crates/fleetdeck-station/src/store/resumes.rs`, `crates/fleetdeck-station/src/store/resumes_tests.rs`, `crates/fleetdeck-station/src/manager/manager_execution.rs`, `crates/fleetdeck-station/src/manager/mod.rs`, `crates/fleetdeck-station/src/manager/shims.rs`, `crates/fleetdeck-station/src/manager/auto_continue.rs`, `crates/fleetdeck-station/src/manager/auto_continue_shim_tests.rs`, `crates/fleetdeck-station/src/manager/shim_settle_tests.rs` (new), `crates/fleetdeck-station/src/manager/shim_resume_check_tests.rs`, `crates/fleetdeck-cli/tests/shim_resume_recovery.rs`.
 - **Changes:**
-  1. Proto: the `by` field and `ReconciledBy` (§3.3); the TS files regenerated with the project's ts-rs export (the same command that made `web/src/gen`).
-  2. Every `ExecutionReconciled { shim_id }` pattern or constructor gets `by` or `..` (`manager/shims.rs:656` sets `by: None`; the two tests).
+  1. Proto: the kind `session.execution_settled` (`Event::ExecutionSettled`, §3.3) in `Event`, `Event::KINDS`, `kind_name` and the fold's ignore list; the TS files regenerated with the project's ts-rs export (the same command that made `web/src/gen`).
+  2. `ExecutionReconciled { shim_id }` does not change; the owner path (`manager/shims.rs:656`) keeps it.
   3. Schema V44 (§3.3): `schema_v44.rs` with the SQL of §3.3 and its tests; `mod schema_v44;` in `store/mod.rs`; `M::up(super::schema_v44::V44)` in `migrations.rs`. In `migrations.rs`, the `vec![…]` of `migrations()` moves to a private `fn all() -> Vec<M<'static>>`; `migrations()` is `Migrations::new(all())`; a new `#[cfg(test)] pub(crate) fn migrations_upto(version: usize) -> Migrations<'static>` truncates `all()` to its first `version` entries.
   4. `store/shims.rs`: the two fields in `ShimRow`, `COLUMNS`, the decode.
   5. `store/resumes.rs`: `settle_eligible`, `proves_end`, `UNRESOLVED`, `shim_settle` (§3.3).
@@ -468,21 +452,21 @@ Workers run with the AGENTS.md rules (every heavy command through `umask 022 && 
   7. `manager/mod.rs`: line 628 calls `self.pre_decision(&command)` instead of `self.reconcile_check(&command)`; lines 322-325 become the one call of `auto_continue::evaluate_at_start` (§3.3 item 2). `mod.rs` (797 lines) must not grow.
   8. `auto_continue.rs`: `evaluate_at_start`, `evaluate_settling`, and `evaluate` as a wrapper (§3.3 item 2). The module comment gets one sentence: on a shim host, an unverified exit of the same boot is settled before the decision (DL-432).
 - **Tests (`shim_settle_tests.rs`, with `shim_resume_rig.rs`):**
-  - `a_resume_after_an_unverified_exit_with_nothing_alive_is_admitted_and_records_the_station_proof` (row `exited/exit_unverified/1` with a dead identity on the real boot → accepted; `station_proof = checked_after_exit`; one `ExecutionReconciled { by: Some(Station) }`).
+  - `a_resume_after_an_unverified_exit_with_nothing_alive_is_admitted_and_records_the_station_proof` (row `exited/exit_unverified/1` with a dead identity on the real boot → accepted; `station_proof = checked_after_exit`; one `ExecutionSettled`).
   - `a_live_group_member_keeps_the_resume_refused` (a test child in the identity's group, as test 8 of DL-182 does) → refused, no proof.
   - `an_exit_with_descendants_remaining_is_not_settled_by_the_station` → refused.
   - `a_lost_row_is_not_settled_by_the_station` (`lost/execution_unknown`) → refused.
   - `a_row_of_another_boot_is_not_settled_by_the_check` → refused, no station proof.
   - `a_legacy_exit_without_inspection_is_settled` (`exited/exited/0`) → accepted.
   - `a_prompt_to_a_hibernated_session_settles_and_resumes` → accepted.
-  - `the_owner_reconcile_still_writes_no_by_field` (the event JSON has no `by`).
-  - `auto_continue_shim_tests.rs` (its `Rig`; the boot reader is `shim_resume_rig::Boot` set to `"boot-now"`): `auto_continue_settles_an_unverified_exit_of_the_same_boot` (auto-continue on, a lost turn, row `exited/exit_unverified/1` with `dead_identity("boot-now")`; `evaluate_settling(…, Some(&reader))` → 1 intent, no skip, `station_proof = checked_after_exit`, one `ExecutionReconciled { by: Some(Station) }`); `auto_continue_off_is_not_settled` (the same row, auto-continue off → 0 intents, `station_proof` is NULL); `auto_continue_without_a_boot_reader_does_not_settle` (the same row with `evaluate` → 0 intents, skip `execution_unknown`, `station_proof` NULL). The existing `descendants_remaining_and_an_unverified_exit_are_not_a_proof` stays unchanged and passes (another boot, no boot reader).
+  - `the_owner_reconcile_keeps_its_kind_and_wire` (the event JSON is `{"kind": "session.execution_reconciled", "shim_id": …}`, and no `session.execution_settled`).
+  - `auto_continue_shim_tests.rs` (its `Rig`; the boot reader is `shim_resume_rig::Boot` set to `"boot-now"`): `auto_continue_settles_an_unverified_exit_of_the_same_boot` (auto-continue on, a lost turn, row `exited/exit_unverified/1` with `dead_identity("boot-now")`; `evaluate_settling(…, Some(&reader))` → 1 intent, no skip, `station_proof = checked_after_exit`, one `ExecutionSettled` and no `ExecutionReconciled`); `auto_continue_off_is_not_settled` (the same row, auto-continue off → 0 intents, `station_proof` is NULL); `auto_continue_without_a_boot_reader_does_not_settle` (the same row with `evaluate` → 0 intents, skip `execution_unknown`, `station_proof` NULL). The existing `descendants_remaining_and_an_unverified_exit_are_not_a_proof` stays unchanged and passes (another boot, no boot reader).
   - `resumes_tests.rs`: `proves_end_accepts_a_station_proof`; `unresolved_skips_a_settled_row`.
   - `schema_v44.rs`: `v44_adds_the_station_proof_columns` (the CHECK refuses another value); `v44_database_is_too_new_for_the_v43_list` (open a file database with `migrations()`, then `Db::open(path, migrations_upto(43))` gives `DbError::TooNew { found: 44, .. }`).
-  - `event_tests.rs`: `execution_reconciled_reads_without_by_and_with_an_unknown_by`.
+  - `event_reconciled_tests.rs`: `the_owner_and_the_station_proof_have_separate_kinds`, `a_station_proof_stored_by_an_older_deck_stays_a_station_proof`, `an_owner_reconciliation_stored_by_an_older_deck_is_unchanged`.
 - **Depends on:** T1 (order of merge only; no shared file).
 - **Acceptance:**
-  - `sh tools/heavy.sh cargo nextest run -p fleetdeck-proto --no-fail-fast -E 'test(execution_reconciled)'`
+  - `sh tools/heavy.sh cargo nextest run -p fleetdeck-proto --no-fail-fast -E 'test(reconcil) | test(station_proof) | test(every_kind)'`
   - `sh tools/heavy.sh cargo nextest run -p fleetdeck-station --no-fail-fast -E 'test(settle) | test(proves_end) | test(unresolved) | test(v44) | test(shim_resume) | test(auto_continue)'`
   - `sh tools/heavy.sh cargo nextest run -p fleetdeck-cli --no-fail-fast -E 'binary(shim_resume_recovery) | binary(shim_resume)'`
   - `sh tools/heavy.sh cargo nextest run -p fleetdeck-cli --no-fail-fast -E 'binary(module_size) | binary(layering)'`
@@ -522,7 +506,7 @@ The recovery check of §3.5: after the upgrade, `ls ~/.local/share/fleetdeck/bac
 9. **The station settles only `exited` rows with the effective reason `exit_unverified`.** Rejected: settling `exited_descendants_remaining` (the station saw live processes) and `lost` rows (the station saw no exit; `attach_refused` and `identity_mismatch` can mean a live shim).
 10. **The settle runs at resume time only**: the `submit` of `session.resume` and of an input to an ended session, and, for auto-continue, at the station start before the auto-continue decision of each candidate (revision 2; auto-continue does not use `submit`). Rejected: a background settle after every exit (more code paths, a check of rows that nobody resumes); a settle of every row at the station start (slow start with many rows); removing auto-continue from the coverage (an auto-continue session with an unverified exit would stay `lost` although the station can prove the end).
 11. **A new column `station_proof`**, not a new value of `proof`. The CHECK of `proof` (V23) cannot change without a table rebuild. Rejected: reusing `reconciled_by_owner` (a false audit) and a table rebuild (a riskier migration).
-12. **The event `session.execution_reconciled` gets an optional `by`**, absent for the owner. Rejected: a new event kind (older boards and decks would carry an unknown kind for nothing) and `by: owner` on owner events (a wire change without need).
+12. **The station's proof is a new event kind `session.execution_settled`**; the owner's `session.execution_reconciled` does not change (build answer 1). Rejected: an optional `by` on `session.execution_reconciled` (an older deck decodes the known kind, drops the extra field and stores the station's proof as the owner's) and `by: owner` on owner events (a wire change without need).
 13. **No feature flag.** The station decides alone, and the event change is additive.
 14. **`session.import` keeps the owner path.** Rejected: a settle of other sessions' rows at import (rare, and it widens the change).
 15. **The board detects the refusal by its text prefix** "not_resumable: the previous execution may still run". Rejected: a new `RejectCode` (an older deck maps it to `unknown`) and a new structured field.
@@ -543,7 +527,7 @@ The recovery check of §3.5: after the upgrade, `ls ~/.local/share/fleetdeck/bac
 ## 8. Out of scope
 
 - Import (`session.import`) of a conversation whose other session has an unverified exit: owner path as today.
-- A timeline line for `session.execution_reconciled` (with `by: station`).
+- A timeline line for `session.execution_settled`.
 - cgroup containment of each run (a kernel-held list of every descendant, also escaped ones). It is the stronger long-term proof; a separate item.
 - macOS (no shim host there, DL-182).
 - The repair of existing rows: the owner's two unreconciled rows on Lighting (`01M5HJ5E…`, `01M5J6H5…`) get the station proof at their next resume; nothing rewrites them at the upgrade.
@@ -581,7 +565,7 @@ The sessions of the reproduction (`01M5MRC26K9K51A4MCJH6CY638`, `01M5MS2NS6E3DMR
 ## DL-432: The station proves an unverified exit by its own check at resume (architect, 2026-10-23)
 
 - Context: design §3.3. Shims of an older build keep the bug of DL-430 until they end; a busy machine can still leave an incomplete exit census.
-- Decision: before the decision of `session.resume`, of an input to an ended session, and of the auto-continue of a lost session at the station start, the station runs the check of "Mark as ended" for each `exited` row whose effective reason is `exit_unverified`. A complete check on the same boot with no live identity and no group or session member records `station_proof = 'checked_after_exit'` (new column, schema V44) and the event `session.execution_reconciled { by: station }`. `lost` and `exited_descendants_remaining` rows stay owner-only. The termination standard of DL-182 §1a does not change: this is the clean-exit proof, taken later.
+- Decision: before the decision of `session.resume`, of an input to an ended session, and of the auto-continue of a lost session at the station start, the station runs the check of "Mark as ended" for each `exited` row whose effective reason is `exit_unverified`. A complete check on the same boot with no live identity and no group or session member records `station_proof = 'checked_after_exit'` (new column, schema V44) and the event `session.execution_settled` (a kind separate from the owner's `session.execution_reconciled`). `lost` and `exited_descendants_remaining` rows stay owner-only. The termination standard of DL-182 §1a does not change: this is the clean-exit proof, taken later.
 
 ## DL-433: A refused resume opens the check; "Mark as ended and resume" and "Stop them and resume" (architect, 2026-10-23)
 
@@ -590,7 +574,7 @@ The sessions of the reproduction (`01M5MRC26K9K51A4MCJH6CY638`, `01M5MS2NS6E3DMR
 
 ## DL-434: Compatibility of B13 (architect, 2026-10-23)
 
-- Decision: no feature flag. The exit report wire does not change. `ExecutionReconciled` gets an optional `by` (`owner`, `station`, unknown values of newer peers). An older station binary refuses the V44 database (`DbError::TooNew`); the recovery is forward repair, or the restore of the V43 pre-upgrade backup (`operations.md` §13.6), which loses station writes since the upgrade. Shims that an older build launched are covered by DL-432.
+- Decision: no feature flag. The exit report wire does not change. The station's proof is the new event kind `session.execution_settled`; `session.execution_reconciled` stays the owner's event without change, so an older deck keeps the new kind as unknown and never stores it as the owner's. An older station binary refuses the V44 database (`DbError::TooNew`); the recovery is forward repair, or the restore of the V43 pre-upgrade backup (`operations.md` §13.6), which loses station writes since the upgrade. Shims that an older build launched are covered by DL-432.
 
 ## Architect decisions (2026-10-23)
 
@@ -617,3 +601,7 @@ Review: `~/fleetdeck-briefs/backlog/resume-after-stop/adv-design-r1.md` (verdict
 Other changes in this revision: the base is 00055138; T2 moves `on_exit` to `server_exit.rs` and the census additions to `inspect_exit.rs` to keep the 800-line rule (decision 22); the T2 and T3 acceptance filters cover the new tests; T2 acceptance adds a `grep` that limits the callers of `signal_group`.
 
 Findings not fixed: none.
+
+## Build answers
+
+1. Pre-PR review (MAJOR, `event.rs:359`): an optional `by` on `session.execution_reconciled` does not survive an older deck. That deck knows the kind, ignores the extra field and stores the station's proof as the owner's. The station's proof is now the separate kind `session.execution_settled` (`Event::ExecutionSettled { shim_id }`); `ReconciledBy` is removed and the owner's event is the wire of 00055138. Decision 12, §3.3, §3.5, §4, §8, T3, DL-432 and DL-434 are updated; `event_reconciled_tests.rs` has the cross-version test (older-deck store, reserialize, read after the upgrade).

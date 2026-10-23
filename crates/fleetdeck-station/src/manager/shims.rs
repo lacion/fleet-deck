@@ -655,7 +655,6 @@ pub fn decide_reconcile(
         session_id,
         Event::ExecutionReconciled {
             shim_id: shim_id.to_owned(),
-            by: None,
         }
         .into(),
     )?;

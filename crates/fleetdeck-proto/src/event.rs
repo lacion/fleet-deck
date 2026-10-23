@@ -352,18 +352,17 @@ pub enum Event {
     /// shows the session as hibernated and resumes it on the next input.
     #[serde(rename = "session.hibernated")]
     SessionHibernated { after_min: u32 },
-    /// The previous run of the session (shim `shim_id`) was marked as ended
-    /// after the station checked its processes (DL-182). Older peers decode
-    /// this kind as unknown.
+    /// The owner marked the previous run of the session (shim `shim_id`) as
+    /// ended after the station checked its processes (DL-182). Older peers
+    /// decode this kind as unknown.
     #[serde(rename = "session.execution_reconciled")]
-    ExecutionReconciled {
-        shim_id: String,
-        /// Who proved the end: absent for the owner (older stations),
-        /// `station` for the station's own check (DL-432).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        by: Option<ReconciledBy>,
-    },
+    ExecutionReconciled { shim_id: String },
+    /// The station proved by its own check that the previous run of the
+    /// session (shim `shim_id`) ended after an unverified exit (DL-432). A
+    /// separate kind, so that a deck that knows only the owner's kind keeps
+    /// it as unknown and never stores it as the owner's reconciliation.
+    #[serde(rename = "session.execution_settled")]
+    ExecutionSettled { shim_id: String },
     /// The station's model help named the session (DL-167, R10.1). It
     /// follows the internal `session.renamed` that set `title`; the fold
     /// marks the title as generated while the title is still the same.
@@ -521,18 +520,6 @@ pub enum Event {
         reason: String,
         exit_code: Option<i32>,
     },
-}
-
-/// Who proved the end of a previous run in `session.execution_reconciled`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "event/")]
-pub enum ReconciledBy {
-    Owner,
-    Station,
-    /// A value of a newer peer.
-    #[serde(other)]
-    Unknown,
 }
 
 #[path = "event_kinds.rs"]

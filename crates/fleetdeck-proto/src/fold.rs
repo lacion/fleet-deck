@@ -328,6 +328,7 @@ impl SessionSummary {
             // The reconciliation changes no summary field; the board reads the
             // execution check instead (DL-182).
             | Event::ExecutionReconciled { .. }
+            | Event::ExecutionSettled { .. }
             // The board reads the skipped files from the event (FG-4).
             | Event::WorkspaceIncludeSkipped { .. }
             // The board reads the reason from the event (FG-12).
