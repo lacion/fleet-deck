@@ -1,6 +1,6 @@
 // Test fixtures. A summary shaped exactly like the Rust `SessionSummary::new`
 // output: if the generated type changes, this literal stops type-checking.
-import type { Activity, SessionSummary } from '../gen';
+import type { Activity, SessionSummary, Usage } from '../gen';
 
 export function summary(
   id: string,
@@ -41,5 +41,17 @@ export function summary(
     session_seq: 0,
     updated_at: updatedAt,
     ...extra,
+  };
+}
+
+/** A usage counted by the rules of scheme 2 (`USAGE_SCHEME`); a part that is not given is unknown. */
+export function newUsage(parts: Partial<Usage> = {}): Usage {
+  return {
+    input_tokens: null,
+    output_tokens: null,
+    cost_usd: null,
+    cost_inferred: false,
+    scheme: 2,
+    ...parts,
   };
 }

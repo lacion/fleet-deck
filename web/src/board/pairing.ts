@@ -1,5 +1,6 @@
 import { basename } from '../app/sessions';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
+import type { RecountCall } from './usageRecountCall';
 import type { ShellActions } from '../shell/shell';
 import type {
   AddStationRequest,
@@ -21,6 +22,8 @@ export type StationActions = {
   readonly worktrees?: ((station: string) => Promise<WorktreeList>) | undefined;
   /** Move to trash, restore, delete permanently or stop tracking a worktree (DL-150); owner only. */
   readonly worktreeAction?: ReturnType<typeof worktreeActor> | undefined;
+  /** Recount the old usage count of a session (B20); the owner's board login only. */
+  readonly usageRecount?: RecountCall | undefined;
 };
 
 type Post = (path: string, body: unknown) => Promise<unknown>;

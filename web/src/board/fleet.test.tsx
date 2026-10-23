@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { WorktreeInfo, WorktreeTrash } from '../gen';
 import type { ShellActions } from '../shell/shell';
 import { card, station } from '../testing/fleet';
+import { newUsage } from '../testing/summary';
 import { archived } from '../ui/archive';
 import { priority } from '../ui/localSet';
 import {
@@ -136,10 +137,18 @@ describe('fleet projections', () => {
     expect(
       usageText(
         card('a', 'idle', 'station-a', {
-          usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0, cost_inferred: false },
+          usage: newUsage({ input_tokens: 0, output_tokens: 0, cost_usd: 0 }),
         }),
       ),
     ).toBe('Input 0 · Output 0 · Cost $0.0000');
+    // A total that is only an old count says so (usage-cost §3.6 item 10).
+    expect(
+      usageText(
+        card('a', 'idle', 'station-a', {
+          usage: { input_tokens: 4, output_tokens: 5, cost_usd: 1, cost_inferred: false },
+        }),
+      ),
+    ).toBe('Old count only');
   });
 });
 

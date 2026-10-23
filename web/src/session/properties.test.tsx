@@ -2,9 +2,9 @@
 // model chip with its own popover of models.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckSession } from '../gen';
+import type { DeckSession, Usage } from '../gen';
 import { station } from '../testing/fleet';
-import { summary } from '../testing/summary';
+import { newUsage, summary } from '../testing/summary';
 import { claudeCaps } from '../testing/capabilities';
 import { compactCount } from '../ui/format';
 import { sessionActions } from './commands';
@@ -13,8 +13,10 @@ import {
   ChangedList,
   changeTotal,
   NEW_INPUT_TITLE,
+  oldCountTitle,
   PROPS_FILES_MAX,
   PropertiesPanel,
+  recountTitle,
   scopeLabel,
   sinceText,
   tokensText,
@@ -176,33 +178,114 @@ describe('properties panel facts (§4.5)', () => {
     expect(panel('live')).not.toContain('context</span>');
   });
 
-  test('the tokens say "new input": the station counts the input outside the prompt cache only', () => {
-    // The parts of the fact: a count and its words (a part keeps one line: no-break spaces).
-    const words = (parts: ReturnType<typeof tokensText>) =>
-      parts.map((p) => `${p.count} ${p.word.replaceAll('\u00a0', ' ')}`).join(' · ');
-    expect(words(tokensText(682, 309_000))).toBe('682 new input · 309K output');
-    expect(tokensText(682, 309_000)).toEqual([
-      { count: '682', word: 'new\u00a0input' },
-      { count: '309K', word: 'output' },
-    ]);
-    expect(words(tokensText(null, 309_000))).toBe('309K output');
-    expect(words(tokensText(1200, null))).toBe('1.2K new input');
-    // A Codex session counts the cached input too (the ops glance says "input").
-    expect(words(tokensText(1200, 5, 'input'))).toBe('1.2K input · 5 output');
-    const usage = { input_tokens: 682, output_tokens: 309_000, cost_usd: 1, cost_inferred: false };
-    const html = panel('live', true, {
-      session: { ...session(), summary: { ...session().summary, usage } },
+  // The words of the token fact: "682 new input · 309K output" (no-break spaces as spaces).
+  const words = (parts: ReturnType<typeof tokensText>) =>
+    parts.map((p) => `${p.lead ?? ''}${p.count} ${p.word}`.replaceAll('\u00a0', ' ')).join(' · ');
+  const withUsage = (usage: Usage, extra: Partial<DeckSession['summary']> = {}) =>
+    panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, usage, ...extra } },
     });
+  const old = { input_tokens: 1200, output_tokens: 5, cost_usd: 1.2, cost_inferred: false };
+
+  test('the_tokens_row_has_four_parts_in_order', () => {
+    const usage = newUsage({
+      input_tokens: 682,
+      cache_read_tokens: 1_200_000,
+      cache_write_tokens: 4_500,
+      output_tokens: 309_000,
+      cost_usd: 1,
+    });
+    expect(words(tokensText(usage))).toBe(
+      '682 new input · 1.2M cache read · 4.5K cache write · 309K output',
+    );
+    expect(tokensText(usage)[0]).toEqual({ count: '682', word: 'new\u00a0input' });
     // As the ops glance: the numbers in --fuel, the words in --dim; a part never breaks inside.
-    expect(html).toContain(
+    expect(withUsage(usage)).toContain(
       `<dt>Tokens</dt><dd><span class="fd-props-tokens" title="${NEW_INPUT_TITLE}">` +
         '<span class="fd-props-tokpart"><span class="fd-props-fuel">682</span>\u00a0new\u00a0input</span> · ' +
+        '<span class="fd-props-tokpart"><span class="fd-props-fuel">1.2M</span>\u00a0cache\u00a0read</span> · ' +
+        '<span class="fd-props-tokpart"><span class="fd-props-fuel">4.5K</span>\u00a0cache\u00a0write</span> · ' +
         '<span class="fd-props-tokpart"><span class="fd-props-fuel">309K</span>\u00a0output</span></span>',
     );
-    // A Codex session: no "new input" title.
-    const codex = { ...session(), summary: { ...session().summary, usage, provider: 'codex' } };
-    expect(panel('live', true, { session: codex as DeckSession })).toContain(
-      '<span class="fd-props-tokens"><span class="fd-props-tokpart">',
+    expect(NEW_INPUT_TITLE).toBe(
+      'Input that the prompt cache did not hold. Cache reads and cache writes are separate counts.',
+    );
+  });
+
+  test('a_missing_part_is_left_out', () => {
+    expect(words(tokensText(newUsage({ input_tokens: 1200, output_tokens: 5 })))).toBe(
+      '1.2K new input · 5 output',
+    );
+    expect(words(tokensText(newUsage({ cache_read_tokens: 9400 })))).toBe('9.4K cache read');
+    expect(tokensText(newUsage())).toEqual([]);
+    // No part is known: no Tokens row (a missing fact is absent).
+    expect(withUsage(newUsage())).not.toContain('<dt>Tokens</dt>');
+  });
+
+  test('a_partial_tokens_row_says_at_least', () => {
+    const usage = newUsage({ input_tokens: 1200, output_tokens: 5, tokens_partial: true });
+    expect(words(tokensText(usage))).toBe('at least 1.2K new input · 5 output');
+    expect(withUsage(usage)).toContain(
+      '<span class="fd-props-tokpart">at\u00a0least\u00a0<span class="fd-props-fuel">1.2K</span>\u00a0new\u00a0input</span> · ',
+    );
+  });
+
+  test('an_old_count_row_for_an_old_session', () => {
+    const html = withUsage(old);
+    // The new-rule usage is unknown; the old count has its own row, with its own words.
+    expect(html).toContain('<dt>Tokens</dt><dd>unknown</dd>');
+    expect(html).not.toContain('<dt>At API prices</dt>');
+    expect(html).toContain('<dt>Old count</dt><dd><span class="fd-props-fuel" title="');
+    expect(html).toContain('1,200 input · 5 output · $1.20</span>');
+    expect(html).toContain(
+      'Fleet Deck counted this with an older rule that was wrong. It is not in the fleet totals.',
+    );
+    expect(withUsage(newUsage({ input_tokens: 1 }))).not.toContain('<dt>Old count</dt>');
+  });
+
+  test('an_old_count_row_with_its_date_for_a_mixed_session', () => {
+    const until = Date.UTC(2026, 9, 20, 12);
+    const html = withUsage(newUsage({ input_tokens: 7, output_tokens: 1, cost_usd: 0.5 }), {
+      usage_legacy: { usage: old, until },
+    });
+    expect(html).toContain('<span class="fd-props-fuel">7</span>');
+    expect(html).toContain('1,200 input · 5 output · $1.20</span>');
+    expect(html).toContain(
+      'Fleet Deck counted this before 2026-10-20 with an older rule that was wrong. It is not in the totals above or in the fleet totals.',
+    );
+    expect(oldCountTitle(null)).toContain('"Recount from provider records" on the Usage tab');
+  });
+
+  test('a_recounted_session_shows_recounted_and_the_previous_cost', () => {
+    const at = Date.UTC(2026, 9, 23, 8);
+    const recount = {
+      at,
+      source: 'claude_transcript' as const,
+      command_id: 'c1',
+      previous: { ...old, cost_usd: 99 },
+    };
+    const html = withUsage(newUsage({ input_tokens: 5, cost_usd: 2, cost_partial: true }), {
+      usage_recount: recount,
+    });
+    const title =
+      'Recounted from the provider record on 2026-10-23. A killed run and Codex sub-agent threads are not in that record, so the real total can be higher. The old count was $99.00.';
+    expect(recountTitle(recount)).toBe(title);
+    expect(html).toContain(
+      `>at least $2.00</span><span class="fd-props-aside" title="${title}">recounted</span>`,
+    );
+    // An unknown previous cost says so.
+    expect(recountTitle({ ...recount, previous: { ...old, cost_usd: null } })).toEndWith(
+      'The old count was unknown.',
+    );
+  });
+
+  test('a_session_without_record_shows_no_record', () => {
+    const at = Date.UTC(2026, 9, 23, 8);
+    const recount = { at, source: 'none' as const, command_id: 'c2', previous: old };
+    const html = withUsage(newUsage(), { usage_recount: recount });
+    expect(html).toContain('<dt>At API prices</dt>');
+    expect(html).toContain(
+      '>unknown</span><span class="fd-props-aside" title="The provider has no record of this session. The total is unknown since 2026-10-23.">no record</span>',
     );
   });
 

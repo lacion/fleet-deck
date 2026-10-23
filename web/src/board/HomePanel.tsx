@@ -24,6 +24,7 @@ import type { FeedItem } from './feed';
 import { fleetVersion } from './fleet';
 import { Feed } from './FeedPanel';
 import { UsageMeters } from './UsageMeters';
+import type { RecountCall } from './usageRecountCall';
 
 export type PanelTab = 'activity' | 'mail' | 'assign' | 'usage';
 type PanelState = { readonly open: boolean; readonly tab: PanelTab };
@@ -110,6 +111,7 @@ export function HomePanel({
   wide = false,
   waiting = [],
   lead,
+  recount,
 }: {
   hasAssign: boolean;
   /** A guest has no mail and no assign tab (the deck refuses the calls). */
@@ -132,6 +134,8 @@ export function HomePanel({
   /** Wide: the sections above Mail & tasks (the usage glance, the conflict radar), at the top of
    * the scrolling body of the column. */
   lead?: ReactNode;
+  /** The owner's recount of old usage counts (B20); shown in the Usage tab. */
+  recount?: RecountCall | undefined;
 }) {
   const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
   const seen = useRef<number | null>(null);
@@ -180,7 +184,9 @@ export function HomePanel({
       {shown === 'assign' && assign !== undefined ? (
         <AssignBar actions={assign} onSpawn={onSpawn} />
       ) : null}
-      {shown === 'usage' ? <UsageMeters sessions={visible} stations={stations} /> : null}
+      {shown === 'usage' ? (
+        <UsageMeters sessions={visible} stations={stations} recount={recount} />
+      ) : null}
     </>
   );
   if (wide) {
@@ -274,7 +280,9 @@ export function HomePanel({
         {tab === 'assign' && assign !== undefined ? (
           <AssignBar actions={assign} onSpawn={onSpawn} />
         ) : null}
-        {tab === 'usage' ? <UsageMeters sessions={visible} stations={stations} /> : null}
+        {tab === 'usage' ? (
+          <UsageMeters sessions={visible} stations={stations} recount={recount} />
+        ) : null}
       </div>
     </section>
   );

@@ -2,6 +2,7 @@ import { basename } from '../app/sessions';
 import type { CardStatus, DeckSession, FileConflict, ProviderKind, StationView } from '../gen';
 import { sessionKey } from '../runtime/state';
 import { sessionRef } from '../ui/localSet';
+import { splitUsage } from './usage';
 
 export type FleetFilter = {
   readonly station: string;
@@ -239,6 +240,7 @@ export function lastSeen(value: number | null): string {
   return Number.isNaN(date.getTime()) ? 'Unknown' : date.toISOString();
 }
 export function usageText(card: DeckSession): string {
-  const usage = card.summary.usage;
+  const usage = splitUsage(card.summary).current;
+  if (usage === null) return 'Old count only';
   return `Input ${usage.input_tokens ?? 'unknown'} · Output ${usage.output_tokens ?? 'unknown'} · Cost ${usage.cost_usd === null ? 'unknown' : `${usage.cost_inferred ? '≈ ' : ''}$${usage.cost_usd.toFixed(4)}${usage.cost_inferred ? ' inferred' : ''}`}`;
 }
