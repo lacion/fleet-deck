@@ -161,18 +161,18 @@ describe('session timeline tree (PLAN D15)', () => {
   test('the recorded background subagent runs on after its tool call and then finishes', () => {
     const events = recorded('subagent');
     const at = (seq: number) => buildTimeline(events.filter((e) => e.session_seq <= seq));
-    const started = at(9);
+    const started = at(10);
     expect(started.running).toBe(1);
     expect(started.subagents.map((s) => [s.title, s.input, s.status])).toEqual([
       ['Agent', 'Test subagent', 'running'],
     ]);
-    // seq 10 announces a local_agent task, seq 11 is its task.updated; seq 12 completes the tool call.
-    const background = at(12).subagents[0];
+    // seq 11 announces a local_agent task, seq 12 is its task.updated; seq 13 completes the tool call.
+    const background = at(13).subagents[0];
     expect(background?.status).toBe('background');
     expect(background?.task_id).toBe('aec7cbebd3902b8ce');
-    expect(at(23).running).toBe(1);
-    // seq 25: the task leaves the list, so the child is done.
-    const after = at(25);
+    expect(at(24).running).toBe(1);
+    // seq 26: the task leaves the list, so the child is done.
+    const after = at(26);
     expect(after.running).toBe(0);
     expect(after.subagents[0]?.status).toBe('done');
     const full = buildTimeline(events);

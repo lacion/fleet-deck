@@ -739,7 +739,7 @@ fn the_first_init_emits_the_slash_commands_without_the_terminal_only_ones() {
         events[1],
         Event::SlashCommands {
             commands: vec!["compact".to_owned(), "review".to_owned()],
-            skills: vec!["review".to_owned(), "deploy".to_owned()]
+            skills: vec!["deploy".to_owned(), "review".to_owned()]
         }
     );
     assert_eq!(events.len(), 2);

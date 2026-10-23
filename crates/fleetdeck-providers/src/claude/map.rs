@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
-use super::{requests, usage};
+use super::{commands, requests, usage};
 
 // The `task_*` frames and the tools under a running task (B6).
 #[path = "tasks.rs"]
@@ -110,13 +110,18 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             core.model = get("model");
             // Every root `init` states the root identity (DL-194); a child
             // `init` carries a `parent_tool_use_id`.
-            let identity = matches!(body.get("parent_tool_use_id"), None | Some(Value::Null))
+            let root = matches!(body.get("parent_tool_use_id"), None | Some(Value::Null));
+            let identity = root
                 .then(|| get("session_id"))
                 .flatten()
                 .map(|native_id| Output::NativeIdentity { native_id });
             if core.started {
                 // Claude sends `init` again for each turn: not a new session.
-                return identity.into_iter().collect();
+                let mut out: Vec<Output> = identity.into_iter().collect();
+                if root {
+                    out.extend(commands::from_init(core, body));
+                }
+                return out;
             }
             core.started = true;
             let config = &core.config;
@@ -145,14 +150,13 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             if !models.is_empty() {
                 out.push(Output::Emit(Event::SessionModels { models }));
             }
-            let commands = slash_commands(body);
-            let skills = string_list(body, "skills");
-            if !commands.is_empty() || !skills.is_empty() {
-                out.push(Output::Emit(Event::SlashCommands { commands, skills }));
+            if root {
+                out.extend(commands::from_init(core, body));
             }
             out.extend(core.usage_request());
             out
         }
+        "commands_changed" => commands::from_objects(core, body.get("commands")),
         "background_tasks_changed" => {
             let tasks: Vec<BackgroundTask> = body
                 .get("tasks")
@@ -207,36 +211,6 @@ fn has_v1_plugin(body: &Map<String, Value>) -> bool {
                         .is_some_and(|path| path.split('/').any(|c| c == V2_SKILL_DIR))
             })
         })
-}
-
-/// The strings of the array `key` of an `init` frame; a missing key, a
-/// non-array value and non-string entries count as nothing.
-fn string_list(body: &Map<String, Value>, key: &str) -> Vec<String> {
-    body.get(key)
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The slash commands that a board can send as a prompt: the `init` frame's
-/// `slash_commands` without the TUI-only `terminal_slash_commands`, in the
-/// frame order and without a leading `/` (DL-140).
-fn slash_commands(body: &Map<String, Value>) -> Vec<String> {
-    let bare = |c: String| c.strip_prefix('/').map_or(c.clone(), str::to_owned);
-    let terminal: Vec<String> = string_list(body, "terminal_slash_commands")
-        .into_iter()
-        .map(bare)
-        .collect();
-    string_list(body, "slash_commands")
-        .into_iter()
-        .map(bare)
-        .filter(|c| !terminal.contains(c))
-        .collect()
 }
 
 fn input_state(native: &str) -> Option<InputState> {
@@ -718,15 +692,19 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
                 core.mode = Some(mode.to_owned());
             }
             let models = model_choices(&resp.response);
-            if models.is_empty() {
-                Vec::new()
-            } else if core.started {
-                vec![Output::Emit(Event::SessionModels { models })]
-            } else {
-                // `session.models` never comes before `session.started`.
-                core.pending_models = models;
-                Vec::new()
+            let mut out = Vec::new();
+            if !models.is_empty() {
+                if core.started {
+                    out.push(Output::Emit(Event::SessionModels { models }));
+                } else {
+                    // `session.models` never comes before `session.started`.
+                    core.pending_models = models;
+                }
             }
+            // A control answer is released at once: the list can come before
+            // `session.started` (B11, DL-410).
+            out.extend(commands::from_objects(core, resp.response.get("commands")));
+            out
         }
         HostRequest::SetMode(mode) => {
             core.mode = Some(mode.clone());

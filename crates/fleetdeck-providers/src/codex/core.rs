@@ -102,6 +102,10 @@ pub struct CodexCore {
     /// uses them, so they are not in the checkpoint.
     #[serde(skip)]
     skill_requests: HashMap<String, &'static str>,
+    /// The last skill list emitted in `session.slash_commands` (B11); an
+    /// older checkpoint has none.
+    #[serde(default)]
+    pub(super) emitted_skills: Option<Vec<String>>,
 }
 
 impl CodexCore {
@@ -145,6 +149,7 @@ impl CodexCore {
             pending_shell: None,
             turns_ended: 0,
             skill_requests: HashMap::new(),
+            emitted_skills: None,
         }
     }
 

@@ -16,7 +16,7 @@ const MODES = [
   { name: 'desktop', viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false },
 ] as const;
 
-function session(): DeckSession {
+function session(commands: string[] = ['compact', 'init'], withBase = false): DeckSession {
   return {
     station_id: ST,
     status: 'working',
@@ -27,14 +27,15 @@ function session(): DeckSession {
       capabilities: claudeCaps(),
       mode: 'default',
       current_run: 'run-1',
-      slash_commands: ['compact', 'init'],
+      slash_commands: commands,
+      ...(withBase ? { base: { oid: 'a1b2c3d4e5f6', inferred: false } } : {}),
     }),
   };
 }
 
-async function setUp(page: Page, deck = new FakeDeck()) {
+async function setUp(page: Page, deck = new FakeDeck(), commands?: string[], withBase = false) {
   deck.stations = [stationView(ST, 'Alpha')];
-  deck.sessions = [session()];
+  deck.sessions = [session(commands, withBase)];
   await page.routeWebSocket('**/shells/*/attach', () => {});
   await deck.install(page);
   await logIn(page);
@@ -83,6 +84,77 @@ for (const mode of MODES) {
       await expect(list).toHaveCount(0);
     });
 
+    test('the `/` menu opens after leading spaces and with the caret in the first word (B11)', async ({
+      page,
+    }) => {
+      await setUp(page);
+      const composer = page.getByRole('form', { name: 'Composer' });
+      const box = composer.getByLabel('Message');
+      const list = composer.getByRole('listbox', { name: 'Commands' });
+      await box.fill('  /co');
+      await expect(list.getByRole('option', { name: '/compact' })).toBeVisible();
+      // The caret goes behind `co` in `/co fix`: the menu opens there, and a pick keeps `fix`.
+      await box.fill('/co fix');
+      await expect(list).toHaveCount(0);
+      await box.press('Home');
+      for (let n = 0; n < 3; n += 1) await box.press('ArrowRight');
+      await expect(list.getByRole('option', { name: '/compact' })).toBeVisible();
+      await box.press('Enter');
+      await expect(box).toHaveValue('/compact fix');
+      await expect(list).toHaveCount(0);
+      // A slash in a later word opens nothing.
+      await box.fill('fix /co');
+      await expect(list).toHaveCount(0);
+    });
+
+    test('ArrowDown past the eighth row scrolls the selected row into view (B11)', async ({
+      page,
+    }) => {
+      const names = Array.from({ length: 40 }, (_, n) => `cmd${String(n).padStart(2, '0')}`);
+      await setUp(page, new FakeDeck(), names);
+      const composer = page.getByRole('form', { name: 'Composer' });
+      const box = composer.getByLabel('Message');
+      const list = composer.getByRole('listbox', { name: 'Commands' });
+      await box.fill('/');
+      await expect(list.getByRole('option')).toHaveCount(40);
+      for (let n = 0; n < 12; n += 1) await box.press('ArrowDown');
+      const inView = () =>
+        list.evaluate((el) => {
+          const row = el.querySelector('[aria-selected="true"]');
+          if (row === null) return false;
+          const box = el.getBoundingClientRect();
+          const at = row.getBoundingClientRect();
+          return at.top >= box.top - 1 && at.bottom <= box.bottom + 1;
+        });
+      await expect.poll(inView).toBe(true);
+      await expect(list.getByRole('option', { name: '/cmd12' })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+    });
+
+    // B11: shots of the open command menu (opt-in, like the gallery: FD_GALLERY=1).
+    test('the open `/` menu in both themes (gallery)', async ({ page }) => {
+      test.skip(!process.env['FD_GALLERY'], 'FD_GALLERY is not set');
+      const names = Array.from({ length: 40 }, (_, n) => `cmd${String(n).padStart(2, '0')}`);
+      await setUp(page, new FakeDeck(), ['compact', 'context', 'init', ...names]);
+      const composer = page.getByRole('form', { name: 'Composer' });
+      const box = composer.getByLabel('Message');
+      await box.fill('/');
+      for (let n = 0; n < 6; n += 1) await box.press('ArrowDown');
+      await expect(composer.getByRole('listbox', { name: 'Commands' })).toBeVisible();
+      for (const theme of ['dark', 'light']) {
+        await page.evaluate((t) => {
+          document.documentElement.dataset['theme'] = t;
+        }, theme);
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({
+          path: `test-results/gallery/${mode.name}-composer-menu-${theme}.png`,
+          animations: 'disabled',
+        });
+      }
+    });
+
     test('the palette closes on a press outside it', async ({ page }) => {
       await setUp(page);
       await page.keyboard.press('Control+k');
@@ -102,6 +174,39 @@ for (const mode of MODES) {
       await expect(help).toBeVisible();
       await pressAt(page, 4, 4, mode.hasTouch);
       await expect(help).toHaveCount(0);
+    });
+
+    test('the bare `@` lists the files that the session changed (B11)', async ({ page }) => {
+      const deck = new FakeDeck();
+      deck.on(`/api/stations/${ST}/sessions/${ID}/diff`, () => ({
+        status: 200,
+        body: {
+          session_id: ID,
+          from_commit: 'base',
+          to_commit: 'head',
+          base_oid: 'a1b2c3d4e5f6',
+          scope: 'worktree',
+          summary: { files_changed: 1, insertions: 1, deletions: 0 },
+          patch:
+            'diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1,2 @@\n x\n+y\n',
+          truncated: false,
+        },
+      }));
+      deck.on(`/api/stations/${ST}/files/search`, () => ({
+        status: 200,
+        body: { hits: [], truncated: false, backend: 'walk' },
+      }));
+      await setUp(page, deck, undefined, true);
+      const composer = page.getByRole('form', { name: 'Composer' });
+      const box = composer.getByLabel('Message');
+      const list = composer.getByRole('listbox', { name: 'Files' });
+      await box.fill('@');
+      await expect(list.getByRole('option', { name: 'src/main.rs' })).toBeVisible();
+      await expect(
+        list.getByRole('option', { name: 'Type 2 or more letters to search files' }),
+      ).toHaveAttribute('aria-disabled', 'true');
+      await box.press('Enter');
+      await expect(box).toHaveValue('@src/main.rs ');
     });
 
     test('the `@` menu says what it does: letters missing, searching, hits, nothing, a failure', async ({

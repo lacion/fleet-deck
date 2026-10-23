@@ -1749,20 +1749,25 @@ details[open] > summary[data-variant="toggle"]::after {
    --shadow-pop and the edge of the floating body, so the fade is a sticky --raised overlay (the
    fill of the body) that never takes room or a pointer event. */
 .fd-menu-body[data-scrolled]::before,
-.fd-menu-body[data-more-below]::after {
+.fd-menu-body[data-more-below]::after,
+.fd-composer-menu[data-scrolled]::before,
+.fd-composer-menu[data-more-below]::after {
   content: "";
+  display: block;
   position: sticky;
   z-index: 2;
   flex: none;
   height: var(--sp-4);
   pointer-events: none;
 }
-.fd-menu-body[data-scrolled]::before {
+.fd-menu-body[data-scrolled]::before,
+.fd-composer-menu[data-scrolled]::before {
   top: 0;
   margin-bottom: calc(-1 * var(--sp-4));
   background: linear-gradient(to bottom, var(--raised), transparent);
 }
-.fd-menu-body[data-more-below]::after {
+.fd-menu-body[data-more-below]::after,
+.fd-composer-menu[data-more-below]::after {
   bottom: 0;
   margin-top: calc(-1 * var(--sp-4));
   background: linear-gradient(to top, var(--raised), transparent);

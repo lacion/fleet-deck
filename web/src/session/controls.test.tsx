@@ -10,7 +10,7 @@ import { sessionActions } from './commands';
 import { Composer, ComposerMenu, searchFailure } from './Composer';
 import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
-import { matchSlash } from './slash';
+import { type CommandList, matchCommand } from './slash';
 import { matchHash } from '../review/hashMenu';
 import { submitKeyMod } from '../spawn/keyHint';
 
@@ -98,52 +98,6 @@ describe('session flags (DL-140)', () => {
     const caps = { ...claudeCaps(), interrupt: false };
     const flags = sessionFlags(session({ capabilities: caps }), 'live', drive);
     expect(flags).toMatchObject({ working: true, drive: true, canInterrupt: false });
-  });
-});
-
-describe('slash menu matching (DL-140)', () => {
-  const commands = ['compact', 'init', 'review', 'clear', 'cost', 'pr-comments'];
-  const names = (text: string, list: readonly string[], skills: readonly string[] = []) =>
-    matchSlash(text, list, skills)?.options.map((o) => o.name);
-  const plain = (list: string[]) => list.map((name) => ({ name, skill: false }));
-
-  test('text without a leading slash does not match', () => {
-    expect(matchSlash('hello', commands)).toBeNull();
-    expect(matchSlash('', commands)).toBeNull();
-    expect(matchSlash(' /c', commands)).toBeNull();
-  });
-
-  test('commands that start with the query come before commands that contain it', () => {
-    expect(matchSlash('/c', commands)).toEqual({
-      query: 'c',
-      options: plain(['compact', 'clear', 'cost', 'pr-comments']),
-    });
-    expect(names('/CO', commands)).toEqual(['compact', 'cost', 'pr-comments']);
-    expect(names('/', commands)).toEqual(commands);
-  });
-
-  test('at most 8 options and no duplicates', () => {
-    const many = Array.from({ length: 12 }, (_, n) => `cmd${n}`);
-    expect(matchSlash('/cmd', many)?.options).toHaveLength(8);
-    expect(names('/a', ['a', 'a', 'ab'])).toEqual(['a', 'ab']);
-  });
-
-  test('a command that is also a skill carries the skill flag (DL-174)', () => {
-    expect(matchSlash('/', ['compact', 'deploy', 'review'], ['deploy', 'review'])?.options).toEqual(
-      [
-        { name: 'compact', skill: false },
-        { name: 'deploy', skill: true },
-        { name: 'review', skill: true },
-      ],
-    );
-    expect(matchSlash('/dep', ['compact', 'deploy'], ['compact'])?.options).toEqual([
-      { name: 'deploy', skill: false },
-    ]);
-  });
-
-  test('a space after the command closes the match', () => {
-    expect(matchSlash('/compact ', commands)).toBeNull();
-    expect(matchSlash('/compact now', commands)).toBeNull();
   });
 });
 
@@ -295,25 +249,9 @@ describe('composer menus (DL-174)', () => {
     expect(composer({ enabled: true, onResume: noop })).toContain('<textarea');
   });
 
-  test('a session without commands says so for a slash word only (DL-174)', () => {
-    const draft = (text: string) => {
-      const store = { getItem: () => text, setItem: () => {}, removeItem: () => {} };
-      Object.defineProperty(globalThis, 'sessionStorage', { value: store, configurable: true });
-      try {
-        return composer({ draftKey: 'k' });
-      } finally {
-        Reflect.deleteProperty(globalThis, 'sessionStorage');
-      }
-    };
-    const note = 'This session reports no commands. The text goes to the agent as a prompt.';
-    expect(draft('/co')).toContain(note);
-    expect(draft('hello')).not.toContain('This session reports no commands.');
-    expect(draft('/co now')).not.toContain('This session reports no commands.');
-  });
-
   test('the placeholder offers the commands when the session has some', () => {
-    expect(composer({ slashCommands: ['init'] })).toContain('(/ for commands)');
-    expect(composer({ slashCommands: [] })).not.toContain('(/ for commands)');
+    expect(composer({ commands: claude(['init']) })).toContain('(/ for commands)');
+    expect(composer({ commands: claude([]) })).not.toContain('(/ for commands)');
   });
 });
 
@@ -601,6 +539,17 @@ describe('session header (DL-140)', () => {
   });
 });
 
+const claude = (names: string[] | null): CommandList => ({
+  provider: 'claude',
+  names,
+  skills: new Set(),
+});
+const codex = (names: string[] | null): CommandList => ({
+  provider: 'codex',
+  names,
+  skills: new Set(),
+});
+
 describe('composer (DL-140)', () => {
   const composer = (extra: Partial<Parameters<typeof Composer>[0]> = {}) =>
     renderToStaticMarkup(
@@ -608,17 +557,21 @@ describe('composer (DL-140)', () => {
     );
 
   test('the placeholder mentions commands only with a command list', () => {
-    expect(composer({ slashCommands: ['init'] })).toContain(
+    expect(composer({ commands: claude(['init']) })).toContain(
       'placeholder="Message the agent… (/ for commands)"',
     );
-    expect(composer({ slashCommands: [] })).toContain('placeholder="Message the agent…"');
-    expect(composer({ slashCommands: null })).toContain('placeholder="Message the agent…"');
+    expect(composer({ commands: codex(['init']) })).toContain(
+      'placeholder="Message the agent… ($ for skills)"',
+    );
+    expect(composer({ commands: claude([]) })).toContain('placeholder="Message the agent…"');
+    expect(composer({ commands: claude(null) })).toContain('placeholder="Message the agent…"');
+    expect(composer({ commands: null })).toContain('placeholder="Message the agent…"');
     expect(composer()).toContain('placeholder="Message the agent…"');
   });
 
   test('the placeholder names the session by its callsign', () => {
     expect(composer({ callsign: 'otter-n1rr' })).toContain('placeholder="Message otter-n1rr…"');
-    expect(composer({ callsign: 'otter-n1rr', slashCommands: ['init'] })).toContain(
+    expect(composer({ callsign: 'otter-n1rr', commands: claude(['init']) })).toContain(
       'placeholder="Message otter-n1rr… (/ for commands)"',
     );
     expect(composer({ callsign: null })).toContain('placeholder="Message the agent…"');
@@ -698,6 +651,6 @@ describe('the # comment menu of the composer (DL-179)', () => {
   test('# is not a trigger of the other menus', () => {
     expect(matchHash('#ab', 3)).toEqual({ query: 'ab', start: 0 });
     expect(matchAt('#ab', 3)).toBeNull();
-    expect(matchSlash('#ab', ['help'], [])).toBeNull();
+    expect(matchCommand('#ab', 3, 'claude')).toBeNull();
   });
 });

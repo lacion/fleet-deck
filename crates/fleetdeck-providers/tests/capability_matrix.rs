@@ -52,13 +52,14 @@ fn row_resume_reopens_the_same_native_session_with_its_memory() {
     }
     // A resume that the host asked for is visible on the new session (L5).
     let claude = replay(P::Claude, "provider_thread_resume");
-    assert!(matches!(
-        claude.processes[1][0],
+    // (The command list can come before `session.started`: DL-410.)
+    assert!(claude.processes[1].iter().any(|e| matches!(
+        e,
         Event::SessionStarted {
             resumed: Some(true),
             ..
         }
-    ));
+    )));
 }
 
 #[test]
@@ -698,8 +699,12 @@ fn every_operation_is_supported_or_degrades_as_the_matrix_says() {
 fn a_session_reports_the_capabilities_of_its_provider() {
     for p in PROVIDERS {
         for (i, events) in replay(p, "simple").processes.iter().enumerate() {
-            let Event::SessionStarted { capabilities, .. } = &events[0] else {
-                panic!("{p:?} process {i} starts with session.started");
+            // (The command list can come before `session.started`: DL-410.)
+            let Some(Event::SessionStarted { capabilities, .. }) = events
+                .iter()
+                .find(|e| matches!(e, Event::SessionStarted { .. }))
+            else {
+                panic!("{p:?} process {i} has no session.started");
             };
             assert_eq!(**capabilities, caps(p), "{p:?}");
         }

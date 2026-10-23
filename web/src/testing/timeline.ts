@@ -134,7 +134,10 @@ export function nestedSubagents(upTo?: number): EventEnvelope[] {
 
 /** The capabilities of a recorded session (no bypass mode, no full access). */
 export function recordedCapabilities(name: keyof typeof RECORDED): Capabilities {
-  const first = recorded(name)[0]?.event as Event | undefined;
+  // `session.slash_commands` can come before `session.started` (DL-410).
+  const first = recorded(name)
+    .map((e) => e.event as Event)
+    .find((e) => e.kind === 'session.started');
   if (first?.kind !== 'session.started') throw new Error('the fixture starts a session');
   return first.capabilities;
 }
