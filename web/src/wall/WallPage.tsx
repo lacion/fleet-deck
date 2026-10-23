@@ -26,7 +26,7 @@ import { keyOf, timelineOf, useSize, useTimelines } from './hooks';
 import { asksOf, fleetSignature, needsList, stepMode, tileSessions, wallSessions } from './model';
 import { RacePane } from './RacePane';
 import { ReviewPane } from './ReviewPane';
-import { baseRemPx, shapeOf, tileGrid, tileLimit } from './shape';
+import { baseRemPx, shapeOf, tileBox, tileGrid, tileLimit } from './shape';
 
 type Props = {
   readonly route: WallRoute;
@@ -111,8 +111,10 @@ function Wall({
       ? stations
       : stations.filter((s) => route.stations.includes(s.station_id));
 
-  // The tile count follows the size of the tiles area (decision 6).
-  const area = useSize(tilesArea, mode === 'mission', '.fd-wall-tiles');
+  // The tile count follows the size of the tiles area (decision 6); on a phone, a fixed share of
+  // the screen (`tileBox`: there the area follows the tiles).
+  const measured = useSize(tilesArea, mode === 'mission', '.fd-wall-tiles');
+  const area = measured === null ? null : tileBox(measured, shape, size);
   const remPx = baseRemPx(size.h, shape);
   const limit = area === null ? MAX_TILES : tileLimit(area.w, area.h, remPx, route.scale, area.gap);
   const tiles = useMemo(() => tileSessions(filtered).slice(0, limit), [filtered, limit]);

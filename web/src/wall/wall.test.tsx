@@ -8,7 +8,7 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
-import { NeedsArea, StreamArea } from './Areas';
+import { NeedsArea, SideArea, StreamArea } from './Areas';
 import { ChatPane } from './ChatPane';
 import { stationStats } from './stationStats';
 import { WallPage } from './WallPage';
@@ -473,10 +473,27 @@ describe('the figures of a station row', () => {
           { total_bytes: 500e9, free_bytes: 216.9e9 },
         ],
       }),
-    ).toEqual(['CPU 1%', 'Mem 6/47 GB', 'Disk 217 GB free']);
+    ).toEqual(['CPU 1%', 'Memory 6 of 47 GB', 'Disk 217 GB free']);
     expect(
       stationStats({ cpu: { cores: 4, load1_x100: 0, load5_x100: 600 }, memory: null, disks: [] }),
     ).toEqual(['CPU 150%']);
+  });
+
+  test('the glyph says online (the word is for a screen reader); offline shows in words', () => {
+    const html = renderToStaticMarkup(
+      <SideArea
+        sessions={[]}
+        stations={[station('station-a'), station('station-b', { reachable: false })]}
+        now={1}
+      />,
+    );
+    expect(html).toContain(
+      '<span class="fd-wall-station-name">Alpha</span><span class="fd-vh"> online</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-wall-station-name">Beta</span><span class="fd-wall-note">Offline</span>',
+    );
+    expect(html).not.toContain('Online');
   });
 
   test('a part that the station does not report is left out', () => {

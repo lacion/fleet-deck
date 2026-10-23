@@ -144,7 +144,7 @@ describe('the load block of the side area', () => {
   test('a cell has the tooltip, the size and the heat; an unknown load has no cell', () => {
     const html = render([owner('station-a', [load('a', 450, 2.5e9), load('b', null, null)])]);
     expect(html).toContain(
-      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">1<span class="fd-vh"> more</span></span></h2>',
+      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">+1<span class="fd-vh"> more sessions</span></span></h2>',
     );
     expect(html).toContain('aria-label="CPU by session"');
     expect(html).toContain('title="Falcon on Alpha: CPU 450%, memory 2.5 GB"');
@@ -164,11 +164,12 @@ describe('the load block of the side area', () => {
     expect(html).not.toContain('fd-callsign');
   });
 
-  test('the heading counts the sessions without a cell in a pill, never "(+N more)"', () => {
+  test('the heading counts the sessions without a cell in a +N pill, never "(+N more)"', () => {
     expect(renderToStaticMarkup(<LoadCount n={0} />)).toBe('');
     expect(renderToStaticMarkup(<LoadCount n={7} />)).toBe(
-      '<span class="fd-count">7<span class="fd-vh"> more</span></span>',
+      '<span class="fd-count">+7<span class="fd-vh"> more sessions</span></span>',
     );
+    expect(renderToStaticMarkup(<LoadCount n={1286} />)).toContain('>+1,286<');
   });
 
   test('the load block is the last block and has no separate count line', () => {
@@ -216,7 +217,7 @@ describe('the load block of the side area', () => {
       ids.map((id) => card(id)),
     );
     expect(html).toContain(
-      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">2<span class="fd-vh"> more</span></span></h2>',
+      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">+2<span class="fd-vh"> more sessions</span></span></h2>',
     );
     expect(html).not.toContain('</p>');
   });

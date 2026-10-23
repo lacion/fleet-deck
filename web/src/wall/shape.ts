@@ -36,9 +36,33 @@ export function tileLimit(
 export const baseRemPx = (heightPx: number, shape?: WallShape): number =>
   Math.min(28, Math.max(shape === 'ultra' ? 16 : 14, heightPx / 80));
 
-/** The most that the tile type grows when there are few tiles. The needs area grows by the same
- * factor (`--fd-wall-tile-k` on the grid), so a tile never reads louder than a request. */
+/** The most that the tile type grows when there are few tiles. The needs and the side areas grow
+ * by the same factor (`--fd-wall-tile-k` on the grid), so a tile never reads louder than a request
+ * or a station line. */
 export const TILE_GROW_MAX = 1.25;
+
+/** Below this width a portrait wall scrolls (wall.css, `@media (max-width: 639px)`). */
+export const SCROLL_BELOW_PX = 640;
+
+/** The share of the screen height that the tiles of a scrolling wall count on. */
+export const SCROLL_TILES_SHARE = 0.6;
+
+type Box = { readonly w: number; readonly h: number; readonly gap: number };
+
+/**
+ * The box that the tile count and the tile type read: the tiles area as measured; on a wall that
+ * scrolls (a phone held upright), its width and a fixed share of the screen height. There a tile
+ * is as tall as its lines (wall.css), so the area follows the tiles: a count read from it would
+ * change the tiles that it measures.
+ */
+export function tileBox(
+  area: Box,
+  shape: WallShape,
+  screen: { readonly w: number; readonly h: number },
+): Box {
+  if (shape !== 'portrait' || screen.w >= SCROLL_BELOW_PX) return area;
+  return { ...area, h: Math.round(screen.h * SCROLL_TILES_SHARE) };
+}
 
 /**
  * How `n` tiles fill an area: the column count that gives the largest tiles, and `k`, how much the
