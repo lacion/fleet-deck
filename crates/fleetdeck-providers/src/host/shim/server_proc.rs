@@ -190,9 +190,11 @@ pub(super) fn group_members(leader: u32) -> Option<u32> {
     crate::host::shim::inspect::group_members_reaping(leader, &mut reap_orphans)
 }
 
-/// Reaps orphaned descendants that came back to the subreaper shim.
+/// Reaps every ended child of the shim (`waitpid(-1)`). Only for the exit
+/// path, after tokio has reaped the provider: the shim has no other child
+/// whose status another owner needs (DL-430).
 pub(super) fn reap_orphans() {
-    while let Ok(Some(_)) = rustix::process::waitpid(None, rustix::process::WaitOptions::NOHANG) {}
+    while let Ok(Some(_)) = rustix::process::wait(rustix::process::WaitOptions::NOHANG) {}
 }
 
 /// How often the shim reaps the ended orphans while the provider runs.
@@ -200,8 +202,9 @@ pub(super) const REAP_EVERY: Duration = Duration::from_secs(5);
 
 /// While the provider runs, reaps the ended orphans that came back to the
 /// subreaper shim, every `every`, on a blocking thread. It ends when
-/// `exited` is set (the exit path then reaps with [`reap_orphans`]). The
-/// provider (`provider`) is never reaped here: its status belongs to tokio.
+/// `exited` is set (the exit path then reaps every ended child with
+/// [`reap_orphans`], `waitpid(-1)`). The provider (`provider`) is never
+/// reaped here: its status belongs to tokio.
 pub(super) async fn reap_while_running(
     provider: u32,
     every: Duration,

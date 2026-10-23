@@ -93,6 +93,46 @@ fn reap_orphans_except_none_reaps_every_zombie_child() {
     );
 }
 
+/// The orphan of a `setsid` shell is in another process group than this
+/// test process: `waitpid(0)` never reaped it, `waitpid(-1)` does (DL-430).
+#[test]
+fn reap_orphans_reaps_an_orphan_of_another_process_group() {
+    if !isolated() {
+        return;
+    }
+    become_subreaper();
+    let status = Command::new("setsid")
+        .args(["sh", "-c", "sleep 0.1 &"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("start the shell in its own session");
+    assert!(status.success());
+    let my_group = rustix::process::getpgrp();
+    // A zombie child whose process group differs from this one.
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            child_pids().into_iter().any(|pid| {
+                matches!(stat_state_ppid(pid), Some(('Z', _)))
+                    && i32::try_from(pid)
+                        .ok()
+                        .and_then(rustix::process::Pid::from_raw)
+                        .and_then(|p| rustix::process::getpgid(Some(p)).ok())
+                        .is_some_and(|g| g != my_group)
+            })
+        }),
+        "no orphan zombie of another group: {:?}",
+        child_pids()
+    );
+    reap_orphans();
+    assert!(
+        wait_until(Duration::from_secs(6), || child_pids().is_empty()),
+        "an orphan was not reaped: {:?}",
+        child_pids()
+    );
+}
+
 #[tokio::test]
 async fn the_periodic_reaper_reaps_orphans_while_the_provider_runs_and_spares_it() {
     if !isolated() {
