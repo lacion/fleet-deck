@@ -52,7 +52,6 @@ pub const IGNORED_NOTIFICATIONS: &[&str] = &[
     "remoteControl/status/changed",
     "hook/started",
     "hook/completed",
-    "skills/changed",
     "app/list/updated",
     "warning",
     "configWarning",
@@ -76,6 +75,7 @@ pub const HANDLED_NOTIFICATIONS: &[&str] = &[
     "serverRequest/resolved",
     "turn/diff/updated",
     "thread/tokenUsage/updated",
+    "skills/changed",
     "error",
 ];
 
@@ -217,6 +217,9 @@ impl CodexCore {
             }
             // The board shows no model selector; the session goes on.
             (HostRequest::ModelList { .. }, Err(_)) => Vec::new(),
+            (HostRequest::SkillCatalog, Ok(r)) => self.on_skill_catalog(&r),
+            // A failed skill list is no session error (B11).
+            (HostRequest::SkillCatalog, Err(_)) => Vec::new(),
             (_, Err((code, message))) => vec![rpc_error(code, message)],
         }
     }
@@ -257,6 +260,7 @@ impl CodexCore {
         out.extend(identity);
         if self.config.request_models {
             out.push(self.model_list(0, Vec::new(), None));
+            out.push(self.skill_catalog());
         }
         out
     }
@@ -353,6 +357,14 @@ impl CodexCore {
             "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => self.delta(p, true),
             "serverRequest/resolved" => self.on_resolved(p),
             "turn/diff/updated" => self.on_diff(p),
+            // The skill list changed: ask again, once the thread is open (B11).
+            "skills/changed" => {
+                if self.config.request_models && self.thread_id.is_some() {
+                    vec![self.skill_catalog()]
+                } else {
+                    Vec::new()
+                }
+            }
             // A root thread statement; a sub-agent thread states nothing.
             "thread/started" => identity::root_thread_id(p)
                 .map(|native_id| Output::NativeIdentity { native_id })

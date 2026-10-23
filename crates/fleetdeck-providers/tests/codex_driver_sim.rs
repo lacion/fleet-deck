@@ -176,6 +176,22 @@ async fn the_models_of_the_app_server_arrive_after_the_session_start() {
 }
 
 #[tokio::test]
+async fn a_sim_session_reports_its_skills() {
+    let mut live = start(None, Origin::New).await;
+    let events = until(&mut live.rx, |e| matches!(e, Event::SlashCommands { .. })).await;
+    assert!(
+        matches!(events.first(), Some(Event::SessionStarted { .. })),
+        "{events:#?}"
+    );
+    let Some(Event::SlashCommands { commands, skills }) = events.last() else {
+        unreachable!()
+    };
+    assert!(commands.is_empty());
+    assert_eq!(skills, &vec!["sim-skill".to_owned()]);
+    live.session.stop(StopMode::Graceful).await.unwrap();
+}
+
+#[tokio::test]
 async fn approvals_steer_and_interrupt_reach_the_app_server() {
     let mut live = start(None, Origin::New).await;
     live.session

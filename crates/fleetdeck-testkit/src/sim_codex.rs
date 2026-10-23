@@ -232,6 +232,23 @@ impl<W: Write> Sim<W> {
                     "isDefault": true,
                 }], "nextCursor": null}),
             ),
+            Some("skills/list") => self.reply(
+                &id,
+                json!({"data": [{
+                    "cwd": params
+                        .pointer("/cwds/0")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    "skills": [{
+                        "name": "sim-skill",
+                        "description": "",
+                        "enabled": true,
+                        "scope": "user",
+                        "path": "/sim/SKILL.md",
+                    }],
+                    "errors": [],
+                }]}),
+            ),
             Some("thread/rollback") => self.on_rollback(&id, &params),
             Some(_) if !id.is_null() => self.error(&id, "method not supported by the sim"),
             Some(_) => Ok(()),

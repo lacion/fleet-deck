@@ -8,7 +8,8 @@ use super::tests::*;
 use super::*;
 
 /// A core with `request_models` on and an open thread; returns the core and
-/// the writes of the thread reply.
+/// the outputs of the thread reply, without the `skills/list` write (B11:
+/// `reply` answers the last write, and these tests answer `model/list`).
 fn models_core() -> (CodexCore, Vec<Output>) {
     let mut cfg = config("/w");
     cfg.request_models = true;
@@ -20,7 +21,8 @@ fn models_core() -> (CodexCore, Vec<Output>) {
         json!({"userAgent": "fleetdeck/0.160.0 (Linux)"}),
     );
     let out = core.open_thread(&SessionSpec::default()).unwrap();
-    let after = reply(&mut core, &out, json!({"thread": {"id": T}, "model": "m"}));
+    let mut after = reply(&mut core, &out, json!({"thread": {"id": T}, "model": "m"}));
+    after.retain(|o| !matches!(o, Output::Write(w) if w["method"] == "skills/list"));
     (core, after)
 }
 

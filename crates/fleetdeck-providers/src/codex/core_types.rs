@@ -99,4 +99,6 @@ pub(super) enum HostRequest {
     ShellCommand {
         effect_id: String,
     },
+    /// `skills/list` for the board's skill list after the thread opened (B11).
+    SkillCatalog,
 }

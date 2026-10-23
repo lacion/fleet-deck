@@ -42,6 +42,8 @@ mod tests_review;
 mod tests_rollback;
 #[cfg(test)]
 mod tests_shell;
+#[cfg(test)]
+mod tests_skills;
 
 use fleetdeck_proto::capability::{BackgroundReporting, TerminalStatusQuality, UsageReporting};
 use fleetdeck_proto::event::ResponseChannel;
@@ -261,7 +263,8 @@ pub struct CoreConfig {
     /// degradation, `None` for a new thread.
     pub resumed: Option<bool>,
     pub client: ClientInfo,
-    /// Send `model/list` after the thread opens (DL-151). Replays of
-    /// recordings that hold no `model/list` set it to false.
+    /// Send the catalog requests after the thread opens: `model/list`
+    /// (DL-151) and `skills/list` (B11). Replays of recordings that hold
+    /// neither set it to false.
     pub request_models: bool,
 }
