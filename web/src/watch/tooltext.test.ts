@@ -1,6 +1,67 @@
 // The words of a tool call: no raw MCP id, no JSON payload, no "(ok)".
 import { describe, expect, test } from 'bun:test';
-import { activityTool, homePath, toolLabel, toolTarget, toolText, toolWords } from './tooltext';
+import {
+  activityTool,
+  homePath,
+  statusWord,
+  toolLabel,
+  toolParts,
+  toolTarget,
+  toolText,
+  toolWords,
+} from './tooltext';
+
+describe('the built-in tools', () => {
+  test('a built-in id reads in the words of the board; every other name stays', () => {
+    expect(toolLabel('AskUserQuestion')).toBe('Question');
+    expect(toolLabel('ExitPlanMode')).toBe('Plan');
+    expect(toolLabel('TodoWrite')).toBe('To-do list');
+    expect(toolLabel('BashOutput')).toBe('Command output');
+    expect(toolLabel('KillShell')).toBe('Stop command');
+    expect(toolWords('AskUserQuestion')).toBe('Question');
+    expect(toolLabel('Workflow')).toBe('Workflow');
+    expect(toolLabel('constructor')).toBe('constructor');
+  });
+
+  test('one parser gives the parts of a name: the tool in words and its server apart', () => {
+    expect(toolParts('mcp__plugin_chrome__take_screenshot')).toEqual({
+      name: 'Take screenshot',
+      server: 'chrome',
+    });
+    expect(toolParts('mcp__fleetdeck__fleet_view')).toEqual({ name: 'Fleet view', server: null });
+    expect(toolParts('TodoWrite')).toEqual({ name: 'To-do list', server: null });
+    expect(toolParts(' Bash ')).toEqual({ name: 'Bash', server: null });
+  });
+
+  test('a request of a built-in tool splits into its lead and its name', () => {
+    expect(activityTool('approval', 'Needs you: AskUserQuestion')).toMatchObject({
+      lead: 'Needs you:',
+      name: 'Question',
+      target: '',
+    });
+  });
+
+  test('a workflow script names its call, also when the input was cut', () => {
+    expect(toolTarget(`{"script":"export const meta = {\\n  name: 'ui-audit',\\n"}`)).toEqual({
+      target: 'ui-audit',
+      form: 'words',
+    });
+    expect(toolTarget(`{"script":"export const meta = {\\n  name: \\"wf one\\", desc`)).toEqual({
+      target: 'wf one',
+      form: 'words',
+    });
+    expect(toolTarget('{"script":"export const meta = {\\n name')).toEqual({
+      target: '',
+      form: 'words',
+    });
+  });
+
+  test('a call without a target says how it stands', () => {
+    expect(statusWord('running')).toBe('running');
+    expect(statusWord('ok')).toBe('done');
+    expect(statusWord('ended')).toBe('stopped');
+  });
+});
 
 describe('toolLabel', () => {
   test('an MCP id gives the tool in words and the server after a dot', () => {

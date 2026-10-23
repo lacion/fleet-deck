@@ -57,8 +57,12 @@ describe('Files page (DL-141)', () => {
     expect(html).toContain('Station');
     expect(html).toContain('Folder');
     expect(html).toContain('placeholder="Folder path on Up"');
-    expect(html).toContain('Open a folder');
-    expect(html).toContain('Type the path of a folder on this station, then press Open.');
+    expect(html).toContain('aria-label="Open a folder"');
+    // What to do is the hint of the Folder field: no empty state under the form repeats it.
+    expect(html).toMatch(
+      /aria-describedby="([^"]+)-hint"[\s\S]*<span id="\1-hint" class="fd-fieldhint">Type the path of a folder on this station\.<\/span>/,
+    );
+    expect(html).not.toContain('fd-emptystate');
     expect(html).toContain('Open</button>');
     expect(html).not.toContain('Pinned and recent');
     expect(html).not.toContain('aria-label="Files"><h3');
@@ -104,7 +108,7 @@ describe('Files page (DL-141)', () => {
     );
     expect(html.indexOf('title="/home/me/new"')).toBeLessThan(html.indexOf('title="/home/me/old"'));
     expect(html).toContain(
-      'Pick a recent folder above, or type the path of a folder on this station.',
+      'class="fd-fieldhint">Pick a recent folder, or type the path of a folder on this station.',
     );
   });
 

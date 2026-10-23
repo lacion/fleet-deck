@@ -4,7 +4,7 @@ import { stationName } from '../board/fleet';
 import type { DeckSession, Schedule, ScheduleRun, ScheduleView, StationView } from '../gen';
 import { spawnTargets } from '../spawn/spawn';
 import type { ListWorkspaces } from '../ui/FolderPicker';
-import { Icon, Plus, RefreshCw, Workflow } from '../ui/icons';
+import { Icon, Info, Plus, RefreshCw, Workflow } from '../ui/icons';
 import { Loading } from '../ui/Loading';
 import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
@@ -281,7 +281,13 @@ export function AutomationsPage({
         <p className="fd-note">No linked station has reported its providers yet.</p>
       ) : null}
       {error === null ? null : <ErrorNotice text={error} />}
-      {notice === null ? null : <p role="status">{notice}</p>}
+      {/* The result of an action: the notice row of a page in the info tone (§4.7). */}
+      {notice === null ? null : (
+        <p className="fd-notice" data-place="page" role="status">
+          <Icon of={Info} size={14} />
+          {notice}
+        </p>
+      )}
       {form === null ? null : (
         <ScheduleForm
           key={form.id ?? 'new'}

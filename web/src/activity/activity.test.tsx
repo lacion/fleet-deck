@@ -6,7 +6,18 @@ import type { ActivityItem } from '../gen';
 import type { ViewsActions } from '../runtime/views';
 import { NO_REPO } from '../board/fleet';
 import { card, station } from '../testing/fleet';
-import { FileText, MessageSquare, Pencil, Plug, Shield, SquareTerminal, Wrench } from '../ui/icons';
+import {
+  CircleStop,
+  FileText,
+  MessageSquare,
+  Moon,
+  Pencil,
+  Play,
+  Plug,
+  Shield,
+  SquareTerminal,
+  Wrench,
+} from '../ui/icons';
 import { ActivityPage, rowIcon } from './ActivityPage';
 import { ALL_CHANNEL, channelList, channelQuery, inChannel, mailTargets } from './channels';
 
@@ -341,6 +352,105 @@ describe('the activity page', () => {
 
   test('before the first answer the page says it loads, and offline it says so', () => {
     expect(page()).toContain('Loading…');
-    expect(page({ live: false })).toContain('The stream needs a live connection.');
+    const offline = page({ live: false });
+    // An empty state of the page (§4.7), not a bare line.
+    expect(offline).toContain('<p class="fd-emptystate-title">Offline</p>');
+    expect(offline).toContain('The stream needs a live connection.');
+  });
+
+  test('only the open request of a session that needs you now is yellow; the rest is history', () => {
+    const waiting = [
+      card('a', 'needs_you', 'station-a', { title: 'Login', repo: web, updated_at: 30 }),
+      ...sessions.slice(1),
+    ];
+    const html = page({
+      sessions: waiting,
+      initialItems: [
+        item({
+          kind: 'approval',
+          text: 'Needs you: Bash cargo test',
+          request_kind: 'command',
+          station_seq: 5,
+        }),
+        item({
+          kind: 'approval',
+          text: 'Needs you: Bash ls',
+          request_kind: 'command',
+          station_seq: 4,
+        }),
+        item({ kind: 'approval', text: 'Approval expired', station_seq: 3 }),
+        item({
+          session_id: 'b',
+          session_title: 'Cache',
+          kind: 'approval',
+          text: 'Needs you: Pick a database',
+          request_kind: 'question',
+          station_seq: 2,
+        }),
+      ],
+    });
+    // One open request: the newest request of the session that needs you now.
+    expect(html.match(/data-open="true"/g)).toHaveLength(1);
+    expect(html).toMatch(
+      /<li class="fd-arow" data-kind="approval" data-run="start" data-open="true">(?:(?!<\/li>)[\s\S])*<span class="fd-arow-lead">Needs you:<\/span><b class="fd-arow-tool">Bash<\/b><code class="fd-arow-target">cargo test<\/code>/,
+    );
+    // An older request of the same session, an expired one and one of a session that waits for
+    // nothing are history: faint, and a closed request says "Asked:".
+    expect(html).toContain(
+      '<span class="fd-arow-lead">Asked:</span><b class="fd-arow-tool">Bash</b><code class="fd-arow-target">ls</code>',
+    );
+    expect(html).toContain('<span class="fd-arow-text">Asked: Pick a database</span>');
+    expect(html).toContain('<span class="fd-arow-text">Approval expired</span>');
+    expect(
+      page({ initialItems: [item({ kind: 'approval', text: 'Needs you: Bash ls' })] }),
+    ).not.toContain('data-open');
+  });
+
+  test('a start, an end and a request always name their session', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 4 }),
+        item({ kind: 'lifecycle', text: 'Session ended', station_seq: 3 }),
+        item({ kind: 'approval', text: 'Approval expired', station_seq: 2 }),
+        item({ text: 'Two', station_seq: 1 }),
+      ],
+    });
+    // One, the end and the expiry start runs; Two goes on the run of the expiry.
+    expect(html.match(/data-run="start"/g)).toHaveLength(3);
+    expect(html.match(/title="[^"]*">Login<\/a>/g)).toHaveLength(3);
+  });
+
+  test('a lifecycle row has the icon of its event', () => {
+    const icon = (text: string) => rowIcon({ kind: 'lifecycle', text });
+    expect(icon('Session started')).toBe(Play);
+    expect(icon('Session ended')).toBe(CircleStop);
+    expect(icon('Session ended: process_exit')).toBe(CircleStop);
+    expect(icon('Hibernated after 30 min idle')).toBe(Moon);
+  });
+
+  test('a built-in tool reads in words; a finished call without a target says done', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'AskUserQuestion: {"questions":[]} (ok)', station_seq: 3 }),
+        item({ kind: 'approval', text: 'Needs you: AskUserQuestion', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Workflow (ok)', station_seq: 1 }),
+      ],
+    });
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Question</b><span class="fd-arow-words">done</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-arow-lead">Asked:</span><b class="fd-arow-tool">Question</b>',
+    );
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Workflow</b><span class="fd-arow-words">done</span>',
+    );
+    expect(html).not.toContain('>AskUserQuestion');
+    expect(rowIcon({ kind: 'tool', text: 'AskUserQuestion: {} (ok)' })).toBe(MessageSquare);
+    expect(rowIcon({ kind: 'tool', text: 'constructor (ok)' })).toBe(Wrench);
+  });
+
+  test('the channel headings have one notation: the label and its count pill', () => {
+    expect(page({ initialItems: [] })).toContain('Repositories <span class="fd-count">2</span>');
   });
 });

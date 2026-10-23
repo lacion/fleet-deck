@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { CheckFailure, PrDetail, Project } from '../gen';
 import { Icon, X } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import type { IntegrationActions } from './actions';
 import { OutsideText } from './Outside';
 import { outsideNote, unfence, webUrl } from './model';
@@ -87,11 +89,7 @@ export function PrPreview({
       </div>
       <PrBody state={state} system={forge ?? 'github'} number={number} now={now} onRetry={reload} />
       {checks.state.kind === 'ok' ? <FailingChecks failures={checks.state.value} /> : null}
-      {checks.state.kind === 'error' ? (
-        <p role="alert" className="fd-note fd-int-error">
-          {checks.state.text}
-        </p>
-      ) : null}
+      {checks.state.kind === 'error' ? <ErrorNotice text={checks.state.text} /> : null}
       {state.kind === 'ok' && actions.canDrive && forge !== undefined ? (
         <div className="fd-plan-actions">
           <button type="button" onClick={() => setWriting('comment')}>
@@ -144,25 +142,8 @@ export function PrBody({
   readonly now: number;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading #{number}…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-int-state">
-        <p role="alert" className="fd-note fd-int-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text={`Loading #${number}…`} />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   const d = state.value;
   const s = d.summary;
   const href = webUrl(s.url);

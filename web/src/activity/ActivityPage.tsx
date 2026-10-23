@@ -12,6 +12,8 @@ import type { FleetActions } from '../fleet/fleet';
 import type { ViewsActions } from '../runtime/views';
 import {
   ChevronRight,
+  CircleStop,
+  CloudOff,
   FileText,
   Globe,
   Icon,
@@ -19,6 +21,7 @@ import {
   Mail,
   MessageSquare,
   MessagesSquare,
+  Moon,
   Pencil,
   Play,
   Plug,
@@ -33,7 +36,7 @@ import { Loading } from '../ui/Loading';
 import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { foldLines } from '../watch/tiles';
-import { type ActivityTool, activityTool, homePath } from '../watch/tooltext';
+import { type ActivityTool, activityTool, homePath, statusWord } from '../watch/tooltext';
 import {
   ALL_CHANNEL,
   type Channel,
@@ -74,6 +77,14 @@ const KIND_ICON = {
   lifecycle: Play,
 } as const;
 
+/** The icon of a lifecycle row: a start plays, an end stops, a hibernation sleeps (the deck writes
+ * "Session started", "Session ended…" and "Hibernated after…"). */
+function lifecycleIcon(text: string): LucideIcon {
+  if (text.startsWith('Session ended')) return CircleStop;
+  if (text.startsWith('Hibernated')) return Moon;
+  return Play;
+}
+
 /** The icon of a tool row: the icon of its tool in the chat (DESIGN-SYSTEM §4.5). */
 const TOOL_ICON: Readonly<Record<string, LucideIcon>> = {
   Read: FileText,
@@ -96,6 +107,8 @@ const TOOL_ICON: Readonly<Record<string, LucideIcon>> = {
   WebSearch: Globe,
   Task: Workflow,
   Agent: Workflow,
+  // A question has the message-square of the fleet strips, the Watch tiles and the wall.
+  AskUserQuestion: MessageSquare,
 };
 
 /** The tool name of a tool row as the deck wrote it ("Read: /a (ok)" gives "Read"). */
@@ -115,8 +128,12 @@ const QUESTION_TEXT = /^(?:Question:|Needs you: (?:AskUserQuestion|Answer a ques
 export function rowIcon(item: Pick<ActivityItem, 'kind' | 'text' | 'request_kind'>): LucideIcon {
   if (item.kind === 'tool') {
     const name = toolNameOf(item.text);
-    return TOOL_ICON[name] ?? (name.startsWith('mcp__') ? Plug : Wrench);
+    return (
+      (Object.hasOwn(TOOL_ICON, name) ? TOOL_ICON[name] : undefined) ??
+      (name.startsWith('mcp__') ? Plug : Wrench)
+    );
   }
+  if (item.kind === 'lifecycle') return lifecycleIcon(item.text);
   return item.kind === 'approval' &&
     (item.request_kind === 'question' ||
       (item.request_kind === undefined && QUESTION_TEXT.test(item.text)))
@@ -144,30 +161,85 @@ function Target({ tool }: { readonly tool: ActivityTool }) {
   return <span className="fd-arow-words">{tool.target}</span>;
 }
 
+/** The lead of a request that waits for the owner, and of one that no longer does: the history
+ * never claims an open request that does not exist. */
+const NEEDS_LEAD = 'Needs you:';
+const ASKED_LEAD = 'Asked:';
+
+/** A request row of the deck: its `request_kind`, or (an older deck) its lead. */
+const isRequest = (item: Pick<ActivityItem, 'kind' | 'text' | 'request_kind'>): boolean =>
+  item.kind === 'approval' &&
+  (item.request_kind !== undefined || /^(?:Needs you|Permission|Question): /.test(item.text));
+
+/** The words of a row: a closed request says "Asked:", not "Needs you:". */
+function words(text: string, open: boolean): string {
+  return !open && (text === NEEDS_LEAD || text.startsWith(`${NEEDS_LEAD} `))
+    ? `${ASKED_LEAD}${text.slice(NEEDS_LEAD.length)}`
+    : text;
+}
+
 /**
  * The text of a row. A tool or request row of a tool ("Read: src/a.ts (ok)", "Permission: Bash
  * cargo test") shows the tool name in weight 600 and its target (the look of a Watch tile and the
- * chat, §4.5): no colon, no "(ok)". Every other text is one plain line: chat text loses its
- * Markdown marks (`plainLine`), so a message reads the same here as on a Watch tile and the wall.
+ * chat, §4.5): no colon, no "(ok)"; a finished call with no target says "done" (a lone name read as
+ * a heading). Every other text is one plain line: chat text loses its Markdown marks
+ * (`plainLine`), so a message reads the same here as on a Watch tile and the wall. A request that
+ * no longer waits (`open` false) leads with "Asked:".
  */
-export function RowText({ item }: { readonly item: ActivityItem }) {
+export function RowText({
+  item,
+  open = false,
+}: {
+  readonly item: ActivityItem;
+  readonly open?: boolean;
+}) {
   const tool = activityTool(item.kind, item.text);
-  if (tool === null) return <span className="fd-arow-text">{plainLine(item.text)}</span>;
+  if (tool === null)
+    return <span className="fd-arow-text">{words(plainLine(item.text), open)}</span>;
+  const lead = words(tool.lead, open);
+  const done = item.kind === 'tool' && tool.target === '' && tool.outcome === null;
   return (
     <span className="fd-arow-text" data-tool="">
-      {tool.lead === '' ? null : <span className="fd-arow-lead">{tool.lead}</span>}
+      {lead === '' ? null : <span className="fd-arow-lead">{lead}</span>}
       <b className="fd-arow-tool">{tool.name}</b>
       {tool.target === '' ? null : <Target tool={tool} />}
+      {done ? <span className="fd-arow-words">{statusWord('ok')}</span> : null}
     </span>
   );
 }
 
 /** The whole text of a row in one line, for its hover title (the row cuts it at its width). */
-function fullText(item: ActivityItem): string {
+function fullText(item: ActivityItem, open: boolean): string {
   const tool = activityTool(item.kind, item.text);
-  if (tool === null) return plainLine(item.text);
+  if (tool === null) return words(plainLine(item.text), open);
   const target = tool.form === 'path' ? homePath(tool.target) : homeShortIn(tool.target);
-  return [tool.lead, tool.name, target].filter((part) => part !== '').join(' ');
+  return [words(tool.lead, open), tool.name, target].filter((part) => part !== '').join(' ');
+}
+
+/**
+ * The open requests of the shown rows: for each session that needs the owner now, its newest
+ * request row (the stream is newest first). Only such a row is yellow (principle 2); every other
+ * request row is history.
+ */
+function openRequests(
+  shown: readonly ActivityItem[],
+  sessions: readonly DeckSession[],
+): ReadonlySet<ActivityItem> {
+  const waiting = new Set(
+    sessions
+      .filter((s) => s.status === 'needs_you')
+      .map((s) => `${s.station_id}/${s.summary.session_id}`),
+  );
+  const seen = new Set<string>();
+  const open = new Set<ActivityItem>();
+  for (const item of shown) {
+    if (item.kind !== 'approval') continue;
+    const key = `${item.station_id}/${item.session_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (waiting.has(key) && isRequest(item)) open.add(item);
+  }
+  return open;
 }
 
 /** A row of the stream: one event, or the same event that came several times in a row. */
@@ -192,16 +264,19 @@ function foldRows(items: readonly ActivityItem[]): Shown[] {
  * repository; the rows after it leave the name to it (a phone shows the name as the head of the
  * run). The whole row opens the session: the session link covers it, and its title names the
  * session, the repository and the station, then the whole text. A failed or denied call ends in
- * its result at the right, the chat's result column (§4.5).
+ * its result at the right, the chat's result column (§4.5). An open request (`open`) has the
+ * yellow icon of "needs you".
  */
 function Row({
   item,
   first,
+  open,
   now,
   stations,
 }: {
   readonly item: Shown;
   readonly first: boolean;
+  readonly open: boolean;
   readonly now: number;
   readonly stations: readonly StationView[];
 }) {
@@ -224,6 +299,7 @@ function Row({
       className="fd-arow"
       data-kind={item.kind}
       data-run={first ? 'start' : undefined}
+      data-open={open ? 'true' : undefined}
       data-outcome={outcome ?? undefined}
     >
       <span className="fd-arow-kind">
@@ -231,14 +307,14 @@ function Row({
         <span className="fd-vh">{item.kind}</span>
       </span>
       <span className="fd-arow-head">
-        <a className="fd-arow-session" href={href} title={`${place}\n${fullText(item)}`}>
+        <a className="fd-arow-session" href={href} title={`${place}\n${fullText(item, open)}`}>
           {first ? title : <span className="fd-vh">{title}</span>}
         </a>
         {first && item.repo !== null ? (
           <span className="fd-arow-repo">{` · ${repoLabel(item.repo)}`}</span>
         ) : null}
       </span>
-      <RowText item={item} />
+      <RowText item={item} open={open} />
       {repeat < 2 ? null : (
         <span className="fd-count fd-arow-repeat">
           {repeat}
@@ -407,6 +483,7 @@ export function ActivityPage({
   latest.current = sessions;
   const id = channelId(channel);
   const shown = foldRows(inChannel(items ?? [], sessions, channel));
+  const open = openRequests(shown, sessions);
   // The Ended group stays open while its channel is the chosen one (the sidebar's rule).
   const endedShown = endedOpen || list.ended.some((e) => channelId(e.channel) === id);
   const more = useMoreBelow(nav, `${list.repos.length}/${list.live.length}/${endedShown}`);
@@ -458,7 +535,11 @@ export function ActivityPage({
             on={channel.kind === 'all'}
             onPick={() => setChannel(ALL_CHANNEL)}
           />
-          {list.repos.length === 0 ? null : <h2 className="fd-label">Repositories</h2>}
+          {list.repos.length === 0 ? null : (
+            <h2 className="fd-label">
+              Repositories <span className="fd-count">{list.repos.length}</span>
+            </h2>
+          )}
           {list.repos.map((e) => (
             <ChannelButton
               key={channelId(e.channel)}
@@ -494,7 +575,11 @@ export function ActivityPage({
             live ? (
               <Loading text="Loading…" />
             ) : (
-              <p className="fd-empty">The stream needs a live connection.</p>
+              <EmptyState
+                icon={CloudOff}
+                title="Offline"
+                body="The stream needs a live connection."
+              />
             )
           ) : shown.length === 0 ? (
             <EmptyState
@@ -506,15 +591,19 @@ export function ActivityPage({
             <ol className="fd-alist" aria-label="Activity, newest first">
               {shown.map((item, n) => {
                 const before = shown[n - 1];
+                // A start, an end and a request always name their session: they start a run.
                 const first =
                   before === undefined ||
                   before.station_id !== item.station_id ||
-                  before.session_id !== item.session_id;
+                  before.session_id !== item.session_id ||
+                  item.kind === 'lifecycle' ||
+                  item.kind === 'approval';
                 return (
                   <Row
                     key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `mail${n}`}`}
                     item={item}
                     first={first}
+                    open={open.has(item)}
                     now={now}
                     stations={stations}
                   />

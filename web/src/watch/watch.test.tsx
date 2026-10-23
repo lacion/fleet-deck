@@ -117,6 +117,9 @@ describe('tile lines', () => {
       ['Agent', 'Review the diff', 'words'],
       ['Read', '/home/ana/briefs/a.png', 'path'],
     ]);
+    // A call without a target says how it stands: never a lone name.
+    expect(lines.map((l) => l.note)).toEqual(['', 'running', '', '']);
+    expect(lines[1]?.text).toBe('Workflow running');
   });
 
   test('an MCP tool has no server on the line; its title keeps the whole name', () => {
@@ -357,8 +360,16 @@ describe('the watch page', () => {
       }),
     ]);
     expect(html).not.toContain(`Alpha · ${NO_REPO}`);
-    expect(html).toContain('<span class="fd-wtile-place">Alpha</span>');
-    expect(html).toContain('<span class="fd-wtile-place">Alpha · acme/web</span>');
+    // The station is a part of its own (never cut); the repository follows it and gives way
+    // first; the branch keeps its first 18 characters (`--fd-wtile-keep`).
+    expect(html).toContain(
+      '<span class="fd-wtile-where"><span class="fd-wtile-station">Alpha</span><span class="fd-wtile-branch"',
+    );
+    expect(html).toContain(
+      '<span class="fd-wtile-station">Alpha</span><span class="fd-wtile-place" title="acme/web"><span aria-hidden="true">· </span>acme/web</span>',
+    );
+    expect(html).toContain('style="--fd-wtile-keep:2ch"');
+    expect(html).toContain('style="--fd-wtile-keep:6ch"');
     expect(html).toContain('title="Folder: reggio"');
     expect(html).toContain('lucide-folder');
     expect(html).toContain('title="Branch: v2"');

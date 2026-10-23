@@ -61,10 +61,13 @@ describe('the Sessions tab of a project', () => {
     expect(html).toContain('id="fd-int-tab-sessions" aria-selected="true"');
   });
 
-  test('an empty project says so and offers a new session', () => {
+  test('an empty project is an empty state that holds the one new-session button', () => {
     const html = page([inProject('x', 'p2'), inProject('y', undefined)]);
-    expect(html).toContain('No sessions in this project yet.');
-    expect(html).toContain('New session in this project');
+    expect(html).toContain('<p class="fd-emptystate-title">No sessions yet</p>');
+    expect(html).toMatch(/Start a session in [^<]+ on Alpha\./);
+    // The button is in the empty state, not in a row above it (§4.7).
+    expect(html).toMatch(/fd-emptystate-body">[^<]*<\/p><button type="button" class="fd-primary">/);
+    expect(html.match(/New session in this project/g)).toHaveLength(1);
   });
 
   test('it lists the live and the ended sessions of the project only', () => {
@@ -82,14 +85,18 @@ describe('the Sessions tab of a project', () => {
     expect(html).toContain(
       '<details class="fd-lane-ended fd-int-ended"><summary>Ended <span class="fd-count">1</span></summary>',
     );
-    expect(html).not.toContain('No sessions in this project yet.');
-    expect(html).not.toContain('No live sessions in');
+    expect(html).not.toContain('fd-emptystate');
+    // One head row: the Live label at the left, the small primary at the right.
+    expect(html).toMatch(
+      /<div class="fd-pane-row fd-int-livehead"><h3 class="fd-label">Live <span class="fd-count">1<\/span><\/h3><button type="button" class="fd-primary fd-sm">/,
+    );
   });
 
-  test('a project whose sessions all ended says that nothing runs, above the Ended fold', () => {
+  test('a project whose sessions all ended is the empty state, above the Ended fold', () => {
     const html = page([inProject('gone-1', 'p1', 'ended')]);
-    expect(html).toContain('<p class="fd-note fd-int-none">No live sessions in Atlas.</p>');
-    expect(html.indexOf('No live sessions in Atlas.')).toBeLessThan(html.indexOf('fd-int-ended'));
+    expect(html).toContain('<p class="fd-emptystate-title">No live sessions</p>');
+    expect(html.indexOf('No live sessions')).toBeLessThan(html.indexOf('fd-int-ended'));
+    expect(html.indexOf('New session in this project')).toBeLessThan(html.indexOf('fd-int-ended'));
     expect(html).not.toContain('aria-label="Live sessions"');
   });
 

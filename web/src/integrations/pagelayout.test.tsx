@@ -49,9 +49,14 @@ describe('the project page header', () => {
       <ProjectPage id="p1" stations={[station()]} sessions={[]} onFixChecks={noop} now={NOW} />,
     );
     expect(html).toContain(
-      '<p class="fd-page-desc"><span class="fd-int-where"><span>Alpha</span><span class="fd-int-sep" aria-hidden="true">·</span><code class="fd-int-path" title="/work/atlas"><bdi>/work/atlas</bdi></code></span></p>',
+      '<p class="fd-page-desc"><span class="fd-int-where"><span class="fd-int-place"><span>Alpha</span><span class="fd-int-sep" aria-hidden="true">·</span><code class="fd-int-path" title="/work/atlas" style="--fd-int-path-ch:11ch"><bdi>/work/atlas</bdi></code></span><span class="fd-int-chips">',
     );
-    expect(html).toMatch(/<div class="fd-page-filters"><span class="fd-int-chips">/);
+    // The forge and tracker badges are facts of the place line, not header filters; the forge
+    // badge leads with its icon and opens the repository on the forge.
+    expect(html).not.toContain('fd-page-filters');
+    expect(html).toMatch(
+      /<a class="fd-badge fd-int-badge" data-chip="forge" title="GitHub [^"]+" href="https:\/\/[^"]+" target="_blank" rel="noopener noreferrer"><svg[^>]*lucide-git-pull-request/,
+    );
     // The sessions are first under the header: no setup panel before the tabs.
     expect(html.indexOf('role="tablist"')).toBeLessThan(html.indexOf('fd-int-tab'));
     expect(html).toContain('>Setup<');

@@ -41,17 +41,45 @@ function words(id: string): string {
 }
 
 /**
- * The name of a tool for the owner: `mcp__<server>__<tool>` gives the tool in words and the server
- * after a dot ("Take screenshot · chrome-devtools"; a plugin server loses its `plugin_` prefix).
- * A tool of the deck's own server is the words only ("Publish artifact"). Every other name stays as
- * it is.
+ * The built-in tools whose id is not a word for the owner: the words of the board for them (a
+ * question is "Question" on the fleet strips and the approval card too). The names that already
+ * are words (Bash, Read, Edit, Workflow, …) stay as they are.
+ */
+const BUILT_IN: ReadonlyMap<string, string> = new Map([
+  ['AskUserQuestion', 'Question'],
+  ['ExitPlanMode', 'Plan'],
+  ['TodoWrite', 'To-do list'],
+  ['BashOutput', 'Command output'],
+  ['KillShell', 'Stop command'],
+]);
+
+/**
+ * A tool name in its parts for the owner: a built-in id in words (`BUILT_IN`), an MCP tool
+ * (`mcp__<server>__<tool>`) as the tool in words and its server apart (a plugin server loses its
+ * `plugin_` prefix; the deck's own server is no server: its tools are words of the board). Every
+ * other name stays as it is. The one parser of tool names: `toolLabel`, `toolWords` and the chat
+ * rows read it.
+ */
+export function toolParts(name: string): { readonly name: string; readonly server: string | null } {
+  const id = name.trim();
+  const own = BUILT_IN.get(id);
+  if (own !== undefined) return { name: own, server: null };
+  const m = MCP.exec(id);
+  if (m === null) return { name: id, server: null };
+  const server = (m[1] ?? '').replace(/^plugin_/, '');
+  return {
+    name: words(m[2] ?? ''),
+    server: server === '' || server === OWN_SERVER ? null : server,
+  };
+}
+
+/**
+ * The name of a tool for the owner: the tool in words and its MCP server after a dot ("Take
+ * screenshot · chrome-devtools"), a built-in id in words ("Question"), every other name as it is.
  */
 export function toolLabel(name: string): string {
-  const m = MCP.exec(name);
-  if (m === null) return name;
-  const server = (m[1] ?? '').replace(/^plugin_/, '');
-  const tool = words(m[2] ?? '');
-  return server === '' || server === OWN_SERVER ? tool : `${tool} · ${server}`;
+  const { name: tool, server } = toolParts(name);
+  return server === null ? tool : `${tool} · ${server}`;
 }
 
 /**
@@ -59,8 +87,18 @@ export function toolLabel(name: string): string {
  * where the server would take the room of the target. The title of the line keeps `toolLabel`.
  */
 export function toolWords(name: string): string {
-  const m = MCP.exec(name.trim());
-  return m === null ? name.trim() : words(m[2] ?? '');
+  return toolParts(name).name;
+}
+
+/**
+ * The word after a call that has no target, so that a line never shows a lone tool name (a lone
+ * "Workflow" read as a heading): "running" while it runs, "done" after it, "stopped" when its
+ * process ended. A call that failed or that the owner denied has its outcome word instead.
+ */
+export function statusWord(status: string): string {
+  if (status === 'running') return 'running';
+  if (status === 'ended') return 'stopped';
+  return 'done';
 }
 
 /** The keys of a JSON input that name its target, in the order of preference, with their form:
@@ -114,6 +152,9 @@ function jsonStrings(text: string): ReadonlyMap<string, string> {
   return out;
 }
 
+/** The name in the `meta` of a workflow script: `name: 'ui-audit'` (the quotes of any kind). */
+const SCRIPT_NAME = /\bname\s*:\s*\\?['"`]([^'"`\\\n]{1,80})\\?['"`]/;
+
 /** A text that is one absolute or home path ("/a/b.ts", "~/x"), with no space. */
 const PATH_LIKE = /^(?:~|\.{1,2})?\/\S*$/;
 
@@ -144,6 +185,11 @@ export function toolTarget(input: string): { readonly target: string; readonly f
     const file = agentFile(firstLine(value));
     if (file !== null) return { target: file, form: 'path' };
   }
+  // The script of a Workflow call names itself in its `meta` (`name: 'ui-audit'`); a cut input
+  // (no whole "script" value) is read as it is, its quotes escaped.
+  const script = fields.get('script') ?? (/^\{\s*"script"\s*:/.test(text) ? text : '');
+  const named = SCRIPT_NAME.exec(script)?.[1]?.trim() ?? '';
+  if (named !== '') return { target: named, form: 'words' };
   return { target: '', form: 'words' };
 }
 
@@ -194,7 +240,8 @@ const COLON_CALL = /^([A-Za-z_][\w-]*): (\S.*)$/s;
 const SPACE_CALL = /^([A-Za-z_][\w-]*) (\S.*)$/s;
 const NAME_ONLY = /^[A-Za-z_][\w-]*$/;
 
-const knownTool = (name: string): boolean => CODE_TOOLS.has(name) || MCP.test(name);
+const knownTool = (name: string): boolean =>
+  CODE_TOOLS.has(name) || MCP.test(name) || BUILT_IN.has(name);
 
 /**
  * A tool or request row of the activity stream in its parts. The deck writes a finished call as

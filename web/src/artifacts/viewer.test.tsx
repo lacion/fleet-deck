@@ -54,6 +54,33 @@ describe('artifact viewer', () => {
     expect(html).not.toContain('<iframe');
   });
 
+  test('the states are the primitives of a page: the loading line and the error notice', () => {
+    expect(render({ kind: 'loading' })).toContain(
+      '<p class="fd-note fd-loading" role="status">Loading the artifact…</p>',
+    );
+    const failed = renderToStaticMarkup(
+      <ArtifactViewerView
+        data={{ kind: 'error', text: 'boom' }}
+        variant="page"
+        canShare
+        onVersion={() => {}}
+        onShare={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+    expect(failed).toContain('class="fd-notice fd-notice-row" data-tone="error" data-place="page"');
+    expect(failed).toContain('Try again</button>');
+  });
+
+  test('a phone says the one version in the summary; more versions keep the select', () => {
+    const one = render(ready({}, detail('a1', { latest_version: 1 })), { variant: 'page' });
+    expect(one).toMatch(
+      /<p class="fd-page-desc">[^<]*<span class="fd-art-metaver">\u00a0· v1<\/span>/,
+    );
+    const more = render(ready({}, detail('a1', { latest_version: 3 })), { variant: 'page' });
+    expect(more).not.toContain('fd-art-metaver');
+  });
+
   test('html: a sandboxed frame without allow-same-origin', () => {
     const html = render(ready());
     expect(html).toContain('<iframe');
@@ -156,7 +183,7 @@ describe('artifact viewer', () => {
     });
     expect(html).toContain('<h1 class="fd-page-title">Plan</h1>');
     expect(html).toContain(
-      `<p class="fd-page-desc">${d.artifact.station_name} · Review · published 5 h ago</p>`,
+      `<p class="fd-page-desc">${d.artifact.station_name}\u00a0· Review\u00a0· published 5 h ago</p>`,
     );
     expect(html).toMatch(/<div class="fd-page-filters"><span class="fd-badge" data-kind="html">/);
     expect(html).toMatch(/<div class="fd-page-actions">[\s\S]*Open in a new tab/);

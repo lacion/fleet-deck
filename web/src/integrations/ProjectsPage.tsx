@@ -21,7 +21,8 @@ import { Menu } from '../ui/Menu';
 import { Loading } from '../ui/Loading';
 import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useIntegrations } from './context';
-import { draftOf, emptyDraft, forgeChip, inputOf, type ProjectDraft, trackerChip } from './model';
+import { draftOf, emptyDraft, inputOf, type ProjectDraft } from './model';
+import { ForgeBadge, TrackerBadge } from './ProjectBadges';
 import { PreflightView } from './Preflight';
 import { ProjectForm } from './ProjectForm';
 import { message } from './useLoad';
@@ -51,24 +52,6 @@ export function sameRepoGroups(projects: readonly Project[]): { repo: string; co
     else group.count += 1;
   }
   return [...groups.values()].filter((g) => g.count >= 2);
-}
-
-/** The chips of a project: its forge and its trackers. */
-export function ProjectChips({ project }: { readonly project: Project }) {
-  return (
-    <span className="fd-int-chips">
-      {project.forge === null ? null : (
-        <span className="fd-badge" data-chip="forge">
-          {forgeChip(project.forge)}
-        </span>
-      )}
-      {project.trackers.map((t) => (
-        <span key={`${t.tracker}/${t.key}`} className="fd-badge" data-chip="tracker">
-          {trackerChip(t)}
-        </span>
-      ))}
-    </span>
-  );
 }
 
 export function ProjectsPage({
@@ -268,11 +251,7 @@ export function ProjectsPage({
                         </code>
                       </td>
                       <td data-label="Forge">
-                        {p.forge === null ? null : (
-                          <span className="fd-badge" data-chip="forge">
-                            {forgeChip(p.forge)}
-                          </span>
-                        )}
+                        {p.forge === null ? null : <ForgeBadge forge={p.forge} />}
                       </td>
                       {anyTrackers ? (
                         <td data-label="Trackers">
@@ -280,13 +259,7 @@ export function ProjectsPage({
                           {p.trackers.length === 0 ? null : (
                             <span className="fd-cellbadges">
                               {p.trackers.map((t) => (
-                                <span
-                                  key={`${t.tracker}/${t.key}`}
-                                  className="fd-badge"
-                                  data-chip="tracker"
-                                >
-                                  {trackerChip(t)}
-                                </span>
+                                <TrackerBadge key={`${t.tracker}/${t.key}`} tracker={t} />
                               ))}
                             </span>
                           )}

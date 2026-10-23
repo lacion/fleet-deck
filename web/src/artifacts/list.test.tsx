@@ -29,9 +29,14 @@ describe('artifact list', () => {
       />,
     );
     expect(html).toContain('Plan');
-    // The kind is a quiet word (the icon says it too): a muted badge, no fill.
-    expect(html).toContain('<span class="fd-badge" data-kind="html" data-tone="muted">HTML</span>');
-    expect(html).toContain('<span class="fd-art-ver">v2</span>');
+    // The kind is a quiet word (the icon says it too): a muted badge, no fill. The icon carries
+    // the name for a screen reader; the badge is for the eye (a phone hides it).
+    expect(html).toContain(
+      '<span class="fd-badge" data-kind="html" data-tone="muted" aria-hidden="true">HTML</span>',
+    );
+    expect(html).toContain('<span class="fd-vh">HTML: </span>');
+    // A version after the first is a neutral badge after the title.
+    expect(html).toContain('<span class="fd-badge fd-art-ver">v2</span>');
     expect(html).toContain('5 min');
     expect(html).toContain('Alpha · Review');
     expect(html).toContain('href="#/artifact/station-a/a1"');
@@ -123,7 +128,7 @@ describe('artifacts page states', () => {
       />,
     );
     expect(html).toContain('<h1 class="fd-page-title">Artifacts</h1>');
-    expect(html).toContain('aria-label="Search by title"');
+    expect(html).toContain('aria-label="Search artifacts"');
     expect(html).toContain('All kinds');
     expect(html).toContain('>Markdown<');
     expect(html).toContain('All stations');
@@ -191,7 +196,7 @@ describe('the board shell', () => {
         artifacts={fakeActions()}
       />,
     );
-    expect(page).toContain('aria-label="Search by title"');
+    expect(page).toContain('aria-label="Search artifacts"');
     const viewer = renderToStaticMarkup(
       <App
         initialRoute={{ name: 'artifact', station: 'station-a', id: 'a1', version: null }}

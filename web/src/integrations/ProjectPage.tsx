@@ -1,16 +1,18 @@
 // R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
 // "Issues", "Pull requests" and "Setup" (the homes, the secret files and the lands of the project).
-import { useState } from 'react';
+import { type CSSProperties, useState } from 'react';
 import { usePhoneTitle } from '../app/Layout';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
 import { PathTail } from '../chat/PathTail';
 import { homeShort } from '../ui/format';
-import { Page } from '../ui/page';
+import { FolderGit2 } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { useIntegrations } from './context';
 import { IssuesTab } from './IssuesTab';
-import { ProjectChips } from './ProjectsPage';
+import { ProjectChips } from './ProjectBadges';
 import { ProjectHomes } from './ProjectHomes';
 import { ProjectLands } from './ProjectLands';
 import { SameRepository } from './SameRepository';
@@ -21,6 +23,9 @@ import type { Freshness } from '../runtime/state';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 
 type Tab = 'sessions' | 'issues' | 'prs' | 'setup';
+
+/** The way back from a project to the list (§4.3), in every state of the page. */
+const ALL_PROJECTS = { href: '#/projects', label: 'All projects' } as const;
 
 type Props = {
   readonly id: string;
@@ -57,60 +62,70 @@ export function ProjectPage({
   usePhoneTitle(project?.name);
   if (env === undefined) {
     return (
-      <Page title="Project">
+      <Page title="Project" back={ALL_PROJECTS}>
         <p className="fd-note">Projects need a live board.</p>
       </Page>
     );
   }
   if (project === undefined) {
+    // The states of a page (§4.7): the loading line, the load error with Try again, or the empty
+    // state of a project that is gone, with the way back as its one button.
     return (
-      <Page title="Project">
-        {env.projects === null ? (
-          env.error === null ? (
-            env.actions.canAdmin ? (
-              <p role="status" className="fd-note">
-                Loading the project…
-              </p>
-            ) : (
-              <p className="fd-note">Projects need the owner’s login.</p>
-            )
-          ) : (
-            <p role="alert" className="fd-note fd-int-error">
-              {env.error}
-            </p>
-          )
+      <Page title="Project" back={ALL_PROJECTS}>
+        {env.projects !== null ? (
+          <EmptyState
+            icon={FolderGit2}
+            title="This project does not exist"
+            body="It was deleted, or the link is old."
+            action={
+              <a className="fd-btn" href="#/projects">
+                All projects
+              </a>
+            }
+          />
+        ) : env.error !== null ? (
+          <ErrorNotice text={env.error} onRetry={env.reload} />
+        ) : env.actions.canAdmin ? (
+          <Loading text="Loading the project…" />
         ) : (
-          <p className="fd-empty">This project does not exist.</p>
+          <p className="fd-note">Projects need the owner’s login.</p>
         )}
-        <a href="#/projects">All projects</a>
       </Page>
     );
   }
-  // The header says where the project lives (§4.3: the summary under the title); the forge and the
-  // trackers are the header chips. The sessions come first under it; the configuration of the
-  // project (Same repository, Homes, Secret files, Lands) is the Setup tab.
+  // The header says where the project lives (§4.3: the summary under the title): the station, the
+  // folder, then the badges of its forge (a link to the repository) and its trackers. The sessions
+  // come first under it; the configuration of the project (Same repository, Homes, Secret files,
+  // Lands) is the Setup tab.
+  const path = homeShort(project.path);
   const where = (
     <span className="fd-int-where">
-      <span>{stationName(project.station_id, stations)}</span>
-      <span className="fd-int-sep" aria-hidden="true">
-        ·
+      <span className="fd-int-place">
+        <span>{stationName(project.station_id, stations)}</span>
+        <span className="fd-int-sep" aria-hidden="true">
+          ·
+        </span>
+        {/* The folder box is as wide as its whole path (mono: one `ch` per character), so that
+            `PathTail` measures the room it has, not its cut text, and the badges follow it. */}
+        <code
+          className="fd-int-path"
+          title={project.path}
+          style={{ '--fd-int-path-ch': `${[...path].length}ch` } as CSSProperties}
+        >
+          <PathTail path={path} />
+        </code>
       </span>
-      <code className="fd-int-path" title={project.path}>
-        <PathTail path={homeShort(project.path)} />
-      </code>
+      {project.forge === null && project.trackers.length === 0 ? null : (
+        <ProjectChips project={project} link />
+      )}
     </span>
   );
-  const chips =
-    project.forge === null && project.trackers.length === 0 ? null : (
-      <ProjectChips project={project} />
-    );
   return (
     <Page
       title={project.name}
-      back={{ href: '#/projects', label: 'All projects' }}
+      back={ALL_PROJECTS}
       label={`Project ${project.name}`}
       description={where}
-      filters={chips}
       wide
       className="fd-int fd-int-project"
     >
