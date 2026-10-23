@@ -61,7 +61,8 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   await expect(card.locator('.fd-facts')).toContainText('0.2.0');
   await expect(card.locator('.fd-facts')).toContainText('st-alpha');
   await expect(card.locator('[data-instance="personal"]')).toHaveText('Claude 2.1.5signed in');
-  await expect(card.locator('[data-instance="work"]')).toHaveText('Codexsign-in unknown');
+  // An unknown sign-in state is absent (DESIGN-SYSTEM principle 7): only the name shows.
+  await expect(card.locator('[data-instance="work"]')).toHaveText('Codex');
   expect(await fitsWidth(page)).toBe(true);
 
   await page.getByRole('button', { name: 'Add station' }).click();
