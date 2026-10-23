@@ -1,6 +1,7 @@
 // B12: the view of one workflow agent, in place of the chat list. A workflow agent has no chat in
 // the main timeline: the view shows what the station knows of it (facts, task, result).
 import { Fragment, type ReactNode } from 'react';
+import type { SubagentLog } from '../gen';
 import {
   agentStatus,
   type WorkflowAgentView as Agent,
@@ -9,6 +10,7 @@ import {
 } from '../session/workflows';
 import { compactCount, countText, shortModel } from '../ui/format';
 import { AgentHead } from './AgentsMenu';
+import { SubagentWork } from './SubagentWork';
 
 /** The facts of the agent as label and value; a fact that the provider did not send has no row. */
 function factsOf(w: WorkflowView, a: Agent): [string, string][] {
@@ -30,6 +32,8 @@ export type WorkflowAgentViewProps = {
   readonly onBack: () => void;
   /** The Agents switcher: it stays in the bar above the facts. */
   readonly toolbar?: ReactNode;
+  /** The owner's reader of the agent's own transcript; `null` or absent for a member. */
+  readonly loadWork?: ((agentId: string) => Promise<SubagentLog>) | null;
 };
 
 export function WorkflowAgentView(props: WorkflowAgentViewProps) {
@@ -37,6 +41,8 @@ export function WorkflowAgentView(props: WorkflowAgentViewProps) {
   const facts = factsOf(w, a);
   const failure = a.error !== null;
   const outcome = failure ? a.error : a.result_preview;
+  const { loadWork } = props;
+  const agentId = a.agent_id;
   return (
     <>
       <AgentHead title={a.label} status={agentStatus(a.state)} onBack={props.onBack} />
@@ -71,6 +77,11 @@ export function WorkflowAgentView(props: WorkflowAgentViewProps) {
                   {outcome}
                 </p>
               </section>
+            )}
+            {loadWork == null ? null : agentId === null ? (
+              <p className="fd-note">Its work shows after it starts.</p>
+            ) : (
+              <SubagentWork key={agentId} load={() => loadWork(agentId)} />
             )}
           </div>
         </div>

@@ -23,13 +23,19 @@ function request(id: string, extra: Partial<OpenRequest> = {}): OpenRequest {
 }
 
 describe('approval dock (DL-140)', () => {
-  const dock = (requests: OpenRequest[], answerable = true, enabled = true) =>
+  const dock = (
+    requests: OpenRequest[],
+    answerable = true,
+    enabled = true,
+    from?: ReadonlyMap<string, string | null>,
+  ) =>
     renderToStaticMarkup(
       <ApprovalDock
         requests={requests}
         answerable={answerable}
         enabled={enabled}
         busy={false}
+        from={from}
         onAnswer={() => {}}
       />,
     );
@@ -69,5 +75,17 @@ describe('approval dock (DL-140)', () => {
   test('without the approvals capability or the scope it says why', () => {
     expect(dock([request('r1')], false)).toContain('This provider has no approval controls.');
     expect(dock([request('r1')], true, false)).toContain('Answering needs the approve scope.');
+  });
+
+  test('an approval of a workflow agent says From workflow agent <label>', () => {
+    const from = new Map<string, string | null>([
+      ['r1', 'Read files'],
+      ['r2', null],
+    ]);
+    const html = dock([request('r1'), request('r2'), request('r3')], true, true, from);
+    expect(html).toContain('<p class="fd-note">From workflow agent Read files</p>');
+    expect(html).toContain('<p class="fd-note">From a workflow agent</p>');
+    expect(html.match(/From (a )?workflow agent/g)).toHaveLength(2);
+    expect(dock([request('r1')])).not.toContain('From workflow agent');
   });
 });

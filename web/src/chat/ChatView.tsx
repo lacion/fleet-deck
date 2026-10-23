@@ -38,10 +38,12 @@ import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
 import { PathTail } from './PathTail';
 import { SubagentWork } from './SubagentWork';
+import { WorkflowLine } from './WorkflowLine';
 import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
 import { hasOpenRequest, pairWaiting, WAITING_LABEL, WAITING_SHORT, type Waiting } from './waiting';
 import { ReviewCard } from '../review/ReviewCard';
+import type { WorkflowView } from '../session/workflows';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
 export type ChatReview = {
@@ -70,6 +72,8 @@ export type ChatViewProps = {
   readonly loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
   /** B6: the tasks of the session; a subagent card shows the status of its task. */
   readonly tasks?: ReadonlyMap<string, TaskState> | undefined;
+  /** B12: the workflows of the session; the card of a Workflow call shows the line of its agents. */
+  readonly workflows?: ReadonlyMap<string, WorkflowView> | undefined;
   /** B6: a slot next to the filters (the agents switcher); it shows alone when there are no items. */
   readonly toolbar?: ReactNode;
   /** B6: scroll to the tool card of this node and mark it for 2 s; a new `nonce` repeats it. */
@@ -157,6 +161,7 @@ type ItemsProps = {
   loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
   tasks?: ReadonlyMap<string, TaskState> | undefined;
   shell?: ShellEnv | undefined;
+  workflows?: ReadonlyMap<string, WorkflowView> | undefined;
 };
 
 const NO_TASKS: ReadonlyMap<string, TaskState> = new Map();
@@ -181,6 +186,7 @@ function Items(props: ItemsProps): ReactNode {
         failed={row.failed}
         summary={row.summary}
         waiting={waiting}
+        workflows={props.workflows}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ) : (
@@ -189,6 +195,7 @@ function Items(props: ItemsProps): ReactNode {
         item={row.item}
         waiting={waiting}
         turnErrors={turnErrors.detail}
+        workflows={props.workflows}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ),
@@ -435,7 +442,10 @@ function ItemView(
       return isShellTool(item) ? (
         <ShellCard tool={item} env={props.shell} />
       ) : (
-        <ToolView tool={item} waitingFor={props.waiting?.tools.get(item.key)} />
+        <>
+          <ToolView tool={item} waitingFor={props.waiting?.tools.get(item.key)} />
+          <WorkflowLine workflows={props.workflows} nodeId={item.node_id} />
+        </>
       );
     case 'subagent':
       return <SubagentView {...props} item={item} />;
@@ -647,6 +657,7 @@ export function ChatView(props: ChatViewProps) {
           loadSubagent={props.loadSubagent}
           tasks={props.tasks}
           shell={props.shell}
+          workflows={props.workflows}
         />
       );
   }

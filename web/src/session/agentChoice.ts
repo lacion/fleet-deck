@@ -2,14 +2,16 @@
 // or a workflow agent (`wf:<task id>:<index>`); any other value, or an agent that is not known,
 // shows the main chat. The hook also owns the workflows of the session and the mark of a chosen
 // background command (its card is scrolled to and marked for 2.5 s).
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AgentChoice } from '../chat/AgentsMenu';
 import type { DeckSession, EventEnvelope } from '../gen';
 import type { SessionActions } from './commands';
 import type { Subagent } from './timeline';
 import { useWorkflows } from './useWorkflows';
 import {
+  agentById,
   parseWorkflowAgentParam,
+  requestAgents,
   type WorkflowAgentView,
   type WorkflowsSnapshot,
   type WorkflowView,
@@ -35,7 +37,14 @@ export type AgentChoiceParams = {
 export type AgentChoiceState = {
   readonly agentSub: Subagent | undefined;
   /** The chosen workflow agent with its workflow; `null`: none, or one that is not known. */
-  readonly wf: { workflow: WorkflowView; agent: WorkflowAgentView } | null;
+  readonly wf: {
+    workflow: WorkflowView;
+    agent: WorkflowAgentView;
+    /** The reader of the agent's transcript (owner only); `null` for a member or an older deck. */
+    loadWork: NonNullable<SessionActions['workflowAgent']> | null;
+  } | null;
+  /** request id → the label of the workflow agent that asked (`null`: the label is not known). */
+  readonly requestFrom: ReadonlyMap<string, string | null>;
   readonly workflows: ReadonlyMap<string, WorkflowView>;
   /** What the Agents menu needs of the workflows (spread into its props). */
   readonly menu: {
@@ -65,7 +74,15 @@ export function useAgentChoice(p: AgentChoiceParams): AgentChoiceState {
   const named = onChat ? parseWorkflowAgentParam(p.agent) : null;
   const workflow = named === null ? undefined : workflows.get(named.task_id);
   const agent = named === null ? undefined : workflow?.agents.get(named.index);
-  const wf = workflow === undefined || agent === undefined ? null : { workflow, agent };
+  const loadWork = p.member ? null : (p.actions?.workflowAgent ?? null);
+  const wf = workflow === undefined || agent === undefined ? null : { workflow, agent, loadWork };
+  const requestFrom = useMemo(() => {
+    const from = new Map<string, string | null>();
+    for (const [request, id] of requestAgents(p.events)) {
+      from.set(request, agentById(workflows, id)?.label ?? null);
+    }
+    return from;
+  }, [p.events, workflows]);
   const chooseAgent = (choice: AgentChoice) => {
     if (choice.kind === 'task') {
       onAgent(null);
@@ -83,6 +100,7 @@ export function useAgentChoice(p: AgentChoiceParams): AgentChoiceState {
   return {
     agentSub,
     wf,
+    requestFrom,
     workflows,
     menu: {
       workflows,

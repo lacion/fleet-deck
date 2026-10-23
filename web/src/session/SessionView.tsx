@@ -502,6 +502,7 @@ export function SessionView(props: SessionViewProps) {
                     ? { history: { view: historyView, gap: historyGap } }
                     : {})}
                   loadSubagent={loadSubagent}
+                  workflows={workflows}
                   tasks={tasks}
                   highlight={highlight}
                   shell={
@@ -554,6 +555,7 @@ export function SessionView(props: SessionViewProps) {
                       (guest !== null ? flags.live && !flags.ended : flags.approve) && busy === null
                     }
                     busy={busy !== null}
+                    from={choice.requestFrom}
                     onAnswer={(request, option, reply) =>
                       actions &&
                       controller.act('answer', () => actions.answer(request, option, reply))
