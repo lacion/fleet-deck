@@ -18,6 +18,8 @@ const CAUSE: Readonly<Record<string, string>> = {
   station_restart: 'the station restarted',
   [NOT_A_GIT_WORKTREE]: 'the folder is not a Git repository',
   capture_failed: 'the capture failed',
+  checkpoint_missing: 'the snapshot is gone',
+  checkpoint_changed: 'the snapshot was changed',
 };
 
 /** The cause of a reason code in plain words (`background work was running`), or `null`. */
