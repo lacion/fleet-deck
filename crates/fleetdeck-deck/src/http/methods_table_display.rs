@@ -42,6 +42,27 @@ pub(super) const API_DISPLAY: &[ApiMethod] = &[
         false,
     ),
     m(
+        "wall_pages.list",
+        Method::GET,
+        "/api/wall-pages",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "wall_pages.add",
+        Method::POST,
+        "/api/wall-pages",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "wall_pages.delete",
+        Method::POST,
+        "/api/wall-pages/{id}/delete",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "displays.self_directive",
         Method::GET,
         "/api/displays/self/directive",

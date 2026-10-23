@@ -82,6 +82,7 @@ pub mod tls_tailscale;
 #[cfg(test)]
 pub(crate) mod tls_test_pki;
 pub mod wall_control_routes;
+pub mod wall_page_routes;
 pub mod workspace_routes;
 pub mod worktree_routes;
 pub mod ws;
@@ -655,6 +656,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(fleet_git_routes::routes())
         .merge(display_directive_routes::routes())
         .merge(wall_control_routes::routes())
+        .merge(wall_page_routes::routes())
         .merge(display_changes::routes())
         .merge(display_artifact::routes())
         .merge(desktop_routes::routes())

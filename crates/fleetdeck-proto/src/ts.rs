@@ -109,6 +109,7 @@ use crate::share::{
 use crate::subagent::{SubagentLog, SubagentQuery};
 use crate::version::{Negotiated, VersionOffer};
 use crate::wall_control as wc;
+use crate::wall_pages as wp;
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
 /// and Unix ms stay below 2^53).
@@ -355,6 +356,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         wc::WallControlAck::export_all(&cfg),
         wc::WallLink::export_all(&cfg),
         wc::WallRemoteView::export_all(&cfg),
+        wp::PageFit::export_all(&cfg),
+        wp::WallPage::export_all(&cfg),
+        wp::NewWallPage::export_all(&cfg),
+        wp::WallPageList::export_all(&cfg),
+        wp::PageRef::export_all(&cfg),
+        wp::DisplayPage::export_all(&cfg),
         DisplayChangesQuery::export_all(&cfg),
         DisplayFileChange::export_all(&cfg),
         DisplayChanges::export_all(&cfg),

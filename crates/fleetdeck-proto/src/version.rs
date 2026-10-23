@@ -270,6 +270,12 @@ pub mod feature {
     /// board feature: no station and no link method uses it.
     pub const WALL_CONTROL: &str = "wall_control.v1";
 
+    /// B17 §3.2: the wall pages allow-list (the routes `GET|POST
+    /// /api/wall-pages`, `POST /api/wall-pages/{id}/delete`) and, with B2,
+    /// the `page` directive. A board feature: no station and no link method
+    /// uses it.
+    pub const WALL_PAGES: &str = "wall_pages.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -336,6 +342,7 @@ pub mod feature {
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
         WALL_CONTROL,
+        WALL_PAGES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
