@@ -11,7 +11,14 @@ import { hasChanges } from '../session/changes';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { archived } from '../ui/archive';
-import { addedText, isRiskyMode, modelFamily, removedText, shortModel } from '../ui/format';
+import {
+  addedText,
+  isRiskyMode,
+  modeLabel,
+  modelFamily,
+  removedText,
+  shortModel,
+} from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
@@ -200,22 +207,6 @@ export function FleetStrip({
               <span className="fd-strip-proj-name">{project.name}</span>
             </span>
           )}
-          {isRiskyMode(s.mode) ? (
-            <Ico
-              kind="risky"
-              icon={ShieldAlert}
-              tone="hazard"
-              title={`Permission mode: ${s.mode}`}
-            />
-          ) : null}
-          {contested === undefined ? null : (
-            <Ico
-              kind="contested"
-              icon={TriangleAlert}
-              tone="hazard"
-              title={`Contested with ${contested.with.join(', ')}`}
-            />
-          )}
           {mail > 0 ? (
             <Ico kind="mail" icon={Mail} title="Mail waiting for delivery" n={mail} />
           ) : null}
@@ -250,6 +241,24 @@ export function FleetStrip({
           ) : null}
           {cleared ? <Ico kind="archived" icon={Archive} title="Archived" /> : null}
           {freshness === 'stale' ? <Ico kind="stale" icon={CloudOff} title="Stale" /> : null}
+          {/* The hazard flags come last: they sit against the where cell in every strip, so a
+              lane reads its risky sessions down one column; the counters grow to their left. */}
+          {isRiskyMode(s.mode) ? (
+            <Ico
+              kind="risky"
+              icon={ShieldAlert}
+              tone="hazard"
+              title={`Permission mode: ${modeLabel(s.mode ?? '')}`}
+            />
+          ) : null}
+          {contested === undefined ? null : (
+            <Ico
+              kind="contested"
+              icon={TriangleAlert}
+              tone="hazard"
+              title={`Contested with ${contested.with.join(', ')}`}
+            />
+          )}
         </span>
         {station === null ? (
           <span className="fd-strip-where" title={place?.title}>

@@ -37,7 +37,11 @@ const board = (resources: StationResources | undefined, group: 'station' | 'repo
 describe('fleet lane: low resources (DL-193)', () => {
   test('a station lane with a low disk shows the chip with the warning in the title', () => {
     const html = board(lowDisk, 'station');
-    expect(html).toContain('▲ Low resources');
+    // The triangle-alert icon of every hazard of the board, not a typed glyph.
+    expect(html).toMatch(
+      /<span class="fd-lane-warn"[^>]*><svg[^>]*lucide-triangle-alert[\s\S]*?<\/svg> Low resources<\/span>/,
+    );
+    expect(html).not.toContain('▲');
     expect(html).toContain('title="Low disk: 3.2 GB free on Data"');
   });
 

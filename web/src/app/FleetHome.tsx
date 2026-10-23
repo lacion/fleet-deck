@@ -179,7 +179,7 @@ export function activeFilters(
       key: 'provider',
       text: `Provider: ${PROVIDER_NAME[filter.provider] ?? filter.provider}`,
     });
-  if (filter.repo !== ALL) list.push({ key: 'repo', text: `Repo: ${filter.repo}` });
+  if (filter.repo !== ALL) list.push({ key: 'repo', text: `Repository: ${filter.repo}` });
   if (archivedOn) list.push({ key: 'archived', text: 'Archived shown' });
   return list;
 }
@@ -209,7 +209,8 @@ export function filtersAlign(
 }
 
 /** The Filters menu: a `<details>` popover that Escape or a press outside closes. It hangs from
- * its button (never from the edge of the header). */
+ * its button (never from the edge of the header); its trigger has the trailing chevron of every
+ * menu trigger of the board (`summary[data-variant=toggle]`). */
 function FiltersMenu({ active, children }: { active: number; children: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
@@ -241,7 +242,7 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
       onKeyDown={onKeyDown}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="fd-ghost fd-sm" onClick={place}>
+      <summary className="fd-ghost fd-sm" data-variant="toggle" onClick={place}>
         <Icon of={ListFilter} size={14} />
         Filters
         {active > 0 ? (
@@ -315,17 +316,11 @@ export function FleetHome({
   const needsYou = sessions.filter(
     (s) => s.status === 'needs_you' || s.summary.open_requests.length > 0,
   ).length;
-  // The header counts what the board shows (§4.3): the live sessions, and the stations with a
-  // lane (every station that was online at its last report, and a station that still holds a
-  // live session). Ended and archived sessions have their own rows (the Ended folds, Filters).
+  // The header sentence (§4.3): the live sessions, and the stations that run one (an online
+  // station without a live session has a lane, but runs none of them). Ended and archived
+  // sessions have their own rows (the Ended folds, Filters).
   const live = sessions.filter(isLiveSession);
-  const liveStations =
-    live.length === 0
-      ? 0
-      : new Set([
-          ...stations.filter((s) => s.reachable).map((s) => s.station_id),
-          ...live.map((s) => s.station_id),
-        ]).size;
+  const liveStations = new Set(live.map((s) => s.station_id)).size;
   const unknownProvider = sessions.some(
     (s) => s.summary.provider === null || s.summary.provider === 'unknown',
   );
@@ -404,7 +399,7 @@ export function FleetHome({
       )}
       {repos.length >= 2 || filter.repo !== ALL
         ? row(
-            'Repo',
+            'Repository',
             <>
               {chip('All', filter.repo === ALL, () => setFilter({ ...filter, repo: ALL }), 'r-all')}
               {[...new Set([...repos, ...(filter.repo === ALL ? [] : [filter.repo])])].map((name) =>
@@ -418,12 +413,15 @@ export function FleetHome({
             </>,
           )
         : null}
+      {/* The row says Archived, so its one chip shows "Show" and the count; a hidden word keeps
+          its name whole ("Show archived 30", §5). */}
       {archivedCount > 0
         ? row(
             'Archived',
             chip(
               <>
-                Show archived <span className="fd-count">{archivedCount}</span>
+                Show <span className="fd-vh">archived </span>
+                <span className="fd-count">{archivedCount}</span>
               </>,
               showArchived,
               () => setArchivedOn(!archivedOn),
@@ -480,12 +478,7 @@ export function FleetHome({
             </span>
           )}
           .{' '}
-          {/* "Nothing needs you." next to a conflict is the calm part: a narrow header drops it
-              first (home.css), so that the conflict stays readable. */}
-          <span
-            className="fd-home-state"
-            data-calm={needsYou === 0 && conflictCount > 0 ? 'true' : undefined}
-          >
+          <span className="fd-home-state">
             {needsYou === 0 ? (
               <span className="fd-home-needs" data-clear="true">
                 {clearText(conflictCount)}

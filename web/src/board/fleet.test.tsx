@@ -521,8 +521,9 @@ describe('fleet cards, DL-141', () => {
       card('c', 'working', 'station-a', { mode: 'default' }),
     ]);
     expect(out.match(/data-ico="risky" data-tone="hazard"/g)).toHaveLength(2);
-    expect(out).toContain('title="Permission mode: bypassPermissions"');
-    expect(out).toContain('title="Permission mode: dontAsk"');
+    // The flag shows no words: its name is the one name of the mode (modeLabel, §5).
+    expect(out).toContain('title="Permission mode: Bypass permissions"');
+    expect(out).toContain('title="Permission mode: Don&#x27;t ask"');
     expect(out).not.toContain('Permission mode: default');
   });
 
@@ -607,7 +608,9 @@ describe('fleet cards, DL-141', () => {
     expect(out).toContain('aria-label="Repository alpha"');
     expect(out).toContain('aria-label="Repository Outside a repository"');
     expect(out).not.toContain('aria-label="Station Alpha"');
-    expect(out).toContain('▲ 1 contested');
+    expect(out).toMatch(
+      /<span class="fd-lane-conf"><svg[^>]*lucide-triangle-alert[\s\S]*?<\/svg> 1 contested<\/span>/,
+    );
     expect(out).toContain('Alpha');
   });
 });

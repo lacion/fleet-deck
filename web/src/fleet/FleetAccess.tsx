@@ -2,8 +2,10 @@
 // one row each with "Change…", which opens the "Fleet access" dialog of the session menu for the
 // grant (renew, change, revoke; also for a grant whose session is not on the board); and "Give
 // fleet access…", a dialog with the session and the same fields. Giving access is rare: the column
-// shows only the rows and one quiet button, never a form.
-import { useState } from 'react';
+// shows only the rows and one quiet button, never a form. The expired grants wait in a collapsed
+// "Expired" fold (the look of a lane's Ended fold): they are nothing to act on until a renewal.
+import { type ReactNode, useState } from 'react';
+import { stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView } from '../gen';
 import { Dialog } from '../integrations/Dialog';
 import { useSettings } from '../settings/context';
@@ -11,7 +13,6 @@ import { useFleetElevation } from '../spawn/useFleetElevation';
 import { Icon, Plus, ShieldCheck } from '../ui/icons';
 import { type FleetActions, type FleetResult, grantStations, grantStatus } from './fleet';
 import { GiveAccess, giveCandidates, titleOf } from './GrantAccess';
-import { grantTitle } from './GrantSpawn';
 import { SessionAccessDialog } from './SessionAccess';
 
 type Props = {
@@ -30,11 +31,18 @@ type Props = {
 
 const keyOf = (s: DeckSession) => `${s.station_id}/${s.summary.session_id}`;
 
-/** The state of a grant as a row says it; a given grant whose session has not bound it yet waits. */
+/**
+ * The state of a grant as a row says it, in words (never a raw reason id): a given grant whose
+ * session has not bound it yet waits; a grant that expired from idle time says so.
+ */
 export function grantState(g: GrantView): string {
   if (g.state === 'active') return g.generation === null ? 'waiting for its session' : 'active';
-  return g.revoked_reason === 'idle' && g.state === 'expired' ? 'expired (idle)' : g.state;
+  if (g.state === 'expired')
+    return g.revoked_reason === 'idle' ? 'expired after idle time' : 'expired';
+  return g.state;
 }
+
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const RANK: Readonly<Record<string, number>> = { active: 0, expired: 1 };
 
@@ -51,6 +59,26 @@ export function accessRows(grants: readonly GrantView[]): readonly GrantView[] {
 }
 
 const kindWord = (g: GrantView) => (g.kind === 'worker' ? 'Worker' : 'Coordinator');
+
+/**
+ * The words of a grant row. A grant whose session is on the board: the session's title over the
+ * kind and the state ("Worker · active"). One whose session is not on the board (not started yet,
+ * or gone) names its kind and station ("Coordinator on Lighting") over its state alone, so the
+ * kind is not said twice.
+ */
+export function grantRowText(
+  g: GrantView,
+  session: DeckSession | undefined,
+  stations: readonly StationView[],
+): { readonly title: string; readonly sub: string } {
+  if (session !== undefined)
+    return { title: titleOf(session), sub: `${kindWord(g)} · ${grantState(g)}` };
+  const title =
+    g.station_id === ''
+      ? `New ${kindWord(g).toLowerCase()}`
+      : `${kindWord(g)} on ${stationName(g.station_id, stations)}`;
+  return { title, sub: sentence(grantState(g)) };
+}
 
 /** The dialog of "Give fleet access…": its own elevation, as the session menu's dialog. */
 function GiveDialog({
@@ -95,6 +123,10 @@ export function FleetAccess({ sessions, stations, grants, actions, layout, onCha
   const [open, setOpen] = useState<{ readonly grant: string; readonly key: string } | null>(null);
   const [result, setResult] = useState<FleetResult | null>(null);
   const rows = accessRows(grants);
+  // The grants that still give access are the rows; the expired ones fold away (as a lane's Ended
+  // strips), and the heading counts only the rows it shows.
+  const current = rows.filter((g) => g.state !== 'expired');
+  const expired = rows.filter((g) => g.state === 'expired');
   const canGive =
     owner &&
     stations.some((s) => s.coordinator_live === true) &&
@@ -103,62 +135,71 @@ export function FleetAccess({ sessions, stations, grants, actions, layout, onCha
     sessions.find((s) => s.station_id === g.station_id && s.summary.session_id === g.session_id);
   const opened = open === null ? undefined : sessions.find((s) => keyOf(s) === open.key);
   if (rows.length === 0 && !canGive && !giving && open === null) return null;
+  const count = current.length === 0 ? null : <span className="fd-count">{current.length}</span>;
   const heading =
     layout === 'section' ? (
       <h2 className="fd-ops-h">
         <Icon of={ShieldCheck} size={14} /> Fleet access
-        {rows.length === 0 ? null : <span className="fd-count">{rows.length}</span>}
+        {count}
       </h2>
     ) : (
       <h3 className="fd-label fd-access-tab-h">
         Fleet access
-        {rows.length === 0 ? null : <span className="fd-count">{rows.length}</span>}
+        {count}
       </h3>
     );
+  const row = (g: GrantView): ReactNode => {
+    const session = sessionOf(g);
+    const text = grantRowText(g, session, stations);
+    const where = grantStations(g, stations);
+    const id = `fd-grant-${g.grant_id}`;
+    return (
+      <li key={g.grant_id} title={where === '' ? grantStatus(g) : `${grantStatus(g)}\n${where}`}>
+        <span className="fd-ops-row-text">
+          <span className="fd-ops-row-title" id={id}>
+            {text.title}
+          </span>
+          <span className="fd-ops-row-sub" data-state={g.state}>
+            {text.sub}
+          </span>
+        </span>
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          aria-describedby={id}
+          onClick={() => {
+            setResult(null);
+            setOpen({
+              grant: g.grant_id,
+              key: session === undefined ? '' : keyOf(session),
+            });
+          }}
+        >
+          Change…
+        </button>
+      </li>
+    );
+  };
   return (
     <section
       className={layout === 'section' ? 'fd-ops-sec fd-ops-access' : 'fd-fleet-access'}
       aria-label="Fleet access"
     >
       {heading}
-      {rows.length === 0 ? null : (
+      {current.length === 0 ? null : (
         <ul className="fd-ops-rows fd-access-list" aria-label="Coordinator grants">
-          {rows.map((g) => {
-            const session = sessionOf(g);
-            const name = session === undefined ? grantTitle(g).trim() : titleOf(session);
-            const where = grantStations(g, stations);
-            const id = `fd-grant-${g.grant_id}`;
-            return (
-              <li
-                key={g.grant_id}
-                title={where === '' ? grantStatus(g) : `${grantStatus(g)}\n${where}`}
-              >
-                <span className="fd-ops-row-text">
-                  <span className="fd-ops-row-title" id={id}>
-                    {name}
-                  </span>
-                  <span className="fd-ops-row-sub" data-state={g.state}>
-                    {kindWord(g)} · {grantState(g)}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  className="fd-ghost fd-sm"
-                  aria-describedby={id}
-                  onClick={() => {
-                    setResult(null);
-                    setOpen({
-                      grant: g.grant_id,
-                      key: session === undefined ? '' : keyOf(session),
-                    });
-                  }}
-                >
-                  Change…
-                </button>
-              </li>
-            );
-          })}
+          {current.map(row)}
         </ul>
+      )}
+      {expired.length === 0 ? null : (
+        <details className="fd-access-expired">
+          <summary>
+            Expired <span className="fd-count">{expired.length}</span>
+          </summary>
+          <ul className="fd-ops-rows fd-access-list" aria-label="Expired grants">
+            {expired.map(row)}
+          </ul>
+        </details>
       )}
       {canGive ? (
         <button

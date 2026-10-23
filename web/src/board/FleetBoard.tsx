@@ -12,7 +12,7 @@ import type { Freshness } from '../runtime/state';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { batchCountOf, batchCounts } from '../compare/compare';
-import { Archive, ArchiveRestore, Icon, Plus, RotateCcw } from '../ui/icons';
+import { Archive, ArchiveRestore, Icon, Plus, RotateCcw, TriangleAlert } from '../ui/icons';
 import { archived } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
@@ -340,7 +340,11 @@ function StationFacts({
 /** A slot meter shows one tick per slot up to this many; a bigger station shows the count only. */
 const MAX_TICKS = 16;
 
-/** The slot meter of a station lane: "3 of 12", the needs-you slots first (DESIGN-SYSTEM §4.4). */
+/**
+ * The slot meter of a station lane: "3 of 12", the needs-you slots first (DESIGN-SYSTEM §4.4). A
+ * station that runs no session shows its free slots as words ("12 free", as the New session
+ * station pills): a row of empty ticks says nothing more.
+ */
 function LaneSlots({
   station,
   cards,
@@ -353,6 +357,8 @@ function LaneSlots({
   const max = info.max_sessions;
   const used = Math.min(info.live_sessions, max);
   const needs = Math.min(cards.filter((c) => c.status === 'needs_you').length, used);
+  if (max > 0 && info.live_sessions === 0)
+    return <span className="fd-lane-slots fd-lane-free">{max} free</span>;
   return (
     <span className="fd-lane-slots">
       {max > 0 && max <= MAX_TICKS ? (
@@ -436,7 +442,8 @@ export function FleetBoard({
         const live = foldEnded ? ordered.filter((c) => !isDone(c)) : ordered;
         const done = foldEnded ? ordered.filter(isDone) : [];
         // The count after the name is the shown strips (the sidebar's rule): a folded lane's
-        // Ended row carries its own count, and the lane total stays in the title.
+        // Ended row carries its own count, and the lane total stays in the title. A lane with no
+        // shown strip has no count: a zero pill is nothing to act on (§4.2, §5).
         const total =
           live.length === lane.cards.length
             ? undefined
@@ -452,17 +459,21 @@ export function FleetBoard({
           >
             <div className="fd-lane-head">
               <h2 className="fd-lane-name fd-wide">{lane.name}</h2>
-              <span className="fd-count" title={total}>
-                {live.length}
-              </span>
+              {live.length === 0 ? null : (
+                <span className="fd-count" title={total}>
+                  {live.length}
+                </span>
+              )}
               {view === undefined ? null : <StationFacts station={view} freshness={freshness} />}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
-                  ▲ Low resources
+                  <Icon of={TriangleAlert} size={12} /> Low resources
                 </span>
               ) : null}
               {group === 'repo' && contestedCount > 0 ? (
-                <span className="fd-lane-conf">▲ {contestedCount} contested</span>
+                <span className="fd-lane-conf">
+                  <Icon of={TriangleAlert} size={12} /> {contestedCount} contested
+                </span>
               ) : null}
               {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
             </div>

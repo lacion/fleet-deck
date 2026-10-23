@@ -56,15 +56,16 @@ export const tokens = (n: number): string => countText(n);
 export const dollars = (n: number): string => usdText(n);
 
 /**
- * The words of the input token total. Claude reports only the input that the cache did not hold
- * (its cache reads and writes are other counts), so a fleet of Claude sessions says "new input
- * tokens"; Codex counts the cached input too.
+ * The word of the input token total: "input", as "output" (one word for one count on every
+ * surface, DESIGN-SYSTEM §1). Claude reports only the input that the cache did not hold (its
+ * cache reads and writes are other counts), so a fleet of Claude sessions says "new input";
+ * Codex counts the cached input too.
  */
 export function inputLabel(sessions: readonly DeckSession[]): string {
   const known = sessions.filter((s) => s.summary.usage.input_tokens !== null);
   return known.length > 0 && known.every((s) => s.summary.provider === 'claude')
-    ? 'new input tokens'
-    : 'input tokens';
+    ? 'new input'
+    : 'input';
 }
 
 /** The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); `null` when unknown. */

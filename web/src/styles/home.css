@@ -35,15 +35,18 @@
 }
 
 /* ── page header (§4.3) ─────────────────────────────────────────── */
+/* The fleet home has the geometry of every Page header: a title row (--header-h) with the
+   controls level with it, the summary sentence under it on the whole width (one line), and a
+   soft rule. The title sits at the same place on Fleet, Watch and every other page. */
 .fd-home-head {
   position: relative;
   flex: none;
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 2px var(--sp-2);
   min-height: var(--header-h);
-  padding: var(--sp-2) var(--sp-5);
+  padding: var(--sp-2) var(--sp-5) var(--sp-3);
   background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -68,21 +71,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A narrow board: the sentence takes a second line before it cuts a word ("All clear." stays
-   whole next to Group by and Share). */
-@container fleet (max-width: 1100px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-counts {
-    display: -webkit-box;
-    line-height: 1.3;
-    white-space: normal;
-    text-wrap: balance;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-  /* A line breaks between the parts of the sentence, never inside "2 need you". */
-  .fd-home:not([data-layout="phone"]) .fd-home-counts > span {
-    white-space: nowrap;
-  }
+/* A desktop or tablet: the title and the sentence are items of the header row, so the title row
+   holds the controls and the sentence (last, a line of its own) has the whole width. */
+.fd-home:not([data-layout="phone"]) .fd-home-titles {
+  display: contents;
+}
+.fd-home:not([data-layout="phone"]) .fd-home-titles > .fd-page-title {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  min-height: var(--header-h);
+}
+.fd-home:not([data-layout="phone"]) .fd-home-counts {
+  order: 1;
+  flex: 1 0 100%;
+  margin-top: calc(-1 * var(--sp-2));
+  line-height: 1.45;
 }
 .fd-home-head > :not(.fd-home-titles) {
   flex: none;
@@ -116,9 +120,8 @@
   display: none;
 }
 /* A narrow board (the main column under 1100px: every desktop with the ops column under about
-   1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
-   text, Share board says "Share", and from 841 to 960px the sentence drops "on N stations" and
-   a calm "Nothing needs you." next to a conflict. */
+   1650px) keeps the title row light: the search folds to its icon until it has the focus or a
+   text, and Share board says "Share". */
 @container fleet (max-width: 1100px) {
   .fd-home:not([data-layout="phone"]) .fd-home-search {
     width: calc(var(--ctl-h) + 6px);
@@ -160,20 +163,15 @@
     display: inline;
   }
 }
-@container fleet (min-width: 841px) and (max-width: 960px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-on,
-  .fd-home:not([data-layout="phone"]) .fd-home-state[data-calm="true"] {
-    display: none;
-  }
-}
-/* Under 840px (a 1280px window, a tablet) the controls take a second row of the header. */
+/* Under 840px (a 1280px window, a tablet) the title row has no room for the controls: the title,
+   the sentence, then the controls on a row of their own (the order of a narrow Page). */
 @container fleet (max-width: 840px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-head {
-    flex-wrap: wrap;
-    row-gap: var(--sp-2);
-  }
-  .fd-home:not([data-layout="phone"]) .fd-home-titles {
+  .fd-home:not([data-layout="phone"]) .fd-home-titles > .fd-page-title {
     flex-basis: 100%;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-counts {
+    order: 0;
+    margin-bottom: var(--sp-2);
   }
 }
 /* No waiting request: the notification switch is the last item of the header. */
@@ -511,10 +509,18 @@
     forced-color-adjust: none;
   }
 }
+/* A lane warning: the triangle-alert icon of every hazard of the board, then the words. */
 .fd-lane-warn,
 .fd-lane-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   color: var(--hazard);
   white-space: nowrap;
+}
+.fd-lane-warn > .fd-icon,
+.fd-lane-conf > .fd-icon {
+  flex: none;
 }
 .fd-lane-slots {
   display: inline-flex;
@@ -935,7 +941,8 @@
 .fd-strips + .fd-lane-ended {
   margin-top: var(--sp-1);
 }
-.fd-lane-ended > summary {
+.fd-lane-ended > summary,
+.fd-access-expired > summary {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -948,13 +955,16 @@
   font-weight: 600;
   transition: color var(--t-fast);
 }
-.fd-lane-ended > summary::before {
+.fd-lane-ended > summary::before,
+.fd-access-expired > summary::before {
   margin-right: 0;
 }
-.fd-lane-ended > summary:hover {
+.fd-lane-ended > summary:hover,
+.fd-access-expired > summary:hover {
   color: var(--dim);
 }
-.fd-lane-ended > summary:focus-visible {
+.fd-lane-ended > summary:focus-visible,
+.fd-access-expired > summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -1128,6 +1138,39 @@
   }
 }
 
+/* A phone-width board (under 480px): the facts (project label, flags, counters) go up to the title
+   line, before the age, so the second line gives the callsign and what the session does now all
+   the room (concept A phone). The title cuts first. */
+@container fleet (max-width: 480px) {
+  .fd-strip {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title meta age"
+      "call now now changes";
+  }
+  .fd-strip[data-nochanges="true"] {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title meta age"
+      "call now now now";
+  }
+  .fd-strip[data-showstation="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title title meta age"
+      "station call now now changes";
+  }
+  .fd-strip[data-showstation="true"][data-nochanges="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title title meta age"
+      "station call now now now";
+  }
+  .fd-strip-meta > .fd-strip-proj {
+    max-width: 96px;
+  }
+}
+
 /* ── ops panel (§4.4) ───────────────────────────────────────────── */
 /* The column never scrolls sideways: its parts and their fields shrink to the column. */
 .fd-ops {
@@ -1226,16 +1269,16 @@
 .fd-ops-h + .fd-glance-span {
   margin-top: 0;
 }
-/* The cost keeps its whole value ("$255,730.38", cents everywhere, §5): its column is as wide as
-   its value, and the token columns share the rest. */
+/* The cost keeps its whole value ("$1,730.38", cents everywhere, §5): its column is as wide as its
+   value, and the token columns share the rest. */
 .fd-glance-totals {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
   gap: var(--sp-2);
   margin: 0;
 }
-/* The value over its label; the values stay on one line when a label wraps ("new input
-   tokens"). */
+/* The value over its one-line label ("new input", "output", "cost"): the labels start at one
+   height under the values. */
 .fd-glance-totals > div {
   display: flex;
   flex-direction: column-reverse;
@@ -1244,8 +1287,11 @@
   min-width: 0;
 }
 .fd-glance-totals dt {
+  overflow: hidden;
   color: var(--dim);
   font-size: var(--fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fd-glance-totals dd {
   margin: 0;
@@ -1761,9 +1807,6 @@
 .fd-fleet[data-layout="section"] > .fd-ops-h {
   margin: 0;
 }
-.fd-ops-h > .fd-count {
-  margin-left: auto;
-}
 .fd-ops-rows {
   display: flex;
   flex-direction: column;
@@ -1801,10 +1844,16 @@
   font-size: var(--fs-meta);
   overflow-wrap: anywhere;
 }
+/* "New mail or task" and "Give fleet access…" are one quiet add row: a leading 14px plus, then
+   12px --dim words; the fold's chevron trails and turns when it opens (summary[data-variant]). */
 .fd-fleet-compose > summary {
   display: flex;
-  align-items: center;
+  gap: 6px;
   width: max-content;
+}
+.fd-fleet-compose > summary,
+.fd-fleet-give {
+  align-items: center;
   height: var(--ctl-h);
   padding: 0 var(--sp-2) 0 0;
   border-radius: var(--r-ctl);
@@ -1812,6 +1861,11 @@
   font-size: var(--fs-meta);
   font-weight: 500;
   transition: color var(--t-fast);
+}
+.fd-fleet-compose > summary > .fd-icon,
+.fd-fleet-give > .fd-icon {
+  flex: none;
+  opacity: 0.7;
 }
 .fd-fleet-compose > summary:hover {
   color: var(--text);
@@ -1829,8 +1883,9 @@
 }
 
 /* Fleet access (a section of the wide column, or a block of the Mail & tasks tab): one row for
-   each grant with "Change…", and "Give fleet access…" in the look of the "New mail or task"
-   fold. The forms are in dialogs. */
+   each grant that gives access, with "Change…"; the expired grants in a collapsed "Expired" fold
+   (the lane Ended fold); and "Give fleet access…" in the look of the "New mail or task" fold. The
+   forms are in dialogs. */
 .fd-ops-access {
   display: flex;
   flex-direction: column;
@@ -1852,27 +1907,51 @@
   gap: var(--sp-2);
   margin: 0;
 }
+/* A grant row: Change… at the end of the title line, and the state line under both, so the state
+   has the whole width ("Coordinator · expired after idle time" on one line). */
 .fd-access-list > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--sp-3);
+  grid-template-areas:
+    "title change"
+    "sub sub";
+  align-items: center;
+  gap: 2px var(--sp-3);
+}
+.fd-access-list .fd-ops-row-text {
+  display: contents;
+}
+.fd-access-list .fd-ops-row-title {
+  grid-area: title;
+}
+.fd-access-list .fd-ops-row-sub {
+  grid-area: sub;
 }
 .fd-access-list > li > button {
-  margin-top: -2px;
+  grid-area: change;
+  margin-block: -4px;
+}
+/* Change… shows on the row under the pointer or the keyboard (it stays in the tab order), so the
+   column is not a stack of equal links next to the names; a touch screen shows it always. */
+@media (hover: hover) {
+  .fd-access-list > li > button {
+    opacity: 0;
+    transition: opacity var(--t-fast);
+  }
+  .fd-access-list > li:hover > button,
+  .fd-access-list > li:focus-within > button {
+    opacity: 1;
+  }
+}
+.fd-access-expired .fd-ops-row-title {
+  color: var(--dim);
+}
+.fd-access-expired > .fd-access-list {
+  margin-top: var(--sp-2);
 }
 .fd-fleet-give {
   align-self: flex-start;
-  height: var(--ctl-h);
-  padding: 0 var(--sp-2) 0 0;
   background: transparent;
-  color: var(--dim);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  transition: color var(--t-fast);
-}
-.fd-fleet-give > .fd-icon {
-  opacity: 0.7;
 }
 .fd-fleet-give:hover:not(:disabled) {
   background: transparent;

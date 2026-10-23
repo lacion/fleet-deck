@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { repoName, repoNames, stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
-import { CircleDot, Icon, Mail } from '../ui/icons';
+import { CircleDot, Icon, Mail, Plus } from '../ui/icons';
 import {
   type FleetActions,
   type FleetResult,
@@ -510,7 +510,10 @@ export function FleetPanel({
             open={composeOpen}
             onToggle={(e) => setComposeOpen(e.currentTarget.open)}
           >
-            <summary>New mail or task</summary>
+            {/* The look of "Give fleet access…" (a leading plus); the chevron trails and turns. */}
+            <summary data-variant="toggle">
+              <Icon of={Plus} size={14} /> New mail or task
+            </summary>
             {form}
           </details>
           {resultNote}

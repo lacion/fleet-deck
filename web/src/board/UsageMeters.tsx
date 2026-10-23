@@ -32,7 +32,7 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
       <h2 className="fd-vh">Usage</h2>
       <dl className="fd-usage-stats">
         <div className="fd-usage-stat">
-          <dt className="fd-label">{sentence(inputLabel(sessions))}</dt>
+          <dt className="fd-label">{`${sentence(inputLabel(sessions))} tokens`}</dt>
           <dd>{totalText(usage.input, tokens)}</dd>
         </div>
         <div className="fd-usage-stat">

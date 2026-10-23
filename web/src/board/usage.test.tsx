@@ -220,19 +220,30 @@ describe('the usage glance totals (live UI audit)', () => {
     expect(dollars(0)).toBe('$0.00');
   });
 
-  test('Claude counts only new input: a Claude fleet says "new input tokens"', () => {
-    expect(inputLabel([big('a'), big('b')])).toBe('new input tokens');
-    expect(inputLabel([big('a'), big('c', 'codex')])).toBe('input tokens');
-    expect(inputLabel([])).toBe('input tokens');
+  test('Claude counts only new input: a Claude fleet says "new input"', () => {
+    expect(inputLabel([big('a'), big('b')])).toBe('new input');
+    expect(inputLabel([big('a'), big('c', 'codex')])).toBe('input');
+    expect(inputLabel([])).toBe('input');
   });
 
   test('the glance says its scope and keeps the exact values as titles', () => {
     const html = renderToStaticMarkup(
       <UsageGlance sessions={[big('a'), big('b')]} stations={[station()]} now={NOW} />,
     );
-    expect(html).toContain('<p class="fd-glance-span">2 sessions · all time</p>');
+    expect(html).toContain('<p class="fd-glance-span">2 sessions on the board</p>');
     expect(html).toContain('<dd title="$51,735.86">$51,735.86</dd>');
     expect(html).toContain('<dd title="1,500,000">1.5M</dd>');
-    expect(html).toContain('<dt>new input tokens</dt>');
+    // One-line labels, the words of the Properties panel ("682 input · 309K output").
+    expect(html).toContain('<dt>new input</dt>');
+    expect(html).toContain('<dt>output</dt>');
+    expect(html).toContain('<dt>cost</dt>');
+  });
+
+  test('the All usage tab keeps the unit in its labels: New input tokens, Output tokens', () => {
+    const html = renderToStaticMarkup(
+      <UsageMeters sessions={[big('a')]} stations={[station()]} now={NOW} />,
+    );
+    expect(html).toContain('<dt class="fd-label">New input tokens</dt>');
+    expect(html).toContain('<dt class="fd-label">Output tokens</dt>');
   });
 });

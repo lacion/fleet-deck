@@ -10,7 +10,7 @@ import {
   statusMatches,
 } from '../app/FleetHome';
 import type { FleetActions } from '../fleet/fleet';
-import type { DeckSession, OpenRequest } from '../gen';
+import type { DeckSession, OpenRequest, StationInfo } from '../gen';
 import { sessionActions } from '../session/commands';
 import { IntegrationsProvider } from '../integrations/context';
 import { fakeActions, project } from '../integrations/fixtures';
@@ -18,6 +18,7 @@ import { PeopleProvider } from '../sharing/context';
 import { env, fakeShareCalls } from '../sharing/fixtures';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
+import { archived } from '../ui/archive';
 import { priority } from '../ui/localSet';
 import { emptyFilter } from './fleet';
 import { rememberConflicts } from './ConflictRadar';
@@ -246,7 +247,7 @@ describe('toolbar filters', () => {
     expect(all.map((f) => f.text)).toEqual([
       'Station: Beta',
       'Provider: Codex',
-      'Repo: org/x',
+      'Repository: org/x',
       'Archived shown',
     ]);
   });
@@ -262,8 +263,9 @@ describe('toolbar filters', () => {
     const html = home([card('a')]);
     // The menu hangs from its button: from its right edge until FleetHome measures the column.
     expect(html).toContain('<details class="fd-menu fd-filters-menu" data-align="end">');
+    // The trigger has the trailing chevron of every menu trigger (summary[data-variant=toggle]).
     expect(html).toMatch(
-      /<summary class="fd-ghost fd-sm"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
+      /<summary class="fd-ghost fd-sm" data-variant="toggle"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
     );
     expect(html).toContain('<option value="station" selected="">Group by station</option>');
     expect(html).toContain('role="group" aria-label="Fleet filters"');
@@ -304,7 +306,7 @@ describe('live UI audit, fleet', () => {
       />,
     );
 
-  test('the header counts the live sessions and the stations with a lane, not the ended or archived', () => {
+  test('the header counts the live sessions and the stations that run one, not the ended or archived', () => {
     const html = homeWith([
       card('a'),
       card('b', 'idle'),
@@ -314,7 +316,10 @@ describe('live UI audit, fleet', () => {
     ]);
     expect(html).toContain('<span>3 live sessions</span>');
     expect(html).toContain('on <span>2 stations</span>');
-    // Every online station has a lane, so it counts; an offline one without a live session not.
+    // An online station without a live session has a lane, but it runs none of them.
+    const idle = homeWith([card('a'), card('e', 'ended', 'station-b')]);
+    expect(idle).toContain('<span>1 live session</span>');
+    expect(idle).toContain('on <span>1 station</span>');
     const away = [station(), station('station-b', { reachable: false })];
     const one = homeWith([card('a'), card('e', 'ended', 'station-b')], away);
     expect(one).toContain('<span>1 live session</span>');
@@ -333,6 +338,20 @@ describe('live UI audit, fleet', () => {
     expect(html.indexOf('>Beta</button>')).toBeLessThan(html.indexOf('>Alpha</button>'));
     expect(html).toContain('aria-pressed="false">Other</button>');
     expect(html).not.toContain('Unknown');
+    // One word for one meaning: the row of repositories says Repository, not Repo.
+    const repos = homeWith([
+      card('a', 'working', 'station-a', { repo: { root: '/w/alpha', origin: null } }),
+      card('b', 'working', 'station-a', { repo: { root: '/w/beta', origin: null } }),
+    ]);
+    expect(repos).toContain('<span class="fd-label">Repository</span>');
+    expect(repos).not.toContain('>Repo<');
+    // The Archived row's one chip says Show and the count; its name keeps the whole words.
+    archived.add(['station-a/e']);
+    const shelf = homeWith([card('a'), card('e', 'ended')]);
+    archived.remove(['station-a/e']);
+    expect(shelf).toContain(
+      '<span class="fd-label">Archived</span><div class="fd-filters-chips"><button type="button" class="fd-chip" aria-pressed="false">Show <span class="fd-vh">archived </span><span class="fd-count">1</span></button>',
+    );
     expect(activeFilters({ ...emptyFilter, provider: 'unknown' }, false, stations)).toEqual([
       { key: 'provider', text: 'Provider: Other' },
     ]);
@@ -515,6 +534,25 @@ describe('flight deck fixes', () => {
     );
   });
 
+  test('an empty lane has no zero count pill, and its slots say how many are free', () => {
+    const free = station('station-b', {
+      info: { max_sessions: 12, live_sessions: 0, providers: [] } as unknown as StationInfo,
+      info_at: 1,
+    });
+    const html = board([card('a')], { emptyLanes: true, stations: [station(), free] });
+    const beta = html.slice(html.indexOf('aria-label="Station Beta"'));
+    expect(beta).toContain('<h2 class="fd-lane-name fd-wide">Beta</h2>');
+    expect(beta.slice(0, beta.indexOf('No sessions.'))).not.toContain('fd-count');
+    expect(beta).toContain('<span class="fd-lane-slots fd-lane-free">12 free</span>');
+    expect(beta).not.toContain('data-slot');
+    // A folded lane of ended sessions only: its count is on the Ended row.
+    const ended = board([card('a'), card('e', 'ended', 'station-b')], { foldEnded: true });
+    const lane = ended.slice(ended.indexOf('aria-label="Station Beta"'));
+    expect(lane).toContain('<h2 class="fd-lane-name fd-wide">Beta</h2>');
+    expect(lane.slice(0, lane.indexOf('<details'))).not.toContain('fd-count');
+    expect(lane).toContain('<summary>Ended <span class="fd-count">1</span></summary>');
+  });
+
   test('a folded board puts the ended strips of a lane in a collapsed Ended group with its tools', () => {
     const html = board([card('a'), card('e', 'ended'), card('l', 'lost')], { foldEnded: true });
     expect(html).toContain(
@@ -668,7 +706,10 @@ describe('flight deck fixes', () => {
     expect(html).toContain('<span class="fd-count">1</span>');
     expect(html).toContain('1 mail waiting');
     expect(html).toContain('For delivery to heron-mc2q');
-    expect(html).toContain('<details class="fd-fleet-compose"><summary>New mail or task</summary>');
+    // The fold has the look of Give fleet access…: a leading plus, the chevron at the end.
+    expect(html).toMatch(
+      /<details class="fd-fleet-compose"><summary data-variant="toggle"><svg[^>]*lucide-plus[\s\S]*?<\/svg> New mail or task<\/summary>/,
+    );
     expect(html).not.toContain('role="tablist"');
     expect(html).toMatch(
       /<div class="fd-ops-foot"><button type="button" class="fd-ghost" aria-expanded="false">/,
