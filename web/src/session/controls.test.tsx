@@ -582,7 +582,10 @@ describe('session header (DL-140)', () => {
       session({ state: 'exited', current_run: null, last_error: error }, 'ended'),
     );
     expect(shown).toContain(strip);
-    expect(shown).toContain('usage_limit: The limit is reached');
+    // The words of the error; the raw code only in the title.
+    expect(shown).toContain('title="usage_limit: The limit is reached"');
+    expect(shown).toMatch(/<\/svg> The limit is reached<\/p>/);
+    expect(shown).not.toContain('</svg> usage_limit');
     expect(shown).not.toContain('retry in');
     expect(header(session({ current_run: null, last_error: error }, 'idle'))).toContain(strip);
     // a running session with a run hides an old error

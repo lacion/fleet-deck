@@ -1,5 +1,6 @@
 // DL-140: the facts, the place chips and the details of a session header ("Flight Deck" §4.5).
 import type { ReactNode } from 'react';
+import { relativeAge } from '../app/sessions';
 import { providerLabel } from '../board/lanes';
 import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession } from '../gen';
@@ -199,16 +200,24 @@ export function DigestList({ digest }: { readonly digest: string | null | undefi
   );
 }
 
+/** `2 min` → `2 min ago`; a change under a minute ago: `just now` (as the Properties since text). */
+export function agoText(age: string): string {
+  return age === 'now' ? 'just now' : `${age} ago`;
+}
+
 /**
  * The facts of a session that the header does not show: its id (with a copy button), worktree,
- * generated summary and event count; `fleet` is the fleet-control fact of a coordinator. The
- * session menu shows them while the Properties panel is closed.
+ * generated summary, last change (`now`: Unix ms) and event count; `fleet` is the fleet-control
+ * fact of a coordinator. The session menu shows them while the Properties panel is closed (the
+ * phone has none: there the menu is the one place of the last change).
  */
 export function Details({
   session,
+  now,
   fleet,
 }: {
   readonly session: DeckSession;
+  readonly now: number;
   readonly fleet?: ReactNode;
 }) {
   const s = session.summary;
@@ -241,6 +250,10 @@ export function Details({
           </dd>
         </div>
       ) : null}
+      <div>
+        <dt>Updated</dt>
+        <dd>{agoText(relativeAge(s.updated_at, now))}</dd>
+      </div>
       <div>
         <dt>Events</dt>
         <dd>{countText(s.session_seq)}</dd>

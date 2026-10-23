@@ -14,7 +14,7 @@ import {
   Ellipsis,
   FileText,
   FolderGit2,
-  FolderTree,
+  FolderOpen,
   GitCompare,
   Icon,
   OctagonAlert,
@@ -92,6 +92,8 @@ type Props = {
   readonly fleetControl?: ((close: () => void) => ReactNode) | null | undefined;
   /** The composer shows its Resume bar: the header then has no Resume (one primary). */
   readonly composerResume?: boolean | undefined;
+  /** The composer shows its model chip (desktop and tablet): the menu then has no model picker. */
+  readonly composerModel?: boolean | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -124,6 +126,7 @@ export function SessionHeader({
   fleet,
   fleetControl = null,
   composerResume = false,
+  composerModel = false,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -393,8 +396,8 @@ export function SessionHeader({
       ) : null,
     ];
     const settings: ReactNode[] = [
-      // The Properties panel holds the mode while it shows; else this menu does.
-      hasModes && caps && !panelOpen ? (
+      // The Properties panel holds the mode while it shows a mode; else this menu does.
+      hasModes && caps && (!panelOpen || !s.mode) ? (
         <ModeLadder
           key="mode"
           modes={caps.modes}
@@ -403,8 +406,9 @@ export function SessionHeader({
           onSet={(m) => run('mode', (a) => a.setMode(m))}
         />
       ) : null,
-      // The composer model chip holds the model; the phone hides the chip, so its menu does.
-      hasModel && phone ? (
+      // The composer model chip holds the model; where no chip shows (the phone, another tab, a
+      // subagent, a hidden composer) this menu does.
+      hasModel && (phone || !composerModel) ? (
         <ModelPicker
           key="model"
           current={s.model}
@@ -494,7 +498,7 @@ export function SessionHeader({
         {/* The Properties panel shows the facts while it is open. */}
         {panelOpen ? null : (
           <>
-            <Details session={session} fleet={fleetControl?.(close)} />
+            <Details session={session} now={now} fleet={fleetControl?.(close)} />
             <div className="fd-menu-sep" />
           </>
         )}
@@ -690,16 +694,17 @@ export function SessionHeader({
           ) : (
             terminalMenu
           )}
+          {/* §4.5: folder-open; "Files panel", so that it is not a second "Files" next to the tab. */}
           {filesPanel ? (
             <button
               type="button"
               className="fd-iconbtn"
-              aria-label="Files"
-              title="Files"
+              aria-label="Files panel"
+              title="Files panel"
               aria-pressed={filesPanel.open}
               onClick={filesPanel.toggle}
             >
-              <Icon of={FolderTree} />
+              <Icon of={FolderOpen} />
             </button>
           ) : null}
           {propsPanel ? (
@@ -732,9 +737,15 @@ export function SessionHeader({
           Ending the terminal, then resuming the session…
         </p>
       ) : null}
+      {/* The words of the error; its code stays in the title (never raw text on the strip). */}
       {showError && s.last_error ? (
-        <p className="fd-sh-strip" data-tone="hazard" role="status">
-          <Icon of={TriangleAlert} size={14} /> {s.last_error.code}: {s.last_error.message}
+        <p
+          className="fd-sh-strip"
+          data-tone="hazard"
+          role="status"
+          title={`${s.last_error.code}: ${s.last_error.message}`}
+        >
+          <Icon of={TriangleAlert} size={14} /> {s.last_error.message}
           {retry ? ` · ${retry}` : ''}
         </p>
       ) : null}

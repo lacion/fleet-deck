@@ -276,12 +276,9 @@ export function SessionView(props: SessionViewProps) {
   // The composer turns into a Resume bar; on the phone the header then shows no Resume of its own.
   const composerResume =
     flags.canResume && !wakes && guest === null && actions !== null && actions !== undefined;
-  const resumeBar =
-    composerResume &&
-    tab === 'chat' &&
-    agentSub === undefined &&
-    !composerHidden(s) &&
-    access.composer;
+  const composerShown =
+    tab === 'chat' && agentSub === undefined && !composerHidden(s) && access.composer;
+  const resumeBar = composerResume && composerShown;
   const order: PaneTab[] = [
     'chat',
     'changes',
@@ -411,6 +408,7 @@ export function SessionView(props: SessionViewProps) {
         fleet={props.fleet}
         fleetControl={propsShown ? null : fleetControl.link}
         composerResume={resumeBar}
+        composerModel={layout !== 'phone' && composerShown && !resumeBar}
       />
       <MoveBanner
         session={session}

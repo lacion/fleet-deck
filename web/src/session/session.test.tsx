@@ -149,8 +149,9 @@ describe('session pane (DL-140)', () => {
   test('on a desktop the Files side panel is closed by default and has a toggle', () => {
     // no stored choice: the panel is closed, the Files tab is offered, the toggle is not pressed
     const closed = view(session(), timeline(), { files: true });
-    expect(closed).not.toContain('aria-label="Files panel"');
-    expect(closed).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="false"/);
+    expect(closed).not.toContain('<aside class="fd-pane-side" aria-label="Files panel">');
+    // The toggle is "Files panel": the tab row has the one "Files".
+    expect(closed).toMatch(/<button[^>]*aria-label="Files panel"[^>]*aria-pressed="false"/);
     // a stored `1` opens it
     const store = { getItem: () => '1', setItem: () => {}, removeItem: () => {} };
     Object.defineProperty(globalThis, 'localStorage', { value: store, configurable: true });
@@ -161,12 +162,13 @@ describe('session pane (DL-140)', () => {
       Reflect.deleteProperty(globalThis, 'localStorage');
     }
     expect(html).toContain('<aside class="fd-pane-side" aria-label="Files panel">');
-    expect(html).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="true"/);
+    expect(html).toMatch(/<button[^>]*aria-label="Files panel"[^>]*aria-pressed="true"/);
     expect(html).not.toMatch(/role="tab"[^>]*>Files</);
     // without the file service there is neither a panel nor a toggle
     const none = view(session(), timeline());
     expect(none).not.toContain('aria-label="Files panel"');
     expect(none).not.toContain('aria-label="Files"');
+    expect(none).not.toMatch(/<button[^>]*aria-label="Files panel"/);
     // the phone and the tablet have no side panel
     expect(view(session(), timeline(), { files: true, layout: 'phone' })).not.toContain(
       'aria-label="Files panel"',

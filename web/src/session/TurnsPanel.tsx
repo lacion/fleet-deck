@@ -580,7 +580,7 @@ export function TurnsPanel(props: Props) {
     );
   }
   // A folder outside Git: no turn can have a file snapshot. One empty state (§4.7), not a list
-  // of rows that all say "No snapshot".
+  // of rows that all say "No snapshot" (the same for turns that all lost theirs, below).
   if (noGit) {
     return (
       <section className="fd-turns" aria-label="Turns">
@@ -595,9 +595,24 @@ export function TurnsPanel(props: Props) {
     );
   }
   const caps = summary.capabilities;
-  // No turn has a snapshot: the reason shows once above the list, and the rows that share it
-  // only say "No snapshot".
+  // No turn has a snapshot or a change: the reason shows once above the list, and the rows that
+  // share it only say "No snapshot".
   const shared = sharedReason(turns);
+  // Then no row offers a diff, and without a start snapshot (or a rollback) no row offers a
+  // revert: one empty state (§4.7) says why, not a list of cards that all say "No snapshot".
+  if (shared !== null && (caps?.rollback !== true || !hasSnapshot(turns))) {
+    return (
+      <section className="fd-turns" aria-label="Turns">
+        {toggle}
+        <EmptyState
+          icon={FileDiff}
+          title="No changes to show"
+          body={sharedNote(shared, turns.length)}
+        />
+        <Bar review={review} />
+      </section>
+    );
+  }
   const sharedBy = (reason: string) =>
     shared !== null && (shared === NOT_A_GIT_WORKTREE || reason === shared);
   return (

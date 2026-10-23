@@ -177,10 +177,14 @@ describe('properties panel facts (§4.5)', () => {
   });
 
   test('the tokens say "new input": the station counts the input outside the prompt cache only', () => {
-    // A part keeps one line (no-break spaces): a narrow panel breaks the fact at the "·".
-    const words = (text: string) => text.replaceAll('\u00a0', ' ');
+    // The parts of the fact: a count and its words (a part keeps one line: no-break spaces).
+    const words = (parts: ReturnType<typeof tokensText>) =>
+      parts.map((p) => `${p.count} ${p.word.replaceAll('\u00a0', ' ')}`).join(' · ');
     expect(words(tokensText(682, 309_000))).toBe('682 new input · 309K output');
-    expect(tokensText(682, 309_000)).toBe('682\u00a0new\u00a0input · 309K\u00a0output');
+    expect(tokensText(682, 309_000)).toEqual([
+      { count: '682', word: 'new\u00a0input' },
+      { count: '309K', word: 'output' },
+    ]);
     expect(words(tokensText(null, 309_000))).toBe('309K output');
     expect(words(tokensText(1200, null))).toBe('1.2K new input');
     // A Codex session counts the cached input too (the ops glance says "input").
@@ -189,8 +193,16 @@ describe('properties panel facts (§4.5)', () => {
     const html = panel('live', true, {
       session: { ...session(), summary: { ...session().summary, usage } },
     });
+    // As the ops glance: the numbers in --fuel, the words in --dim; a part never breaks inside.
     expect(html).toContain(
-      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682\u00a0new\u00a0input · 309K\u00a0output</span>`,
+      `<dt>Tokens</dt><dd><span class="fd-props-tokens" title="${NEW_INPUT_TITLE}">` +
+        '<span class="fd-props-tokpart"><span class="fd-props-fuel">682</span>\u00a0new\u00a0input</span> · ' +
+        '<span class="fd-props-tokpart"><span class="fd-props-fuel">309K</span>\u00a0output</span></span>',
+    );
+    // A Codex session: no "new input" title.
+    const codex = { ...session(), summary: { ...session().summary, usage, provider: 'codex' } };
+    expect(panel('live', true, { session: codex as DeckSession })).toContain(
+      '<span class="fd-props-tokens"><span class="fd-props-tokpart">',
     );
   });
 
@@ -206,9 +218,9 @@ describe('properties panel facts (§4.5)', () => {
     const digest = panel('live', true, {
       session: { ...session(), summary: { ...session().summary, digest: '- One\n- Two' } },
     });
-    expect(digest).toContain('<dt>Summary</dt><dd><span class="fd-generated" role="img"');
-    expect(digest).toContain(
-      '<dd class="fd-props-filelist fd-props-digest"><ul class="fd-sh-digest"><li>One</li><li>Two</li></ul></dd>',
+    // The sparkles mark goes with the label; no empty value cell: the list starts under them.
+    expect(digest).toMatch(
+      /<dt>Summary <span class="fd-generated" role="img" aria-label="Generated" title="Written by model help"><svg[^>]*>[\s\S]*?<\/svg><\/span><\/dt><dd class="fd-props-filelist fd-props-digest"><ul class="fd-sh-digest"><li>One<\/li><li>Two<\/li><\/ul><\/dd>/,
     );
   });
 
@@ -230,7 +242,7 @@ describe('properties panel facts (§4.5)', () => {
     expect(menu).toMatch(/title="bypassPermissions" aria-pressed="true" disabled=""/);
   });
 
-  test('a folder never cuts its last name (the CSS wraps it); the earlier ones stay whole', () => {
+  test('a folder keeps its last name whole (one piece; the CSS ellipsizes only an overlong one)', () => {
     const cwd = '/home/me/projects/obsurvive/fleet-deck--fd-raven-b6df';
     const html = panel('live', true, {
       session: { ...session(), summary: { ...session().summary, cwd } },

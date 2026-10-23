@@ -212,9 +212,10 @@ describe('turns and reverts (DL-097)', () => {
     expect(claudeHtml).not.toContain('cannot be rolled back');
   });
 
-  test('turns without any snapshot: the reason once above the list, "No snapshot" on the rows', () => {
+  test('turns without a snapshot at their end: the reason once above the list of revert rows', () => {
     const outside = gone('not_a_git_worktree');
     // Background work on two of three turns: that reason once; the other row keeps its own words.
+    // The starts have snapshots, so each row still offers "Revert to here": the list stays.
     const busy = view(codex(), [
       finalized('t1', ok('a'), gone('background_writers')),
       finalized('t2', ok('b'), gone('queued_input')),
@@ -226,9 +227,50 @@ describe('turns and reverts (DL-097)', () => {
     expect(busy).toContain(
       'title="queued_input">No snapshot: a queued message started next</span>',
     );
+    expect(busy).toContain('Revert to here');
+    expect(busy).not.toContain('fd-emptystate');
     // One turn, or a turn with changes: no note.
     expect(view(codex(), [finalized('t1', ok('a'), outside)])).not.toContain('no-snapshots');
     expect(checkpointText('submodule')).toBe('No snapshot of the files for this turn');
+  });
+
+  test('turns that all lost their snapshots: one empty state, not a list of "No snapshot" rows', () => {
+    const busy = gone('background_writers');
+    const turns = [
+      finalized('t1', busy, busy),
+      finalized('t2', busy, gone('queued_input')),
+      finalized('t3', busy, busy),
+    ];
+    const html = view(codex(), turns);
+    // §4.7, as a folder outside Git: the icon, a title and why, with no box and no rows.
+    expect(html).toContain('<div class="fd-emptystate"><svg');
+    expect(html).toContain('lucide-file-diff');
+    expect(html).toContain('<p class="fd-emptystate-title">No changes to show</p>');
+    expect(html).toContain(
+      '<p class="fd-emptystate-body">The board kept no file snapshots for the 3 finished turns: background work was running.</p>',
+    );
+    expect(html).not.toContain('No snapshot');
+    expect(html).not.toContain('Turn 1');
+    expect(html).not.toContain('Revert to here');
+    expect(html).not.toContain('data-note="no-snapshots"');
+    // Claude cannot roll back: start snapshots offer no revert either, so the state is the same.
+    const claude: DeckSession = {
+      station_id: 'station-a',
+      status: 'idle',
+      summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
+    };
+    const started = [finalized('t1', ok('a'), busy), finalized('t2', ok('b'), busy)];
+    const claudeHtml = view(claude, started);
+    expect(claudeHtml).toContain('No changes to show');
+    expect(claudeHtml).toContain('for the 2 finished turns: background work was running.');
+    expect(claudeHtml).not.toContain('cannot be rolled back');
+    // A turn with changes keeps the list.
+    const mixed = view(codex(), [
+      finalized('t1', busy, busy),
+      finalized('t2', ok('s'), ok('e'), { files_changed: 1, insertions: 2, deletions: 0 }),
+    ]);
+    expect(mixed).not.toContain('fd-emptystate');
+    expect(mixed).toContain('Show the diff');
   });
 
   test('the diff button: a loaded diff hides; nothing or a failed load shows (and retries)', () => {
@@ -308,13 +350,13 @@ describe('turns and reverts (DL-097)', () => {
     expect(rollbackNote(null)).toBe(
       'This session cannot be rolled back, so the board offers no revert.',
     );
-    // Without any snapshot no revert is possible anyway: no note.
+    // Without any snapshot no revert is possible anyway: no note (one empty state says why).
     const none = view(s, [
       finalized('t1', gone('background_writers'), gone('background_writers')),
       finalized('t2', gone('background_writers'), gone('background_writers')),
     ]);
     expect(none).not.toContain('cannot be rolled back');
-    expect(none).toContain('data-note="no-snapshots"');
+    expect(none).toContain('<p class="fd-emptystate-title">No changes to show</p>');
   });
 
   test('read-only scopes and a running turn disable the revert; a read-only board has no files', () => {
