@@ -7,7 +7,7 @@
 import { Fragment, type ReactNode, useId } from 'react';
 import type { DeckSession, FieldMeta, MonitorInfo, SettingsView, StationView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
-import { Icon, Lock, TriangleAlert } from '../ui/icons';
+import { Icon, Lock, RotateCcw, TriangleAlert } from '../ui/icons';
 import { DEPENDS_ON, fieldLabel, helpOf } from './copy';
 import { FieldEditor, GROUP_KEYS, GROUP_KINDS, MONITOR_KEY } from './FieldEditor';
 import { InstancesEditor } from './InstancesEditor';
@@ -42,6 +42,8 @@ export type FieldsProps = {
   readonly slots?: Readonly<Record<string, SectionSlot>> | undefined;
   /** The keys that a card of the tab shows now: their fields are left out (model.ts). */
   readonly omit?: readonly string[] | undefined;
+  /** The saved keys that wait for a restart: their restart badge says "Restart needed". */
+  readonly pending?: readonly string[] | undefined;
 };
 
 /** The words of the password mark (a section note, the title and the hidden text of a field). */
@@ -57,7 +59,8 @@ function Badges({ items }: { readonly items: BadgeItems }) {
   return items.length === 0 ? null : (
     <span className="fd-set-badges" aria-hidden="true">
       {items.map((b) => (
-        <span key={b.text} className="fd-badge">
+        <span key={b.text} className="fd-badge" data-tone={b.tone}>
+          {b.tone === 'info' ? <Icon of={RotateCcw} size={12} /> : null}
           {b.text}
         </span>
       ))}
@@ -192,6 +195,7 @@ export function SettingsFields({
   os,
   slots = {},
   omit = [],
+  pending = [],
 }: FieldsProps) {
   const keep = Object.entries(slots)
     .filter(([, slot]) => slot.top !== undefined)
@@ -225,7 +229,7 @@ export function SettingsFields({
                     const locked = meta.read_only || view.overrides.includes(meta.key);
                     const parts = GROUP_KINDS.includes(meta.kind) || GROUP_KEYS.includes(meta.key);
                     const marked = meta.danger && !once;
-                    const badges = badgesOf(meta, view.overrides);
+                    const badges = badgesOf(meta, view.overrides, pending.includes(meta.key));
                     const hint = (
                       <>
                         {helpOf(meta, stationId === null)}

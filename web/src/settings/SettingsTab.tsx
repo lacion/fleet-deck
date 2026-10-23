@@ -16,6 +16,7 @@ import type { DesktopToolsActions } from './desktopTools';
 import { DesktopToolsCard } from './DesktopToolsCard';
 import type { OmarchyActions } from './omarchy';
 import { asInstances, changedKeys, changesOf, labelOf, sectionId, type Values } from './model';
+import { NO_PENDING, nextPending, type Pending } from './restartPending';
 import { SectionIndex } from './SectionIndex';
 import { type SectionSlot, SettingsFields } from './SettingsFields';
 
@@ -31,6 +32,7 @@ export type InitialTab = {
   readonly edits?: Values;
   readonly notices?: readonly NoticeItem[];
   readonly errors?: Readonly<Record<string, string>>;
+  readonly pending?: Pending;
 };
 
 type Props = {
@@ -119,9 +121,12 @@ const withoutNotice = (list: readonly NoticeItem[], ...ids: NoticeItem['id'][]) 
   list.filter((n) => !ids.includes(n.id));
 
 /** The notices that a saved answer needs. */
-export function noticesOfSaved(saved: SettingsSaved): NoticeItem[] {
+export function noticesOfSaved(
+  saved: SettingsSaved,
+  pendingCount = saved.restart_needed.length,
+): NoticeItem[] {
   const out: NoticeItem[] = [];
-  const n = saved.restart_needed.length;
+  const n = pendingCount;
   if (n > 0) {
     out.push({
       id: 'restart',
@@ -172,6 +177,7 @@ export function SettingsTab({
   const [edits, setEdits] = useState<Values>(initial?.edits ?? {});
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>(initial?.errors ?? {});
   const [notices, setNotices] = useState<readonly NoticeItem[]>(initial?.notices ?? []);
+  const [pending, setPending] = useState<Pending>(initial?.pending ?? NO_PENDING);
   const [saving, setSaving] = useState(false);
   const [secret, setSecret] = useState<SecretState | null>(null);
   const [restart, setRestart] = useState<RestartView | null>(null);
@@ -218,6 +224,7 @@ export function SettingsTab({
         setWaiting(null);
         setGiveUp(false);
         setNotices((cur) => withoutNotice(cur, 'restart'));
+        setPending(NO_PENDING);
         load();
       } else {
         if (step.sawDown !== waiting.sawDown) setWaiting({ ...waiting, sawDown: step.sawDown });
@@ -272,6 +279,8 @@ export function SettingsTab({
   };
 
   const applySaved = (saved: SettingsSaved, patch?: (v: Values) => Values) => {
+    const next = nextPending(pending, view.values, saved, view.fields);
+    setPending(next);
     setView((cur) =>
       cur === null ? cur : { ...cur, values: saved.values, revision: saved.revision },
     );
@@ -279,7 +288,7 @@ export function SettingsTab({
     setErrors({});
     setNotices((cur) => [
       ...withoutNotice(cur, 'restart', 'uncertain', 'changed', 'error'),
-      ...noticesOfSaved(saved),
+      ...noticesOfSaved(saved, Object.keys(next).length),
     ]);
   };
 
@@ -492,6 +501,7 @@ export function SettingsTab({
           os={os}
           slots={allSlots}
           omit={hidden}
+          pending={Object.keys(pending)}
         />
         {changed.length === 0 ? null : (
           <SaveBar

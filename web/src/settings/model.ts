@@ -188,15 +188,20 @@ export const sectionId = (title: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')}`;
 
-export type Badge = { readonly text: string };
+export type Badge = { readonly text: string; readonly tone?: 'info' };
 
 /**
- * The badges of a field: applies after a restart, set by the command line. A danger field (a save
- * asks for the password) has a lock mark, not a badge (SettingsFields).
+ * The badges of a field: applies after a restart (or, once a save waits for it, "Restart needed"
+ * with the info tone), set by the command line. A danger field (a save asks for the password) has
+ * a lock mark, not a badge (SettingsFields).
  */
-export function badgesOf(meta: FieldMeta, overrides: readonly string[]): Badge[] {
+export function badgesOf(meta: FieldMeta, overrides: readonly string[], pending = false): Badge[] {
   const out: Badge[] = [];
-  if (meta.apply === 'restart') out.push({ text: 'Applies after a restart' });
+  if (meta.apply === 'restart') {
+    out.push(
+      pending ? { text: 'Restart needed', tone: 'info' } : { text: 'Applies after a restart' },
+    );
+  }
   const flag = meta.cli_flag;
   if (overrides.includes(meta.key)) {
     out.push({
