@@ -84,3 +84,196 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Status:** open.
 - **Done (2026-10-16):** the chat shows the whole prompt, folded when long (`20fc4ce6`).
 - **Done (2026-10-16):** `run.started.input_text` (up to 32 KiB) from both providers; the chat bubble shows the whole prompt, folded after 12 lines with "Show more".
+
+## B11. The `/` menu misses commands and opens only at the start of an empty box (owner report, 2026-10-22)
+
+- **Observed:** when the owner types `/` in the composer, several commands do not show in the menu. The menu does not open at any caret position, only in some cases. The owner thinks that `@` can have the same problem.
+- **Facts (code on `v2` 7333db5d):**
+  - `matchSlash` (`web/src/session/slash.ts`) opens the menu only when the whole text is `/` and one word without a space (`/^\/(\S*)$/`). A `/` after other text, on a new line, or at the caret in the middle of the text gives no menu.
+  - The menu shows a maximum of 8 rows (`MAX_SLASH_OPTIONS`). There is no scroll or "more" row, so the other matches are not visible.
+  - The command list comes only from the Claude `init` frame (`claude/map.rs` `slash_commands`): `slash_commands` minus the TUI-only `terminal_slash_commands`. Before the first `init` (a new session before its first turn) the list is empty, and the composer shows no menu (`hasCommands`).
+  - The `skills` of the `init` frame only mark a row as a skill. A skill that is not also in `slash_commands` never shows in the menu.
+  - Codex sends no `session.slash_commands` event, so a Codex session has no `/` menu.
+  - `@` (`matchAt`, `web/src/session/at.ts`) already works at the caret, at the start of any word. But the search starts only after 2 characters (`MIN_AT_QUERY = 2`), only when the session has a file search (`searchFiles`), and never when a `/` or `#` menu is open. So `@` alone, or `@a`, shows no file list. This can look like "`@` is not detected".
+- **Wanted:** `/` and `@` open their menus at the caret, at any word start in the text, like Claude Code. The `/` menu lists all the commands and skills that the session can run (scroll or filter past 8 rows). Make it clear when there is no list yet, or when the provider has no commands.
+- **Questions for the design:**
+  - Which `/` positions does the provider accept? Claude reads a slash command only at the start of a prompt. A `/` in the middle of the text can be only a text insert, not a command.
+  - Where does the list come from before the first turn, and for Codex (its built-in commands, prompts and skills)?
+  - Does `@` open a menu on the `@` alone (recent or top files), as Claude Code does?
+- **Status:** open (noted only).
+
+## B12. Workflows (ultracode) show nothing in the session (owner report, 2026-10-22)
+
+- **Observed:** when a Claude session runs a workflow (the `Workflow` tool, "ultracode"), the board shows no progress. The owner cannot see how many subagents the workflow started, cannot see its phases, and cannot switch to the chat of one of its agents.
+- **Wanted:** full support in the shim and the board: the workflow, its phases and progress, the count and state of its agents, and the same switch to each agent's chat as the Agents switcher of B6.
+- **Facts (code on `v2` 7333db5d):**
+  - B6 (`docs/v2/design/agents-view.md`) reads Claude's `task_started`, `task_updated` and `task_notification` frames (`claude/tasks.rs`) and `background_tasks_changed` (`claude/map.rs`) into `task.updated` and `background.updated` events.
+  - The board treats only the task kinds `local_agent` and `remote_agent` as subagents (`SUBAGENT_TASK_KINDS`, `web/src/session/timeline.ts`; the same list in Rust). A task of any other kind shows at most as a background row, without its agents.
+  - The code has no mention of workflows. Nothing reads a workflow run, its phases, or the agents that it starts.
+- **Questions for the design:**
+  - Which frames does Claude Code send in `stream-json` for a workflow run: a task with its own `task_type`, one task per agent, progress frames? Record a live fixture first.
+  - Are the agents of a workflow in the session transcript, or only in the workflow's own files? This decides how the shim reads each agent's chat (as "Show its work" does for a subagent, DL-191).
+  - Is a workflow a group in the Agents switcher (workflow → phase → agent), or a separate view?
+  - What does the shim need beyond the direct host: is the workflow state lost after a shim takeover or a resume?
+- **Status:** open (noted only).
+
+## B13. Resume after Stop fails until the owner marks the previous run as ended (owner report, 2026-10-22)
+
+- **Observed:** the owner stops a session and then resumes it. The resume fails with an error. The owner must open "Check the previous run" in the session menu and click "Mark as ended". After that, the resume works.
+- **Wanted:** Stop and then Resume work without manual steps. The station does the check and the reconciliation itself when it is safe. The owner sees the manual dialog only when the station cannot decide.
+- **Facts (code and design on `v2` 7333db5d):**
+  - Design `docs/v2/design/shim-resume.md` (DL-182). A resume on the shim host is admitted only when every earlier shim execution of the session has a proof that it ended (`unended_execution`, `crates/fleetdeck-station/src/store/resumes.rs`; `unended_native` across sessions). Proof is one of these: `exited` with `descendants_remaining == Some(0)` and `inspection_version >= 1`; `ended_by_reboot`; `reconciled_by_owner` (§1a, §4).
+  - The design expects that "a graceful stop gives `exited` with a verified zero count in the normal case" (§5). The owner's report means that a normal Stop often does not give that proof. Possible row reasons are `exited_descendants_remaining` (a process of the provider's group or session still lived when the shim checked, for example an MCP server, a hook or a background shell), `exit_unverified` (incomplete `/proc` inspection, or an older shim without `inspection: 1`), or `lost` (`execution_unknown`, `exit_not_reported`).
+  - "Mark as ended" (`session.reconcile_execution`, §4.2) runs the same check again. It is refused while any group or session member lives or when the check is incomplete. So when the button works, the station had already found nothing alive. The only reason for the owner's click is the accepted risk of an escaped descendant (a process that left the group and the session), which the station cannot see. The direct host accepts this same risk on every resume (§1a).
+  - The board: `web/src/session/ExecutionDialog.tsx` ("Previous run of this session", "Mark as ended"), `ExecutionStop.tsx` (BG-4, "Stop previous run processes").
+- **Questions for the design:**
+  - Which row reason does a normal Stop leave? Reproduce it on the shim host and read the `shims` row (`state`, `reason`, `descendants_remaining`, `inspection_version`). If the cause is descendants that are still alive in the exit check, the shim can wait for them, or stop the whole group, before it writes the exit report.
+  - After an owner Stop (not a crash), may the station reconcile by itself when the check is complete and nothing lives? This is the same check that "Mark as ended" runs, with the same accepted risk as the direct host. It needs an adversary DESIGN REVIEW, because it changes the termination proof of DL-182.
+  - Can Resume run the check first and reconcile when it is safe, so that the error shows only when a process really lives?
+  - If a process still lives, can Resume offer "Stop them and resume" (BG-4 stop, then the check, then the resume) in one step?
+- **Status:** open (noted only).
+
+## B14. Token counts and cost are not correct (owner report, 2026-10-22)
+
+- **Observed:** the token count and the cost that the board shows for a session are wrong.
+- **Wanted:** a more reliable source and method for tokens and cost, for Claude and for Codex.
+- **Facts (code on `v2` 7333db5d):**
+  - The session total is a sum: every `usage.updated` event adds its `input_tokens`, `output_tokens` and `cost_usd` to the summary (`add_usage`, `crates/fleetdeck-proto/src/fold.rs`). So each event must carry only the new usage (a delta), never a running total.
+  - **Claude** (`claude/map.rs` `usage_of`, `on_result`): one `usage.updated` per `result` frame, with `input_tokens` and `output_tokens` of `result.usage` and `cost_usd = result.total_cost_usd` (`cost_inferred: false`).
+    - Suspect 1: if `total_cost_usd` is the running total of the CLI process (not of one turn), the fold adds the running total again at each turn, and the cost grows too fast. This must be checked against a live multi-turn recording. A resume starts a new process, which can reset such a running total.
+    - Suspect 2: Claude's `input_tokens` does not include `cache_read_input_tokens` and `cache_creation_input_tokens`. The fold does not read them, so the input count is much too low for a session with prompt caching.
+    - Suspect 3: the usage of subagents, of workflows (B12) and of background tasks can be missing from, or counted twice in, the `result` of the main turn.
+  - **Codex** (`codex/prices.rs`, `codex/map.rs`): Codex reports tokens only. The adapter adds the `last` block of each `thread/tokenUsage/updated` and infers a cost from a local price table (`PRICE_TABLE_VERSION = "2026-10-13"`, R4.6, DL-161). The table has only some `gpt-5*` ids, and `gpt-5.6-luna` has placeholder rates. A model that is not in the table has no cost. Codex also sends a `total` block, which the adapter does not use.
+  - On a subscription plan (the owner's case), the cost is an API-price estimate, not a bill.
+- **Questions for the design:**
+  - Record live fixtures (Claude multi-turn with a subagent and a resume; Codex several turns) and compare the board totals with the provider's own numbers (Claude `/cost` and the transcript `usage`; the Codex `total` block).
+  - Use the provider's running totals (Claude transcript, Codex `tokenUsage.total`) as the source and store the last value per process or thread, instead of adding deltas?
+  - Show cache tokens separately (read, write) and use them in the cost.
+  - Keep the price table current from one place (both providers), show its date, and say "estimate" on a subscription plan?
+- **Status:** open (noted only).
+
+## B15. Explore: interactive mini UIs in the chat (MCP Apps), as t3code does (owner request, 2026-10-22)
+
+- **Wanted:** an exploration task. Study how t3code shows custom mini UIs inside its chat, and decide whether Fleet Deck can do the same and how. The owner thinks the feature is very good.
+- **Facts (t3code, research 2026-10-22):**
+  - The feature is **MCP Apps**: [pingdotgg/t3code#16236](https://github.com/pingdotgg/t3code/pull/16236) "MCP apps render and run inline in threads", merged 2026-10-07. It builds on HTML renders (#15968) and the MCP Apps bridge messages (#16196). Later fixes: #17026, #17027, #17040, #18548, #20691; open #22535 (Codex app widget tool names).
+  - It follows the [MCP Apps specification (2026-01-26)](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx). An MCP tool names a `ui://` resource. The host reads the resource (an HTML document) and renders it in the chat row of the tool call. Any MCP server that ships an app works with no extra setup.
+  - **Server side:** t3code initializes Codex with the `io.modelcontextprotocol/ui` extension. When a tool call that names a `ui://` resource completes, the adapter reads it with `mcpServer/resource/read` (20 s cap, else a plain tool row), stores it as a thread attachment with a CSP built from the app's `_meta.ui.csp`, and keeps the turn open until it lands. A request service routes the app's `tools/call` and `resources/read` only to its own server, through the live session; it refuses tools that are hidden from apps, and never starts a stopped session.
+  - **Client side:** a host bridge (`ui/initialize`, replay of the tool input and result, theme and width as `--color-*` variables, size changes, links, `ui/message`, `ui/update-model-context`, display modes inline and full screen, teardown, `ui/download-file`). The app runs in an opaque-origin sandboxed frame, the same as their HTML renders.
+  - **Consent:** a tool call that is not marked `readOnlyHint`, every app message, every link and every download asks the user first. App model context is sent to the model as untrusted context, capped at 16 KiB.
+  - **Provider coverage:** Codex only. "Claude's SDK has no resource read yet."
+  - Their review: 5 + 7 adversary rounds (impersonation by a fake app reference, navigation away from the bridge, captures during an interrupt, oversized documents, full screen over approvals).
+- **Facts (Fleet Deck on `v2` 7333db5d):**
+  - Codex `mcpToolCall` items map to `ToolKind::Mcp` rows (`codex/map_tools.rs`). Nothing reads `ui://` resources or uses the `io.modelcontextprotocol/ui` extension.
+  - HTML artifacts (DL-155, R12) already render in an opaque-origin sandbox that protects the board's login and API. This can be the base of an app frame.
+  - The R13 wall and the P6 previews (`omarchy-p6.md`) already have reviewed rules for inert artifact documents and their CSP (§5E).
+- **Questions for the exploration:**
+  - Codex: does the station's app-server driver get the `ui://` reference and `mcpServer/resource/read` with the Codex version that we pin?
+  - Claude: is there a way today (Claude Code MCP resources, a station-side MCP client for the session's servers)? Or Codex only first, as t3code did?
+  - Routing: the app's tool calls go from the board through the deck and the station to the live provider session. Which principals may call them (owner only; a shared-session approver)? This is a new command path: adversary DESIGN REVIEW.
+  - Where is the app document stored (session attachment, artifact store), and what does the deck relay?
+  - Can Fleet Deck's own MCP tools (the coordinator tools) ship apps, for example a fleet view or a task board inside a chat?
+- **Status:** open (exploration, noted only).
+
+## B16. A new logo for Fleet Deck (owner request, 2026-10-22)
+
+- **Wanted:** a strong, distinctive logo for Fleet Deck: a mark and a wordmark that fit the "Flight Deck" look of the new board.
+- **Facts (`v2` 7333db5d):**
+  - `docs/v2/assets/fleet-deck-icon.png` (512 px): a stack of three dark cards with an orange outline on the front card (a green status dot and text lines) on a dark rounded square. No file in the repository refers to it.
+  - The board has no image logo. The brand row draws a 24 px rounded square (`--ink-fill`) with the text "FD" (`.fd-wide`, weight 800, 10 px) next to "Fleet Deck" 14 px (`DESIGN-SYSTEM.md`, "Brand row"). `web/index.html` has no favicon.
+  - Design rules that the logo must respect (`DESIGN-SYSTEM.md`): "Yellow is never decoration: not the logo …"; the wordmark uses `.fd-wide` (`font-stretch: 115%`, weight 620); light and dark themes and forced colors.
+- **Deliverables to decide:** the mark (SVG, readable at 16 px), the wordmark, a lockup; favicon and PWA / app icons; the board brand row; the Omarchy and desktop icons (P4, launcher and panel entries); the README and docs header; a social preview image.
+- **Questions for the design:**
+  - Keep the idea of the current icon (a deck of session cards) or start again (an aviation or carrier-deck idea that matches "Flight Deck", stations, callsigns)?
+  - Concepts first (3 directions as an artifact, as the UI refresh did), then the owner chooses?
+  - Monochrome-first, so that it works in forced colors and in the Omarchy theme palettes?
+- **Status:** open (noted only).
+
+## B17. More control of the wall: scroll, custom URLs, a "remote control" for the wall browser, AI-generated wall UIs (owner request, 2026-10-22)
+
+- **Observed:** the wall is useful, but the owner needs more. Today the owner cannot scroll the content of the wall, and cannot show a page that is not a Fleet Deck view.
+- **Wanted:**
+  1. Ways to control the wall from the board (and the phone): scroll the content, move between tiles and items, open and close views.
+  2. Load a custom URL on the wall (a dashboard, a docs page, a preview of a dev server).
+  3. Something like a remote desktop, but only for the wall browser: the owner sees the wall and drives it (scroll, click, keys) from another device.
+  4. AI-generated mini UIs on the wall, made on the fly by an agent. This relates to the MCP Apps idea of B15: a custom UI on the wall instead of in the chat.
+- **Facts (design and code on `v2` 7333db5d):**
+  - The wall is the board route `#/wall` (`docs/v2/design/omarchy.md` §4): the modes `mission`, `focus`, `review`, `race`, `artifact`, `ambient`. It runs as a `Principal::Display`, which is read-only by construction (§5): it may only subscribe, and it sees no files, terminals, settings or artifact routes.
+  - The only control today is a **directive** (§4.5): `display.directive { display_id, mode, session?, artifact_url?, batch_id?, pin?, filter? }`, sent by the owner (`POST /api/displays/{id}/directive`), a coordinator with the `desktop` class, or the bound station (the hotkeys of §8.4: next needs-you item, next mode). A directive selects a view. It cannot scroll, click or type.
+  - Wall keys only navigate (`←/→` mode, `Tab` tiles, `Enter`, `Esc`), and only when the kiosk window has the keyboard focus (§4.3).
+  - The `artifact` mode shows one artifact full screen through its `/a/{token}/` URL in the sandboxed frame. DL-221: the wall shows single-file artifacts only. An agent can already publish an HTML artifact and send it to the wall. This is the nearest thing to an "AI-generated wall UI" today, but it is static and has no bridge back to the agent.
+  - P6 (`omarchy-p6.md`) gives coordinators monitor screenshots and wall previews. P7 (`omarchy-p7.md`, DL-245) gives coordinators keyboard input and pointer movement on the desktop (the whole desktop, with its own consent and scope rules, not limited to the wall).
+- **Questions for the design:**
+  - Wall control: new directive kinds (`scroll { area, by }`, `select { item }`, `open`, `back`), or a narrow input channel that only the wall page reads? Who may send them (owner, the phone, coordinators)?
+  - Custom URLs: a new `url` mode in a sandboxed frame? Which URLs are allowed (any, an owner list, only the local network)? The wall principal and the kiosk profile must not leak to the page. High risk: adversary DESIGN REVIEW.
+  - Remote control of the wall only: a live view of the wall (P6 screenshots, or a stream) plus input that P7 limits to the wall window, or a board-side mirror of the wall state (no pixels, just the same route and directives)? The mirror is cheaper and safer.
+  - AI-generated wall UIs: an agent publishes an HTML artifact with a small bridge (as MCP Apps, B15): live data from the deck (read-only, the display's own rows), and maybe actions that go back through the owner's approval. Do B15 and this item share one app host for the chat and the wall?
+- **Status:** open (noted only).
+
+## B18. Show the effort level next to the model (owner request, 2026-10-22)
+
+- **Wanted:** wherever the board shows the model of a session, it also shows the reasoning effort (for example "Opus 5.5 · high").
+- **Facts (code on `v2` 7333db5d):**
+  - The board shows the model with `shortModel` (`web/src/ui/format.ts`) in the session header (`SessionView.tsx`) and the Properties panel (`PropertiesPanel.tsx`). The board has no effort field at all.
+  - `SessionSummary` has `mode` and `model` (`crates/fleetdeck-proto/src/session.rs`), and `session.model_changed` updates the model. No event or summary field carries the effort.
+  - Codex: the driver config and `SessionSpec` have `effort: Option<String>` and send it on `thread/start` and each turn (`codex/core.rs`, `codex/driver.rs`). No code outside the Codex provider sets it, so it is always `None` (the Codex default from the user's `config.toml`), and the board does not know the real value.
+  - Claude: the provider has no effort code. Claude Code has an effort setting (the `/effort` command, settings), which can change during a session.
+- **Questions for the design:**
+  - Where does the real value come from? Codex: the `thread/start` or `thread/resume` answer, or the config that the station reads. Claude: the `init` frame, if it carries the effort, or the settings. Record live frames first.
+  - A new `session.effort_changed` event (like `model_changed`), so that a `/effort` change in the session shows at once?
+  - Show it also on the session cards, the wall tiles and the spawn dialog? Let the owner choose the effort at spawn and in the session (this is a separate step: it writes, the display only reads).
+  - Unknown effort: show nothing, or "default"?
+- **Status:** open (noted only).
+
+## B19. The fleet view shows the agents too: per session and in total, with ultracode workflows (owner request, 2026-10-22)
+
+- **Wanted:** in the fleet view, the owner sees for each session its subagents (and the agents of an ultracode workflow, B12), and the total number of running agents across the whole fleet. The total is the sessions plus their agents, so one number shows how much is running.
+- **Facts (code on `v2` 7333db5d):**
+  - The fleet view is `web/src/board/FleetBoard.tsx` (cards) and `web/src/board/FleetStrip.tsx` (the strip). The fleet panel is `web/src/fleet/FleetPanel.tsx`.
+  - The cards show a "Background tasks" badge with `s.background_tasks.length` (a count of all background tasks). It does not split subagents from other tasks, and it does not show a fleet total.
+  - `SessionSummary` has `background_tasks: Vec<String>` (the ids) and `background_agents: u32` (the subagent count, `crates/fleetdeck-proto/src/session.rs`, set by `fold.rs` from `SUBAGENT_TASK_KINDS`). The board uses only `background_tasks.length`, so the subagent count is not shown in the fleet view. The count is also not in the `timeline.ts` summary (`background_agents` is read there only).
+  - A session's "Activity" is `Background` only when it has background tasks and no run (`fold.rs`); the fleet view has no agent total anywhere.
+  - Workflows (ultracode) show no agents at all (B12). So the count can miss them until B12 is built.
+  - The display route (`crates/fleetdeck-deck/src/http/display_view.rs`) copies `background_agents`, so a wall could show the total too.
+- **Questions for the design:**
+  - Count per session as "running agents" = subagents still running (`background_agents`), or all background tasks, or the agents of a workflow once B12 gives them?
+  - Fleet total: sum over the sessions the viewer can see (a shared member sees less), and a note when a station is stale and its count is old.
+  - Where to show it: a total in the fleet header and the strip, and "N agents" next to each session. Should the wall (B17) show the total too?
+  - Keep "tasks" (shell commands) separate from "agents" in the count, so the number means agents only?
+- **Status:** open (noted only).
+
+## B20. Cost totals already stored are too high: repair or reset (owner report, 2026-10-22)
+
+- **Observed:** the cost totals that the deck already stores for sessions are too high. This follows from the usage problem of B14.
+- **Wanted:** a repair of the stored totals, or a reset to a correct starting value, after B14 fixes the source of the cost.
+- **Facts:** the session total is a sum of every `usage.updated` event (`add_usage`, `crates/fleetdeck-proto/src/fold.rs`). A wrong value in an event is therefore kept in the stored total. The fix in B14 does not change the totals that are already stored.
+- **Questions for the design:** recompute the totals from the stored events (a migration), or reset them and count again from the fix date? Show the reset in the audit log. Which sessions does it touch: all, or only the ones with a Claude or Codex cost?
+- **Depends on:** B14 (the source of the cost must be right before a repair is worth doing).
+- **Status:** open (noted only).
+
+## B21. The first turn after a Claude resume is not counted (owner report, 2026-10-22)
+
+- **Observed:** the first turn after a Claude resume adds no cost to the session total.
+- **Suspected cause (not verified):** the first turn after a resume is not added to the stored total. A resumed process may start its own cost count at zero.
+- **Wanted (owner proposal):** the session's recorded cost is passed to the resumed process as its starting point. Then the total continues from the stored value.
+- **Facts:** the resume path is the shim-resume design (`docs/v2/design/shim-resume.md` §2 and §3). Claude's cost is `total_cost_usd` of the `result` frame (`claude/map.rs`, `usage_of`).
+- **Risk:** this changes the protocol between the station and the provider, and the station state. It needs its own high-risk review: an adversary DESIGN REVIEW before any build.
+- **Depends on:** B14 (the source of Claude's cost). If the cost is a running total of the process, the fix of B14 may change this design.
+- **Status:** open (noted only).
+
+## B22. "Last seen" of an offline station shows when its last link started, not when it ended (owner report, 2026-10-22)
+
+- **Observed:** for an offline station, "Last seen" shows the time when its last link started, not the time when the link ended.
+- **Wanted:** "Last seen" shows the end of the last link (the last moment the station was reachable).
+- **Facts:** the board shows `station.last_seen` in `web/src/board/StationsPanel.tsx` (the text "Last seen …" with `showLastSeen`, `web/src/board/StationSummary.tsx`). The value comes from the deck's station record. I did not trace where the deck writes `last_seen` for a station; that is the first research step.
+- **Questions for the design:** does the deck store the link start and the link end separately? If not, add the link end when the link closes (and keep the start for the status history).
+- **Status:** open (noted only).
+
+## B23. Smaller items: a restart marker, turns without a snapshot, the phone artifact version selector, older hover CSS (owner list, 2026-10-22)
+
+- **Wanted, one by one:**
+  1. **A different marker for settings that need a restart.** The settings tab counts `saved.restart_needed` and shows a text line "N settings apply after a restart" (`web/src/settings/SettingsTab.tsx`). The owner wants a clear visual marker on each such setting.
+  2. **Folding turns that have no snapshot.** The turn list shows a turn diff only when it has a snapshot (`web/src/session/TurnsPanel.tsx`, `parseTurnSnapshot`, `turnSnapshot`). A turn without one is not folded the same way. Decide the fold rule for such turns.
+  3. **The version selector of phone artifacts.** On the phone, an artifact chip shows the version (`Artifact: <title> v<n>`, `web/src/artifacts/ArtifactChips.tsx`). The owner wants a version selector on the phone that is as clear as the board's.
+  4. **Some older CSS hover rules.** About 148 `:hover` rules are in `web/src/styles`. Some are old and do not match the new design (`DESIGN-SYSTEM.md`). Find them and bring them to the design rules.
+- **Status:** open (noted only). Each point is a separate small item when it is built.
