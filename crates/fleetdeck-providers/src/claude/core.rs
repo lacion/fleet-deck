@@ -246,9 +246,14 @@ pub struct ClaudeCore {
     /// levels (B18 Phase 2).
     #[serde(default)]
     pub(super) model_choices: Vec<ModelChoice>,
-    /// The model of the last `get_settings` answer.
+    /// The model of the last `get_settings` answer; `None` after a model
+    /// change until a newer answer.
     #[serde(default)]
     pub(super) applied_model: Option<String>,
+    /// The `settings_seq` at the last model change: an answer with an id at
+    /// or below it was written before the change and its model is old.
+    #[serde(default)]
+    pub(super) model_set_seq: u64,
     /// The model of the last `session.started` or `model.changed` that this
     /// core emitted. `None` in a restored older checkpoint.
     #[serde(default)]
@@ -301,6 +306,7 @@ impl ClaudeCore {
             effort: None,
             model_choices: Vec::new(),
             applied_model: None,
+            model_set_seq: 0,
             reported_model: None,
             effort_seq: 0,
             effort_sets: BTreeMap::new(),

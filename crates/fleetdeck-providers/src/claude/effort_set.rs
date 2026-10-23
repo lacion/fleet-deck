@@ -135,10 +135,11 @@ pub(super) fn after_settings(
     seq: u64,
 ) -> Vec<Output> {
     let mut out = Vec::new();
+    // A read written before the last model change names the old model.
     if let Some(model) = applied
         .get("model")
         .and_then(Value::as_str)
-        .filter(|m| model_text_ok(m))
+        .filter(|m| seq > core.model_set_seq && model_text_ok(m))
     {
         core.applied_model = Some(model.to_owned());
         match core.reported_model.as_deref() {
@@ -170,6 +171,14 @@ pub(super) fn after_settings(
         }
     }
     out
+}
+
+/// A successful model change: the applied model is not known until a
+/// `get_settings` read that is written after the change answers, so
+/// [`ClaudeCore::set_effort`] uses the new `model` until then.
+pub(super) fn on_model_set(core: &mut ClaudeCore) {
+    core.applied_model = None;
+    core.model_set_seq = core.settings_seq;
 }
 
 /// The asks stopped: no read will verify the applied sets.

@@ -725,6 +725,7 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
             let model = model.unwrap_or_else(|| "default".to_owned());
             core.model = Some(model.clone());
             core.reported_model = Some(model.clone());
+            effort_set::on_model_set(core);
             // A model change can change or clamp the effort (B18).
             let mut out = vec![Output::Emit(Event::ModelChanged { model })];
             out.extend(core.settings_request());

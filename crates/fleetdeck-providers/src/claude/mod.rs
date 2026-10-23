@@ -38,6 +38,8 @@ mod tests;
 #[cfg(test)]
 mod tests_effort;
 #[cfg(test)]
+mod tests_effort_model;
+#[cfg(test)]
 mod tests_effort_set;
 #[cfg(test)]
 mod tests_models;

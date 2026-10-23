@@ -12,8 +12,8 @@ use super::*;
 use crate::adapter::ProviderError;
 use crate::checkpoint::AdapterCheckpoint;
 
-const OPUS: &str = "claude-opus-5-5";
-const HAIKU: &str = "claude-haiku-5-5";
+pub(super) const OPUS: &str = "claude-opus-5-5";
+pub(super) const HAIKU: &str = "claude-haiku-5-5";
 
 /// The `models` of an `initialize` answer.
 fn models_json() -> Value {
@@ -36,13 +36,13 @@ fn init_frame(model: &str) -> Value {
 }
 
 /// A `get_settings` answer whose `applied` has `model` and `effort`.
-fn settings_answer(id: &str, model: &str, effort: Value) -> Value {
+pub(super) fn settings_answer(id: &str, model: &str, effort: Value) -> Value {
     json!({"type":"control_response","response":{"subtype":"success","request_id":id,
         "response":{"effective":{"env":{"K":"fd-test-secret-0002"}},
                     "applied":{"model":model,"effort":effort}}}})
 }
 
-fn error_answer(id: &str, text: &str) -> Value {
+pub(super) fn error_answer(id: &str, text: &str) -> Value {
     json!({"type":"control_response","response":{"subtype":"error","request_id":id,"error":text}})
 }
 
@@ -56,7 +56,7 @@ fn ack(core: &mut ClaudeCore, n: u64) -> Vec<Output> {
 }
 
 /// A started core whose first read is answered (`medium`): no request is open.
-fn started(model: &str) -> ClaudeCore {
+pub(super) fn started(model: &str) -> ClaudeCore {
     let mut core = ClaudeCore::new(config(false));
     let id = writes(&core.initialize().unwrap())[0]["request_id"]
         .as_str()
@@ -78,7 +78,7 @@ fn started(model: &str) -> ClaudeCore {
 }
 
 /// The ids of the `get_settings` requests in `out`.
-fn settings_ids(out: &[Output]) -> Vec<String> {
+pub(super) fn settings_ids(out: &[Output]) -> Vec<String> {
     writes(out)
         .iter()
         .filter(|w| w["request"]["subtype"] == "get_settings")
@@ -87,7 +87,7 @@ fn settings_ids(out: &[Output]) -> Vec<String> {
 }
 
 /// A finished turn: the input starts, then its `result` arrives.
-fn finish_turn(core: &mut ClaudeCore, n: u8) -> Vec<Output> {
+pub(super) fn finish_turn(core: &mut ClaudeCore, n: u8) -> Vec<Output> {
     core.prompt(&input(n, "go")).unwrap();
     lifecycle(core, n, "started");
     feed(
@@ -127,14 +127,14 @@ fn set_results(out: &[Output]) -> Vec<Event> {
         .collect()
 }
 
-fn model_changes(out: &[Output]) -> Vec<Event> {
+pub(super) fn model_changes(out: &[Output]) -> Vec<Event> {
     emits(out)
         .into_iter()
         .filter(|e| matches!(e, Event::ModelChanged { .. }))
         .collect()
 }
 
-fn restored(core: &ClaudeCore) -> ClaudeCore {
+pub(super) fn restored(core: &ClaudeCore) -> ClaudeCore {
     let text = core.checkpoint().unwrap().to_json().unwrap();
     let stored = AdapterCheckpoint::from_json(&text).unwrap();
     ClaudeCore::restore(config(false), &stored).unwrap()
@@ -629,6 +629,7 @@ fn a_pre_effort_set_checkpoint_restores_without_a_reported_model() {
     for key in [
         "model_choices",
         "applied_model",
+        "model_set_seq",
         "reported_model",
         "effort_seq",
         "effort_sets",
@@ -685,6 +686,7 @@ fn the_checkpoint_with_an_open_change_stays_readable_by_the_previous_build() {
     for key in [
         "model_choices",
         "applied_model",
+        "model_set_seq",
         "reported_model",
         "effort_seq",
         "effort_sets",
