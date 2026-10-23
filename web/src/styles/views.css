@@ -44,10 +44,6 @@
   min-width: 0;
 }
 
-.fd-wfilter select {
-  max-width: 100%;
-}
-
 /* A phone: one Filters button (the fleet's pattern, §4.8). Its menu hangs from the left edge of
    the button (the button starts the row) and names each control, the label over the control. */
 .fd-watch-filtermenu {
@@ -73,6 +69,7 @@
 
 .fd-watch-filtergrid select {
   width: 100%;
+  max-width: 100%;
 }
 
 /* The status segments share the width of the menu. */
@@ -151,9 +148,13 @@
   text-decoration: none;
 }
 
-.fd-wtile-open:hover,
 .fd-wtile-open:focus-visible {
   text-decoration: none;
+}
+@media (hover: hover) {
+  .fd-wtile-open:hover {
+    text-decoration: none;
+  }
 }
 
 .fd-wtile-open:focus-visible {
@@ -375,9 +376,11 @@
   border-color: var(--btn-edge-raised);
 }
 
-.fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
-  background: var(--raised-hi);
-  border-color: var(--ctl-edge);
+@media (hover: hover) {
+  .fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
+    background: var(--raised-hi);
+    border-color: var(--ctl-edge);
+  }
 }
 
 /* A phone: the answers are 44px buttons on a two-column grid: Allow and Deny side by side, a
@@ -405,8 +408,10 @@
     border-color: var(--btn-edge);
   }
 
-  .fd-wtile-ask .fd-options > button.fd-danger:hover:not(:disabled) {
-    background: var(--hazard-bg);
+  @media (hover: hover) {
+    .fd-wtile-ask .fd-options > button.fd-danger:hover:not(:disabled) {
+      background: var(--hazard-bg);
+    }
   }
 }
 
@@ -468,16 +473,24 @@
   }
 }
 
-.fd-achan:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-achan:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+  }
 }
 
-.fd-achan[aria-pressed="true"],
-.fd-achan[aria-pressed="true"]:hover {
+.fd-achan[aria-pressed="true"] {
   background: var(--selected-bg);
   color: var(--text);
   box-shadow: var(--selected-lift);
+}
+@media (hover: hover) {
+  .fd-achan[aria-pressed="true"]:hover {
+    background: var(--selected-bg);
+    color: var(--text);
+    box-shadow: var(--selected-lift);
+  }
 }
 
 .fd-achan-label {
@@ -530,9 +543,11 @@
   }
 }
 
-.fd-achan-ended:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-achan-ended:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+  }
 }
 
 .fd-achan-ended > .fd-icon {
@@ -638,9 +653,11 @@
   font-weight: 500;
 }
 
-.fd-arow-session:hover {
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-arow-session:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 .fd-arow-session:focus-visible {
@@ -878,8 +895,10 @@
   font-weight: 500;
 }
 
-.fd-auto-list summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-auto-list summary:hover {
+    color: var(--text);
+  }
 }
 
 .fd-auto-list details[open] > summary {
@@ -969,12 +988,18 @@
 
   /* the phone pill: the pressed-chip look of base.css (fill, control edge, weight 600), and no
      selection bar (a pill is not a row) */
-  .fd-achan[aria-pressed="true"],
-  .fd-achan[aria-pressed="true"]:hover {
+  .fd-achan[aria-pressed="true"] {
     background: var(--badge-bg);
     border-color: var(--ctl-edge);
     box-shadow: none;
     font-weight: 600;
+  }
+  @media (hover: hover) {
+    .fd-achan[aria-pressed="true"]:hover {
+      background: var(--badge-bg);
+      box-shadow: inset 0 0 0 1px var(--ctl-edge);
+      font-weight: 600;
+    }
   }
 
   .fd-achan.fd-selbar[aria-pressed="true"]::before {

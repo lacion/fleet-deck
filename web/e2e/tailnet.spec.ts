@@ -130,7 +130,9 @@ function suite() {
     await expect(toggle).not.toBeChecked();
     const help = card.locator('.fd-tailnet-help');
     await expect(help).toContainText('Keeps the tailnet addresses current at each start.');
-    await expect(help.locator('.fd-badge')).toHaveText('Applies after a restart');
+    // The badge ends the control line of the switch, not the help line.
+    await expect(card.locator('.fd-tailnet-auto .fd-badge')).toHaveText('Applies after a restart');
+    await expect(help.locator('.fd-badge')).toHaveCount(0);
     await expect(card).toContainText(
       'Not applied at start: Tailscale did not answer within 3 seconds.',
     );

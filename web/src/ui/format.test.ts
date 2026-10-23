@@ -10,6 +10,8 @@ import {
   homeShortIn,
   isRiskyMode,
   modelFamily,
+  monitorLabel,
+  monitorRaw,
   pathParts,
   plainLine,
   removedText,
@@ -203,5 +205,31 @@ describe('paths (DESIGN-SYSTEM §5)', () => {
     expect(pathParts('/srv/data')).toEqual({ parent: '/srv/', base: 'data' });
     expect(pathParts('/srv')).toEqual({ parent: '/', base: 'srv' });
     expect(pathParts('/')).toEqual({ parent: '', base: '/' });
+  });
+});
+
+describe('monitorLabel', () => {
+  const m = (name: string, description: string) => ({ name, description });
+
+  test('a description loses its hex product code and comes before the connector', () => {
+    expect(monitorLabel(m('DP-1', 'Dell Inc. DELL U2720Q 0x1A2B'))).toBe(
+      'Dell Inc. DELL U2720Q · DP-1',
+    );
+    expect(monitorLabel(m('HDMI-A-1', ''))).toBe('HDMI-A-1');
+    expect(monitorLabel(m('DP-2', '0x41AA'))).toBe('DP-2');
+  });
+
+  test('a laptop panel is the built-in display', () => {
+    expect(monitorLabel(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
+      'Built-in display · eDP-1',
+    );
+    expect(monitorLabel(m('LVDS-1', ''))).toBe('Built-in display · LVDS-1');
+  });
+
+  test('the raw text keeps the name and the description', () => {
+    expect(monitorRaw(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
+      'eDP-1 — Samsung Display Corp. 0x41AA',
+    );
+    expect(monitorRaw(m('DP-1', ''))).toBe('DP-1');
   });
 });

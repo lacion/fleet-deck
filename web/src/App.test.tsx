@@ -68,7 +68,8 @@ describe('App', () => {
       expect(html).toMatch(new RegExp(`<button[^>]*class="fd-chip"[^>]*>${name}</button>`));
     // no filter is set: there is no "N of M" output
     expect(html).not.toContain('<output');
-    expect(html).toContain('2 stations');
+    // The sentence counts the stations that run a live session (§4.3): one of the two.
+    expect(html).toContain('on <span>1 station</span>');
   });
 
   test('provider text and workspace paths are escaped rather than treated as HTML', () => {

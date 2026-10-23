@@ -2,36 +2,25 @@
    ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). The primitives come from base.css. */
 
 /* ════════════════════ the Tailnet card (Settings → Deck) ═════════════════════ */
-/* A part of the Network section of the deck tab (§4.7: no boxed groups): its small heading, labels
-   and controls sit on the columns of the settings fields. It has no rule and no margin of its own:
-   the section and the tab space it. */
+/* A part of the Network section of the deck tab (§4.7: no boxed groups): it has no heading of its
+   own; its rows (Tailnet name, Use Tailscale automatically, Trusted certificate) are field rows of
+   the section, on the columns of the settings fields and at the gap of their grid. It has no rule
+   and no margin of its own: the section and the tab space it. */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
   min-width: 0;
   background: none;
 }
-.fd-tailnet h2 {
-  margin: 0;
-  font-size: var(--fs-heading);
-  font-weight: 600;
-  line-height: 1.15;
-}
-.fd-tailnet h3 {
-  margin: 0;
-  font-size: var(--fs-ui);
-  font-weight: 600;
-}
 .fd-tailnet p {
   margin: 0;
 }
-/* A switch field: the field grid of the settings (§4.7): the label (200px), then the switch, and
-   the help and the state lines under the switch. The label keeps the switch inside it (its name);
-   the grid puts the text in the label column. */
+/* A switch field: the field grid of the settings (§4.7): the label (200px), then the switch and
+   its badge on the control line, and the help and the state lines under the switch. The label
+   keeps the switch inside it (its name); the grid puts the text in the label column. */
 .fd-tailnet label.fd-tailnet-switch {
   display: grid;
-  grid-template-columns: 200px auto;
-  column-gap: var(--sp-5);
+  grid-template-columns: calc(200px + var(--sp-5)) auto auto;
   justify-content: start;
   align-items: center;
   min-height: var(--ctl-h);
@@ -44,27 +33,40 @@
   grid-row: 1;
   grid-column: 2;
 }
+/* The badge ends the control line, 8px after the switch (settings.css .fd-set-ctlrow). */
+.fd-tailnet label.fd-tailnet-switch > .fd-set-badges {
+  grid-row: 1;
+  grid-column: 3;
+  margin-left: var(--sp-2);
+}
 .fd-tailnet-auto > :not(label),
 .fd-tailnet-cert > :not(label) {
   margin-left: calc(200px + var(--sp-5));
   font-size: var(--fs-meta);
   line-height: 1.45;
 }
-/* The help of the automatic mode ends with the "Applies after a restart" badge, as the help of a
-   settings field does (settings.css .fd-set-grid .fd-fieldhint:has(> .fd-set-badges)). */
-.fd-tailnet-auto > .fd-tailnet-help {
+/* A note of a row that has no control ("Tailscale" and why it cannot be used). */
+.fd-tailnet-rownote {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-1) var(--sp-2);
+  min-height: var(--ctl-h);
+  max-width: 72ch;
+  line-height: 1.45;
 }
 /* Narrow screens: the switch ends the label row (touch settings), like the settings fields; the
-   help and the state lines go under both. */
+   badge, the help and the state lines go under both. */
 @media (max-width: 720px) {
   .fd-tailnet label.fd-tailnet-switch {
     grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--sp-1);
     color: var(--dim);
     font-size: var(--fs-meta);
+  }
+  .fd-tailnet label.fd-tailnet-switch > .fd-set-badges {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-left: 0;
   }
   .fd-tailnet-auto > :not(label),
   .fd-tailnet-cert > :not(label) {

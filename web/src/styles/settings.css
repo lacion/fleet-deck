@@ -177,27 +177,8 @@
   min-width: 0;
 }
 
-/* The quiet loading line (Loading.tsx): a 12px ring with a turning --focus arc (blue = in
-   progress, as the restart wait), then the words in --dim. Reduce motion stops the arc. */
-.fd-set-loading {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  margin: 0;
-  color: var(--dim);
-  font-size: var(--fs-ui);
-}
-.fd-set-loading::before {
-  content: "";
-  flex: none;
-  box-sizing: border-box;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--focus);
-  border-radius: 50%;
-  animation: fd-turn 0.9s linear infinite;
-}
+/* The quiet loading line is the base.css primitive `.fd-loading` (ui/Loading.tsx); the inline
+   `.fd-set-loading` of Displays and the Tailnet card is its old name there. */
 
 /* An empty list (§4.7): a 20px --faint icon and one sentence in --dim. */
 .fd-set-empty {
@@ -316,7 +297,7 @@
     text-decoration: none;
   }
   .fd-set-toc a:hover:not([aria-current="true"]) {
-    background: var(--hover-bg, var(--raised));
+    background: var(--hover-bg);
     color: var(--text);
   }
 }

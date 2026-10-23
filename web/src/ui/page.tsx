@@ -1,6 +1,6 @@
 // DL-171: the frame of every secondary page of the board and its form parts (UI-DESIGN.md §3.6).
 import { type ReactNode, useId } from 'react';
-import { ChevronLeft, Icon, type LucideIcon } from './icons';
+import { ChevronLeft, Icon, type LucideIcon, OctagonAlert } from './icons';
 
 type PageProps = {
   readonly title: string;
@@ -122,6 +122,33 @@ export function EmptyState({
       <p className="fd-emptystate-title">{title}</p>
       <p className="fd-emptystate-body">{body}</p>
       {action === undefined ? null : action}
+    </div>
+  );
+}
+
+/**
+ * A load error of a page, a list or a panel (§4.7): the notice row in the error tone (a 3px
+ * --hazard holder, the octagon icon, the words in --text), with an optional "Try again". The words
+ * are the alert; the row is a card in the page (`data-place="page"`, shell.css), not a banner.
+ */
+export function ErrorNotice({
+  text,
+  onRetry,
+}: {
+  readonly text: ReactNode;
+  readonly onRetry?: (() => void) | undefined;
+}) {
+  return (
+    <div className="fd-notice fd-notice-row" data-tone="error" data-place="page">
+      <Icon of={OctagonAlert} size={14} />
+      <span className="fd-notice-text" role="alert">
+        {text}
+      </span>
+      {onRetry === undefined ? null : (
+        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
+          Try again
+        </button>
+      )}
     </div>
   );
 }

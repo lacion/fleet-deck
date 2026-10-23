@@ -137,9 +137,9 @@ describe('artifact viewer', () => {
 
   test('the page has the Page header: the way back above the title, the panel a back button', () => {
     const html = render(ready(), { variant: 'page' });
-    // §4.3: "‹ All artifacts" above the title row, not in it.
+    // §4.3: "‹ All artifacts" is a row of its own above the title row, not in it.
     expect(html).toMatch(
-      /<div class="fd-page-titles"><a class="fd-btn fd-ghost fd-sm fd-page-back" href="#\/artifacts">[\s\S]*All artifacts<\/a><div class="fd-page-titlerow"><h1 class="fd-page-title">/,
+      /<div class="fd-page-backrow"><a class="fd-btn fd-ghost fd-sm fd-page-back" href="#\/artifacts">[\s\S]*All artifacts<\/a><\/div><div class="fd-page-titles"><div class="fd-page-titlerow"><h1 class="fd-page-title">/,
     );
     expect(html).toContain('aria-label="Artifact"');
     expect(render(ready())).toContain('Back to the list');

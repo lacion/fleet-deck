@@ -207,12 +207,19 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* On the New session route the button is the current nav row, not a second general primary
    (§2.2): the --selected-bg fill and the 2px --focus bar of .fd-selbar. */
-.fd-newbtn[aria-current="page"],
-.fd-newbtn[aria-current="page"]:hover:not(:disabled) {
+.fd-newbtn[aria-current="page"] {
   background: var(--selected-bg);
   border-color: transparent;
   box-shadow: var(--selected-lift);
   color: var(--text);
+}
+@media (hover: hover) {
+  .fd-newbtn[aria-current="page"]:hover:not(:disabled) {
+    background: var(--selected-bg);
+    border-color: transparent;
+    box-shadow: var(--selected-lift);
+    color: var(--text);
+  }
 }
 
 .fd-newbtn-text {
@@ -242,8 +249,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: transparent;
 }
 
-.fd-newbtn + .fd-sidebar-search:hover > input:not(:focus):placeholder-shown {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-newbtn + .fd-sidebar-search:hover > input:not(:focus):placeholder-shown {
+    background: var(--raised);
+  }
 }
 
 .fd-sidebar-actions:is([data-query="true"], :has(> .fd-sidebar-search:focus-within))
@@ -323,13 +332,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: transparent;
 }
 
-.fd-sidebar-links a:hover,
-.fd-sidebar-more > summary:hover,
-.fd-linkbtn:hover:not(:disabled) {
-  background: var(--raised);
-  border-color: transparent;
-  color: var(--text);
-  text-decoration: none;
+/* --hover-bg: a step apart from the --selected-bg of the current row (light: grey under the white,
+   lifted selected row). */
+@media (hover: hover) {
+  .fd-sidebar-links a:hover,
+  .fd-sidebar-more > summary:hover,
+  .fd-linkbtn:hover:not(:disabled) {
+    background: var(--hover-bg);
+    border-color: transparent;
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 /* The open page: the --selected-bg fill (lifted in light) and the 2px --focus bar of .fd-selbar
@@ -522,13 +535,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   transition: background-color var(--t-fast);
 }
 
-.fd-srow:hover {
-  background: var(--raised);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-srow:hover {
+    background: var(--hover-bg);
+    text-decoration: none;
+  }
 }
 
-.fd-srow[aria-current="page"]:hover {
-  background: var(--selected-bg);
+@media (hover: hover) {
+  .fd-srow[aria-current="page"]:hover {
+    background: var(--selected-bg);
+  }
 }
 
 .fd-srow > .fd-holder {
@@ -619,9 +636,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   cursor: pointer;
 }
 
-.fd-sended > summary:hover {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-sended > summary:hover {
+    background: var(--hover-bg);
+    color: var(--text);
+  }
 }
 
 .fd-sended > summary::before {
@@ -666,9 +685,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-.fd-sidebar-archived:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-sidebar-archived:hover:not(:disabled) {
+    background: var(--hover-bg);
+    color: var(--text);
+  }
 }
 
 .fd-sidebar-chev {
@@ -762,8 +783,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   transition: background-color var(--t-fast);
 }
 
-.fd-menu-switch:hover {
-  background: var(--badge-bg);
+@media (hover: hover) {
+  .fd-menu-switch:hover {
+    background: var(--badge-bg);
+  }
 }
 
 .fd-menu-switch-label {
@@ -887,8 +910,10 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* A tap leaves no hover fill behind on a touch screen: the fill shows while pressed, and on
    hover only where a pointer hovers. */
-.fd-sidebar[data-variant="list"] .fd-srow:hover {
-  background: transparent;
+@media (hover: hover) {
+  .fd-sidebar[data-variant="list"] .fd-srow:hover {
+    background: transparent;
+  }
 }
 
 .fd-sidebar[data-variant="list"] .fd-srow:active {
@@ -1161,6 +1186,14 @@ button.fd-phonebar-back {
   color: var(--act);
 }
 
+/* A notice in a page body (ui/page.tsx ErrorNotice, §4.7): the same row as a card in the page,
+   not a banner under the header (no rule under it, the corners of a card). */
+.fd-notice[data-place="page"] {
+  padding: 6px var(--sp-2) 6px 15px;
+  border-bottom: 0;
+  border-radius: var(--r-card);
+}
+
 /* Forced colors drop the box-shadow holder: a CanvasText edge marks the notice row. The tone stays
    in the icon (error or info). */
 @media (forced-colors: active) {
@@ -1237,8 +1270,10 @@ button.fd-phonebar-back {
   transition: background-color var(--t-fast);
 }
 
-.fd-bottombar a.fd-bottombar-new:hover .fd-bottombar-circle {
-  background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
+@media (hover: hover) {
+  .fd-bottombar a.fd-bottombar-new:hover .fd-bottombar-circle {
+    background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
+  }
 }
 
 /* On #/new the circle keeps its full ink (a mix read as disabled) and a 2px --focus ring, the
@@ -1627,8 +1662,10 @@ button.fd-phonebar-back {
   cursor: pointer;
 }
 
-.fd-palette [role="option"]:hover {
-  background: var(--badge-bg);
+@media (hover: hover) {
+  .fd-palette [role="option"]:hover {
+    background: var(--badge-bg);
+  }
 }
 
 /* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and the

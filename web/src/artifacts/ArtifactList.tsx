@@ -106,6 +106,7 @@ export function ArtifactList({ items, now, where, onOpen }: Props) {
             <span className="fd-art-kind" aria-hidden="true">
               <Icon of={KIND_ICON[a.kind]} size={14} />
             </span>
+            {/* The fold under the row says how many older copies there are: no count here. */}
             <span className="fd-art-titlecell">
               <span className="fd-art-title">{a.title}</span>
               {a.latest_version > 1 ? (

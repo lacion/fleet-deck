@@ -4,7 +4,7 @@ import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, SessionExtras, StationView } from '../gen';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
-import { ProjectChip } from '../integrations/ProjectChip';
+import { ProjectChip, useOwnProject } from '../integrations/ProjectChip';
 import { useProjects } from '../integrations/context';
 import type { Freshness } from '../runtime/state';
 import { hasChanges } from '../session/changes';
@@ -125,8 +125,10 @@ export function FleetStrip({
         : null;
   const mail = extra?.mail_pending ?? 0;
   // The project of the session: a chip (a link of its own) on a wide strip; on a narrow strip a
-  // quiet label of the meta line, so the strip stays two lines (§4.1, concept A phone).
-  const project = projects.find((p) => p.project_id === card.project_id);
+  // quiet label of the meta line, so the strip stays two lines (§4.1, concept A phone). On the
+  // page of its own project the strip names no project (the page is the project).
+  const own = useOwnProject();
+  const project = projects.find((p) => p.project_id === card.project_id && p.project_id !== own);
   const title = s.title ?? '';
   const changed = total !== undefined && hasChanges(total) ? total : null;
   // A lane by repo or project names the station of each strip: the second line of the where

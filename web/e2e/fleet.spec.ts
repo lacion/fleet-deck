@@ -129,7 +129,8 @@ test('the owner revokes a coordinator grant from the phone', async ({ page }) =>
   await openPanel(page, 'Mail & tasks');
   // A grant is a row; its Change… opens the Fleet access dialog, where Revoke asks to confirm.
   const grants = page.getByRole('list', { name: 'Coordinator grants' });
-  await expect(grants).toContainText('Coordinator · active');
+  await expect(grants).toContainText('Coordinator on Alpha');
+  await expect(grants).toContainText('Active');
   await grants.getByRole('button', { name: 'Change…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Fleet access' });
   await expect(dialog).toContainText('read');
@@ -455,7 +456,7 @@ test('the strips show the bypass mode, the last error and the conflict', async (
   const a = page.locator('a.fd-strip[data-session="a"]');
   await expect(a.locator('[data-ico="risky"]')).toHaveAttribute(
     'title',
-    'Permission mode: bypassPermissions',
+    'Permission mode: Bypass permissions',
   );
   await expect(a).toHaveAttribute('data-contested', 'true');
   await expect(a.locator('[data-ico="contested"]')).toHaveAttribute(
@@ -533,8 +534,8 @@ test.describe('wide screen', () => {
     await expect(page.getByText('1 of 3')).toBeVisible();
     await expect(page.locator('.fd-filters-menu > summary')).toHaveText('Filters 1');
     // the active-filter chip clears the repo filter
-    await page.getByRole('button', { name: 'Repo: lib' }).click();
+    await page.getByRole('button', { name: 'Repository: lib' }).click();
     await expect(page.locator('a.fd-strip')).toHaveCount(3);
-    await expect(page.getByRole('button', { name: 'Repo: lib' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Repository: lib' })).toHaveCount(0);
   });
 });

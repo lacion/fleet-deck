@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type RefObject, useEffect } from 'react';
 
-const FOCUSABLE =
+/** The controls that can take the focus. */
+export const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 /** Keeps Tab and Shift+Tab inside a dialog. */

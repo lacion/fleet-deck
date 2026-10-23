@@ -1,9 +1,10 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { relativeAge, sessionTitle } from '../app/sessions';
 import type { DeckPlan, DeckSession, PlanStatus, SessionKey, StationView } from '../gen';
-import { Archive, FileText, Icon, RefreshCw } from '../ui/icons';
+import { Archive, FileText, Icon, Plus, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
-import { EmptyState, Page } from '../ui/page';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import { liveProposer, type PlanActions, PROPOSER_NOTE, planTitle, STATUS_LABEL } from './plans';
@@ -141,6 +142,7 @@ export function PlanLibrary({
       wide
       title="Plans"
       label="Plan library"
+      count={plans === null || plans.length === 0 ? undefined : plans.length}
       description="Plans that sessions proposed. Start one as a new session."
       filters={
         <button
@@ -165,17 +167,19 @@ export function PlanLibrary({
         </button>
       }
     >
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <ErrorNotice text={error} onRetry={actions === undefined ? undefined : load} />
+      ) : null}
       {plans === null ? (
-        <p role="status">Loading plans…</p>
+        <Loading text="Loading plans…" />
       ) : plans.length === 0 ? (
         <EmptyState
           icon={FileText}
           title="No plans yet"
           body="A session in plan mode adds its plan here."
           action={
-            <a className="fd-btn fd-ghost fd-sm" href="#/new">
-              New session
+            <a className="fd-btn fd-primary" href="#/new">
+              <Icon of={Plus} /> New session
             </a>
           }
         />

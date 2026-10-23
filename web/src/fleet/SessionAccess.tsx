@@ -117,7 +117,6 @@ type BodyProps = {
   readonly onEdit: () => void;
   readonly onCancelEdit: () => void;
   readonly onSave: () => void;
-  readonly onClose: () => void;
   /** A change of the session rules or the desktop limits: the grant loads again. */
   readonly onChanged: () => void;
 };
@@ -131,16 +130,6 @@ function Status({ result }: { readonly result: FleetResult | null }) {
 }
 
 /** The footer with "Close" only. */
-function CloseFoot({ onClose }: { readonly onClose: () => void }) {
-  return (
-    <div className="fd-access-foot">
-      <button type="button" className="fd-ghost" onClick={onClose}>
-        Close
-      </button>
-    </div>
-  );
-}
-
 /** The body of the dialog, without the load: it shows the grant, or the form that gives one. */
 export function SessionAccessBody({
   session,
@@ -166,7 +155,6 @@ export function SessionAccessBody({
   onEdit,
   onCancelEdit,
   onSave,
-  onClose,
   onChanged,
 }: BodyProps) {
   const codex = session?.summary.provider === 'codex';
@@ -187,7 +175,6 @@ export function SessionAccessBody({
         <p role="status" className="fd-note">
           Loading…
         </p>
-        <CloseFoot onClose={onClose} />
       </>
     );
   }
@@ -198,7 +185,6 @@ export function SessionAccessBody({
         <>
           <Status result={result} />
           <p className="fd-note">{NO_ACCESS}</p>
-          <CloseFoot onClose={onClose} />
         </>
       );
     }
@@ -208,7 +194,6 @@ export function SessionAccessBody({
           {sub}
           <Status result={result} />
           <p className="fd-note">{CANNOT_GIVE}</p>
-          <CloseFoot onClose={onClose} />
         </>
       );
     }
@@ -235,16 +220,13 @@ export function SessionAccessBody({
             codex={codex}
           />
           <Status result={result} />
-          <div className="fd-access-foot">
-            <button type="button" className="fd-ghost" onClick={onClose}>
-              Close
-            </button>
-            {ask === undefined ? null : (
+          {ask === undefined ? null : (
+            <div className="fd-access-foot">
               <button type="submit" className="fd-primary" disabled={busy || problem !== null}>
                 Give access
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </form>
       </>
     );
@@ -360,9 +342,6 @@ export function SessionAccessBody({
         </>
       ) : (
         <div className="fd-access-foot">
-          <button type="button" className="fd-ghost" onClick={onClose}>
-            Close
-          </button>
           {grant.state === 'expired' && grant.revoked_reason === 'idle' ? (
             <button type="button" disabled={busy} onClick={onRenew}>
               Renew
@@ -459,12 +438,9 @@ export function SessionAccessDialog({ session, grantId, stations, actions, onClo
   return (
     <Dialog title="Fleet access" onClose={onClose}>
       {failed ? (
-        <>
-          <p className="fd-note" role="alert">
-            {LOAD_FAILED}
-          </p>
-          <CloseFoot onClose={onClose} />
-        </>
+        <p className="fd-note" role="alert">
+          {LOAD_FAILED}
+        </p>
       ) : (
         <SessionAccessBody
           session={session}
@@ -523,7 +499,6 @@ export function SessionAccessDialog({ session, grantId, stations, actions, onClo
               () => setEditing(false),
             );
           }}
-          onClose={onClose}
           onChanged={reload}
         />
       )}

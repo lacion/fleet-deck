@@ -326,7 +326,7 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('Clone repository').click();
   await form.getByLabel('Repository', { exact: true }).fill('https://github.com/acme/app.git');
-  await form.getByLabel('New directory name').fill('app-copy');
+  await form.getByLabel('New folder name').fill('app-copy');
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-c$/);
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
@@ -354,7 +354,7 @@ test('More options is folded and stays open while an option has a value', async 
   await expect(fold).not.toHaveAttribute('open', '');
   // An option with a value keeps the fold open.
   await form.getByText('More options', { exact: true }).click();
-  await form.getByLabel('Import CLI session id (optional)').fill('abc');
+  await form.getByLabel('Session to import (optional)').fill('abc');
   await form.getByText('More options', { exact: true }).click();
   await expect(fold).toHaveAttribute('open', '');
 });
@@ -377,7 +377,7 @@ test('a terminal CLI session is imported by its id as a driven session (6-12)', 
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByText('More options', { exact: true }).click();
-  const id = form.getByLabel('Import CLI session id (optional)');
+  const id = form.getByLabel('Session to import (optional)');
   await id.fill('--resume');
   await expect(form.getByRole('alert')).toContainText('starts with a letter or a digit');
   await expect(form.getByRole('button', { name: 'Import session' })).toBeDisabled();
@@ -481,8 +481,8 @@ test('a pinned directory stays after a reload and unpins again', async ({ page }
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   await expect(form.getByLabel('Recent directories')).toHaveCount(0);
-  await form.getByRole('button', { name: 'Pin this directory' }).click();
-  await expect(form.getByRole('button', { name: 'Unpin this directory' })).toBeVisible();
+  await form.getByRole('button', { name: 'Pin this folder' }).click();
+  await expect(form.getByRole('button', { name: 'Unpin this folder' })).toBeVisible();
   await expect(form.getByLabel('Recent directories')).toContainText('Pinned and recent');
   await page.reload();
   const again = page.getByRole('region', { name: 'New session' });
@@ -491,7 +491,7 @@ test('a pinned directory stays after a reload and unpins again', async ({ page }
   await expect(recent.getByRole('button', { name: '~/projects/app' })).toBeVisible();
   await recent.getByRole('button', { name: '~/projects/app' }).click();
   await expect(again.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
-  await again.getByRole('button', { name: 'Unpin this directory' }).click();
+  await again.getByRole('button', { name: 'Unpin this folder' }).click();
   await again.getByRole('button', { name: 'Browse…' }).click();
   await expect(again.getByLabel('Recent directories')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('fd-dir-pins'))).toBe('{"st-alpha":[]}');

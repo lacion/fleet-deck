@@ -4,9 +4,10 @@ import { Fragment, type ReactNode, useEffect, useRef, useState, useSyncExternalS
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
-import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
+import { costText, inputLabel, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { commandsText } from '../chat/AgentsMenu';
 import {
   addedText,
   compactCount,
@@ -163,9 +164,10 @@ type Props = {
   readonly turns: readonly FinalizedTurn[];
   /** The size of the session's changes (`changeTotal`, the same total as the Changes tab label). */
   readonly total: DiffSummary | null;
-  /** The subagents of the session, and the running count of the Agents bar (it counts the running
-      background commands too): the row and the bar show one number. */
+  /** The subagents and the background commands of the session, and the running count of the
+      Agents bar (both kinds): the row and the summary of the bar show the same numbers. */
   readonly agents: number;
+  readonly commands?: number;
   readonly runningAgents: number;
   /** A changed file opens the Changes tab on that file. */
   readonly onOpenChange: (path: string) => void;
@@ -190,13 +192,18 @@ export type ModeControl = {
 export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached context is not counted';
 
 /**
- * The token fact: the input outside the prompt cache as "new in", and the output. The station does
- * not count the cached context, so a bare "682 in" next to a large cost read as a bug.
+ * The token fact in the words of the ops usage glance (`inputLabel`): a Claude session counts the
+ * input outside the prompt cache only, "new input" (a bare "682 in" next to a large cost read as a
+ * bug); then the "output".
  */
-export function tokensText(input: number | null, output: number | null): string {
+export function tokensText(
+  input: number | null,
+  output: number | null,
+  inputWord = 'new input',
+): string {
   return [
-    input === null ? null : `${compactCount(input)} new in`,
-    output === null ? null : `${compactCount(output)} out`,
+    input === null ? null : `${compactCount(input)} ${inputWord}`,
+    output === null ? null : `${compactCount(output)} output`,
   ]
     .filter((part) => part !== null)
     .join(' · ');
@@ -361,6 +368,7 @@ export function PropertiesPanel({
   turns,
   total,
   agents,
+  commands = 0,
   runningAgents,
   onOpenChange,
   onOpenAll,
@@ -379,6 +387,7 @@ export function PropertiesPanel({
   const hasBase = Boolean(s.base);
   const opens = (path: string) => hasBase || turnForPath(turns, turnPaths, path) !== undefined;
   const { input_tokens: input, output_tokens: output } = s.usage;
+  const inputWord = inputLabel([session]);
   const cost = costText(s.usage);
   const meters = rateMeters([session], stations);
   const provider = s.provider === null ? null : providerLabel(s.provider);
@@ -473,8 +482,11 @@ export function PropertiesPanel({
         )}
         {input === null && output === null ? null : (
           <Row label="Tokens">
-            <span className="fd-props-fuel" title={input === null ? undefined : NEW_INPUT_TITLE}>
-              {tokensText(input, output)}
+            <span
+              className="fd-props-fuel"
+              title={input === null || inputWord !== 'new input' ? undefined : NEW_INPUT_TITLE}
+            >
+              {tokensText(input, output, inputWord)}
             </span>
           </Row>
         )}
@@ -500,9 +512,21 @@ export function PropertiesPanel({
             </div>
           ),
         )}
-        {agents === 0 && runningAgents === 0 ? null : (
-          <Row label="Agents">
-            {agents > 0 ? agents : null}
+        {agents === 0 && commands === 0 && runningAgents === 0 ? null : (
+          // One rule with the Agents bar: the subagents, then the commands in quiet words; a
+          // session with commands only names them.
+          <Row label={agents === 0 && commands > 0 ? 'Commands' : 'Agents'}>
+            {agents > 0 || commands > 0 ? (
+              <span>
+                {countText(agents > 0 ? agents : commands)}
+                {agents > 0 && commands > 0 ? (
+                  <>
+                    {' '}
+                    <span className="fd-props-aside">{`· ${commandsText(commands)}`}</span>
+                  </>
+                ) : null}
+              </span>
+            ) : null}
             {runningAgents > 0 ? (
               <span className="fd-props-aside">{runningAgents} running</span>
             ) : null}

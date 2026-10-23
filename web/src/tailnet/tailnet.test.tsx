@@ -267,7 +267,10 @@ describe('TailnetCardView', () => {
   test('both booleans are switches with the label after the box', () => {
     const html = card(view());
     expect(html.match(/<input type="checkbox" role="switch" class="fd-switch"/g)).toHaveLength(2);
-    expect(html).toMatch(/class="fd-switch"[^>]*\/>Use Tailscale automatically<\/label>/);
+    // The restart badge ends the control line of the automatic mode (hidden from the name).
+    expect(html).toMatch(
+      /class="fd-switch"[^>]*\/>Use Tailscale automatically<span class="fd-set-badges" aria-hidden="true"><span class="fd-badge">Applies after a restart<\/span><\/span><\/label>/,
+    );
     expect(html).toMatch(/class="fd-switch"[^>]*\/>Trusted certificate from Tailscale<\/label>/);
   });
 
@@ -465,9 +468,10 @@ describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
     expect(off).toContain('Use Tailscale automatically');
     expect(off).toContain('type="checkbox"');
     expect(off).not.toContain('checked=""');
-    expect(off).toContain('Keeps the tailnet addresses current at each start.<span');
+    expect(off).toContain(
+      'Keeps the tailnet addresses current at each start.<span class="fd-vh"> Applies after a restart.</span>',
+    );
     expect(off).toContain('<span class="fd-badge">Applies after a restart</span>');
-    expect(off).not.toContain('at each start. Applies after a restart.');
     const on = card(view({ auto: { enabled: true, skipped: [], changed: false } }));
     expect(on).toContain('checked=""');
     // The deck sends the effective value: the key absent is on.

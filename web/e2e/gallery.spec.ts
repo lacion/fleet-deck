@@ -4,6 +4,7 @@
 // and desktop). The tablet project does not run this spec.
 import { expect, type Page, test } from '@playwright/test';
 import { logIn } from './fake-deck';
+import { FD_REPO } from './gallery-data';
 import { galleryDeck, LIGHTING, OTTER } from './gallery-scene';
 
 test.skip(!process.env['FD_GALLERY'], 'FD_GALLERY is not set');
@@ -320,4 +321,24 @@ test('25 home all clear', async ({ page }) => {
   // (a narrow desktop header drops the calm words next to a conflict, so: attached, not visible)
   await expect(page.locator('.fd-home-needs[data-clear="true"]')).toHaveCount(1);
   await themed(page, '25', 'home-all-clear');
+});
+
+// A project page: the sessions of the fleet-deck repository are strips with the columns of the
+// fleet board (the where width is set outside the fleet board too).
+test('26 project', async ({ page }) => {
+  desktopOnly();
+  const deck = galleryDeck();
+  deck.sessions = deck.sessions.map((s) =>
+    s.summary.repo?.origin === FD_REPO ? { ...s, project_id: 'p-fleet-deck' } : s,
+  );
+  await shellScreen(page);
+  await deck.install(page);
+  await logIn(page);
+  await page.locator('a.fd-srow').first().waitFor();
+  await goTo(page, '#/project/p-fleet-deck');
+  const strip = page.locator('.fd-int-sessions .fd-strip').first();
+  await expect(strip).toBeVisible();
+  // The strip has its columns outside the fleet board: one --strip-h (44px) row.
+  expect(Math.round(await strip.evaluate((el) => el.getBoundingClientRect().height))).toBe(44);
+  await themed(page, '26', 'project');
 });

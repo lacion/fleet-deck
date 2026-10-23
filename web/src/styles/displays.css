@@ -234,6 +234,22 @@
   min-height: var(--ctl-h);
 }
 
+/* A phone: the station choices are a grid of two columns of 44px check rows, so that no name
+   stands alone on a line of its own. */
+@media (max-width: 640px) {
+  .fd-disp-choices {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--sp-4);
+  }
+
+  .fd-disp-choices > .fd-disp-check {
+    min-width: 0;
+    min-height: var(--tap-min);
+    overflow-wrap: anywhere;
+  }
+}
+
 /* The choices of the Send to wall dialog (a stacked form): the legend, then one choice a line. */
 .fd-disp-modes {
   display: flex;

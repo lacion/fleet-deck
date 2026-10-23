@@ -41,12 +41,12 @@ const withConfig = (id: string, config: ConfigDigest | undefined) =>
 describe('the traits line', () => {
   test('os, arch, battery and labels', () => {
     expect(traitsText({ os: 'linux', arch: 'x86_64', labels: [] })).toBe('Linux · x86_64');
-    // One separator for every part: each label reads as its own value.
+    // One separator for every part: each label reads as its own value, as a word.
     expect(
-      traitsText({ os: 'macos', arch: 'aarch64', on_battery: true, labels: ['gpu', 'big'] }),
-    ).toBe('macOS · aarch64 · on battery · gpu · big');
+      traitsText({ os: 'macos', arch: 'aarch64', on_battery: true, labels: ['gpu', 'big-ram'] }),
+    ).toBe('macOS · aarch64 · on battery · GPU · Big ram');
     expect(traitsText({ os: 'linux', arch: 'x86_64', on_battery: false, labels: ['gpu'] })).toBe(
-      'Linux · x86_64 · gpu',
+      'Linux · x86_64 · GPU',
     );
     // The display name of the OS; an id without one stays as it is.
     expect(traitsText({ os: 'omarchy', arch: 'x86_64', labels: [] })).toBe('Omarchy · x86_64');
@@ -290,7 +290,7 @@ describe('the Stations page', () => {
         } as unknown as StationInfo,
       }),
     ]);
-    expect(html).toContain('Linux · x86_64 · on battery · gpu');
+    expect(html).toContain('Linux · x86_64 · on battery · GPU');
     expect(html).toContain('out · /srv/out · as ada');
   });
 

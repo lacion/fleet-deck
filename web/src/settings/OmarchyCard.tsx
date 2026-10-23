@@ -6,7 +6,7 @@ import { Icon, RefreshCw } from '../ui/icons';
 import type { ElevationAsk } from './elevation';
 import { NoticeIcon } from './NoticeIcon';
 import { DeckError } from './http';
-import { Loading } from './Loading';
+import { Loading } from '../ui/Loading';
 import { sectionId } from './model';
 import {
   buttons,

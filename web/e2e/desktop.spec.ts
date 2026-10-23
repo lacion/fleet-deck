@@ -170,8 +170,8 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
     'Changes',
     'Artifacts',
   ]);
-  // the root listing loads at once, once
-  await expect(side.getByRole('button', { name: 'docs/' })).toBeVisible();
+  // the root listing loads at once, once (a folder row is named without a trailing "/")
+  await expect(side.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
   expect(lists).toEqual(['']);
   // a new summary of the session re-renders the pane but does not list again
   const docs = threeSessions()[1];
@@ -183,12 +183,12 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   await expect(pane.getByRole('heading', { level: 2 })).toHaveText('Write the docs now');
   expect(lists).toEqual(['']);
 
-  await side.getByRole('button', { name: 'docs/' }).click();
+  await side.getByRole('button', { name: 'docs', exact: true }).click();
   await expect(side.getByRole('button', { name: /^guide\.md/ })).toBeVisible();
   const crumbs = side.getByRole('navigation', { name: 'Folder path' });
   await expect(crumbs.getByRole('button', { name: 'docs' })).toBeVisible();
   await crumbs.getByRole('button', { name: 'root' }).click();
-  await expect(side.getByRole('button', { name: 'docs/' })).toBeVisible();
+  await expect(side.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
   expect(lists).toEqual(['', 'docs', '']);
 
   // the toggle closes the panel, the Files tab takes its place, and the choice is kept

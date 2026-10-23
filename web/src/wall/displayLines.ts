@@ -4,7 +4,7 @@
 // the request state.
 import type { DisplayEvent, DisplayItem, RequestKind } from '../gen';
 import { plainLine } from '../ui/format';
-import { TILE_LINES, type TileLine } from '../watch/tiles';
+import { foldLines, TILE_LINES, type TileLine } from '../watch/tiles';
 
 /** The most items that the chat pane draws (the same as `CHAT_ITEMS`). */
 const CHAT_MAX = 120;
@@ -15,6 +15,8 @@ export type DisplayLine = {
   readonly key: string;
   readonly kind: 'prompt' | 'message' | 'tool' | 'ask';
   readonly text: string;
+  /** The node of a tool call (the call that runs now folds into its tile line). */
+  readonly node?: string;
 };
 
 /** The fixed label of a request kind (the same four texts as the deck's `request_label`). */
@@ -38,7 +40,7 @@ function lineOf(event: DisplayEvent, withEnds: boolean): DisplayLine | null {
       return item.text.trim() === '' ? null : { key, kind: 'message', text: item.text };
     case 'tool': {
       const mark = item.status === 'failed' || item.status === 'denied' ? ` (${item.status})` : '';
-      return { key, kind: 'tool', text: `${item.name}${mark}` };
+      return { key, kind: 'tool', text: `${item.name}${mark}`, node: item.node_id };
     }
     case 'request': {
       const name = requestName(item);
@@ -100,7 +102,8 @@ const cut = (text: string): string => {
 
 /**
  * The last agent text and tool lines of a tile, oldest first (the form of `tileLines`). A line that
- * is empty without its Markdown marks is no line: a tile never draws a blank row.
+ * is empty without its Markdown marks is no line: a tile never draws a blank row. Lines that came
+ * several times in a row ("Bash", "Bash") are one line with its count (`foldLines`).
  */
 export function displayTileLines(
   events: readonly DisplayEvent[],
@@ -110,9 +113,15 @@ export function displayTileLines(
   for (const line of linesOf(events, false)) {
     if (line.kind !== 'message' && line.kind !== 'tool') continue;
     const text = cut(line.text);
-    if (text !== '') out.push({ key: line.key, kind: line.kind, text });
+    if (text === '') continue;
+    out.push({
+      key: line.key,
+      kind: line.kind,
+      text,
+      ...(line.node === undefined ? {} : { node: line.node }),
+    });
   }
-  return out.slice(-max);
+  return foldLines(out).slice(-max);
 }
 
 /** The last assistant message of a display timeline, or `null` (the race column). */

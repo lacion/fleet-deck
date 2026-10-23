@@ -112,7 +112,7 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     );
   });
 
-  test('the kbd hint names the key of the platform: ⌘↵ on Apple systems, else Ctrl+↵', () => {
+  test('the kbd hint names the key of the platform: ⌘↵ on Apple systems, else Ctrl+Enter', () => {
     const real = Object.getOwnPropertyDescriptor(navigator, 'platform');
     const hint = (platform: string) => {
       Object.defineProperty(navigator, 'platform', { configurable: true, value: platform });
@@ -122,8 +122,8 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
       expect(hint('MacIntel')).toBe('⌘↵');
       expect(hint('iPhone')).toBe('⌘↵');
       expect(hint('iPad')).toBe('⌘↵');
-      expect(hint('Linux x86_64')).toBe('Ctrl+↵');
-      expect(hint('Win32')).toBe('Ctrl+↵');
+      expect(hint('Linux x86_64')).toBe('Ctrl+Enter');
+      expect(hint('Win32')).toBe('Ctrl+Enter');
     } finally {
       if (real === undefined) delete (navigator as { platform?: string }).platform;
       else Object.defineProperty(navigator, 'platform', real);

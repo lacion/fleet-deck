@@ -18,7 +18,8 @@ import {
   Trash2,
 } from '../ui/icons';
 import { Menu } from '../ui/Menu';
-import { EmptyState, Page } from '../ui/page';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useIntegrations } from './context';
 import { draftOf, emptyDraft, forgeChip, inputOf, type ProjectDraft, trackerChip } from './model';
 import { PreflightView } from './Preflight';
@@ -191,8 +192,8 @@ export function ProjectsPage({
         </>
       }
     >
-      {env.error === null ? null : <p role="alert">{env.error}</p>}
-      {error === null ? null : <p role="alert">{error}</p>}
+      {env.error === null ? null : <ErrorNotice text={env.error} />}
+      {error === null ? null : <ErrorNotice text={error} />}
       {sameRepoGroups(list ?? []).map((g) => (
         <p key={g.repo} className="fd-note" role="note">
           {g.count} projects use {g.repo}. Open one of them to merge them.
@@ -218,7 +219,7 @@ export function ProjectsPage({
       )}
       {list === null ? (
         env.error === null ? (
-          <p role="status">Loading projects…</p>
+          <Loading text="Loading projects…" />
         ) : null
       ) : list.length === 0 ? (
         form === null ? (

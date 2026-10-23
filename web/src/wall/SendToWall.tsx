@@ -164,9 +164,12 @@ export function SendToWallDialog({
         )}
         {sent === null ? null : <p role="status">{sent}</p>}
         <div className="fd-formactions">
-          <button type="button" className="fd-ghost" onClick={onClose}>
-            {sent === null ? 'Cancel' : 'Close'}
-          </button>
+          {/* After a send the head X closes the dialog (§4.7: no text Close button). */}
+          {sent === null ? (
+            <button type="button" className="fd-ghost" onClick={onClose}>
+              Cancel
+            </button>
+          ) : null}
           <button
             type="submit"
             className="fd-primary"

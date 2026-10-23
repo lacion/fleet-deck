@@ -1,8 +1,9 @@
 // The words of a tool call for the owner (DESIGN-SYSTEM §4.1, §4.5): a readable tool name and one
 // target, never a raw MCP id or a JSON payload. The Watch tiles (and the wall tiles, which reuse
 // them) and the Activity rows use it, so one call reads the same everywhere.
+import { agentFile } from '../chat/labels';
 import type { ActivityKind, ToolKind } from '../gen';
-import { homeShort } from '../ui/format';
+import { CODE_TOOLS, homeShort } from '../ui/format';
 
 /** How a target reads: a file path (mono, `PathTail`), a command or an id (mono) or words (sans). */
 export type TargetForm = 'path' | 'code' | 'words';
@@ -14,28 +15,6 @@ export type ToolText = {
   readonly target: string;
   readonly form: TargetForm;
 };
-
-/** The tools whose input is a command or a path (the list of `ui/format.ts` `toolParts`). */
-const CODE_TOOLS: ReadonlySet<string> = new Set([
-  'Bash',
-  'Shell',
-  'shell',
-  'exec_command',
-  'Read',
-  'Edit',
-  'MultiEdit',
-  'Write',
-  'NotebookEdit',
-  'Grep',
-  'Glob',
-  'LS',
-  'WebFetch',
-  'apply_patch',
-  // The shell tools that watch or stop a command: their input is a command or a shell id.
-  'Monitor',
-  'BashOutput',
-  'KillShell',
-]);
 
 /** The tools whose input is one file. */
 const FILE_TOOLS: ReadonlySet<string> = new Set([
@@ -84,9 +63,12 @@ export function toolWords(name: string): string {
   return m === null ? name.trim() : words(m[2] ?? '');
 }
 
-/** The keys of a JSON input that name its target, in the order of preference, with their form. */
+/** The keys of a JSON input that name its target, in the order of preference, with their form:
+ * a description, a name or a title first (the rule of the chat rows, chat/labels.ts `argText`). */
 const TARGET_KEYS: readonly (readonly [string, TargetForm])[] = [
   ['description', 'words'],
+  ['name', 'words'],
+  ['title', 'words'],
   ['command', 'code'],
   ['file_path', 'path'],
   ['notebook_path', 'path'],
@@ -95,8 +77,6 @@ const TARGET_KEYS: readonly (readonly [string, TargetForm])[] = [
   ['url', 'code'],
   ['path', 'path'],
   ['prompt', 'words'],
-  ['name', 'words'],
-  ['title', 'words'],
 ];
 
 /** An id key (`task_id`, `shell_id`, `id`): its value is an id, in mono. */
@@ -151,11 +131,18 @@ export function toolTarget(input: string): { readonly target: string; readonly f
   const fields = jsonStrings(text);
   for (const [key, form] of TARGET_KEYS) {
     const value = firstLine(fields.get(key) ?? '');
+    const file = agentFile(value);
+    if (file !== null) return { target: file, form: 'path' };
     if (value !== '') return { target: value, form };
   }
   for (const [key, value] of fields) {
     const line = firstLine(value);
     if (ID_KEY.test(key) && line !== '') return { target: line, form: 'code' };
+  }
+  // A path in the folder of the agent CLI (the script of a Workflow call): its file name.
+  for (const value of fields.values()) {
+    const file = agentFile(firstLine(value));
+    if (file !== null) return { target: file, form: 'path' };
   }
   return { target: '', form: 'words' };
 }

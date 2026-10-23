@@ -510,15 +510,35 @@ fn on_stream_event(core: &mut ClaudeCore, event: &Value, is_child: bool) -> Vec<
     out
 }
 
-fn usage_of(res: &ResultFrame) -> Usage {
+fn usage_of(res: &ResultFrame, cost_usd: Option<f64>) -> Usage {
     let u = res.usage.as_ref();
     let tokens = |k: &str| u.and_then(|u| u.get(k)).and_then(Value::as_u64);
     Usage {
         input_tokens: tokens("input_tokens"),
         output_tokens: tokens("output_tokens"),
-        cost_usd: res.total_cost_usd,
+        cost_usd,
         cost_inferred: false,
     }
+}
+
+/// The cost that one `result` adds to its session. `total_cost_usd` is the
+/// running total of the CLI process, not the cost of the turn (the tokens
+/// are per turn): the first result of a new session adds its whole total; the
+/// first result of a resumed process adds nothing (its total starts from the
+/// cost that the CLI restored, which an earlier process reported; the CLI
+/// sends a zero-usage `result` with that total right after the restart); a
+/// later result adds the growth since the last one; a total under the last
+/// one is a count that started again, all new.
+fn cost_part(core: &mut ClaudeCore, total: Option<f64>) -> Option<f64> {
+    let total = total?;
+    let part = match core.last_total_cost {
+        None if core.config.resumed == Some(true) => 0.0,
+        None => total,
+        Some(last) if total >= last => total - last,
+        Some(_) => total,
+    };
+    core.last_total_cost = Some(total);
+    Some(part)
 }
 
 /// `result` subtypes that mean a usage limit of the run (trap 7).
@@ -526,7 +546,8 @@ const LIMIT_SUBTYPES: &[&str] = &["error_max_turns", "error_max_budget_usd"];
 
 fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     let mut out = Vec::new();
-    let usage = usage_of(res);
+    let cost = cost_part(core, res.total_cost_usd);
+    let usage = usage_of(res, cost);
     let terminal_reason = res.body.get("terminal_reason").and_then(Value::as_str);
     let status = if core.interrupt_requested
         || terminal_reason.is_some_and(|r| r.contains("interrupt") || r.contains("abort"))

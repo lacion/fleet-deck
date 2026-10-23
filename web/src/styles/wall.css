@@ -974,12 +974,17 @@
   font-size: var(--fs-data);
   font-variant-ligatures: none;
 }
-/* The tool name of a tool row (§4.5: weight 600) and the hazard badge of a failed call. */
+/* The tool name of a tool row (§4.5: weight 600), the hazard word of a failed or denied call (the
+   Activity page's `.fd-arow-result`) and the count of a repeated event. */
 .fd-wall-stream .fd-wall-tool {
   color: var(--text);
   font-weight: 600;
 }
-.fd-wall-stream .fd-badge {
+.fd-wall-stream .fd-wall-result {
+  color: var(--hazard);
+  font-weight: 500;
+}
+.fd-wall-stream .fd-count {
   vertical-align: baseline;
 }
 

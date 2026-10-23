@@ -3,8 +3,8 @@ import type { DeckSession, StationView } from '../gen';
 import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
 import { readPins } from '../spawn/spawn';
-import { pathParts } from '../ui/format';
-import { Folder, FolderOpen, Icon, Pin } from '../ui/icons';
+import { FolderRow } from '../ui/FolderPicker';
+import { FolderOpen } from '../ui/icons';
 import { EmptyState, Field, Page } from '../ui/page';
 
 /** The most folder rows that the page offers: every pinned folder, then the recent session
@@ -64,17 +64,9 @@ function sessionFolders(
   return out;
 }
 
-/** A folder row names its folder and its parent from the root (`pathParts`, §5); a home folder is
- * "Home" (a bare `~` says nothing). */
-function folderName(path: string): { readonly parent: string; readonly base: string } {
-  const parts = pathParts(path);
-  return parts.base === '~' && parts.parent === '' ? { parent: '', base: 'Home' } : parts;
-}
-
 /**
  * The pinned and recent folders as folder rows, the look of the New session folder picker
- * (DESIGN-SYSTEM §4.6, §5 paths): a 14px folder or pin icon, the name, then the parent in --faint
- * mono. The full path is the title of the row.
+ * (`FolderRow`, DESIGN-SYSTEM §4.6, §5 paths).
  */
 export function FolderRows({
   pinned,
@@ -88,24 +80,9 @@ export function FolderRows({
   return (
     <ul className="fd-folder-list fd-files-folders">
       {[...pinned.map((p) => ({ p, pin: true })), ...recent.map((p) => ({ p, pin: false }))].map(
-        ({ p, pin }) => {
-          const { parent, base } = folderName(p);
-          return (
-            <li key={pin ? `pin:${p}` : p}>
-              <button
-                type="button"
-                data-pinned={pin ? '' : undefined}
-                title={p}
-                aria-label={parent + base}
-                onClick={() => onPick(p)}
-              >
-                <Icon of={pin ? Pin : Folder} size={14} />
-                <span className="fd-folder-base">{base}</span>
-                {parent === '' ? null : <span className="fd-folder-parent">{parent}</span>}
-              </button>
-            </li>
-          );
-        },
+        ({ p, pin }) => (
+          <FolderRow key={pin ? `pin:${p}` : p} path={p} pin={pin} onPick={onPick} />
+        ),
       )}
     </ul>
   );

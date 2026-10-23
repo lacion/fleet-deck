@@ -45,6 +45,22 @@ describe('toolTarget', () => {
     });
   });
 
+  test('a name or a title comes before a command; a path under ~/.claude/ is its file name', () => {
+    expect(toolTarget('{"command":"make","name":"Build"}')).toEqual({
+      target: 'Build',
+      form: 'words',
+    });
+    expect(
+      toolTarget(
+        '{"resumeFromRunId":"wf_b7605b1a-452","scriptPath":"/home/me/.claude/projects/-home-me-x/0549/workflows/reggio-db-fixes.js"}',
+      ),
+    ).toEqual({ target: 'reggio-db-fixes.js', form: 'path' });
+    expect(toolTarget('{"path":"/home/me/.claude/agents/review.md"}')).toEqual({
+      target: 'review.md',
+      form: 'path',
+    });
+  });
+
   test('an id is the target when no known field is there', () => {
     expect(toolTarget('{"task_id":"bv93ogg6d"}')).toEqual({ target: 'bv93ogg6d', form: 'code' });
   });

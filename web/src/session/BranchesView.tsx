@@ -4,6 +4,8 @@ import { relativeAge } from '../app/sessions';
 import { Diff } from '../chat/Diff';
 import type { RepoBranch, RepoBranches, SessionDiff } from '../gen';
 import { ApiError } from '../runtime/api';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import { type FleetSession, OtherStations } from './OtherStations';
 
 type Props = {
@@ -37,19 +39,7 @@ function failureOf(e: unknown): Failure {
 }
 
 function Alert({ failure, onRetry }: { readonly failure: Failure; readonly onRetry: () => void }) {
-  return (
-    <p role="alert" className="fd-since-alert">
-      {failure.message}
-      {failure.retry ? (
-        <>
-          {' '}
-          <button type="button" className="fd-sm" onClick={onRetry}>
-            Try again
-          </button>
-        </>
-      ) : null}
-    </p>
-  );
+  return <ErrorNotice text={failure.message} onRetry={failure.retry ? onRetry : undefined} />;
 }
 
 /** The `files +N −N` stat of a diff summary, as the other Changes views write it. */
@@ -112,7 +102,7 @@ export function BranchDiffView({
           Back to branches
         </button>
       </p>
-      {state.kind === 'loading' ? <p className="fd-note">Loading the diff…</p> : null}
+      {state.kind === 'loading' ? <Loading text="Loading the diff…" /> : null}
       {state.kind === 'error' ? <Alert failure={state.failure} onRetry={onRetry} /> : null}
       {state.kind === 'ready' ? (
         <>
@@ -177,7 +167,7 @@ export function BranchListView({
           )}
         </>
       ) : null}
-      {list.kind === 'loading' ? <p className="fd-note">Loading the branches…</p> : null}
+      {list.kind === 'loading' ? <Loading text="Loading the branches…" /> : null}
       {list.kind === 'error' ? <Alert failure={list.failure} onRetry={onReload} /> : null}
     </div>
   );

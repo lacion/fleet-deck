@@ -194,11 +194,12 @@ test('a login without the admin scope has no Open in terminal', async ({ page })
   deck.scopes = ['read', 'drive', 'approve'];
   deck.sessions = [session()];
   await setUp(page, deck);
-  // One primary Resume: on the phone it is the composer's Resume bar (the header has none there).
-  const resume = onPhone()
-    ? page.locator('.fd-composer-resume').getByRole('button', { name: 'Resume', exact: true })
-    : header(page).getByRole('button', { name: 'Resume', exact: true });
+  // One primary Resume on a screen: the composer's Resume bar (the header has none next to it).
+  const resume = page
+    .locator('.fd-composer-resume')
+    .getByRole('button', { name: 'Resume', exact: true });
   await expect(resume).toBeVisible();
+  await expect(header(page).getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
   await expectNoOpenInTerminal(page);
 });
 

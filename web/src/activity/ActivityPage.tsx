@@ -29,7 +29,8 @@ import {
   Wrench,
 } from '../ui/icons';
 import { homeShortIn, plainLine } from '../ui/format';
-import { EmptyState, Page } from '../ui/page';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { foldLines } from '../watch/tiles';
 import { type ActivityTool, activityTool, homePath } from '../watch/tooltext';
@@ -488,13 +489,13 @@ export function ActivityPage({
         </nav>
         <div className="fd-astream">
           <Post key={id} channel={channel} sessions={sessions} fleet={fleet} />
-          {error === null ? null : (
-            <p className="fd-note" role="alert">
-              {error}
-            </p>
-          )}
+          {error === null ? null : <ErrorNotice text={error} />}
           {items === null ? (
-            <p className="fd-empty">{live ? 'Loading…' : 'The stream needs a live connection.'}</p>
+            live ? (
+              <Loading text="Loading…" />
+            ) : (
+              <p className="fd-empty">The stream needs a live connection.</p>
+            )
           ) : shown.length === 0 ? (
             <EmptyState
               icon={MessagesSquare}

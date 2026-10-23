@@ -680,7 +680,7 @@
 }
 .fd-strip {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w) 88px 64px;
+  grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w, 168px) 88px 64px;
   align-items: stretch;
   min-height: var(--strip-h);
   padding-left: 3px;
@@ -861,14 +861,14 @@
    edge. */
 @container fleet (min-width: 721px) {
   .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
-    grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w) 64px;
+    grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w, 168px) 64px;
   }
   .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
     grid-column: auto;
   }
   .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
-    left: calc(100% - var(--fd-where-w) - 64px + var(--sp-3));
-    max-width: calc(var(--fd-where-w) - 2 * var(--sp-3));
+    left: calc(100% - var(--fd-where-w, 168px) - 64px + var(--sp-3));
+    max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   }
 }
 .fd-strip > .fd-strip-changes {
@@ -920,12 +920,12 @@
   z-index: 1;
   pointer-events: none;
   bottom: 3px;
-  left: calc(100% - var(--fd-where-w) - 88px - 64px + var(--sp-3));
-  max-width: calc(var(--fd-where-w) - 2 * var(--sp-3));
+  left: calc(100% - var(--fd-where-w, 168px) - 88px - 64px + var(--sp-3));
+  max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   overflow: hidden;
 }
 .fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
-  max-width: calc(var(--fd-where-w) + 88px - 2 * var(--sp-3));
+  max-width: calc(var(--fd-where-w, 168px) + 88px - 2 * var(--sp-3));
 }
 .fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer)) > .fd-strip > .fd-strip-where {
   align-items: flex-start;

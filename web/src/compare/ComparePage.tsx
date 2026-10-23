@@ -12,7 +12,9 @@ import { hasChanges } from '../session/changes';
 import type { Outcome, SessionActions } from '../session/commands';
 import { modelFamily, shortModel } from '../ui/format';
 import { Check, GitCompare, Icon, Trash2, X } from '../ui/icons';
+import { Loading } from '../ui/Loading';
 import { sessionRef } from '../ui/localSet';
+import { ErrorNotice } from '../ui/page';
 import {
   digestOf,
   kept,
@@ -115,14 +117,8 @@ function DiffDialog({
 }
 
 function Changes({ state, onShow }: { readonly state: DiffState; readonly onShow: () => void }) {
-  if (state.kind === 'loading') return <p className="fd-note">Loading the diff…</p>;
-  if (state.kind === 'error') {
-    return (
-      <p className="fd-note" role="alert">
-        {state.text}
-      </p>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text="Loading the diff…" />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} />;
   const { summary, patch } = state.diff;
   if (!hasChanges(summary) && patch.trim() === '') {
     return <p className="fd-note">No file changes since the session started.</p>;

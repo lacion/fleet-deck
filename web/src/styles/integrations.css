@@ -41,9 +41,12 @@
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
+/* The row menu shares the baseline of the row too: a middle-aligned cell put the ⋯ 4.5px under the
+   row text (the text cells sit on the baseline at the top of the row). The menu itself is
+   `vertical-align: middle` on that line (base.css .fd-menu). */
 .fd-int-projects .fd-cell-actions {
   width: 1%;
-  vertical-align: middle;
+  vertical-align: baseline;
 }
 .fd-int-projects .fd-cell-actions > :is(.fd-menu, span, button) {
   position: relative;
@@ -704,11 +707,6 @@ a.fd-int-projectchip:hover {
   .fd-int-sessions > * {
     --fd-where-w: clamp(168px, 16cqi, 260px);
   }
-}
-/* The page is the project: the meta line of a narrow strip does not repeat the project name (the
-   now text gets the room). */
-.fd-int-sessions .fd-strip-meta > .fd-strip-proj {
-  display: none;
 }
 /* No live session: one quiet sentence says so above the Ended fold (a fleet lane's "No
    sessions."). */

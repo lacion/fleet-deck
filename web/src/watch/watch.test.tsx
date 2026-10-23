@@ -17,6 +17,7 @@ import {
   tileLines,
   watchColumns,
   watchSessions,
+  withoutCall,
 } from './tiles';
 import { Tile, WatchPage } from './WatchPage';
 
@@ -279,10 +280,8 @@ describe('the watch page', () => {
     ]);
     expect(html).toContain('Fix login');
     expect(html).toContain('<span class="fd-wtile-line" data-kind="message">Fixed the test</span>');
-    // The tool name in sans weight 600, only the target in mono (DESIGN-SYSTEM §4.1, §4.5).
-    expect(html).toContain(
-      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
-    );
+    // The chat line of the call that runs now folds into its running line: it reads once.
+    expect(html).not.toContain('data-kind="tool"><b class="fd-wtile-toolname">Bash</b>');
     // The call that runs now: the working glyph and its name tell it from the past calls.
     expect(html).toContain(
       '<span class="fd-wtile-tool"><span class="fd-dot" data-status="working" aria-hidden="true"></span><span class="fd-vh">Running now: </span><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
@@ -291,6 +290,21 @@ describe('the watch page', () => {
     // The age of the tile, at the right of its head (the strip's age).
     expect(html).toMatch(/<time class="fd-wtile-age" dateTime="[^"]+">[^<]+<\/time>/);
     expect(html).toContain('href="#/s/station-a/busy"');
+  });
+
+  test('a past call is a chat line: the tool name in sans weight 600, the target in mono', () => {
+    const html = page([
+      card('busy', 'working', 'station-a', {
+        running_tools: [{ node_id: 'n2', tool_kind: 'shell', title: 'Bash', input_summary: 'ls' }],
+      }),
+    ]);
+    // DESIGN-SYSTEM §4.1, §4.5.
+    expect(html).toContain(
+      'data-kind="tool"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-vh">Running now: </span><b class="fd-wtile-toolname">Bash</b><code>ls</code>',
+    );
   });
 
   test('a session that needs you has the answer buttons in the tile', () => {
@@ -409,6 +423,26 @@ describe('the read-only tile (R13 P1)', () => {
       </ul>,
     );
 
+  test('on the wall the call that runs now is the newest chat line, with the working glyph', () => {
+    const html = tile({
+      card: card('busy', 'working', 'station-a', {
+        running_tools: [{ node_id: 'n9', tool_kind: 'shell', title: 'Bash', input_summary: 'ls' }],
+      }),
+      timeline: {
+        incarnation: 'i',
+        cursor: 2,
+        events: envelopes('busy', [said('Fixed the test'), started('n9', 'Bash', 'ls')]),
+        freshness: 'live',
+        error: null,
+        ready: true,
+      },
+    });
+    expect(html).toContain(
+      '<span class="fd-wtile-lines"><span class="fd-wtile-line" data-kind="message">Fixed the test</span><span class="fd-wtile-line" data-kind="tool" data-running=""><span class="fd-dot" data-status="working" aria-hidden="true"></span><span class="fd-vh">Running now: </span><b class="fd-wtile-toolname">Bash</b><code>ls</code></span></span>',
+    );
+    expect(html).not.toContain('fd-wtile-tool"');
+  });
+
   test('it has no button and no link, and the request shows as text', () => {
     const html = tile();
     expect(html).not.toContain('<button');
@@ -507,5 +541,23 @@ describe('the read-only tile (R13 P1)', () => {
     expect(html).toMatch(/class="fd-decide fd-sm"[^>]*aria-label="Allow: /);
     expect(html).toMatch(/class="fd-sm"[^>]*aria-label="Allow for this session: /);
     expect(html).toMatch(/class="fd-danger fd-sm"[^>]*aria-label="Deny: /);
+  });
+});
+
+describe('the call that runs now', () => {
+  const line = (key: string, node: string, repeat?: number) => ({
+    key,
+    kind: 'tool' as const,
+    text: 'Bash: cargo test',
+    node,
+    ...(repeat === undefined ? {} : { repeat }),
+  });
+
+  test('its chat line folds into it; a folded run keeps the other copies', () => {
+    expect(withoutCall([line('1', 'a'), line('2', 'b')], 'b')).toEqual([line('1', 'a')]);
+    expect(withoutCall([line('1', 'a', 3)], 'a')).toEqual([line('1', 'a', 2)]);
+    // Another call, or the call further up the chat, stays.
+    expect(withoutCall([line('1', 'a'), line('2', 'b')], 'a')).toHaveLength(2);
+    expect(withoutCall([], 'a')).toEqual([]);
   });
 });

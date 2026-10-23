@@ -14,7 +14,6 @@ import type {
 } from '../gen';
 import { PlacementFields, StationChoice } from '../spawn/PlacementFields';
 import { AUTO, autoOffered, parseNeeds } from '../spawn/spawn';
-import { Icon, X } from '../ui/icons';
 import type { IntegrationActions } from './actions';
 import { Dialog } from './Dialog';
 import { ticketModes } from './model';
@@ -330,19 +329,12 @@ export function StartDialog({
               {busy ? 'Starting…' : 'Start'}
             </button>
             <button type="button" className="fd-ghost" onClick={onClose}>
-              <Icon of={X} size={14} /> Cancel
+              Cancel
             </button>
           </div>
         </form>
       ) : (
-        <>
-          <StartResult station={project.station_id} result={result} />
-          <div className="fd-pane-row">
-            <button type="button" className="fd-primary" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </>
+        <StartResult station={project.station_id} result={result} />
       )}
     </Dialog>
   );

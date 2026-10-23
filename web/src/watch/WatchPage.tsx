@@ -49,6 +49,7 @@ import {
   type WatchFilter,
   watchColumns,
   watchSessions,
+  withoutCall,
 } from './tiles';
 import { homePath, type TargetForm, toolText, toolWords } from './tooltext';
 
@@ -203,8 +204,10 @@ export function Tile({
   const [note, setNote] = useState<string | null>(null);
   // A wall display gets its own event type (R13 §5D item 7).
   const shown = timeline?.display ?? [];
-  const lines = shown.length > 0 ? displayTileLines(shown) : tileLines(timeline?.events ?? []);
   const tool = s.running_tools[0];
+  // The call that runs now has its own line under the chat: its chat line folds into it.
+  const all = shown.length > 0 ? displayTileLines(shown) : tileLines(timeline?.events ?? []);
+  const lines = tool === undefined ? all : withoutCall(all, tool.node_id);
   const ask = tileRequest(card);
   const answerable =
     !readOnly &&
@@ -222,6 +225,21 @@ export function Tile({
     tool === undefined ? null : toolText(tool.title, tool.input_summary, { kind: tool.tool_kind });
   // The tile line is short: an MCP tool has no server there; the title keeps the whole name.
   const runningName = tool === undefined ? '' : toolWords(tool.title);
+  // The call that runs now: the working glyph and its name tell it from the past calls.
+  const runTitle = running === null || running.name === runningName ? undefined : running.name;
+  const run =
+    running === null ? null : (
+      <>
+        <span className="fd-dot" data-status="working" aria-hidden="true" />
+        <span className="fd-vh">Running now: </span>
+        <ToolCall name={runningName} target={running.target} form={running.form} />
+      </>
+    );
+  // On the wall it is the newest chat line: the room that no whole line fills falls at the tile
+  // foot (wall.css), never between the chat and the call. A tile that loads or failed keeps its
+  // word, and the call under it.
+  const runInLines =
+    readOnly && run !== null && !unavailable && (lines.length > 0 || timeline?.ready === true);
   const answer = (requestId: string, optionId: string) => {
     if (actions === undefined) return;
     setBusy(true);
@@ -253,7 +271,7 @@ export function Tile({
       <FocusLine summary={s} />
       {unavailable ? (
         <span className="fd-wtile-empty">Unavailable</span>
-      ) : lines.length === 0 ? (
+      ) : lines.length === 0 && !runInLines ? (
         // The empty state of a tile: a loaded tile without chat says so, unlike a broken one. A
         // running tool or a focus line already shows what the session does (principle 7).
         timeline?.ready !== true ? (
@@ -290,17 +308,16 @@ export function Tile({
               </span>
             );
           })}
+          {runInLines ? (
+            <span className="fd-wtile-line" data-kind="tool" data-running="" title={runTitle}>
+              {run}
+            </span>
+          ) : null}
         </span>
       )}
-      {/* The call that runs now: the working glyph and its name tell it from the past calls. */}
-      {running === null ? null : (
-        <span
-          className="fd-wtile-tool"
-          title={running.name === runningName ? undefined : running.name}
-        >
-          <span className="fd-dot" data-status="working" aria-hidden="true" />
-          <span className="fd-vh">Running now: </span>
-          <ToolCall name={runningName} target={running.target} form={running.form} />
+      {run === null || runInLines ? null : (
+        <span className="fd-wtile-tool" title={runTitle}>
+          {run}
         </span>
       )}
     </>

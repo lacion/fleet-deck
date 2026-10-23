@@ -1,7 +1,8 @@
 // DL-178: Settings → Deck → Network → "Tailnet": the tailnet name of the deck, what "Use tailnet"
 // would save (only when it differs from the addresses in use) and the two Tailscale switches. It
 // saves with an elevation (DL-172); the listeners start after a restart of the deck. The card is a
-// part of the Network section (SettingsPage), so its heading is an h3.
+// part of the Network section (SettingsPage): no heading of its own; its rows are field rows of
+// the section (the region keeps the name "Tailnet").
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsEnv } from '../settings/context';
 import { useElevation } from '../settings/elevation';
@@ -64,12 +65,15 @@ function AutoSection({
           onChange={(e) => onAuto(e.target.checked)}
         />
         Use Tailscale automatically
+        {/* The badge ends the control line, as on every settings field; hidden from the name of
+            the switch, the help carries its words. */}
+        <span className="fd-set-badges" aria-hidden="true">
+          <span className="fd-badge">Applies after a restart</span>
+        </span>
       </label>
       <p className="fd-note fd-tailnet-help">
         Keeps the tailnet addresses current at each start.
-        <span className="fd-set-badges">
-          <span className="fd-badge">Applies after a restart</span>
-        </span>
+        <span className="fd-vh"> Applies after a restart.</span>
       </p>
       {notes.map((text) => (
         <p className="fd-note" key={text}>
@@ -179,19 +183,27 @@ function CardBody({
 }) {
   const button = useButton(view);
   const changes = tailnetChanges(view);
+  // Without a tailnet the card is one field row: "Tailscale" and why it cannot be used.
   if (!view.available) {
     return (
-      <p className="fd-note">
-        Tailscale is not available on the deck machine: {view.reason ?? 'no reason given'}. Pair
-        stations with an invitation instead.
-      </p>
+      <div className="fd-tailnet-row">
+        <span className="fd-tailnet-label">Tailscale</span>
+        <p className="fd-note fd-tailnet-rownote">
+          Tailscale is not available on the deck machine: {view.reason ?? 'no reason given'}. Pair
+          stations with an invitation instead.
+        </p>
+      </div>
     );
   }
   if (view.userspace) {
     return (
-      <p className="fd-note">
-        {view.reason ?? 'Tailscale runs in userspace networking: set the listen addresses by hand.'}
-      </p>
+      <div className="fd-tailnet-row">
+        <span className="fd-tailnet-label">Tailscale</span>
+        <p className="fd-note fd-tailnet-rownote">
+          {view.reason ??
+            'Tailscale runs in userspace networking: set the listen addresses by hand.'}
+        </p>
+      </div>
     );
   }
   return (
@@ -273,11 +285,15 @@ export function TailnetCardView({
 }) {
   return (
     <>
-      {usesWindows(view) ? <p className="fd-note">{WINDOWS_TEXT}</p> : null}
       <CardBody view={view} busy={busy} onUse={onUse} />
+      {usesWindows(view) ? <p className="fd-note fd-tailnet-indent">{WINDOWS_TEXT}</p> : null}
       <AutoSection view={view} busy={busy} onAuto={onAuto} />
       <CertificateSection cert={view.certificate} busy={busy} onCert={onCert} />
-      {note === null ? null : <p role="status">{note}</p>}
+      {note === null ? null : (
+        <p role="status" className="fd-tailnet-indent">
+          {note}
+        </p>
+      )}
     </>
   );
 }
@@ -365,9 +381,8 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
 
   return (
     <section className="fd-tailnet" aria-label="Tailnet">
-      <h3>Tailnet</h3>
       {view === null && error === null ? (
-        <p className="fd-note fd-set-loading" role="status">
+        <p className="fd-note fd-set-loading fd-tailnet-indent" role="status">
           Checking Tailscale…
         </p>
       ) : null}
@@ -391,7 +406,11 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
           }
         />
       )}
-      {error === null ? null : <p role="alert">{error}</p>}
+      {error === null ? null : (
+        <p role="alert" className="fd-tailnet-indent">
+          {error}
+        </p>
+      )}
       {node}
     </section>
   );

@@ -324,7 +324,7 @@ export function BatchSwitch({
 /**
  * The footer of the sheet, one line: the Batch switch at the left (a desktop); the outcome, and the
  * missing steps that have no field of their own to show them; Cancel and the primary start button
- * (kbd ⌘↵ or Ctrl+↵). The directory note stays under its field, also on a phone: there the footer
+ * (kbd ⌘↵ or Ctrl+Enter). The directory note stays under its field, also on a phone: there the footer
  * is one row of buttons above the bottom bar, and grows only for a reason that the sheet shows
  * nowhere else (the board or the scope, a missing step, the outcome).
  */

@@ -619,6 +619,7 @@ export function App({
             station={route.station}
             id={route.id}
             version={route.version}
+            sessions={sessions}
             onVersion={(version) => navigate({ ...route, version }, { replace: true })}
           />
         );

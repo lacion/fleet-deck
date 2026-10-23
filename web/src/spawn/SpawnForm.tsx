@@ -369,7 +369,7 @@ export function SpawnForm({
         <p className="fd-empty">No linked station has reported its providers yet.</p>
       ) : (
         <form
-          // ⌘↵ (Ctrl+↵) starts, as the kbd hint of the Start button says.
+          // ⌘↵ (Ctrl+Enter) starts, as the kbd hint of the Start button says.
           onKeyDown={(event) => {
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && startable) {
               event.preventDefault();

@@ -99,6 +99,7 @@ describe('the Sessions tab of a project', () => {
     expect(html).toContain('data-showstation="true"');
     expect(html).not.toContain('class="fd-card"');
     expect(html).not.toContain('fd-int-projectchip');
+    expect(html).not.toContain('fd-strip-proj');
   });
 
   test('without the drive scope there is no button', () => {

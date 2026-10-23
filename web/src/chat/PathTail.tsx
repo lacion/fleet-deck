@@ -29,7 +29,9 @@ export function fitChars(width: number, textWidth: number, textLength: number): 
 }
 
 /** `path` shortened to the width of its parent box (a one-line, `overflow: hidden` mono box).
-    A screen reader reads the whole path. */
+    A screen reader reads the whole path. The parent box must have a width that does not depend on
+    its text (a block, a grid cell, or a flex item with `flex: 1 1 auto; min-width: 0`): a box as
+    wide as its text shrinks to a cut path and never grows back. */
 export function PathTail({ path }: { readonly path: string }) {
   const text = useRef<HTMLElement>(null);
   const [max, setMax] = useState<number | null>(null);

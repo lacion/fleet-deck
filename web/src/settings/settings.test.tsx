@@ -199,7 +199,7 @@ describe('field rendering for each kind', () => {
     expect(html).toContain('aria-label="Remove Allowed folders 1"');
     expect(html).toContain('Add folder');
     // A settings row has no pin button: pinning belongs to the New session sheet.
-    expect(html).not.toContain('Pin this directory');
+    expect(html).not.toContain('Pin this folder');
     // The deck tab has no folders to browse: plain inputs.
     const deck = fields({ stationId: null });
     expect(deck).not.toContain('class="fd-folder"');

@@ -50,11 +50,13 @@
   text-decoration: none;
   transition: background-color var(--t-fast);
 }
-.fd-art-row:hover,
-.fd-art-row:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-art-row:hover,
+  .fd-art-row:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 .fd-art-row:focus-visible {
   outline-offset: -2px;
@@ -138,8 +140,10 @@
 .fd-art-copies > summary::before {
   margin-right: 0;
 }
-.fd-art-copies > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-art-copies > summary:hover {
+    color: var(--text);
+  }
 }
 .fd-art-copies > ul {
   margin: 0 0 var(--sp-1);
@@ -164,11 +168,13 @@
   text-decoration: none;
   transition: background-color var(--t-fast);
 }
-.fd-art-copy:hover,
-.fd-art-copy:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-art-copy:hover,
+  .fd-art-copy:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 .fd-art-copy:focus-visible {
   outline-offset: -2px;
@@ -210,6 +216,8 @@
 .fd-art-filters input.fd-sm {
   font-size: var(--fs-field);
 }
+/* A long session title stops at 180px (an ellipsis): the filter row stays on one line. The ghost
+   select hugs a shorter value (base.css select.fd-ghost). */
 .fd-art-filters select {
   min-width: 0;
   max-width: 180px;
@@ -292,11 +300,15 @@
   .fd-art-kind {
     margin-right: 0;
   }
-  .fd-art-row:hover,
-  .fd-art-row:hover:not(:disabled) {
-    background: transparent;
+  @media (hover: hover) {
+    .fd-art-row:hover,
+    .fd-art-row:hover:not(:disabled) {
+      background: transparent;
+    }
   }
+  /* The chevron in the icon column, the words on the title column (the row gap is 8px here). */
   .fd-art-copies > summary {
+    gap: var(--sp-2);
     margin-left: 0;
   }
   .fd-art-copy {
@@ -624,10 +636,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fd-art-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-art-chip:hover:not(:disabled) {
+    background: var(--raised-hi);
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 /* Each file row has a fixed 24px trailing slot for "Publish as artifact" (empty when it is not
@@ -645,8 +659,10 @@
   width: var(--ctl-h-sm);
   color: var(--faint);
 }
-.fd-files-item > button.fd-files-publish:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-files-item > button.fd-files-publish:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 @media (pointer: coarse) {
   .fd-files-item > .fd-files-publish {

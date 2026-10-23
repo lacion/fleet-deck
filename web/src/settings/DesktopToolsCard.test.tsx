@@ -100,7 +100,7 @@ describe('the card', () => {
     expect(loading).toContain('id="fd-set-sec-desktop-tools"');
     expect(loading).toContain('<h2>Desktop tools</h2>');
     expect(loading).toContain(
-      '<p class="fd-note fd-set-loading" role="status">Loading the desktop tools…</p>',
+      '<p class="fd-note fd-loading" role="status">Loading the desktop tools…</p>',
     );
     const error = view({ kind: 'error' });
     expect(error).toContain('role="alert"');

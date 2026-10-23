@@ -308,7 +308,7 @@ describe('session pane (DL-140)', () => {
     expect(off).not.toContain('Open in terminal…');
     // A station setting is changed on the board: the note links the station tab of Settings.
     expect(off).toContain(
-      'Shells are off on this station. <a href="#/settings/station/station-a">Turn on Allow terminals in Settings</a>',
+      'Shells are off on this station. <a href="#/settings/station/station-a">Turn them on in Settings</a>.',
     );
     expect(off).not.toContain('station.toml');
     for (const allowed of [true, null]) {

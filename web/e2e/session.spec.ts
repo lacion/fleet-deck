@@ -380,7 +380,9 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(page.getByRole('alert')).toContainText('Delivery is unknown');
   await page.locator('summary[aria-label="Session menu"]').click();
-  const ladder = page.getByRole('group', { name: 'Mode (most restrictive first)' });
+  // The order of the rows says "most restrictive first": the legend is "Mode" ("Model" is the
+  // legend of the model rows, so the name is exact).
+  const ladder = page.getByRole('group', { name: 'Mode', exact: true });
   // The modes are menu rows with their sentence-case names (the title keeps the raw id).
   await expect(ladder.getByRole('button')).toHaveText([
     'Default',
@@ -395,10 +397,13 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   );
   await ladder.getByRole('button', { name: 'Plan' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
-  const model = page.getByRole('form', { name: 'Model' });
-  await model.getByLabel('Model (now unknown)').fill(' claude-haiku-4-5 ');
+  // The phone has no composer model chip: its session menu holds the model rows (no list here:
+  // the id field only).
+  const model = page.getByRole('group', { name: 'Model', exact: true });
+  await model.getByLabel('Model id or alias').fill(' claude-haiku-4-5 ');
   await model.getByRole('button', { name: 'Set model' }).click();
-  await expect(model.getByRole('button', { name: 'Set model' })).toBeDisabled();
+  // A pick closes the menu (the same as a model row).
+  await expect(model).toBeHidden();
   expect(await fitsWidth(page)).toBe(true);
 
   const sent = deck.calls.filter((c) => c.path.startsWith('/api/commands/'));
@@ -496,7 +501,8 @@ test('the menu lists the session facts, asks for a status update, and stars the 
   const details = view.locator('.fd-sh-details');
   await expect(details).toContainText('Session');
   await expect(details).toContainText(ID);
-  await expect(details).toContainText('falcon');
+  // The header shows the callsign: the details do not repeat it.
+  await expect(details).not.toContainText('falcon');
   await expect(details).toContainText('/wt/review');
   await expect(details).toContainText('42');
   await expect(details.getByRole('button', { name: 'Copy the session id' })).toBeVisible();

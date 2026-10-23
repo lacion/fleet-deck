@@ -24,7 +24,7 @@ import { ForgeConnect, forgeAccounts } from './ForgeSection';
 import { TrackerBlock, type TrackerKind } from './TrackerSection';
 import type { SettingsRoute } from '../settings/SettingsPage';
 import { describe } from '../settings/http';
-import { Loading } from '../settings/Loading';
+import { Loading } from '../ui/Loading';
 import { NoticeIcon } from '../settings/NoticeIcon';
 
 type Banner = { readonly tone: 'info' | 'warn' | 'error'; readonly text: string };

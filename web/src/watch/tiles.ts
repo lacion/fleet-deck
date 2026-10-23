@@ -58,12 +58,27 @@ export type TileLine = {
   readonly outcome?: 'failed' | 'denied';
   /** The times the same line came in a row (`foldLines`); absent: once. */
   readonly repeat?: number;
+  /** The node of a tool call: the call that runs now (`running_tools`) folds into it (`withoutCall`). */
+  readonly node?: string;
 };
 
 /** A line that `foldLines` can fold. */
 type Foldable = { readonly kind: string; readonly text: string; readonly repeat?: number };
 
 const sameLine = (a: Foldable, b: Foldable): boolean => a.kind === b.kind && a.text === b.text;
+
+/**
+ * The lines without the call `node` when it is the last one: a tile shows the call that runs now
+ * on a line of its own (with the working glyph), so the chat line of the same call folds into it
+ * and one call never reads twice. A folded run keeps its other copies.
+ */
+export function withoutCall(lines: readonly TileLine[], node: string): readonly TileLine[] {
+  const last = lines[lines.length - 1];
+  if (last === undefined || last.node !== node) return lines;
+  const rest = lines.slice(0, -1);
+  const times = last.repeat ?? 1;
+  return times > 1 ? [...rest, { ...last, repeat: times - 1 }] : rest;
+}
 
 /**
  * Consecutive equal lines (the same kind and text, or `same`) as one line with the number of
@@ -124,6 +139,7 @@ function lineOf(item: Item): TileLine | null {
       form: call.form,
       note: '',
       ...(outcome === null ? {} : { outcome }),
+      node: item.node_id,
     };
   }
   if (item.type === 'subagent') {

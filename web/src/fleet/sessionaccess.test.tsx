@@ -53,7 +53,6 @@ const body = (extra: Partial<Body> = {}): ReactElement => (
     onEdit={() => {}}
     onCancelEdit={() => {}}
     onSave={() => {}}
-    onClose={() => {}}
     onChanged={() => {}}
     {...extra}
   />
@@ -100,7 +99,7 @@ describe('the dialog body', () => {
     expect(out).toContain('<dt>Sessions started</dt><dd>1 of 3</dd>');
     expect(out).toContain(`<dt>Expires</dt><dd>${new Date(10).toLocaleString()}</dd>`);
     expect(out).toContain('<div class="fd-access-foot">');
-    expect(out).toContain('type="button" class="fd-ghost">Close<');
+    expect(out).not.toContain('>Close<');
     expect(out).toContain('>Revoke<');
     expect(out).toContain('>Change permissions<');
     expect(out).not.toContain('>Renew<');
@@ -242,7 +241,7 @@ describe('the dialog body', () => {
     expect(out).toContain('Session limit');
     expect(out).not.toContain('Codex sees the change');
     expect(out).toContain('type="submit" class="fd-primary">Give access<');
-    expect(out).toContain('type="button" class="fd-ghost">Close<');
+    expect(out).not.toContain('>Close<');
     expect(out).toContain('<h4 class="fd-label fd-access-h">Stations</h4>');
   });
 
@@ -272,14 +271,14 @@ describe('the dialog body', () => {
   test('without an elevation, Give access is not shown', () => {
     const out = html({ ask: undefined });
     expect(out).not.toContain('Give access');
-    expect(out).toContain('type="button" class="fd-ghost">Close<');
+    expect(out).not.toContain('>Close<');
   });
 
   test('a station without coordinator_live gets the refusal text', () => {
     const out = html({ stations: [station('station-a', { coordinator_live: false })] });
     expect(out).toContain('This session cannot get fleet access now');
     expect(out).not.toContain('Give access');
-    expect(out).toContain('type="button" class="fd-ghost">Close<');
+    expect(out).not.toContain('>Close<');
   });
 
   test('a session that is not running gets the refusal text', () => {
@@ -291,7 +290,7 @@ describe('the dialog body', () => {
   test('the load shows a status', () => {
     const out = html({ grant: null });
     expect(out).toContain('<p role="status" class="fd-note">Loading…</p>');
-    expect(out).toContain('type="button" class="fd-ghost">Close<');
+    expect(out).not.toContain('>Close<');
     expect(out).not.toContain('Give access');
   });
 

@@ -9,7 +9,7 @@ import { RestartDialog, RestartOverlay, type RestartView, SecretDialog, waitStep
 import { useElevation } from './elevation';
 import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { describe } from './http';
-import { Loading } from './Loading';
+import { Loading } from '../ui/Loading';
 import { NoticeIcon } from './NoticeIcon';
 import { OmarchyCard } from './OmarchyCard';
 import type { DesktopToolsActions } from './desktopTools';

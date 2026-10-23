@@ -38,8 +38,8 @@
   }
 }
 
-/* The roles: no box around the group. Each choice is a row; the picked one has the look of a
-   pressed segment. */
+/* The roles: no box around the group. Each choice is a row; the checked radio and a 600 name mark
+   the picked one. */
 .fd-share-roles {
   display: grid;
   gap: 2px;
@@ -55,23 +55,9 @@
     min-height: var(--tap-min);
   }
 }
-.fd-share-roles .fd-share-role:hover {
-  background: var(--badge-bg);
-}
-/* The picked role has the pressed-segment look (§3 `.fd-seg`): one look for "chosen". */
-.fd-share-roles .fd-share-role:has(> input:checked) {
-  background: var(--pressed-bg);
-  box-shadow:
-    inset 0 0 0 1px var(--ctl-edge),
-    var(--shadow-lift);
-}
-.fd-share-roles .fd-share-role:has(> input:checked) strong {
-  font-weight: 600;
-}
-@media (forced-colors: active) {
-  .fd-share-roles .fd-share-role:has(> input:checked) {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
+@media (hover: hover) {
+  .fd-share-roles .fd-share-role:hover {
+    background: var(--badge-bg);
   }
 }
 .fd-share-form .fd-share-role {
@@ -91,6 +77,11 @@
 }
 .fd-share-role strong {
   font-weight: 500;
+}
+/* The picked role: its checked radio carries the state (base.css; Highlight in forced colors) and
+   its name is 600. No box: a white box on the white light dialog read as an empty field. */
+.fd-share-roles .fd-share-role:has(> input:checked) strong {
+  font-weight: 600;
 }
 .fd-share-role .fd-note {
   font-size: var(--fs-meta);

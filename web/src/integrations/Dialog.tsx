@@ -1,5 +1,5 @@
 import { type ReactNode, useLayoutEffect, useRef } from 'react';
-import { trapTab, useFocusReturn } from '../app/focus';
+import { FOCUSABLE, trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import { Icon, X } from '../ui/icons';
 
@@ -10,10 +10,6 @@ type Props = {
   readonly onClose: () => void;
   readonly children: ReactNode;
 };
-
-/** The controls that can take the focus (the list of `app/focus.ts`). */
-const CONTROLS =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 /**
  * The modal frame of the integrations dialogs: the dialog head (§4.7: the title, an optional
@@ -27,7 +23,7 @@ export function Dialog({ title, description, onClose, children }: Props) {
   const start = useRef<HTMLElement | null>(null);
   // A layout effect runs before the focus effect of useFocusReturn.
   useLayoutEffect(() => {
-    const controls = root.current?.querySelectorAll<HTMLElement>(CONTROLS) ?? [];
+    const controls = root.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [];
     start.current = [...controls].find((c) => !head.current?.contains(c)) ?? null;
   }, []);
   useFocusReturn(root, start);

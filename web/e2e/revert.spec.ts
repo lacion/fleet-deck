@@ -109,12 +109,13 @@ test('the files of a session are browsed, read and searched; a symlink is not op
     'link (symlink, not opened)',
   );
   await expect(files.locator('[data-entry-kind="symlink"] button')).toHaveCount(0);
-  await files.getByRole('button', { name: 'docs/' }).click();
+  // A folder row is named without a trailing "/" (the folder icon marks it).
+  await files.getByRole('button', { name: 'docs', exact: true }).click();
   const crumbs = files.getByRole('navigation', { name: 'Folder path' });
   await expect(crumbs.getByRole('button', { name: 'docs' })).toBeVisible();
   await crumbs.getByRole('button', { name: 'root' }).click();
   await expect(files.getByRole('button', { name: /^a\.txt/ })).toBeVisible();
-  await files.getByRole('button', { name: 'docs/' }).click();
+  await files.getByRole('button', { name: 'docs', exact: true }).click();
   // a file row names its size
   await files.getByRole('button', { name: /^guide\.md\s*6 B$/ }).click();
   // a Markdown file shows rendered; the Raw chip shows its text
@@ -133,7 +134,11 @@ test('the files of a session are browsed, read and searched; a symlink is not op
   await files.getByRole('button', { name: /^a\.txt\s*4 B$/ }).click();
   await expect(files.getByRole('alert')).toHaveText('no such file');
   await files.getByLabel('Search', { exact: true }).fill('Guide');
-  await files.getByLabel('Search in').selectOption('content');
+  // Names | Content: two segments of one group (not a select).
+  await files
+    .getByRole('group', { name: 'Search in' })
+    .getByRole('button', { name: 'Content' })
+    .click();
   await files.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(files.locator('[data-search="git"]')).toContainText('docs/guide.md:1');
   expect(await fitsWidth(page)).toBe(true);

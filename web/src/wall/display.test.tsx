@@ -94,6 +94,17 @@ describe('the lines of a display timeline', () => {
     expect(displayChatLines(call).map((l) => l.text)).toEqual(['Bash (failed)', 'Read']);
   });
 
+  test('the same line in a row is one tile line with its count, and a call keeps its node', () => {
+    const repeats: DisplayEvent[] = [
+      ev(1, { item: 'tool', node_id: 'n1', name: 'Bash', status: 'ok' }),
+      ev(2, { item: 'tool', node_id: 'n2', name: 'Bash', status: 'ok' }),
+      ev(3, { item: 'tool', node_id: 'n3', name: 'Bash', status: null }),
+    ];
+    expect(displayTileLines(repeats)).toEqual([
+      { key: '3', kind: 'tool', text: 'Bash', node: 'n3', repeat: 3 },
+    ]);
+  });
+
   test('a message with only Markdown marks draws no blank tile row', () => {
     const marks: DisplayEvent[] = [
       ev(1, { item: 'message', turn_id: 't', text: 'First' }),

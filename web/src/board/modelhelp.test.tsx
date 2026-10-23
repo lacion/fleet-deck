@@ -79,11 +79,15 @@ describe('generated titles and digests', () => {
   test('the session header marks a generated title and lists the digest in the details', () => {
     const html = header(generated({ digest: '- Read the router\n- Fixed the redirect' }));
     expect(html).toContain('<span class="fd-generated"');
-    expect(html).toContain('Summary (generated)');
+    // "Summary" and the sparkles mark named "Generated", not a parenthesis.
+    expect(html).toContain(
+      '<dt>Summary <span class="fd-generated" role="img" aria-label="Generated"',
+    );
+    expect(html).not.toContain('(generated)');
     expect(html).toContain('<li>Read the router</li><li>Fixed the redirect</li>');
     const plain = header(generated({ title_generated: false }));
     expect(plain).not.toContain('fd-generated');
-    expect(plain).not.toContain('Summary (generated)');
+    expect(plain).not.toContain('<dt>Summary');
   });
 });
 

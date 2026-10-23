@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { WorkspaceListing } from '../gen';
 import { card } from '../testing/fleet';
-import { crumbsOf, FolderPicker } from './FolderPicker';
+import { crumbsOf, FolderPicker, QUICK_ROWS } from './FolderPicker';
 
 const listing: WorkspaceListing = {
   path: '/home/me/projects',
@@ -37,7 +37,7 @@ describe('FolderPicker (DL-171)', () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('fd-folder-panel');
     // A typed path can be pinned.
-    expect(html).toContain('aria-label="Pin this directory"');
+    expect(html).toContain('aria-label="Pin this folder"');
   });
 
   test('without a listing call the picker is a text input only', () => {
@@ -58,6 +58,8 @@ describe('FolderPicker (DL-171)', () => {
     // The first crumbs sit above the allowed parent: text. The parent and the folder stay.
     expect(html).toContain('aria-current="location">projects</span>');
     expect(html).toContain('aria-label="Open app"');
+    // The folder name is sans, the same as the name of a recent folder.
+    expect(html).toContain('<span class="fd-folder-base">app</span>');
     expect(html).toContain('git repository');
     expect(html).toContain('aria-label="Open notes"');
     expect(html).toContain('Use this folder');
@@ -71,14 +73,47 @@ describe('FolderPicker (DL-171)', () => {
     });
     expect(html).toContain('aria-label="Recent directories"');
     expect(html).toContain('title="/w/one"');
+    expect(html).not.toContain('fd-folder-more');
   });
 
-  test('the crumbs of a path carry the path up to each part', () => {
+  test('the panel shows the first recent folders and "Show all" with the count', () => {
+    const sessions = [1, 2, 3, 4, 5, 6].map((n) =>
+      card(`s${n}`, 'idle', 'station-a', { cwd: `/w/f${n}`, updated_at: n }),
+    );
+    const html = render({ initialOpen: true, initialListing: listing, sessions });
+    const recent = html.slice(
+      html.indexOf('aria-label="Recent directories"'),
+      html.indexOf('<nav'),
+    );
+    expect(recent.match(/title="\/w\/f\d"/g)).toHaveLength(QUICK_ROWS);
+    expect(recent).toContain(
+      '<button type="button" class="fd-folder-more">Show all<span class="fd-count">6</span></button>',
+    );
+  });
+
+  test('an empty folder says that it has no subfolders', () => {
+    const empty = { ...listing, entries: [] };
+    expect(render({ initialOpen: true, initialListing: empty })).toContain('No subfolders.');
+  });
+
+  test('the crumbs of a path carry the path up to each part; a home folder is one ~', () => {
     expect(crumbsOf('/home/me/app')).toEqual([
-      { name: 'home', path: '/home' },
-      { name: 'me', path: '/home/me' },
+      { name: '~', path: '/home/me' },
       { name: 'app', path: '/home/me/app' },
     ]);
+    expect(crumbsOf('/Users/me')).toEqual([{ name: '~', path: '/Users/me' }]);
+    expect(crumbsOf('/srv/data')).toEqual([
+      { name: 'srv', path: '/srv' },
+      { name: 'data', path: '/srv/data' },
+    ]);
     expect(crumbsOf('/')).toEqual([]);
+  });
+
+  test('the listing names are folder names, the foot names the folder it takes', () => {
+    const html = render({ initialOpen: true, initialListing: listing });
+    expect(html).toContain('<span class="fd-folder-base">app</span>');
+    expect(html).toContain('title="/home/me/projects"><bdi>~/projects</bdi>');
+    // Close first, then the choice (as Cancel, then Start session).
+    expect(html.indexOf('>Close<')).toBeLessThan(html.indexOf('>Use this folder<'));
   });
 });

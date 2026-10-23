@@ -45,9 +45,11 @@ const view = (count: number, tab: PaneTab = 'chat', provided = true) => {
 };
 
 describe('the session Artifacts tab', () => {
-  test('the tab sits beside Chat and Changes, with the count', () => {
+  test('the tab sits beside Chat and Changes; its count waits for the rows of the list', () => {
+    // The count is the rows that the list shows (session/artifactRows.ts): none until the list
+    // is read (a first render reads nothing).
     const html = view(2);
-    expect(html).toMatch(/role="tab"[^>]*>Artifacts <span class="fd-count">2<\/span>/);
+    expect(html).toMatch(/role="tab"[^>]*>Artifacts<\/button>/);
     expect(html.indexOf('>Changes')).toBeLessThan(html.indexOf('>Artifacts'));
   });
 

@@ -6,7 +6,8 @@ import { type ReactNode, useId, useRef, useState } from 'react';
 import type { StationView } from '../gen';
 import type { SettingsEnv } from '../settings/context';
 import { type ElevationAsk, useElevation } from '../settings/elevation';
-import { Icon, Monitor, Plus } from '../ui/icons';
+import { NoticeIcon } from '../settings/NoticeIcon';
+import { Icon, Monitor, Plus, RefreshCw } from '../ui/icons';
 import { EmptyState } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { NO_DISPLAYS_TEXT } from './actions';
@@ -113,13 +114,16 @@ export function DisplaysView({
             Loading displays…
           </p>
         ) : null}
+        {/* A failed read: the error row of every settings tab, with the one name of the action
+            (§5: "Try again" everywhere). */}
         {state.kind === 'error' ? (
-          <p role="alert" className="fd-fielderror">
-            {state.text}{' '}
-            <button type="button" className="fd-ghost" onClick={refresh}>
-              Retry
+          <div className="fd-set-notice" data-tone="error" role="alert">
+            <NoticeIcon tone="error" />
+            <span>{state.text}</span>
+            <button type="button" className="fd-sm" onClick={refresh}>
+              <Icon of={RefreshCw} size={14} /> Try again
             </button>
-          </p>
+          </div>
         ) : null}
         {empty ? (
           <EmptyState

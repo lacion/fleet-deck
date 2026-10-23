@@ -577,6 +577,33 @@ select.fd-ghost[data-active="true"] {
   -webkit-appearance: none;
   margin: 0;
 }
+/* A time field (the quiet hours of a wall display): the digits in the field type (--fs-field of
+   every input; times are not code, so no mono), and the picker button is the Lucide clock in
+   --dim, --text on hover (a mask on a fill), not the black icon of the browser. The keys edit the
+   hour and the minute; a click on the clock opens the picker of the browser. */
+:where(input[type="time"]) {
+  font-size: var(--fs-field);
+}
+:where(input[type="time"])::-webkit-calendar-picker-indicator {
+  width: 14px;
+  height: 14px;
+  margin: 0 0 0 var(--sp-1);
+  padding: 0;
+  background: var(--dim);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 6v6l4 2'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  opacity: 1;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  :where(input[type="time"]:not(:disabled))::-webkit-calendar-picker-indicator:hover {
+    background: var(--text);
+  }
+}
+:where(input[type="time"]:disabled)::-webkit-calendar-picker-indicator {
+  cursor: not-allowed;
+}
 /* The select chevron. A <select> has no pseudo-elements, so a mask cannot draw it: two
    1.5px diagonal strokes (linear gradients in --dim) draw Lucide's chevron-down. */
 :where(select:not([multiple]):not([size])) {
@@ -1923,6 +1950,12 @@ details[open] > summary[data-variant="toggle"]::after {
   :where(details:not(.fd-menu) > summary:not(:has(svg)))::before,
   summary[data-variant="toggle"]::after,
   .fd-menu > summary.fd-ghost[data-variant="toggle"]::after {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
+  /* The clock of a time field, too (a rule of its own: a browser without the pseudo-element
+     drops the whole selector list). */
+  :where(input[type="time"])::-webkit-calendar-picker-indicator {
     forced-color-adjust: none;
     background-color: CanvasText;
   }

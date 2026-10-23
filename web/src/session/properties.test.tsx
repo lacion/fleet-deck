@@ -140,14 +140,23 @@ describe('properties panel facts (§4.5)', () => {
     expect(some).not.toContain('−0');
   });
 
-  test('the Agents row counts the Agents bar: its agents and how many run', () => {
+  test('the Agents row counts as the Agents bar: subagents, commands and how many run', () => {
     expect(panel('live')).not.toContain('<dt>Agents</dt>');
     const html = panel('live', true, { agents: 2, runningAgents: 1 });
-    expect(html).toContain('<dt>Agents</dt><dd>2<span class="fd-props-aside">1 running</span>');
+    expect(html).toContain(
+      '<dt>Agents</dt><dd><span>2</span><span class="fd-props-aside">1 running</span>',
+    );
     expect(html).not.toContain('Subagents');
-    // Only a background command runs: the bar's number, with no count of subagents.
-    expect(panel('live', true, { agents: 0, runningAgents: 1 })).toContain(
-      '<dt>Agents</dt><dd><span class="fd-props-aside">1 running</span></dd>',
+    // The commands follow the subagents in quiet words, as in the summary of the bar.
+    expect(panel('live', true, { agents: 3, commands: 33, runningAgents: 5 })).toContain(
+      '<dt>Agents</dt><dd><span>3 <span class="fd-props-aside">· 33 commands</span></span><span class="fd-props-aside">5 running</span></dd>',
+    );
+    // Commands only: the row names them ("Commands 34" in the bar).
+    expect(panel('live', true, { agents: 0, commands: 34, runningAgents: 0 })).toContain(
+      '<dt>Commands</dt><dd><span>34</span></dd>',
+    );
+    expect(panel('live', true, { agents: 0, commands: 1, runningAgents: 1 })).toContain(
+      '<dt>Commands</dt><dd><span>1</span><span class="fd-props-aside">1 running</span></dd>',
     );
   });
 
@@ -167,16 +176,18 @@ describe('properties panel facts (§4.5)', () => {
     expect(panel('live')).not.toContain('context</span>');
   });
 
-  test('the tokens say "new in": the station counts the input outside the prompt cache only', () => {
-    expect(tokensText(682, 309_000)).toBe('682 new in · 309K out');
-    expect(tokensText(null, 309_000)).toBe('309K out');
-    expect(tokensText(1200, null)).toBe('1.2K new in');
+  test('the tokens say "new input": the station counts the input outside the prompt cache only', () => {
+    expect(tokensText(682, 309_000)).toBe('682 new input · 309K output');
+    expect(tokensText(null, 309_000)).toBe('309K output');
+    expect(tokensText(1200, null)).toBe('1.2K new input');
+    // A Codex session counts the cached input too (the ops glance says "input").
+    expect(tokensText(1200, 5, 'input')).toBe('1.2K input · 5 output');
     const usage = { input_tokens: 682, output_tokens: 309_000, cost_usd: 1, cost_inferred: false };
     const html = panel('live', true, {
       session: { ...session(), summary: { ...session().summary, usage } },
     });
     expect(html).toContain(
-      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682 new in · 309K out</span>`,
+      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682 new input · 309K output</span>`,
     );
   });
 

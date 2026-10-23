@@ -256,11 +256,11 @@ export function ShareFields({ request, form, busy, onChange, onSubmit }: FormPro
           checked={form.history}
           onChange={(e) => onChange({ ...form, history: e.target.checked })}
         />
-        <span>Members can read the earlier history of imported sessions</span>
+        <span>People with the link can read the history from before the deck ran a session</span>
       </label>
       <p className="fd-note">
-        Members see the full earlier conversation of the shared sessions, including anything that
-        was pasted into it. Tool commands and file names stay hidden.
+        They see the full earlier conversation, including anything pasted into it. Tool commands and
+        file names stay hidden.
       </p>
       <button type="submit" className="fd-primary" disabled={busy}>
         {busy ? 'Making the link…' : 'Make a link'}

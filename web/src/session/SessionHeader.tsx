@@ -14,6 +14,7 @@ import {
   Ellipsis,
   FileText,
   FolderGit2,
+  FolderTree,
   GitCompare,
   Icon,
   OctagonAlert,
@@ -54,7 +55,6 @@ import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { SendToWall } from '../wall/SendToWall';
-import { FolderTree } from './icons';
 import { KillConfirm, menuGroups, OpenConfirm, ShellsOffNote } from './MenuParts';
 import { AutoContinueSwitch, ModeLadder, ModelPicker } from './SessionSettings';
 

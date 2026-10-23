@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
 import { SessionArtifacts } from '../artifacts/SessionArtifacts';
-import { type AgentChoice, AgentHead, AgentsMenu } from '../chat/AgentsMenu';
+import { type AgentChoice, AgentHead, AgentsMenu, subagentName } from '../chat/AgentsMenu';
 import { ChatView } from '../chat/ChatView';
 import { SubagentWork } from '../chat/SubagentWork';
 import { useSessionHistory } from '../chat/history';
@@ -53,7 +53,15 @@ import { disabledReason, useFilesOpen, useWide } from './paneLayout';
 import { changeTotal, PropertiesPanel, usePropsOpen, useSessionChanges } from './PropertiesPanel';
 import { SessionHeader } from './SessionHeader';
 import { useTabReserve } from './tabReserve';
-import { hasAgents, isLive, runningCount, shownStatus, taskStates, toolTitles } from './tasks';
+import {
+  commandTasks,
+  hasAgents,
+  isLive,
+  runningCount,
+  shownStatus,
+  taskStates,
+  toolTitles,
+} from './tasks';
 import { buildTimeline, runningSubagents, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns, useDiffTotal } from './workspace';
@@ -251,8 +259,7 @@ export function SessionView(props: SessionViewProps) {
     turns,
     hasBase && filesReady && files !== null && changesRead === 'loading',
   );
-  // The running agents: the loaded timeline, or the summary when an agent started before the
-  // loaded history (DL-189 paging); the Agents row and the fleet strip show one number.
+  // Running agents: the loaded timeline, or the summary for one older than its pages (DL-189).
   const running = Math.max(runningCount(tree.subagents, tasks), runningSubagents(s));
   const artifactRows = useArtifactRows(
     artifactsEnv?.actions,
@@ -469,7 +476,7 @@ export function SessionView(props: SessionViewProps) {
             <>
               {agentSub === undefined ? null : (
                 <AgentHead
-                  title={agentSub.title}
+                  title={subagentName(agentSub)}
                   status={shownStatus(agentSub, tasks)}
                   onBack={() => onAgent(null)}
                 />
@@ -511,6 +518,7 @@ export function SessionView(props: SessionViewProps) {
                       toolTitles={titles}
                       agent={agentSub?.node_id ?? null}
                       onChoose={chooseAgent}
+                      running={running}
                     />
                   ) : undefined
                 }
@@ -763,6 +771,7 @@ export function SessionView(props: SessionViewProps) {
             turns={turns}
             total={total}
             agents={Math.max(tree.subagents.length, runningSubagents(s))}
+            commands={commandTasks(tasks).length}
             runningAgents={running}
             onOpenChange={onOpenChange}
             onOpenAll={() => onTab('changes')}

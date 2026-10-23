@@ -30,6 +30,9 @@ export type AgentsMenuProps = {
   /** The node id of the chosen subagent; `null`: the main chat. */
   readonly agent: string | null;
   readonly onChoose: (choice: AgentChoice) => void;
+  /** The running count of the pane (it also counts the agents of the summary that started before
+      the loaded history); absent: the count of the loaded timeline. */
+  readonly running?: number | undefined;
 };
 
 /** "1 command", "33 commands": the background commands next to the subagent count (the Agents
@@ -148,7 +151,7 @@ function Summary(props: { subagents: number; commands: number; running: number }
 /** The "Agents" control with its menu. The caller shows it only when `hasAgents` is true. */
 export function AgentsMenu(props: AgentsMenuProps) {
   const { subagents, tasks, toolTitles, agent, onChoose } = props;
-  const running = runningCount(subagents, tasks);
+  const running = props.running ?? runningCount(subagents, tasks);
   const commands = commandTasks(tasks);
   const agentRows = ranked(subagents, (sub) => shownStatus(sub, tasks));
   const commandRows = ranked(commands, (task) => taskStatus(task.status));

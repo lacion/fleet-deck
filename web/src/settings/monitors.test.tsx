@@ -49,12 +49,14 @@ const fields = (
   );
 
 describe('the monitor drop-downs of capture_monitors', () => {
-  test('each row is a select with every monitor as name and description', () => {
+  test('each row is a select with every monitor in words, the connector last (monitorLabel)', () => {
     const html = fields({ capture_monitors: ['DP-1'] }, MONITORS);
     expect(html).toContain('<select aria-label="Screenshot monitors 1"');
     expect(html).not.toContain('<input aria-label="Screenshot monitors 1"');
-    expect(html).toContain('<option value="DP-1" selected="">DP-1 — Dell U2720Q</option>');
-    expect(html).toContain('<option value="HDMI-A-1">HDMI-A-1</option>');
+    expect(html).toContain(
+      '<option value="DP-1" title="DP-1 — Dell U2720Q" selected="">Dell U2720Q · DP-1</option>',
+    );
+    expect(html).toContain('<option value="HDMI-A-1" title="HDMI-A-1">HDMI-A-1</option>');
     expect(html).toContain('aria-label="Remove Screenshot monitors 1"');
     expect(html).toContain('The monitors that a screenshot may capture.');
     expect(html).not.toContain('This station reports no monitors');
@@ -63,7 +65,7 @@ describe('the monitor drop-downs of capture_monitors', () => {
   test('a value that no monitor has is the first option as not connected', () => {
     const html = fields({ capture_monitors: ['DP-9'] }, MONITORS);
     expect(html).toContain(
-      '<option value="DP-9" selected="">DP-9 (not connected)</option><option value="DP-1">',
+      '<option value="DP-9" selected="">DP-9 (not connected)</option><option value="DP-1" title=',
     );
   });
 

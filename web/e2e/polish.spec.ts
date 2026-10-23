@@ -12,6 +12,7 @@ import { summary } from '../src/testing/summary';
 import { envelopes } from '../src/testing/timeline';
 import { FakeDeck, fitsWidth, logIn, openSession, PASSWORD, stationView } from './fake-deck';
 import { OTTER } from './gallery-data';
+import { galleryDeck } from './gallery-scene';
 import { LIGHTING, polishDeck, SECRET_PROJECT } from './polish-scene';
 
 const desktopOnly = () =>
@@ -102,9 +103,14 @@ test('2: Revoke and Renew of a coordinator grant show their outcome note', async
   // Change… opens the Fleet access dialog, which shows the outcome of Renew and Revoke.
   const access = page.getByRole('region', { name: 'Fleet access' });
   const list = access.getByRole('list', { name: 'Coordinator grants' });
-  await expect(list.getByRole('listitem')).toHaveCount(2);
+  // The live grant is a row; the expired one waits in the collapsed Expired fold.
+  await expect(list.getByRole('listitem')).toHaveCount(1);
   const live = list.getByRole('listitem').filter({ hasText: 'active' });
-  const idle = list.getByRole('listitem').filter({ hasText: 'expired' });
+  await access.locator('details.fd-access-expired > summary').click();
+  const idle = access
+    .getByRole('list', { name: 'Expired grants' })
+    .getByRole('listitem')
+    .filter({ hasText: 'expired after idle time' });
   const dialog = page.getByRole('dialog', { name: 'Fleet access' });
 
   await idle.getByRole('button', { name: 'Change…' }).click();
@@ -121,7 +127,7 @@ test('2: Revoke and Renew of a coordinator grant show their outcome note', async
   await dialog.getByRole('button', { name: 'Revoke' }).click();
   await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
   await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
-  // A revoked grant leaves the list.
+  // A revoked grant leaves the list; the renewed grant is the row left.
   await expect(list.getByRole('listitem')).toHaveCount(1);
 });
 
@@ -663,4 +669,25 @@ test('8: a changed file of Properties focuses its diff once; a later turn end le
   await expect(view.locator('[data-diff="since-spawn"]')).toBeVisible();
   await expect(view.locator('.fd-dl-file[aria-label="src/b.ts"]')).toBeVisible();
   await expect(refresh).toBeFocused();
+});
+
+test('a page with a back link keeps its filters level with the title row', async ({ page }) => {
+  desktopOnly();
+  const deck = galleryDeck({});
+  await deck.install(page);
+  await logIn(page);
+  await goTo(page, '#/project/p-rannoch');
+  await expect(page.getByRole('heading', { level: 1, name: 'rannoch' })).toBeVisible();
+  // The back link is a row of its own above the title row (§4.3), so the filters stay level.
+  const centre = (sel: string) =>
+    page
+      .locator(sel)
+      .first()
+      .evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+  expect(
+    Math.abs((await centre('.fd-page-titlerow')) - (await centre('.fd-page-filters'))),
+  ).toBeLessThan(1);
 });

@@ -14,9 +14,10 @@ import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
 import { ReviewBar } from '../review/ReviewBar';
 import { addedText, removedText } from '../ui/format';
-import { ChevronRight, Icon, RefreshCw } from '../ui/icons';
+import { ChevronRight, FileDiff, Icon, RefreshCw } from '../ui/icons';
+import { Loading } from '../ui/Loading';
 import { sessionRef } from '../ui/localSet';
-import { EmptyState } from '../ui/page';
+import { EmptyState, ErrorNotice } from '../ui/page';
 import { BranchesView } from './BranchesView';
 import { allChangedPaths, turnForPath } from './changedFiles';
 import {
@@ -29,7 +30,6 @@ import {
 } from './checkpoint';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
-import { FileDiff } from './icons';
 import {
   type FinalizedTurn,
   mergeTurnPaths,
@@ -290,12 +290,8 @@ function SinceSpawn({
           onDone={review.state.reload}
         />
       ) : null}
-      {error !== null ? (
-        <p role="alert" className="fd-since-alert">
-          {error}
-        </p>
-      ) : null}
-      {error === null && diff === null ? <p className="fd-note">Loading the diff…</p> : null}
+      {error !== null ? <ErrorNotice text={error} /> : null}
+      {error === null && diff === null ? <Loading text="Loading the diff…" /> : null}
       {diff !== null && !hasChanges(diff.summary) && diff.patch.trim() === '' ? (
         <p className="fd-note">No file changes since the session started.</p>
       ) : null}

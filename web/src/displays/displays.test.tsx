@@ -20,7 +20,6 @@ import { AddDisplay, COST_TEXT } from './AddDisplay';
 import { DisplayRow, changeOf, isDirty, QUIET_PROBLEM, seenText } from './DisplayRow';
 import { ADD_TEXT, DisplaysTab, DisplaysView } from './DisplaysTab';
 import { ELEVATION_LABELS, withElevation } from './elevate';
-import { monitorLabel } from './monitorLabel';
 import { PendingPairings } from './PendingPairings';
 
 type Call = { method: 'GET' | 'POST'; path: string; body?: unknown };
@@ -420,25 +419,6 @@ describe('a display row', () => {
     expect(listed).not.toContain('(not connected)');
     const gone = row(base, [withMonitors(['HDMI-A-1'])]);
     expect(gone).toContain('DP-1 (not connected)');
-  });
-});
-
-describe('the words of a monitor', () => {
-  const m = (name: string, description: string) => ({ name, description });
-
-  test('a description loses its hex product code and comes before the connector', () => {
-    expect(monitorLabel(m('DP-1', 'Dell Inc. DELL U2720Q 0x1A2B'))).toBe(
-      'Dell Inc. DELL U2720Q · DP-1',
-    );
-    expect(monitorLabel(m('HDMI-A-1', ''))).toBe('HDMI-A-1');
-    expect(monitorLabel(m('DP-2', '0x41AA'))).toBe('DP-2');
-  });
-
-  test('a laptop panel is the built-in display', () => {
-    expect(monitorLabel(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
-      'Built-in display · eDP-1',
-    );
-    expect(monitorLabel(m('LVDS-1', ''))).toBe('Built-in display · LVDS-1');
   });
 });
 

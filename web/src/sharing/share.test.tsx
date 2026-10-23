@@ -176,7 +176,8 @@ describe('shares page (R11.4)', () => {
 
   test('loading, error and empty states', () => {
     expect(view({ kind: 'loading' })).toContain('Loading the shares…');
-    const error = view({ kind: 'error', text: 'owner only' });
+    // The page passes its reload: the error notice offers Try again (ui/page.tsx ErrorNotice).
+    const error = view({ kind: 'error', text: 'owner only' }, { onRetry: () => {} });
     expect(error).toContain('role="alert"');
     expect(error).toContain('Try again');
     const empty = view({ kind: 'ok', value: [] });
@@ -406,7 +407,7 @@ describe('new share (DL-171)', () => {
 
 describe('the history option of a share (DL-189)', () => {
   const warning =
-    'Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden.';
+    'They see the full earlier conversation, including anything pasted into it. Tool commands and file names stay hidden.';
   const history = { ...defaultForm, history: true };
 
   test('the body has history and elevation only when the option is on', () => {
@@ -420,7 +421,9 @@ describe('the history option of a share (DL-189)', () => {
     const html = dialog();
     expect(html).toContain('type="checkbox"');
     expect(html).not.toMatch(/type="checkbox" checked/);
-    expect(html).toContain('Members can read the earlier history of imported sessions');
+    expect(html).toContain(
+      'People with the link can read the history from before the deck ran a session',
+    );
     expect(html).toContain(warning);
     expect(dialog({ initialForm: history })).toMatch(/type="checkbox" checked/);
   });
@@ -499,6 +502,8 @@ describe('the history option of a share (DL-189)', () => {
   });
 
   test('Share history opens the confirm with the warning', () => {
+    const warning =
+      'People with the link see the full earlier conversation, including anything pasted into it. Tool commands and file names stay hidden.';
     const closed = row();
     expect(closed).toContain('aria-label="Share history of Alpha / Review"');
     expect(closed).not.toContain(warning);

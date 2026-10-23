@@ -2,10 +2,10 @@
 // reports an edit; the form keeps the edits.
 import type { DeckSession, FieldMeta, MonitorInfo, StationView } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
+import { monitorLabel, monitorRaw } from '../ui/format';
 import { Icon, Plus, X } from '../ui/icons';
 import { defaultOptionLabel, fieldLabel, optionLabel, unitOf } from './copy';
 import { asNumber, asPairs, asStrings, asText } from './model';
-import { monitorText, monitorTitleOf } from './monitorText';
 import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
 
 /** The text keys whose value is a host name or a path: mono, as every path and id (§1.5). */
@@ -141,8 +141,8 @@ function MonitorRows({
               <option value={row}>{`${row} (not connected)`}</option>
             )}
             {monitors.map((m) => (
-              <option key={m.name} value={m.name} title={monitorTitleOf(m)}>
-                {monitorText(m)}
+              <option key={m.name} value={m.name} title={monitorRaw(m)}>
+                {monitorLabel(m)}
               </option>
             ))}
           </select>

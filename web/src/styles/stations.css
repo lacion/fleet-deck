@@ -629,8 +629,13 @@
   font-weight: 500;
 }
 
-.fd-station-busy a:is(:hover, :focus-visible) .fd-station-busy-name {
+.fd-station-busy a:focus-visible .fd-station-busy-name {
   text-decoration: underline;
+}
+@media (hover: hover) {
+  .fd-station-busy a:hover .fd-station-busy-name {
+    text-decoration: underline;
+  }
 }
 
 .fd-station-busy-cs {

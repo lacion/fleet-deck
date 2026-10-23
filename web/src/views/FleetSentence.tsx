@@ -10,8 +10,8 @@ export function clearText(conflicts: number): string {
 
 /**
  * The sentence, as inline parts for the summary line of a header: the live sessions, the stations
- * they are on (none: no station part), who needs you, then the conflicts. Each part is a span, so a
- * narrow header can drop one (`.fd-home-on`, the calm `.fd-home-state[data-calm]`).
+ * that run them (none: no station part), who needs you, then the conflicts. The sentence has the
+ * whole width of the header under the title, so it drops no part (§4.3).
  */
 export function FleetSentence({
   live,
@@ -20,7 +20,7 @@ export function FleetSentence({
   conflicts = 0,
 }: {
   readonly live: number;
-  /** The stations of the sentence: 0 leaves out "on N stations". */
+  /** The stations that run a live session: 0 leaves out "on N stations". */
   readonly stations: number;
   readonly needsYou: number;
   readonly conflicts?: number;
@@ -35,12 +35,7 @@ export function FleetSentence({
         </span>
       )}
       .{' '}
-      {/* "Nothing needs you." next to a conflict is the calm part: a narrow header drops it
-          first (home.css), so that the conflict stays readable. */}
-      <span
-        className="fd-home-state"
-        data-calm={needsYou === 0 && conflicts > 0 ? 'true' : undefined}
-      >
+      <span className="fd-home-state">
         {needsYou === 0 ? (
           <span className="fd-home-needs" data-clear="true">
             {clearText(conflicts)}

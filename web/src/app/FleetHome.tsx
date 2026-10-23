@@ -13,7 +13,6 @@ import {
   filterFleet,
   fleetVersion,
   isLiveSession,
-  liveSessionsText,
   repoNames,
   stationName,
 } from '../board/fleet';
@@ -26,6 +25,8 @@ import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { FleetSentence } from '../views/FleetSentence';
+import { type StatusFilter, StatusSeg, statusMatches } from '../views/StatusSeg';
 import { stationOrder } from './sessions';
 import type { SessionActions } from '../session/commands';
 import { useProjects } from '../integrations/context';
@@ -120,24 +121,11 @@ const PROVIDER_NAME: Record<string, string> = {
   unknown: 'Other',
 };
 
-/** The status filter of the page header (DESIGN-SYSTEM §4.3); not stored. */
-export type StatusFilter = 'all' | 'working' | 'idle' | 'needs_you';
-
-const STATUS_FILTERS: readonly { readonly id: StatusFilter; readonly label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'working', label: 'Working' },
-  { id: 'idle', label: 'Idle' },
-  { id: 'needs_you', label: 'Needs you' },
-];
-
-/** True when `s` passes the status filter: Working holds a running, checking or queued
- * session; Needs you holds a session with an open request. */
-export function statusMatches(s: DeckSession, status: StatusFilter): boolean {
-  if (status === 'all') return true;
-  if (status === 'needs_you') return s.status === 'needs_you' || s.summary.open_requests.length > 0;
-  if (status === 'idle') return s.status === 'idle';
-  return s.status === 'working' || s.status === 'verifying' || s.status === 'queued';
-}
+// The status filter and the summary sentence are the Watch header's too (views/): one control and
+// one sentence for one meaning.
+export { clearText } from '../views/FleetSentence';
+export type { StatusFilter } from '../views/StatusSeg';
+export { statusMatches } from '../views/StatusSeg';
 
 /**
  * The sessions of the home under the filters: `scoped` without the status filter (the usage
@@ -152,11 +140,6 @@ export function scopeFleet(
 ): { readonly scoped: readonly DeckSession[]; readonly visible: readonly DeckSession[] } {
   const scoped = filterFleet(shown, stations, filter);
   return { scoped, visible: scoped.filter((s) => statusMatches(s, status)) };
-}
-
-/** The header words when nothing needs you: "All clear" only without a conflict (§4.4). */
-export function clearText(conflicts: number): string {
-  return conflicts > 0 ? 'Nothing needs you' : 'All clear';
 }
 
 /** One active filter, as the removable chip under the toolbar shows it. */
@@ -439,7 +422,7 @@ export function FleetHome({
   };
   const shareable = canShare(people);
   const shareBoard = () =>
-    openShare({ kind: 'board', target: '', label: 'Every session of the deck' });
+    openShare({ kind: 'board', target: '', label: 'A link to every session on this deck.' });
   const waiting = sessions.some((s) => s.summary.open_requests.length > 0);
   // The phone has no tooltips: Share board and the notification switch are the rows of one menu
   // (§4.8). With a request, the switch is in the head of the Needs you strip instead.
@@ -470,35 +453,12 @@ export function FleetHome({
       <div className="fd-home-titles">
         <h1 className="fd-page-title">Fleet</h1>
         <p className="fd-home-counts">
-          <span>{liveSessionsText(live.length)}</span>
-          {liveStations === 0 ? null : (
-            <span className="fd-home-on">
-              {' '}
-              on <span>{liveStations === 1 ? '1 station' : `${liveStations} stations`}</span>
-            </span>
-          )}
-          .{' '}
-          <span className="fd-home-state">
-            {needsYou === 0 ? (
-              <span className="fd-home-needs" data-clear="true">
-                {clearText(conflictCount)}
-              </span>
-            ) : (
-              <span className="fd-home-needs">
-                {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
-              </span>
-            )}
-            .
-          </span>
-          {conflictCount > 0 ? (
-            <>
-              {' '}
-              <span className="fd-home-conf">
-                {conflictCount === 1 ? '1 conflict' : `${conflictCount} conflicts`}
-              </span>
-              .
-            </>
-          ) : null}
+          <FleetSentence
+            live={live.length}
+            stations={liveStations}
+            needsYou={needsYou}
+            conflicts={conflictCount}
+          />
           {limit === null ? null : (
             <>
               {' '}
@@ -509,20 +469,7 @@ export function FleetHome({
           )}
         </p>
       </div>
-      {phone ? null : (
-        <div className="fd-seg fd-home-status" role="group" aria-label="Status">
-          {STATUS_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              aria-pressed={status === f.id}
-              onClick={() => setStatus(f.id)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {phone ? null : <StatusSeg value={status} onChange={setStatus} className="fd-home-status" />}
       <div className="fd-field fd-home-search">
         <Icon of={Search} />
         <input

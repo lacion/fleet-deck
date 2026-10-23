@@ -6,8 +6,8 @@ import type { DeckSession } from '../gen';
 import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
-import { digestLines } from '../ui/generated';
-import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert, Sparkles } from '../ui/icons';
+import { digestLines, GeneratedMark } from '../ui/generated';
+import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
 import {
   countText,
   homeShort,
@@ -183,11 +183,7 @@ export function Place({
  * (§7), named for a summary ("Generated"; the title mark of `ui/generated` says "Named by").
  */
 export function GeneratedText() {
-  return (
-    <span className="fd-generated" role="img" aria-label="Generated" title="Written by model help">
-      <Icon of={Sparkles} size={12} />
-    </span>
-  );
+  return <GeneratedMark label="Generated" title="Written by model help" />;
 }
 
 /** The generated summary of a session as a list, or `null` without one. */

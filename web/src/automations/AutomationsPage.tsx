@@ -5,7 +5,8 @@ import type { DeckSession, Schedule, ScheduleRun, ScheduleView, StationView } fr
 import { spawnTargets } from '../spawn/spawn';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, RefreshCw, Workflow } from '../ui/icons';
-import { EmptyState, Page } from '../ui/page';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import {
   type AutomationActions,
@@ -107,8 +108,8 @@ function RunHistory({
       current = false;
     };
   }, [id, actions, version]);
-  if (error !== null) return <p role="alert">{error}</p>;
-  if (runs === null) return <p role="status">Loading runs…</p>;
+  if (error !== null) return <ErrorNotice text={error} />;
+  if (runs === null) return <Loading text="Loading runs…" />;
   if (runs.length === 0) return <p className="fd-note">No runs yet.</p>;
   return (
     <ol className="fd-auto-runs">
@@ -279,7 +280,7 @@ export function AutomationsPage({
       ) : targets.length === 0 && form === null ? (
         <p className="fd-note">No linked station has reported its providers yet.</p>
       ) : null}
-      {error === null ? null : <p role="alert">{error}</p>}
+      {error === null ? null : <ErrorNotice text={error} />}
       {notice === null ? null : <p role="status">{notice}</p>}
       {form === null ? null : (
         <ScheduleForm
@@ -297,7 +298,7 @@ export function AutomationsPage({
       )}
       {list === null ? (
         actions === undefined ? null : (
-          <p role="status">Loading automations…</p>
+          <Loading text="Loading automations…" />
         )
       ) : list.length === 0 ? (
         form === null ? (

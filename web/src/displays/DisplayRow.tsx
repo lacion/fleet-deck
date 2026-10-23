@@ -9,12 +9,12 @@ import type { DisplayView, MonitorInfo, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
 import type { ElevationAsk } from '../settings/elevation';
 import { describe } from '../settings/http';
+import { monitorLabel, monitorRaw } from '../ui/format';
 import { Ellipsis, Icon } from '../ui/icons';
 import { Menu } from '../ui/Menu';
 import { Field } from '../ui/page';
 import type { DisplayActions, DisplayChange } from './actions';
 import { withElevation } from './elevate';
-import { monitorLabel, monitorRaw } from './monitorLabel';
 import { StationChoices } from './StationChoices';
 
 type Draft = {

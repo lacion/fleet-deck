@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { DesktopPanel } from '../desktop/DesktopPanel';
 import { formatHash } from '../app/routes';
+import { DesktopPanel } from '../desktop/DesktopPanel';
 import { relativeAge } from '../app/sessions';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
@@ -396,6 +396,7 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     </summary>
                     {info?.allow_shell === false ? (
                       <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
+                        {/* A station setting is changed on the board, never in station.toml. */}
                         <p className="fd-note">
                           Shells are off on this station.{' '}
                           <a

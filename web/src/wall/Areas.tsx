@@ -15,7 +15,7 @@ import { shortPath } from '../chat/PathTail';
 import { homeShortIn, plainLine } from '../ui/format';
 import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
-import { refOf } from '../watch/tiles';
+import { foldLines, refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
@@ -300,10 +300,20 @@ export function StreamArea({
     [sessions, filterStations, filter.repo],
   );
   // The deck sends the newest first, and the list keeps that order: the newest row sits under the
-  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first.
-  const rows = (items ?? [])
-    .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
-    .slice(0, STREAM_ITEMS);
+  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first. The same
+  // event of one session several times in a row is one row with its count, as on the Activity
+  // page (`foldLines` keeps the last of a run, so it folds the reversed list).
+  const rows = foldLines<ActivityItem & { readonly repeat?: number }>(
+    (items ?? [])
+      .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
+      .slice(0, STREAM_ITEMS)
+      .reverse(),
+    (a, b) =>
+      a.station_id === b.station_id &&
+      a.session_id === b.session_id &&
+      a.kind === b.kind &&
+      a.text === b.text,
+  ).reverse();
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
       <h2 className="fd-wall-h">Activity</h2>
@@ -320,7 +330,7 @@ export function StreamArea({
             const text = oneLine(item.text, 160);
             // A tool call reads as the Activity page reads it (watch/tooltext): the tool name in
             // words (no raw MCP id, no "(ok)"), a command or a path in mono, words in sans, and a
-            // failed or denied call as a hazard badge.
+            // failed or denied call ends in a hazard word (one form for one outcome).
             const tool = activityTool(item.kind, text);
             const name = item.session_title ?? item.session_id;
             return (
@@ -356,13 +366,20 @@ export function StreamArea({
                       {tool.outcome === null ? null : (
                         <>
                           {' '}
-                          <span className="fd-badge" data-tone="hazard">
-                            {tool.outcome === 'failed' ? 'Failed' : 'Denied'}
-                          </span>
+                          <span className="fd-wall-result">{tool.outcome}</span>
                         </>
                       )}
                     </>
                   )}
+                  {(item.repeat ?? 1) > 1 ? (
+                    <>
+                      {' '}
+                      <span className="fd-count">
+                        {item.repeat}
+                        <span className="fd-vh"> times</span>
+                      </span>
+                    </>
+                  ) : null}
                 </span>
               </li>
             );

@@ -124,7 +124,7 @@ export type SendKey = {
 /**
  * What a key press in the text box sends, or `null` (not a send key: Shift+↵, or ↵ on a touch
  * screen, is a newline). ↵ sends the prompt, or queues a follow-up while a turn runs. §4.5:
- * ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
+ * ⌘↵ (Ctrl+Enter) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
  * a `!` shell command); else it is the same as ↵.
  */
 export function enterSend(

@@ -63,11 +63,6 @@ export function ArtifactsLink({
         {open ? (
           <Dialog title="Artifacts" onClose={() => setOpen(false)}>
             <FilesPanel files={files} root={dir.path} />
-            <div className="fd-pane-row">
-              <button type="button" className="fd-ghost" onClick={() => setOpen(false)}>
-                Close
-              </button>
-            </div>
           </Dialog>
         ) : null}
       </>

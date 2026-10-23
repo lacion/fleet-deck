@@ -25,7 +25,7 @@ import {
 } from './desktopTools';
 import type { ElevationAsk } from './elevation';
 import { DeckError } from './http';
-import { Loading } from './Loading';
+import { Loading } from '../ui/Loading';
 import { MaintenancePanel } from './MaintenancePanel';
 import { sectionId } from './model';
 import { NoticeIcon } from './NoticeIcon';

@@ -4,7 +4,8 @@ import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, SpaceView, StationView } from '../gen';
 import { Icon, Layers, Plus } from '../ui/icons';
-import { EmptyState, Field, FormActions, FormGrid, Page } from '../ui/page';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Field, FormActions, FormGrid, Page } from '../ui/page';
 import { canShare, usePeople } from './context';
 import { sharesChanged } from './shareStore';
 import { MAX_SPACE_NAME_CHARS, openSpaceShare } from './spaceShare';
@@ -128,22 +129,9 @@ export function SpacesView({
   const trimmed = name.trim();
   let body: React.ReactNode;
   if (state.kind === 'loading') {
-    body = (
-      <p role="status" className="fd-note">
-        Loading the spaces…
-      </p>
-    );
+    body = <Loading text="Loading the spaces…" />;
   } else if (state.kind === 'error') {
-    body = (
-      <div className="fd-art-state">
-        <p role="alert" className="fd-note fd-share-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
+    body = <ErrorNotice text={state.text} onRetry={onRetry} />;
   } else if (state.value.length === 0) {
     body = (
       <EmptyState
@@ -192,15 +180,16 @@ export function SpacesView({
     );
   }
   // One primary per screen (§2.2): while the list is empty, the empty state holds New space.
-  const listed = state.kind === 'ok' && state.value.length > 0;
+  const empty = state.kind === 'ok' && state.value.length === 0;
   return (
     <Page
       title="Spaces"
+      count={state.kind === 'ok' && state.value.length > 0 ? state.value.length : undefined}
       back={{ href: '#/shares', label: 'Shares' }}
       wide
       description="A space is a named set of sessions. One share of a space covers all of them, also the ones that you add later."
       actions={
-        creating || !listed ? null : (
+        creating || empty ? null : (
           <button type="button" className="fd-primary" onClick={() => setCreating(true)}>
             <Icon of={Plus} /> New space
           </button>
@@ -244,11 +233,7 @@ export function SpacesView({
           </form>
         </div>
       ) : null}
-      {error === null ? null : (
-        <p role="alert" className="fd-note fd-share-error">
-          {error}
-        </p>
-      )}
+      {error === null ? null : <ErrorNotice text={error} />}
       {body}
     </Page>
   );

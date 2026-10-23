@@ -1,5 +1,14 @@
-import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useLayoutEffect, useRef, useState } from 'react';
 import { useDismiss } from './dismiss';
+
+/**
+ * The scroll body fade of a long menu (base.css, DESIGN-SYSTEM §7): `data-scrolled` away from its
+ * top, `data-more-below` while rows hide below its bottom edge.
+ */
+function markEdges(el: HTMLElement) {
+  el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+  el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
 
 /**
  * A `<details>` popover menu. Escape or a press outside it closes it; Escape returns the focus
@@ -22,11 +31,16 @@ export function Menu(props: {
   readonly children: (close: () => void) => ReactNode;
 }) {
   const ref = useRef<HTMLDetailsElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const close = () => {
     if (ref.current) ref.current.open = false;
   };
   useDismiss(ref, open, close);
+  // The rows can change while the menu is open (a confirm step): mark the edges after each render.
+  useLayoutEffect(() => {
+    if (open && body.current) markEdges(body.current);
+  });
   const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
     if (event.key !== 'Escape' || !ref.current?.open) return;
     event.stopPropagation();
@@ -54,7 +68,9 @@ export function Menu(props: {
       {props.scrim === true ? (
         <div className="fd-menu-scrim" aria-hidden="true" onClick={close} />
       ) : null}
-      <div className="fd-menu-body">{props.children(close)}</div>
+      <div className="fd-menu-body" ref={body} onScroll={(event) => markEdges(event.currentTarget)}>
+        {props.children(close)}
+      </div>
     </details>
   );
 }

@@ -3,11 +3,11 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MonitorInfo } from '../gen';
+import { monitorLabel, monitorRaw } from '../ui/format';
 import { fieldLabel, helpOf, unitOf } from './copy';
 import { FieldEditor } from './FieldEditor';
 import { meta, view } from './fixtures';
 import { groupFields } from './model';
-import { monitorText, monitorTitleOf } from './monitorText';
 import { SettingsFields } from './SettingsFields';
 
 const noop = () => {};
@@ -178,12 +178,12 @@ describe('the words of a monitor', () => {
 
   test('a built-in panel is named so; hex model codes go; the title keeps the full text', () => {
     const panel = monitor('eDP-1', 'Samsung Display Corp. 0x41A1');
-    expect(monitorText(panel)).toBe('Built-in screen (eDP-1)');
-    expect(monitorTitleOf(panel)).toBe('eDP-1 — Samsung Display Corp. 0x41A1');
+    expect(monitorLabel(panel)).toBe('Built-in display · eDP-1');
+    expect(monitorRaw(panel)).toBe('eDP-1 — Samsung Display Corp. 0x41A1');
+    expect(monitorLabel(monitor('DSI-1', ''))).toBe('Built-in display · DSI-1');
     const dell = monitor('DP-1', 'Dell Inc. DELL U2720Q 0x0001A2B3');
-    expect(monitorText(dell)).toBe('DP-1 — Dell Inc. DELL U2720Q');
-    expect(monitorText(monitor('DP-2', 'Dell U2720Q'))).toBe('DP-2 — Dell U2720Q');
-    expect(monitorTitleOf(monitor('DP-2', 'Dell U2720Q'))).toBeUndefined();
+    expect(monitorLabel(dell)).toBe('Dell Inc. DELL U2720Q · DP-1');
+    expect(monitorLabel(monitor('DP-2', 'Dell U2720Q'))).toBe('Dell U2720Q · DP-2');
   });
 
   test('the add button of the monitors says what it adds', () => {

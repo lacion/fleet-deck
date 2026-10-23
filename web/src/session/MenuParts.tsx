@@ -66,8 +66,9 @@ export function ShellsOffNote(props: { readonly station: string; readonly onOpen
         href={formatHash({ name: 'settings', tab: 'station', station: props.station })}
         onClick={props.onOpen}
       >
-        Turn on Allow terminals in Settings
+        Turn them on in Settings
       </a>
+      .
     </p>
   );
 }

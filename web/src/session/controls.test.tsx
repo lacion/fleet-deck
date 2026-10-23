@@ -441,7 +441,7 @@ describe('session header (DL-140)', () => {
     expect(html).not.toContain('aria-label="Open in terminal"');
     // The setting is changed on the board (remote first): a prose link to the station tab.
     expect(html).toContain(
-      '<p class="fd-menu-text">Shells are off on this station. <a href="#/settings/station/station-a">Turn on Allow terminals in Settings</a></p>',
+      '<p class="fd-menu-text">Shells are off on this station. <a href="#/settings/station/station-a">Turn them on in Settings</a>.</p>',
     );
     expect(html).not.toContain('station.toml');
     // an available terminal does not show the text
