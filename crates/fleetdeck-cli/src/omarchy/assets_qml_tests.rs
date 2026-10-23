@@ -114,7 +114,7 @@ fn every_text_sink_is_plain_text() {
             );
         }
     }
-    assert!(text_blocks(text("Widget.qml")).len() >= 1);
+    assert!(!text_blocks(text("Widget.qml")).is_empty());
     assert!(text_blocks(text("Panel.qml")).len() >= 8);
 }
 
