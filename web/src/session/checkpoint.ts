@@ -1,6 +1,7 @@
 // DL-084: why a turn has no file snapshot (a checkpoint side is `unavailable` with a reason code of
 // the station, `workspace/boundary.rs`). The board shows plain words, never the code itself; the
 // code stays in the `title` of the row.
+import { countText } from '../ui/format';
 import { hasChanges } from './changes';
 import type { FinalizedTurn } from './workspace';
 
@@ -73,13 +74,17 @@ export function hasSnapshot(turns: readonly FinalizedTurn[]): boolean {
   return turns.some((t) => t.start?.state === 'available' || t.end?.state === 'available');
 }
 
-/** The note above a turn list that has no snapshot at all (`sharedReason`). */
-export function sharedNote(reason: string): string {
+/**
+ * The note of a turn list that has no snapshot at all (`sharedReason`). With `count` (the empty
+ * state that replaces the list) it names the turns, as no list shows them.
+ */
+export function sharedNote(reason: string, count?: number): string {
   if (reason === NOT_A_GIT_WORKTREE) {
     return 'The board keeps no file snapshots for this session: the folder is not a Git repository.';
   }
+  const turns = count === undefined ? 'these turns' : `the ${countText(count)} finished turns`;
   const cause = checkpointCause(reason);
   return cause === null
-    ? 'The board kept no file snapshots for these turns.'
-    : `The board kept no file snapshots for these turns: ${cause}.`;
+    ? `The board kept no file snapshots for ${turns}.`
+    : `The board kept no file snapshots for ${turns}: ${cause}.`;
 }

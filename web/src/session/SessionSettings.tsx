@@ -1,7 +1,7 @@
 // DL-140: the settings of a session as menu rows: the mode ladder (the Properties Mode row, or the
 // session menu where no Properties panel shows), the model picker (the composer model chip, or the
 // phone session menu) and the auto-continue switch of the session menu.
-import { type FormEvent, useId, useState } from 'react';
+import { useId, useState } from 'react';
 import type { ModelChoice } from '../gen';
 import { contextLabel, isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
 import { Menu } from '../ui/Menu';
@@ -132,8 +132,7 @@ export function ModelPicker(props: {
     props.onDone?.();
     props.onSet(next);
   };
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  const apply = () => {
     if (value === '') return;
     setModel('');
     pick(value);
@@ -179,20 +178,33 @@ export function ModelPicker(props: {
           </button>
         )}
       </div>
+      {/* Not a form: the composer chip puts the picker inside the composer form, and a submit
+          here would also send the draft. Enter in the field sets the model, and only that. */}
       {list === null || other ? (
-        <form className="fd-model-other" id={id} aria-label="Model id" onSubmit={submit}>
+        <div className="fd-model-other" id={id} role="group" aria-label="Model id">
           <input
             className="fd-sm"
             value={model}
             disabled={!props.enabled}
             onChange={(event) => setModel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              event.stopPropagation();
+              apply();
+            }}
             placeholder="Model id or alias"
             aria-label="Model id or alias"
           />
-          <button type="submit" className="fd-sm" disabled={!props.enabled || value === ''}>
+          <button
+            type="button"
+            className="fd-sm"
+            disabled={!props.enabled || value === ''}
+            onClick={apply}
+          >
             Set model
           </button>
-        </form>
+        </div>
       ) : null}
     </fieldset>
   );

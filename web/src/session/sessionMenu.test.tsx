@@ -7,6 +7,7 @@ import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { sessionActions } from './commands';
 import { type Controller, sessionFlags } from './controller';
+import { agoText } from './HeaderBadges';
 import { SessionHeader } from './SessionHeader';
 import { ModelPicker, modelRowName, modelRows } from './SessionSettings';
 
@@ -33,7 +34,7 @@ const idle: Controller = {
   dismiss: () => {},
 };
 
-function header(s: DeckSession, extra: { onNewShell?: () => void } = {}) {
+function header(s: DeckSession, extra: { onNewShell?: () => void; composerModel?: boolean } = {}) {
   return renderToStaticMarkup(
     <SessionHeader
       session={s}
@@ -41,6 +42,7 @@ function header(s: DeckSession, extra: { onNewShell?: () => void } = {}) {
       controller={{ ...idle, flags: sessionFlags(s, 'live', drive) }}
       actions={drive}
       terminal={null}
+      composerModel={extra.composerModel ?? true}
       {...(extra.onNewShell ? { onNewShell: extra.onNewShell } : {})}
     />,
   );
@@ -75,6 +77,10 @@ describe('session menu (DL-140)', () => {
     // The desktop composer chip holds the model: the desktop menu has no model picker.
     expect(html).not.toContain('<legend>Model</legend>');
     expect(html).not.toContain('Set model');
+    // Where no chip shows (another tab, a subagent, a hidden composer) the menu holds the model.
+    const chipless = header(session(), { composerModel: false });
+    expect(chipless).toContain('<legend>Model</legend>');
+    expect(chipless).toContain('role="group" aria-label="Model id"');
     // A named switch row, the same as Compact cards and Reduce motion of the account menu.
     expect(html).toMatch(
       /<label class="fd-menu-switch"><span class="fd-menu-switch-label"><svg[^>]*>.*?<\/svg>Continue after a station restart<\/span><input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/,
@@ -113,9 +119,10 @@ describe('session menu (DL-140)', () => {
   });
 
   test('with the Properties panel open, the menu has no details and no mode ladder', () => {
+    // The panel shows the mode that the session reports (its Mode row holds the ladder).
     const open = renderToStaticMarkup(
       <SessionHeader
-        session={session({ session_seq: 42 })}
+        session={session({ session_seq: 42, mode: 'default' })}
         stations={[station()]}
         controller={idle}
         actions={drive}
@@ -126,6 +133,18 @@ describe('session menu (DL-140)', () => {
     expect(open).not.toContain('class="fd-sh-details"');
     expect(open).not.toContain('<legend>Mode</legend>');
     expect(open).toContain('Continue after a station restart');
+    // A session that reports no mode has no Mode row in the panel: the menu keeps the ladder.
+    const unknown = renderToStaticMarkup(
+      <SessionHeader
+        session={session({ mode: null })}
+        stations={[station()]}
+        controller={idle}
+        actions={drive}
+        terminal={null}
+        propsPanel={{ open: true, toggle: () => {} }}
+      />,
+    );
+    expect(unknown).toContain('<legend>Mode</legend>');
     const closed = renderToStaticMarkup(
       <SessionHeader
         session={session({ session_seq: 42 })}
@@ -157,7 +176,7 @@ describe('session menu (DL-140)', () => {
     expect(phone).toContain('<legend>Mode</legend>');
   });
 
-  test('the Files panel toggle shows a file tree, not "open the folder"', () => {
+  test('the Files panel toggle: folder-open (§4.5), named "Files panel", not a second "Files"', () => {
     const html = renderToStaticMarkup(
       <SessionHeader
         session={session()}
@@ -169,9 +188,10 @@ describe('session menu (DL-140)', () => {
       />,
     );
     expect(html).toMatch(
-      /aria-label="Files" title="Files" aria-pressed="false"><svg[^>]*folder-tree/,
+      /aria-label="Files panel" title="Files panel" aria-pressed="false"><svg[^>]*folder-open/,
     );
-    expect(html).not.toContain('lucide-folder-open');
+    expect(html).not.toContain('lucide-folder-tree');
+    expect(html).not.toContain('aria-label="Files"');
   });
 
   test('the details block lists the facts that the header does not show', () => {
@@ -195,9 +215,12 @@ describe('session menu (DL-140)', () => {
       ),
     ).toBe(true);
     expect(html).toContain('<dt>Events</dt><dd>42</dd>');
-    // The header shows the callsign (.fd-callsign) and the status says since when: no repeats.
+    // The header shows the callsign (.fd-callsign): no repeat. The last change is a fact of the
+    // menu (the phone has no Properties panel to say it), before the event count.
     expect(html).not.toContain('<dt>Callsign</dt>');
-    expect(html).not.toContain('<dt>Updated</dt>');
+    expect(html).toContain('<dt>Updated</dt><dd>just now</dd></div><div><dt>Events</dt>');
+    expect(agoText('3 h')).toBe('3 h ago');
+    expect(agoText('now')).toBe('just now');
     // "Summary" and the 12px sparkles mark named "Generated", not a parenthesis.
     expect(html).toMatch(
       /<dt>Summary <span class="fd-generated" role="img" aria-label="Generated" title="Written by model help"><svg[^>]*width="12"/,
@@ -268,6 +291,10 @@ describe('model picker (DL-151)', () => {
       expect(html).toContain('aria-label="Model id or alias"');
       expect(html).toContain('Set model');
       expect(html).not.toContain('Other…');
+      // Not a form: inside the composer form a submit would also send the draft.
+      expect(html).not.toContain('<form');
+      expect(html).toContain('<div class="fd-model-other" id="');
+      expect(html).toMatch(/role="group" aria-label="Model id"><input[^>]*><button type="button"/);
     }
     expect(picker('claude-haiku-4-5', null)).toContain(
       '<span class="fd-model-name">Haiku 4.5</span>',

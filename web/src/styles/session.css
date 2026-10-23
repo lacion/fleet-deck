@@ -619,15 +619,40 @@
 }
 
 /* ── properties panel (§4.5): 280px, --surface ───────────────────── */
+/* The room above the title and under the last list is their margin and padding, not the padding
+   of the scroller: the fades below then sit on the edges of the visible panel. */
 .fd-props {
   display: flex;
   flex: none;
   flex-direction: column;
   width: 280px;
   min-height: 0;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  padding: 0 var(--sp-4);
   overflow-y: auto;
   background: var(--surface);
+}
+/* The scroll body fade (§3): while rows hide above or under an edge of the panel, its 16px there
+   fade out (PropertiesPanel sets `data-scrolled` and `data-more-below`). A sticky --surface overlay
+   that takes no room and no pointer, not a mask: a mask would also fade the --surface fill of the
+   panel into the --bg of the pane under it. */
+.fd-props[data-scrolled]::before,
+.fd-props[data-more-below]::after {
+  content: "";
+  position: sticky;
+  z-index: 1;
+  flex: none;
+  height: var(--sp-4);
+  pointer-events: none;
+}
+.fd-props[data-scrolled]::before {
+  top: 0;
+  margin-bottom: calc(-1 * var(--sp-4));
+  background: linear-gradient(to bottom, var(--surface), transparent);
+}
+.fd-props[data-more-below]::after {
+  bottom: 0;
+  margin-top: calc(-1 * var(--sp-4));
+  background: linear-gradient(to top, var(--surface), transparent);
 }
 /* With the Properties panel open, the terminal dock stops at the panel, and the panel's --surface
    column goes on down to the window bottom (§4.5). CSS only: the dock stays where Layout mounts
@@ -639,7 +664,7 @@
   margin-right: 280px;
 }
 .fd-props-title {
-  margin: 0 0 var(--sp-2);
+  margin: var(--sp-4) 0 var(--sp-2);
   font-size: var(--fs-ui);
   font-weight: 600;
 }
@@ -649,8 +674,13 @@
   margin: 0;
   padding: var(--sp-2) 0;
 }
+.fd-props > .fd-props-list:last-of-type {
+  padding-bottom: calc(var(--sp-2) + var(--sp-5));
+}
+/* The rules between the groups are section rules (§4.7): --border, not the list separator (the
+   light --border-soft is about 1.1:1 on --surface, and the groups ran together). */
 .fd-props-list + .fd-props-list {
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-props-list:empty {
   display: none;
@@ -712,8 +742,14 @@
   font-size: var(--fs-data);
   overflow-wrap: anywhere;
 }
-/* A folder is never cut: it wraps after a "/" onto a second line (each folder name stays whole;
-   a name wider than the column alone gets an ellipsis). */
+/* The Folder and Worktree rows are stacked (concept B): the label on its line, the path under it
+   at the full width of the panel. A path breaks only after a "/" (the <wbr> between its names):
+   each folder name stays whole, and a name wider than the panel alone gets an ellipsis (the
+   title keeps the full path). */
+.fd-props-row:has(> dd > [data-path]) {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 2px;
+}
 .fd-props-mono[data-path] {
   flex: 1;
 }
@@ -724,11 +760,6 @@
   text-overflow: ellipsis;
   vertical-align: top;
   white-space: nowrap;
-}
-/* The last name names the folder (a worktree): it is never cut; a long one wraps. */
-.fd-props-seg:last-child {
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 /* The used slots of the station under its name: ticks and "3 of 12". */
 .fd-props-slots {
@@ -794,14 +825,15 @@
   align-self: center;
   margin-block: -4px;
 }
-/* The generated summary: a list under its label, the whole width of the panel. */
+/* The generated summary: the sparkles mark after its label, the list under them at the whole
+   width of the panel. */
 .fd-props-row > dd.fd-props-digest {
   color: var(--dim);
   font-size: var(--fs-meta);
   line-height: 1.5;
 }
-.fd-props-row dd > .fd-generated {
-  align-self: center;
+.fd-props-row dt > .fd-generated {
+  vertical-align: -2px;
 }
 .fd-props .fd-add,
 .fd-props .fd-del {
@@ -895,6 +927,14 @@
 .fd-props-fuel {
   color: var(--fuel);
   font-weight: 500;
+}
+/* The tokens in the words of the ops glance: the numbers in --fuel, the words in --dim. A part
+   never breaks; the line breaks at the "·". */
+.fd-props-tokens {
+  color: var(--dim);
+}
+.fd-props-tokpart {
+  white-space: nowrap;
 }
 /* The fleet-control fact before the first answer: plain text, not a link. */
 .fd-fleet-none {
@@ -1527,16 +1567,19 @@ fieldset:disabled .fd-opt {
   max-width: 1040px;
   margin-inline: auto;
 }
-/* The turns, the files and the artifact list share the chat column (the open artifact keeps
-   the wide column). */
-.fd-pane-body > :not(.fd-art-viewer) {
+/* Only a chat keeps the centered reading column: the people side chat, as the Chat tab. */
+.fd-pane-body[data-tab="people"] > * {
   max-width: var(--chat-w);
 }
-/* The Changes tab uses the whole main width (a 24px inset): a diff is wide content. Only the chat
-   keeps the reading column. Not centered, so the scrollbar room is kept at the right only: the
-   content starts on the 24px gutter of the tabs. */
-.fd-pane-body[data-tab="changes"] {
+/* §4.5: Changes, Files and Artifacts start on the 24px gutter of the tabs, so that the left edge
+   does not move between the tabs. Not centered: the scrollbar room is kept at the right only.
+   Changes uses the whole main width (a diff is wide content); the Files and Artifacts lists and
+   the open artifact keep the 1040px measure of the list pages. */
+.fd-pane-body:is([data-tab="changes"], [data-tab="files"], [data-tab="artifacts"]) {
   scrollbar-gutter: stable;
+}
+.fd-pane-body:is([data-tab="files"], [data-tab="artifacts"]) > * {
+  margin-inline: 0;
 }
 .fd-pane-body[data-tab="changes"] > * {
   max-width: none;
@@ -1560,35 +1603,17 @@ fieldset:disabled .fd-opt {
     min-height: var(--row-h-touch);
   }
 }
-/* The fold of the older copies: its chevron in the icon column, its words on the title column. */
-.fd-pane[data-layout="phone"] .fd-pane-body[data-tab="artifacts"] .fd-art-copies > summary {
-  gap: var(--sp-2);
-  margin-left: var(--sp-2);
-}
-/* The phone rule of artifacts.css takes the inline padding of a row away; in the session the
-   artifact icons stay on the column of the Files tab icons (8px inset). One 44px line per artifact:
-   the icon, the title, the version and the age at fixed places; the icon already shows the kind,
-   so its badge is only read by a screen reader. The separators span the content (16px edge). */
-.fd-pane[data-layout="phone"] .fd-pane-body[data-tab="artifacts"] .fd-art-row {
-  padding-inline: var(--sp-2);
-}
+/* The phone: the row of the Artifacts page (artifacts.css), on the 16px gutter of the tabs (no
+   inline padding: the icon starts under "Chat", the age ends on the right gutter). Two lines: the
+   icon, the title (with its version) and the age, then the kind under the title. The desktop
+   columns above would win over the phone grid of artifacts.css, so it is named here again. */
 .fd-pane[data-layout="phone"]
   .fd-pane-body[data-tab="artifacts"]
   .fd-art-row:not(:has(> .fd-art-where)) {
-  grid-template-columns: 14px minmax(0, 1fr) auto 48px;
-  grid-template-areas: "icon title version age";
-  min-height: var(--row-h-touch);
-}
-.fd-pane[data-layout="phone"]
-  .fd-pane-body[data-tab="artifacts"]
-  .fd-art-row
-  > .fd-badge:not(.fd-art-ver) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon title age"
+    ". kind kind";
 }
 .fd-revert,
 .fd-turns,
@@ -2220,6 +2245,7 @@ button.fd-cchip {
 .fd-files ul > li:last-child {
   border-bottom: 0;
 }
+/* A row never grows past its column (a long name ellipsizes; a phone pane never pans sideways). */
 .fd-files-row {
   display: flex;
   align-items: center;
@@ -2230,6 +2256,7 @@ button.fd-cchip {
   min-width: 0;
   min-height: var(--row-h);
   padding: 0 var(--sp-2);
+  overflow: hidden;
   background: none;
   border: 0;
   border-radius: 0;
@@ -2282,9 +2309,12 @@ button.fd-cchip {
 .fd-files-changed h4 {
   margin: 0 0 var(--sp-1);
 }
+/* The name of a changed file shrinks only after its folder gave way (the folder has no basis):
+   then it ellipsizes, and the change at the right of the row stays in view. */
 .fd-files-changed .fd-files-name {
-  flex: 0 0 auto;
-  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
 }
 /* The folder of a changed file keeps its end in view (the end says where the file is): a long one
    loses whole leading folders ("…/e2e", PathTail); the start ellipsis is the fallback for a name
@@ -2330,32 +2360,29 @@ button.fd-cchip {
 .fd-files-stat > .fd-badge {
   align-self: center;
 }
-/* With a listing that has the publish slot (24px, 44px on touch), the changed-file rows keep the
-   same trailing slot: their change ends on the edge of the sizes of the listing. */
-.fd-files:has(.fd-files-item) .fd-files-changed li {
-  display: flex;
+/* A file that Publish offers: the icon, the name, "Publish as artifact", then the size. The row
+   button spans the four columns of the item as a subgrid and the publish button sits over its
+   third column, so that every size and every change ends on the row edge, on the edge of the
+   search bar (a trailing publish slot left a ragged right edge). The item rule of artifacts.css
+   is a flex row: this one weighs more. */
+.fd-files li.fd-files-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--sp-1);
+  column-gap: var(--sp-2);
 }
-.fd-files:has(.fd-files-item) .fd-files-changed li > .fd-files-row {
-  flex: 1;
+.fd-files li.fd-files-item > .fd-files-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-row: 1;
+  grid-column: 1 / -1;
 }
-.fd-files:has(.fd-files-item) .fd-files-changed li::after {
-  content: "";
-  flex: none;
-  width: var(--ctl-h-sm);
-}
-/* A touch screen: only a row with the Publish button keeps the trailing slot; the sizes and the
-   changes of the other rows end on the row edge (an empty 44px slot left a blank column). */
-@media (pointer: coarse) {
-  .fd-files-item > span.fd-files-publish,
-  .fd-files:has(.fd-files-item) .fd-files-changed li::after {
-    display: none;
-  }
+.fd-files li.fd-files-item > .fd-files-row > .fd-size {
+  grid-column: 4;
 }
 /* A fine pointer: "Publish as artifact" shows on the row under the pointer or with the focus (a
-   column of the same icon at rest was noise); its slot keeps the sizes aligned. A pointer that
-   cannot hover keeps the button in view. */
+   column of the same icon at rest was noise); its column keeps its room. A pointer that cannot
+   hover keeps the button in view. */
 @media (hover: hover) and (pointer: fine) {
   .fd-files li .fd-files-publish {
     opacity: 0;
@@ -2365,35 +2392,37 @@ button.fd-cchip {
     opacity: 1;
   }
 }
-/* The crumbs: the root icon on the column of the row icons. The row is one list row high (the
-   same rhythm as the file rows under it: --row-h, 44px on touch) and has the same divider. */
+.fd-files li.fd-files-item > .fd-files-publish {
+  grid-row: 1;
+  grid-column: 3;
+}
+/* The label of the listing, as "Changed since the session started" labels the changed files
+   (§4.7): "Files in" in the .fd-label look, then the crumbs, sans 12px as the crumbs of the
+   Browse panel (§4.6), a "/" between two of them, the current one --text weight 600. No row
+   rule and no row height: it is the place of the list, not its first entry. Its crumbs keep the
+   44px target of a touch screen (base.css). The list follows 4px under it, as under a label. */
 .fd-files-crumbs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px var(--sp-1);
   min-width: 0;
-  min-height: var(--row-h);
-  padding: 0 var(--sp-2);
-  border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+  margin: var(--sp-3) 0 calc(-1 * var(--sp-1));
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
 }
-/* The list follows the crumbs at the row rhythm: no grid gap between them (the crumbs have the
-   row height and the rule of a row). */
-.fd-files-crumbs + [data-listing] {
-  margin-top: calc(-1 * var(--sp-2));
+.fd-files-crumbs-lead {
+  font-weight: 600;
 }
 .fd-files-crumb-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   min-width: 0;
 }
-/* The root crumb has the icon-to-name gap of a file row (8px), so that its name starts on the
-   column of the names under it. */
 .fd-files-crumb {
-  gap: var(--sp-2);
   height: auto;
   padding: 0;
   background: none;
@@ -2401,29 +2430,25 @@ button.fd-cchip {
   border-radius: 0;
   color: var(--dim);
   font: inherit;
+  font-weight: 500;
+}
+.fd-files-crumb[aria-current="location"],
+.fd-files-file {
+  color: var(--text);
+  font-weight: 600;
 }
 @media (hover: hover) {
   .fd-files-crumb:hover:not(:disabled) {
     background: none;
     border-color: transparent;
     color: var(--text);
+    text-decoration: underline;
   }
-}
-/* The root crumb is the folder's name: a path in the mono of the other crumbs, in the --dim of
-   the path (not the --text of the entries under it) with an open folder icon and a "/", so that
-   it reads as the path of the list, not as one more entry. */
-.fd-files-crumb.fd-files-root {
-  color: var(--dim);
-  font-weight: 600;
-}
-.fd-files-root > .fd-icon {
-  color: var(--dim);
 }
 .fd-files-sep {
   color: var(--faint);
 }
 .fd-files-file {
-  color: var(--text);
   overflow-wrap: anywhere;
 }
 .fd-files .fd-path {
@@ -2449,11 +2474,6 @@ button.fd-cchip {
   max-width: 760px;
   font-size: var(--fs-chat);
   line-height: 1.6;
-}
-.fd-files-error {
-  margin: 0;
-  color: var(--hazard);
-  font-size: var(--fs-ui);
 }
 .fd-files .fd-file-text {
   width: 100%;
@@ -2510,9 +2530,17 @@ button.fd-cchip {
   cursor: default;
 }
 @media (pointer: coarse) {
-  .fd-files-row,
-  .fd-files-crumbs {
+  .fd-files-row {
     min-height: var(--row-h-touch);
+  }
+  /* The label row stays 32px (8px over the listing): the 44px crumb targets of base.css reach 6px
+     over its edges, so the label does not stand in a 44px band of its own. */
+  .fd-files-crumbs {
+    min-height: 32px;
+    margin-bottom: 0;
+  }
+  .fd-files-crumb {
+    margin-block: -6px;
   }
   .fd-files-go {
     width: var(--tap-min);

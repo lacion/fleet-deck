@@ -1,6 +1,14 @@
 // "Flight Deck" §4.5: the properties panel at the right of a session. It shows only what the
 // session summary (and the timeline that the pane already read) knows; a missing fact is absent.
-import { Fragment, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
@@ -117,20 +125,23 @@ export function changeTotal(
   );
 }
 
-/** One fact; `extra` is a second `<dd>` that takes the whole width of the panel under it. */
+/**
+ * One fact; `extra` is a second `<dd>` that takes the whole width of the panel under it. A row
+ * with no value (the generated summary: its list is the `extra`) has no empty `<dd>`.
+ */
 function Row({
   label,
   children,
   extra,
 }: {
-  readonly label: string;
-  readonly children: ReactNode;
+  readonly label: ReactNode;
+  readonly children?: ReactNode;
   readonly extra?: ReactNode;
 }) {
   return (
     <div className="fd-props-row">
       <dt>{label}</dt>
-      <dd>{children}</dd>
+      {children === undefined ? null : <dd>{children}</dd>}
       {extra}
     </div>
   );
@@ -194,22 +205,44 @@ export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached conte
 /** A part of a fact that keeps one line: its spaces do not break (the 280px row breaks at "·"). */
 const keep = (text: string): string => text.replaceAll(' ', '\u00a0');
 
+/** One part of the token fact: the count and its words (`316K`, `output`). */
+export type TokenPart = { readonly count: string; readonly word: string };
+
 /**
  * The token fact in the words of the ops usage glance (`inputLabel`): a Claude session counts the
  * input outside the prompt cache only, "new input" (a bare "682 in" next to a large cost read as a
- * bug); then the "output". A narrow panel breaks the line at the "·", never inside a part.
+ * bug); then the "output". The words keep one line (no-break spaces), so a narrow panel breaks the
+ * fact at the "·", never inside a part.
  */
 export function tokensText(
   input: number | null,
   output: number | null,
   inputWord = 'new input',
-): string {
+): TokenPart[] {
   return [
-    input === null ? null : keep(`${compactCount(input)} ${inputWord}`),
-    output === null ? null : keep(`${compactCount(output)} output`),
-  ]
-    .filter((part) => part !== null)
-    .join(' · ');
+    input === null ? null : { count: compactCount(input), word: keep(inputWord) },
+    output === null ? null : { count: compactCount(output), word: 'output' },
+  ].filter((part): part is TokenPart => part !== null);
+}
+
+/**
+ * The token fact as the ops glance shows it: the numbers in --fuel, the words in --dim. Each part
+ * is one unbreakable piece (`316K\u00a0output`).
+ */
+function TokensValue({ parts, title }: { readonly parts: TokenPart[]; readonly title?: string }) {
+  return (
+    <span className="fd-props-tokens" title={title}>
+      {parts.map((part, i) => (
+        <Fragment key={part.word}>
+          {i === 0 ? null : ' · '}
+          <span className="fd-props-tokpart">
+            <span className="fd-props-fuel">{part.count}</span>
+            {`\u00a0${part.word}`}
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  );
 }
 
 /** The mode of the session: a ghost menu summary that opens the mode ladder, or a plain fact. */
@@ -252,6 +285,31 @@ function ModeValue({ mode, control }: { readonly mode: string; readonly control?
       </Menu>
     </span>
   );
+}
+
+/**
+ * The scroll body fade of the panel (§3, session.css): `data-scrolled` away from its top,
+ * `data-more-below` while rows hide under its bottom edge.
+ */
+function markEdges(el: HTMLElement) {
+  el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+  el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
+
+/** Marks the edges of `ref` after each render, on a scroll, and when it or a list resizes. */
+function useScrollEdges(ref: { readonly current: HTMLElement | null }) {
+  useLayoutEffect(() => {
+    if (ref.current) markEdges(ref.current);
+  });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => markEdges(el));
+    observer.observe(el);
+    for (const child of el.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, []);
+  return (event: { readonly currentTarget: HTMLElement }) => markEdges(event.currentTarget);
 }
 
 /** The changed files that the Changes row lists; the others are "+N more files". */
@@ -395,8 +453,10 @@ export function PropertiesPanel({
   const meters = rateMeters([session], stations);
   const provider = s.provider === null ? null : providerLabel(s.provider);
   const context = contextLabel(s.model);
+  const box = useRef<HTMLElement>(null);
+  const onScroll = useScrollEdges(box);
   return (
-    <aside className="fd-props" aria-label="Properties">
+    <aside className="fd-props" aria-label="Properties" ref={box} onScroll={onScroll}>
       <h3 className="fd-props-title">Properties</h3>
       <dl className="fd-props-list">
         <Row label="Status">
@@ -485,12 +545,10 @@ export function PropertiesPanel({
         )}
         {input === null && output === null ? null : (
           <Row label="Tokens">
-            <span
-              className="fd-props-fuel"
-              title={input === null || inputWord !== 'new input' ? undefined : NEW_INPUT_TITLE}
-            >
-              {tokensText(input, output, inputWord)}
-            </span>
+            <TokensValue
+              parts={tokensText(input, output, inputWord)}
+              {...(input === null || inputWord !== 'new input' ? {} : { title: NEW_INPUT_TITLE })}
+            />
           </Row>
         )}
         {cost === null ? null : (
@@ -539,17 +597,20 @@ export function PropertiesPanel({
       </dl>
       {/* The facts that the session menu shows while this panel is closed. */}
       <dl className="fd-props-list">
+        {/* The sparkles mark goes with the label: the list starts right under it. */}
         {digestLines(s.digest).length === 0 ? null : (
           <Row
-            label="Summary"
+            label={
+              <>
+                Summary <GeneratedText />
+              </>
+            }
             extra={
               <dd className="fd-props-filelist fd-props-digest">
                 <DigestList digest={s.digest} />
               </dd>
             }
-          >
-            <GeneratedText />
-          </Row>
+          />
         )}
         <Row label="Session">
           <code className="fd-props-mono fd-props-sid" title={s.session_id}>

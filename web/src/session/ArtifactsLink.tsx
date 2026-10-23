@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import type { ArtifactsDir, EventEnvelope } from '../gen';
 import { Dialog } from '../integrations/Dialog';
+import { Icon, TriangleAlert } from '../ui/icons';
 import { FilesPanel } from './FilesPanel';
 import type { FileActions } from './workspace';
 
@@ -43,10 +44,11 @@ export function ArtifactsLink({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // A notice row of the pane (§4.7), in the error tone of the chat line of the same event.
   if (artifactsRevoked(events)) {
     return (
-      <p className="fd-note" role="status">
-        The artifact share is not verified now.
+      <p className="fd-sh-strip" data-tone="hazard" role="status">
+        <Icon of={TriangleAlert} size={14} /> The artifact share is not verified now.
       </p>
     );
   }
