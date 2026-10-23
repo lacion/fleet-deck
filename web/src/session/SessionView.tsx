@@ -62,7 +62,8 @@ import {
   taskStates,
   toolTitles,
 } from './tasks';
-import { buildTimeline, runningSubagents, sessionModels, slashCommands } from './timeline';
+import { buildTimeline, runningSubagents, sessionModels } from './timeline';
+import { commandList } from './slash';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns, useDiffTotal } from './workspace';
 import { shortModel } from '../ui/format';
@@ -634,8 +635,7 @@ export function SessionView(props: SessionViewProps) {
                             : disabledReason(flags, s.state === 'lost', actions)
                       }
                       phone={layout === 'phone'}
-                      slashCommands={s.slash_commands ?? slashCommands(events)}
-                      skills={s.skills ?? []}
+                      commands={commandList(s, events)}
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}

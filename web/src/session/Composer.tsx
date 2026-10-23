@@ -13,11 +13,12 @@ import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
-import { matchSlash } from './slash';
+import { type CommandList, commandMenu, matchCommand, pickCommand } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
 import { ReturnKey, SubmitKeys } from '../spawn/keyHint';
 import { ModelMenu } from './SessionSettings';
+import { useScrollEdges } from '../ui/Menu';
 
 type Props = {
   readonly enabled: boolean;
@@ -31,10 +32,8 @@ type Props = {
   readonly onResume?: (() => void) | null;
   /** A command of the session is pending: the Resume button waits (no second resume). */
   readonly resumeBusy?: boolean;
-  /** The commands of the provider; `null` or empty: it gave no list. */
-  readonly slashCommands?: readonly string[] | null;
-  /** The skill names of the provider; a command in this list shows the badge "skill". */
-  readonly skills?: readonly string[];
+  /** B11: the command and skill names of the session; `null` or absent: the session has no menu. */
+  readonly commands?: CommandList | null;
   /** The file name search of the session root (DL-174); `null` or absent: `@` has no menu. */
   readonly searchFiles?: ((query: string, maxHits: number) => Promise<readonly string[]>) | null;
   /** The comments of the session for the `#` menu (DL-179), newest first; absent or empty: no menu. */
@@ -171,8 +170,20 @@ export function ComposerMenu(props: {
   readonly current: number;
   readonly onChoose: (n: number) => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollEdges(ref);
+  // The keys never select a row that the box hides.
+  useLayoutEffect(() => {
+    document.getElementById(`${props.id}-${props.current}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [props.id, props.current]);
   return (
-    <div className="fd-composer-menu" role="listbox" aria-label={props.label} id={props.id}>
+    <div
+      ref={ref}
+      className="fd-composer-menu"
+      role="listbox"
+      aria-label={props.label}
+      id={props.id}
+    >
       {props.rows.map((row, n) =>
         row.status ? (
           <div
@@ -220,7 +231,8 @@ export function Composer(props: Props) {
   const [readError, setReadError] = useState<string | null>(null);
   const [active, setActive] = useState(0);
   const [menuClosed, setMenuClosed] = useState(false);
-  const [cursor, setCursor] = useState(0);
+  // A restored draft has its caret at the end, so its menu opens as the text was left.
+  const [cursor, setCursor] = useState(() => readDraft(draftKey).length);
   const [found, setFound] = useState<{
     query: string;
     paths: readonly string[];
@@ -237,6 +249,7 @@ export function Composer(props: Props) {
   if (loadedKey !== draftKey) {
     setLoadedKey(draftKey);
     setText(readDraft(draftKey));
+    setCursor(readDraft(draftKey).length);
   }
 
   const problem = readError ?? imagesProblem(images);
@@ -251,21 +264,18 @@ export function Composer(props: Props) {
     (meaning.kind === 'shell' && (props.working || meaning.command === ''));
   // "Steer now" is offered: a turn runs, the provider can steer, the text is a prompt.
   const steerable = canSteer(props.working, props.steer, bangOn);
-  const commands = props.slashCommands ?? [];
-  const hasCommands = commands.length > 0;
-  const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
+  const list = props.commands ?? null;
+  const command = list !== null && !bangOn ? matchCommand(text, cursor, list.provider) : null;
+  const menu = command !== null && list !== null ? commandMenu(list, command) : null;
+  const hasNames = list !== null && list.names !== null && list.names.length > 0;
   const canSearch = props.searchFiles != null;
   // Precedence: the `/` menu, then the `#` menu, then the `@` menu.
-  const hash = bangOn ? null : hashMenu(text, cursor, props.comments ?? [], slash !== null);
-  const at = canSearch && !bangOn && slash === null && hash === null ? matchAt(text, cursor) : null;
+  const hash = bangOn ? null : hashMenu(text, cursor, props.comments ?? [], menu !== null);
+  const at = canSearch && !bangOn && menu === null && hash === null ? matchAt(text, cursor) : null;
   const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
   const choices: MenuRow[] =
-    slash !== null
-      ? slash.options.map((o) => ({
-          key: o.name,
-          text: `/${o.name}`,
-          ...(o.skill ? { badge: 'skill' } : {}),
-        }))
+    menu !== null
+      ? menu.rows
       : hash !== null
         ? hash.rows
         : atQuery !== null
@@ -273,17 +283,19 @@ export function Composer(props: Props) {
           : [];
   // `@` status: how many letters are missing, the search runs, it found nothing, or it failed.
   const status: string | null =
-    slash !== null || at === null
-      ? null
-      : atQuery === null
-        ? 'Type 2 or more letters to search files'
-        : found.query !== atQuery
-          ? 'Searching…'
-          : found.failure !== null
-            ? `File search failed: ${found.failure}`
-            : found.paths.length === 0
-              ? 'No matching files'
-              : null;
+    menu !== null
+      ? menu.status
+      : at === null
+        ? null
+        : atQuery === null
+          ? 'Type 2 or more letters to search files'
+          : found.query !== atQuery
+            ? 'Searching…'
+            : found.failure !== null
+              ? `File search failed: ${found.failure}`
+              : found.paths.length === 0
+                ? 'No matching files'
+                : null;
   const rows: MenuRow[] =
     status === null ? choices : [...choices, { key: '\u0000status', text: status, status: true }];
   const menuOpen = props.enabled && !menuClosed && rows.length > 0;
@@ -376,8 +388,10 @@ export function Composer(props: Props) {
   const choose = (n: number) => {
     const row = rows[n];
     if (row === undefined) return;
-    if (slash !== null) {
-      edit(`${row.text} `);
+    if (menu !== null && command !== null && list !== null) {
+      const picked = pickCommand(text, command, row.key, list.provider);
+      caretTo.current = picked.caret;
+      edit(picked.text, picked.caret);
     } else if (hash !== null) {
       const picked = pickComment(text, cursor, hash.match, row.text);
       caretTo.current = picked.caret;
@@ -449,8 +463,8 @@ export function Composer(props: Props) {
   const target = props.callsign ? props.callsign : 'the agent';
   const placeholder = bangOn
     ? 'Shell command (runs in the session folder)'
-    : hasCommands
-      ? `Message ${target}… (/ for commands)`
+    : hasNames
+      ? `Message ${target}… (${list.provider === 'codex' ? '$ for skills' : '/ for commands'})`
       : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
@@ -483,7 +497,7 @@ export function Composer(props: Props) {
       {menuOpen ? (
         <ComposerMenu
           id={listId}
-          label={slash !== null ? 'Commands' : hash !== null ? 'Comments' : 'Files'}
+          label={menu !== null ? menu.label : hash !== null ? 'Comments' : 'Files'}
           rows={rows}
           current={current}
           onChoose={choose}
@@ -510,7 +524,7 @@ export function Composer(props: Props) {
         value={text}
         disabled={!props.enabled}
         placeholder={placeholder}
-        aria-autocomplete={hasCommands || canSearch ? 'list' : undefined}
+        aria-autocomplete={list !== null || canSearch ? 'list' : undefined}
         aria-controls={menuOpen ? listId : undefined}
         aria-activedescendant={menuOpen && choices.length > 0 ? optionId(current) : undefined}
         onChange={(event) => edit(event.target.value, event.target.selectionStart)}
@@ -523,11 +537,6 @@ export function Composer(props: Props) {
       ) : null}
       {bangOn && props.shared === true ? (
         <p className="fd-composer-note">Members of this session see the command and its output.</p>
-      ) : null}
-      {!hasCommands && /^\/\S*$/.test(text) ? (
-        <p className="fd-composer-note">
-          This session reports no commands. The text goes to the agent as a prompt.
-        </p>
       ) : null}
       {images.length > 0 ? (
         <ul className="fd-images" aria-label="Images">

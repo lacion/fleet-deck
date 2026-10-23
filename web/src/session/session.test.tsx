@@ -360,6 +360,16 @@ describe('session pane (DL-140)', () => {
     expect(html).toContain('(/ for commands)');
   });
 
+  test('a Codex session offers its skills with $ in the placeholder (B11)', () => {
+    const codex = session({ provider: 'codex', slash_commands: [], skills: ['deploy'] });
+    const html = view(codex, timeline([]));
+    expect(html).toContain('($ for skills)');
+    expect(html).not.toContain('(/ for commands)');
+    // Codex without any skill has no hint.
+    const none = session({ provider: 'codex', slash_commands: [], skills: [] });
+    expect(view(none, timeline([]))).not.toContain('for skills)');
+  });
+
   test('the chat nests the subagents and shows the open approval', () => {
     const html = view(session(), timeline());
     expect(html).toContain('aria-label="Conversation"');
