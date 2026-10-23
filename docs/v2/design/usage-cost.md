@@ -1,6 +1,6 @@
 # Token counts and cost: a correct source, the resume baseline and a recount (B14, B20, B21)
 
-- **Status:** Draft, revision 2 (2026-10-23), after the adversary DESIGN REVIEW round 1 (FAIL; every finding is resolved, see the last section). Design agent of the backlog program. Needs a RE-REVIEW before the build (risk high, §8).
+- **Status:** Draft, revision 3 (2026-10-23), after the adversary DESIGN REVIEW rounds 1 and 2 (both FAIL; every finding is resolved, see the last two sections). Design agent of the backlog program. Needs a RE-REVIEW before the build (risk high, §8).
 - **Items:** B14 (token counts and cost not correct), B21 (the first turn after a Claude resume is not counted), B20 (stored cost totals too high: repair or reset).
 - **Base:** `v2` at `497b2fbc`. Every `file:line` below is on that commit.
 - **Recordings:** `~/fleetdeck-briefs/backlog/usage-cost/` (`claude/`, `codex/`, `comparison.txt`). Only the usage frames are kept; prompts, e-mail addresses and account data are removed. The drivers that made them are in `scratch/` (`drive_claude.py`, `drive_codex.py`, `extract.py`).
@@ -83,7 +83,7 @@ Claude ran with `-p --input-format stream-json --output-format stream-json --ver
    - **Automatic separation.** The first event of the new rules moves the stored total of a session into `SessionSummary.usage_legacy` (the "old count"). The new total counts from there. The board shows the old count apart and never adds it to the fleet totals.
    - **Owner recount.** For a session whose whole total is an old count, the owner can replace it with the provider's own record on the station: the last `cost-state` of the Claude transcript, or the Codex rollout priced turn by turn. A new event `usage.set` replaces the total; both folds apply it (§4). The record can miss usage (a killed Claude run, Codex sub-agent threads), so a recounted total is always marked as a lower bound ("at least").
 2. *Show the reset in the audit log.* Yes. The recount is an owner command `session.usage_recount` with two audit rows per session on the deck: `stage=submitted` and the terminal outcome (§4.3). The summary keeps the replaced total durably (`usage_recount.previous`); it does not depend on event retention.
-3. *Which sessions?* Claude and Codex sessions whose total is entirely an old count, whose conversation started in this session on this station (no import, no move, no other session on the same conversation), and whose every execution is proven ended. All other sessions keep their old count apart, and the board says why.
+3. *Which sessions?* Claude and Codex sessions whose total is entirely an old count, whose conversation started in this session on this station, and whose every execution is proven ended. "Started here" needs positive proof: the first `start` or `resume` effect of the session that the station still has is a `start` (§4.2 step 3.c). An import, a move, a conversation that another session shares, and a session whose start record the station pruned are refused. All other sessions keep their old count apart, and the board says why.
 
 ### B21
 
@@ -535,7 +535,12 @@ New module `crates/fleetdeck-station/src/manager/usage_recount.rs`, a reader `cr
 3. **Decide (in the writer transaction),** in this order; the first that applies refuses:
    a. `unsupported_provider`: the provider is not Claude or Codex.
    b. `counted_since_upgrade`: `summary.usage.scheme.is_some()` or `summary.usage_legacy.is_some()`. Only a total that is entirely an old count is recounted; a new-rule total (live counted, or recounted before) is never replaced, so no counted Codex sub-agent usage and no killed Claude run counted live can be lost.
-   c. `other_history`: the provider record can hold usage that another session counts, or usage outside the execution scope: the session has a `session_transcripts` row (an import, `store/migrations.rs:583`), or `summary.moved_to` or `summary.move_in` is set, or another session of the station has the same provider and native id. (A fork has no station path: `session.fork` is refused, `manager/decide.rs:136`.)
+   c. Provenance, two codes in this order:
+      - `other_history`: the provider record can hold usage that another session counts: the session has a `session_transcripts` row (an import, `store/migrations.rs:583`), or `summary.moved_to` or `summary.move_in` is set (the fold never clears them, `fold.rs:286`), or another session of the station has the same provider and native id. (A fork has no station path: `session.fork` is refused, `manager/decide.rs:136`.)
+      - `origin_unproven`: `db.origin` is not `FirstEffect::Start`. The record of a conversation that began before the session (an import) holds usage outside the execution scope, and the "at least" mark cannot correct an overcount. So the recount needs **positive** proof that the station began the conversation, not the absence of an import mark: an older import has no `session_transcripts` row until the owner reads its history (`history/tests_capture.rs:206-240`). The proof is the first `start` or `resume` effect of the session by `seq`, the rule that the history already uses (`store/transcripts.rs:206-227`, `history/mod.rs:610`). The station creates a session with exactly one of two effects (`manager/decide.rs:615-640`): `Start` for a new conversation (`SessionSpec` has no resume target), or `Resume { import: true }` for an import (DL-308). No other path enqueues a `Start` for an existing session. The result is:
+        - `Start`: proven new; the check passes.
+        - `Import`: refused.
+        - `Unknown`: refused. This covers an import stored before the `import` flag existed (it reads as a plain resume, `store/payload.rs:120-124`), a session whose first effect was pruned (finished effects are deleted 90 days after their last update, `HISTORY_RETENTION_MS`, `store/mod.rs:148`, `store/log.rs:425-430`; the first remaining effect is then a later resume, or there is none), and a session that has no start or resume effect at all.
    d. `session_running`: `facts.live`; or `facts.blocked` is `Some`; or `db.busy` (the `BUSY` rule of `store/resumes.rs:183`: state not `exited` or `lost`, a live process row, or a queued or claimed start or resume effect); or `db.blocked` is `Some` (the resume rule again, in the transaction); or `d.native_session_held(native)` is `Some` (a terminal holds the conversation, `resumes.rs:337`); or `db.reboot_rows` has a shim id that is not in `facts.revalidated`. A `lost` row without proof (`manager/shims.rs:215` leaves the shim alive when its checkpoint is unreadable) therefore refuses the recount.
    e. `session_changed`: the summary's `session_seq` is not `facts.session_seq`.
    f. `record_unreadable`: `facts.record` is that `Err`.
@@ -548,6 +553,9 @@ New module `crates/fleetdeck-station/src/manager/usage_recount.rs`, a reader `cr
        pub busy: bool,
        /// A `session_transcripts` row exists (an import).
        pub imported: bool,
+       /// The first `start` or `resume` effect of the session (§4.2 step 3.c),
+       /// from `transcripts::first_effect(conn, session)`.
+       pub origin: FirstEffect,
        /// Another `sessions` row has the same `provider` and `native_session_id`.
        pub same_native: bool,
        /// `exclusion(conn, Some(session), kind, native, Some(session), Purpose::Resume).blocked`
@@ -559,7 +567,7 @@ New module `crates/fleetdeck-station/src/manager/usage_recount.rs`, a reader `cr
    }
    ```
 
-   Step 3.c uses `imported` and `same_native`; step 3.d uses the rest.
+   Step 3.c uses `imported`, `same_native` and `origin`; step 3.d uses the rest. `first_effect` is the query and the match of `history_facts` (`store/transcripts.rs:206-227`), moved without change into `pub(super) fn first_effect(conn: &rusqlite::Connection, session: &SessionId) -> Result<FirstEffect>` in `transcripts.rs`; `history_facts` calls it. The recount and the history therefore use one rule for "the station began this conversation".
 5. The direct decide (`decide.rs`) refuses the command like `StopExecution` (`decide.rs:349`): `SessionCommand::UsageRecount { .. } => Err(super::usage_recount::refuse_direct())`.
 6. **Module size:** `manager/mod.rs` has 797 lines and `decide.rs` 792. The task moves the closure body `match command { … }` of `mod.rs:635-664` without change into `manager/submit_route.rs` (`pub(super) fn route(d, ctx: RouteCtx<'_>, command: SessionCommand) -> Result<…>`, `RouteCtx` holds `origin`, `policy`, `coordinator`, `shells`, `restarting`, `root`, `check`, `stop` and the new `recount`), and adds the `UsageRecount` arm there.
 7. The station advertises `usage_recount.v1`.
@@ -582,6 +590,7 @@ Refusals are built as in `manager/stop_decide.rs:40-43`: `reject(<RejectCode>, "
 | `unsupported_provider` | `Only Claude and Codex sessions have a provider record.` |
 | `counted_since_upgrade` | `Fleet Deck counts this session with the new rules. Only an old count is recounted.` |
 | `other_history` | `The provider record of this session can hold usage of another session or station.` |
+| `origin_unproven` | `Fleet Deck has no proof that this session started its conversation on this station (an import, or a start record older than 90 days).` |
 | `session_running` | `This session may still run (<reason>). It keeps its old count.` |
 | `session_changed` | `The session changed during the recount. Recount it again.` |
 | `record_unreadable` | `Fleet Deck could not read the provider record: <reason word>.` |
@@ -632,6 +641,7 @@ New files `web/src/board/usageRecountCall.ts` (the typed action) and `web/src/bo
    - `<n> wait for their new totals.`: `accepted` or `pending` whose summary does not show that `command_id` yet.
    - `<n> may still run and keep their old counts.`: not sent (state), or refused `session_running`.
    - `<n> hold usage of another session in their record and keep their old counts.`: refused `other_history`.
+   - `<n> have no proof that their conversation started in Fleet Deck and keep their old counts.`: refused `origin_unproven`.
    - `<n> stations need a newer Fleet Deck.`: `not_supported`, counted per station.
    - `<n> could not be recounted.`: every other `refused` or `failed`; the first message follows in parentheses.
 8. **Properties:** when `summary.usage_recount` is set, the "At API prices" row gets the aside `recounted` with the title `Recounted from the provider record on <date of at>. A killed run and Codex sub-agent threads are not in that record, so the real total can be higher. The old count was <usdText(previous.cost_usd) or "unknown">.`; with source `none` the aside is `no record` with the title `The provider has no record of this session. The total is unknown since <date>.`
@@ -652,10 +662,11 @@ New files `web/src/board/usageRecountCall.ts` (the typed action) and `web/src/bo
 12. **Codex `total` absent.** The HEAD `last` rule (§3.4 rule 1).
 13. **An unknown base or an unpriced model.** The emitted usage has `tokens_partial` or `cost_partial`; the fold keeps the flag, and the board shows `at least` (§3.6). A known cost never looks complete when a part of the usage has no cost.
 14. **Recount of an imported or moved session, or of a conversation that two sessions share.** Refused `other_history` (§4.2 step 3.c): its record holds usage of other executions, which would count the same usage twice in the fleet total.
-15. **Recount while a run may still exist.** A `lost` shim row without proof, a launch of the same conversation, a terminal hold, a queued resume: refused `session_running`. The per-session lock of `stop_prepare` keeps a resume, a reconcile or a stop of the session out of the recount's prepare and decision.
-16. **Recount while the owner resumes the session.** The resume waits for the per-session lock; a resume decided first leaves a queued effect: `session_running`. An event in between: `session_changed`.
-17. **A paired deck that is older** sees `usage.set` as an unknown kind and keeps the old total (L16), and adds new-rule and old-rule usage together. Only a deck with the route sends the command, so only an owner with a second, older deck sees this (§9, open item c).
-18. **The transcript is edited by an agent** (it can write files under `~/.claude` in a permissive mode). A forged `cost-state` changes only the shown numbers of that session (threat note T3, §8).
+15. **Recount of an older import that has no transcript row, or of a session whose start record was pruned.** Refused `origin_unproven` (§4.2 step 3.c): only a remaining first `start` effect proves that the conversation began in this session. A session older than the effect retention (90 days) keeps its old count (§9, open item g).
+16. **Recount while a run may still exist.** A `lost` shim row without proof, a launch of the same conversation, a terminal hold, a queued resume: refused `session_running`. The per-session lock of `stop_prepare` keeps a resume, a reconcile or a stop of the session out of the recount's prepare and decision.
+17. **Recount while the owner resumes the session.** The resume waits for the per-session lock; a resume decided first leaves a queued effect: `session_running`. An event in between: `session_changed`.
+18. **A paired deck that is older** sees `usage.set` as an unknown kind and keeps the old total (L16), and adds new-rule and old-rule usage together. Only a deck with the route sends the command, so only an owner with a second, older deck sees this (§9, open item c).
+19. **The transcript is edited by an agent** (it can write files under `~/.claude` in a permissive mode). A forged `cost-state` changes only the shown numbers of that session (threat note T3, §8).
 
 ## 6. Compatibility
 
@@ -687,7 +698,7 @@ Threat notes:
 - **T1, path and file trust.** The recount opens the provider file only through the station's trusted locator (no-follow walk, owner uid, regular file, the history limits). The resume baseline in the providers crate opens one fixed path below the provider home with `O_NOFOLLOW`, checks the owner uid, the file type and the link count, and reads numbers only. Neither reads a path from the board.
 - **T2, authority.** `session.usage_recount` is owner-only (board login, scope `admin`), checked by the deck and audited with a submitted row and an outcome row; the station accepts it only from a paired deck with origin `Board`, as `ReleaseShell`.
 - **T3, forged records.** An agent that can write its own transcript can change the baseline or the recount of its own session. The effect is limited to the shown usage numbers of that session; no authority, file or process depends on them.
-- **T4, data loss.** The recount replaces only an old count, never a new-rule total. The replaced total stays in `usage_recount.previous` in the summary (durable, not subject to event retention), and Properties shows it. An old count that is set apart at the upgrade stays in `usage_legacy`. Nothing is deleted.
+- **T4, data loss and overcount.** The recount replaces only an old count, never a new-rule total. It installs a record only for a session with positive proof that the station began its conversation (a first `start` effect); an import, a move, a shared conversation or a pruned start record is refused, so no pre-import usage enters the fleet totals. The replaced total stays in `usage_recount.previous` in the summary (durable, not subject to event retention), and Properties shows it. An old count that is set apart at the upgrade stays in `usage_legacy`. Nothing is deleted.
 - **T5, races.** The recount holds the per-session lock of `stop_prepare` (resume, reconcile and stop wait), uses the resume rule for the end of every execution of the session and its conversation, and rechecks it, the live map, the `BUSY` rule and the `session_seq` in the writer transaction (§4.2 step 3). A resume is refused until the previous execution is proven ended, so no `cost-state` is written between the baseline read and the spawn.
 - **T6, denial of service.** The baseline scan has a 32 MiB cap and a 2 s deadline, the recount scan the history limits and 3 s; the board sends at most 4 recounts at a time and polls a pending command once a second for at most 30 s.
 
@@ -699,6 +710,7 @@ Threat notes:
 - d. Sessions of an older station stay old counts until that station is updated.
 - e. A session that ran after the upgrade keeps its old count apart for good (it is not recountable: the record cannot be split at the upgrade time).
 - f. A recounted total is a lower bound: killed Claude runs and Codex sub-agent threads are not in it. A conversation that the owner continued in a terminal (DL-140) is in the Claude record.
+- g. A session whose first `start` effect the station pruned (90 days after the effect ended) cannot prove its origin and keeps its old count. The station keeps no other durable origin record; a new one would not help, because every session created after the upgrade counts with scheme 2 and is never recounted.
 
 ## 10. Build plan
 
@@ -760,7 +772,7 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
 ### T4: station recount (backend, about 650 lines)
 
 - **Depends on:** T1, T2, T3.
-- **Owned files:** `crates/fleetdeck-station/src/manager/usage_recount.rs` (new), `crates/fleetdeck-station/src/manager/usage_recount_tests.rs` (new), `crates/fleetdeck-station/src/manager/submit_route.rs` (new), `crates/fleetdeck-station/src/manager/mod.rs`, `crates/fleetdeck-station/src/manager/decide.rs`, `crates/fleetdeck-station/src/manager/stop_plan.rs` (one match arm in `stop_prepare`), `crates/fleetdeck-station/src/store/usage_recount.rs` (new: `RecountDb`, `Decision::recount_db`, §4.2 step 4), `crates/fleetdeck-station/src/store/mod.rs` (the `mod` line), `crates/fleetdeck-station/src/store/resumes.rs` (only `const BUSY` → `pub(super) const BUSY`), `crates/fleetdeck-station/src/history/usage_record.rs` (new), `crates/fleetdeck-station/src/history/mod.rs` (the `mod` line), the station feature list file (where `feature::SHELL_COMMAND` is advertised).
+- **Owned files:** `crates/fleetdeck-station/src/manager/usage_recount.rs` (new), `crates/fleetdeck-station/src/manager/usage_recount_tests.rs` (new), `crates/fleetdeck-station/src/manager/submit_route.rs` (new), `crates/fleetdeck-station/src/manager/mod.rs`, `crates/fleetdeck-station/src/manager/decide.rs`, `crates/fleetdeck-station/src/manager/stop_plan.rs` (one match arm in `stop_prepare`), `crates/fleetdeck-station/src/store/usage_recount.rs` (new: `RecountDb`, `Decision::recount_db`, §4.2 step 4), `crates/fleetdeck-station/src/store/mod.rs` (the `mod` line), `crates/fleetdeck-station/src/store/resumes.rs` (only `const BUSY` → `pub(super) const BUSY`), `crates/fleetdeck-station/src/store/transcripts.rs` (only: move the first-effect query of `history_facts` without change into `pub(super) fn first_effect`, §4.2 step 4), `crates/fleetdeck-station/src/history/usage_record.rs` (new), `crates/fleetdeck-station/src/history/mod.rs` (the `mod` line), the station feature list file (where `feature::SHELL_COMMAND` is advertised).
 - **Changes:** §4.2.
 - **Tests (`usage_recount_tests.rs`, `history/usage_record.rs` tests):**
   - `a_claude_session_takes_the_transcript_total` (temp home, a transcript with two `cost-state` records, an old-count summary → `usage.set` with the last record, scheme 2, both partial flags, source `claude_transcript`, `previous` = the old summary usage, `command_id` = the command's).
@@ -771,13 +783,15 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
   - `an_untrusted_file_is_refused` (a symlink → `record_unreadable`, no event).
   - `a_new_rule_total_is_refused` (`summary.usage.scheme == Some(2)` → `counted_since_upgrade`, no event); `an_old_count_set_apart_is_refused` (`usage_legacy` set → `counted_since_upgrade`).
   - `an_imported_session_is_refused` (a `session_transcripts` row → `other_history`); `a_moved_session_is_refused`; `a_shared_conversation_is_refused` (two sessions with one native id).
+  - Provenance (`origin_unproven`, no event in each case): `an_older_import_without_a_transcript_row_is_refused` (first effect `resume` with `import: true`, no `session_transcripts` row, ended, old count, no move, no other session on the native id, a Claude transcript with a `cost-state` record); `an_import_from_before_the_import_flag_is_refused` (first effect `resume` without the flag); `a_session_without_a_start_effect_is_refused` (no `start` or `resume` effect row: the start was pruned); `a_pruned_start_with_a_later_resume_is_refused` (only a later plain `resume` effect remains); `the_recount_and_the_history_share_the_first_effect_rule` (`history_facts(..).first_effect` and `RecountDb.origin` agree for `start`, `resume` with and without `import`, and no row).
+  - Every accepted case above (`a_claude_session_takes_the_transcript_total`, `a_codex_session_prices_each_interval_by_its_model`, the unlisted-model cases, `no_record_sets_an_unknown_total`) has a confirmed first `start` effect row.
   - `a_live_session_is_refused` (`session_running`); `a_lost_row_without_proof_is_refused` (a shim row `lost` with reason `adapter_checkpoint_unreadable` → `session_running`); `a_queued_resume_is_refused`; `a_terminal_hold_is_refused`.
   - `a_session_that_changed_is_refused` (an event appended between prepare and decide → `session_changed`).
   - `another_provider_is_refused` (`unsupported_provider`).
   - `the_recount_waits_for_the_session_lock` (a held `stops().locks` for the session delays the decision).
   - `the_direct_decide_refuses_a_recount`.
   - `the_station_advertises_usage_recount`.
-- **Acceptance:** `cargo nextest run -p fleetdeck-station --no-fail-fast -E 'test(/usage_recount/) | test(/usage_record/) | test(/decide/) | test(/resumes/) | test(/stop_plan/)'`; the guards.
+- **Acceptance:** `cargo nextest run -p fleetdeck-station --no-fail-fast -E 'test(/usage_recount/) | test(/usage_record/) | test(/decide/) | test(/resumes/) | test(/stop_plan/) | test(/history/)'` (the history tests prove that the moved `first_effect` did not change); the guards.
 
 ### T5: deck route rules and recount audit (backend, about 220 lines)
 
@@ -796,7 +810,7 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
   - `usage.test.tsx`: `split_usage_of_a_new_an_old_and_a_mixed_session`; `fleet_usage_sums_only_new_rule_usage_and_cache_parts`; `an_old_count_session_is_unknown_and_a_mixed_one_partial`; `total_text_says_at_least_for_partial_parts` (the four forms of §3.6 item 3); `cost_text_says_at_least_for_a_partial_cost`; `the_input_label_is_new_input_for_every_provider`; `an_inferred_cost_title_names_the_price_table`.
   - `properties.test.tsx`: `the_tokens_row_has_four_parts_in_order`; `a_missing_part_is_left_out`; `a_partial_tokens_row_says_at_least`; `an_old_count_row_for_an_old_session`; `an_old_count_row_with_its_date_for_a_mixed_session`; `a_recounted_session_shows_recounted_and_the_previous_cost`; `a_session_without_record_shows_no_record`.
   - `usageRecountCall.test.ts`: `an_accepted_receipt_is_accepted`; `a_rejected_receipt_keeps_its_code` (`session_running: This session …` → code `session_running`); `not_supported_is_its_own_result`; `a_pending_command_is_polled_until_done`; `a_pending_command_past_the_limit_stays_pending`; `failed_and_ambiguous_are_failed`.
-  - `usageRecount.test.tsx`: `the_row_is_absent_without_old_counts`; `the_row_is_absent_without_the_call` (a member or a token login); `cancel_sends_nothing`; `recount_sends_one_command_per_ended_old_count_session_and_skips_running_ones`; `a_result_waits_for_the_matching_summary` (accepted, then the `sessions` prop gets `usage_recount.command_id` → counted under its source); `the_result_line_counts_each_outcome` (claude source, `none`, waiting, running, `other_history`, 409, failed); `at_most_four_commands_run_at_once`.
+  - `usageRecount.test.tsx`: `the_row_is_absent_without_old_counts`; `the_row_is_absent_without_the_call` (a member or a token login); `cancel_sends_nothing`; `recount_sends_one_command_per_ended_old_count_session_and_skips_running_ones`; `a_result_waits_for_the_matching_summary` (accepted, then the `sessions` prop gets `usage_recount.command_id` → counted under its source); `the_result_line_counts_each_outcome` (claude source, `none`, waiting, running, `other_history`, `origin_unproven`, 409, failed); `at_most_four_commands_run_at_once`.
 - **Acceptance:** `cd web && bun run test src/board src/session/properties src/compare` (through `heavy.sh`); `cd web && bun run typecheck && bun run lint`; `sh tools/design-check.sh`; the guards; gallery shots of the Usage tab (with and without old counts) and Properties (new, mixed, recounted) in both themes, desktop and phone.
 
 ## 11. Decisions made in this draft
@@ -815,7 +829,7 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
 12. **The recount is an owner command per session through the generic command route, run from the Usage tab, with a typed board call that polls and a deck outcome audit row** (DL-448). Rejected: an automatic run at upgrade (changes stored data without the owner); a new deck bulk route (a second audit and receipt path); `sessionActions(...).run` (private, loses the delivery state and the codes).
 13. **A session without a provider record becomes "unknown"** (owner question 2). Rejected: keep the old, too high total.
 14. **A session is recounted only when every execution of it and of its conversation is proven ended, under the session lock** (the resume rule). Rejected: the live map alone (a `lost` shim can still drive its provider).
-15. **An imported or moved session, or a shared conversation, is not recounted** (DL-447, execution scope). Rejected: include the conversation before the import (counts the same usage twice in the fleet total); subtract an unknown import-time value.
+15. **An imported or moved session, or a shared conversation, is not recounted; a recount needs positive proof that the station began the conversation (a first `start` effect)** (DL-447, execution scope, revision 3). Rejected: include the conversation before the import (counts the same usage twice in the fleet total); subtract an unknown import-time value; the absence of a `session_transcripts` row as proof (an older import has none until its history is read); a new origin column with a backfill (it adds a migration and helps only sessions whose start effect is pruned between the upgrade and the recount); the time of the first record of the provider file against `sessions.created_at` (a provider-file fact that an agent can edit, T3, and records without a time).
 16. **Every recounted total is a lower bound (`tokens_partial`, `cost_partial`).** Rejected: claim an exact total (a killed Claude run and Codex sub-agents are not in the record, and the station cannot prove a clean exit).
 17. **The Codex recount prices each `token_count` interval at the model of the `turn_context` before it.** Rejected: the last model for the whole total (a model switch re-prices earlier turns).
 18. **The new rules carry `scheme: 2`, and the fold never mixes old and new parts** (DL-449). Rejected: a silent meaning change of `input_tokens` (an old Codex count includes the cached input); mark every old total unknown (loses the old number that the owner may want to see).
@@ -859,9 +873,9 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
 
 - The existing label and title ("A subscription does not bill it") are the estimate text. Design §2 (B14.4).
 
-## DL-447: Old counts are recounted from the provider record with a `usage.set` event (B20) (design agent, 2026-10-23, revision 2)
+## DL-447: Old counts are recounted from the provider record with a `usage.set` event (B20) (design agent, 2026-10-23, revision 3)
 
-- The events cannot rebuild the totals (7-day retention, 500 deck rows, old meanings). Only a total that is entirely an old count is recounted, and only for a session whose conversation started in it on this station (no import, no move, no shared conversation) and whose every execution is proven ended (the resume rule, under the session lock). The station reads the last Claude `cost-state` or prices the Codex rollout interval by interval through the trusted history locator and appends `usage.set { usage, previous, source, command_id }`; the folds replace and keep `previous` in the summary. A recounted total is a lower bound. A session without a record becomes unknown. Design §4.
+- The events cannot rebuild the totals (7-day retention, 500 deck rows, old meanings). Only a total that is entirely an old count is recounted, and only for a session whose conversation started in it on this station (proven by its first `start` effect; no import, no move, no shared conversation, no pruned start record) and whose every execution is proven ended (the resume rule, under the session lock). The station reads the last Claude `cost-state` or prices the Codex rollout interval by interval through the trusted history locator and appends `usage.set { usage, previous, source, command_id }`; the folds replace and keep `previous` in the summary. A recounted total is a lower bound. A session without a record becomes unknown. Design §4.
 
 ## DL-448: The recount is an owner command per session, `session.usage_recount`, feature `usage_recount.v1` (B20) (design agent, 2026-10-23, revision 2)
 
@@ -902,3 +916,19 @@ Report: `~/fleetdeck-briefs/backlog/usage-cost/adv-design-r1.md` (verdict FAIL, 
 Other changes for consistency: §2 (B20 answers), §5 (new edge cases 2-4, 7, 13-15), §6, §7.8, §8 (T2, T4, T5, T6), §9 (items d-f), §10 (owned files, tests and acceptance of T1-T6; task sizes), §11 (decisions 3, 6, 11, 12, 14-18, 21), DL-441, DL-442, DL-443, DL-445, DL-447, DL-448, and the new DL-449 (the last number of this track's block DL-440..449). No task id changed; no task split.
 
 Findings not fixed: none. Every finding was a BLOCKER or a MAJOR with confidence 0.8 or no stated confidence; all eleven are resolved above. One part of finding 3 is not done as proposed: the design does not keep a separate "conversation-history total" next to the execution total. It refuses the recount for sessions whose record holds other executions instead, which keeps one scope for every total.
+
+## Revision 3 (design review round 2)
+
+Report: `~/fleetdeck-briefs/backlog/usage-cost/adv-design-r2.md` (verdict FAIL, 1 BLOCKER). The critic marked the round 1 findings 1, 2 and 4-11 as fixed. The finding was checked against the code on `00055138` (the cited lines are the same on `497b2fbc`).
+
+| # | Finding | Verified | What changed |
+| --- | --- | --- | --- |
+| 1 | BLOCKER (0.99): older imports pass the recount scope guard, because the absence of a `session_transcripts` row does not prove that the session began its conversation. The recount then installs pre-import usage into the fleet totals. | Yes. `session_transcripts` gets a row only at an import capture or at the first owner read of an older import (`history/tests_capture.rs:206-240`). An older import that is ended, has an old count, no move and no other session on its native id passed every check of revision 2. | New refusal `origin_unproven` in §4.2 step 3.c, after `other_history`: the recount needs positive proof, the first `start` effect of the session (`RecountDb.origin`, the `first_effect` rule of `store/transcripts.rs:206-227`, which the history already uses at `history/mod.rs:610`). The station creates a session with either a `Start` (new conversation) or a `Resume { import: true }` (import) effect (`manager/decide.rs:615-640`). An import, an import from before the `import` flag, a pruned start record (90-day effect retention) and a session without a start or resume effect are refused. Updated: §2 B20.3, §4.2 steps 3.c and 4 (`RecountDb.origin`, the moved `first_effect`), the refusal table, §4.4 item 7 (a result line), §5.15 (new; later edge cases renumbered 16-19), §8 T4, §9 item g, T4 (owned file `store/transcripts.rs`, five provenance tests including `an_older_import_without_a_transcript_row_is_refused`, the history tests in the acceptance), T6 (`origin_unproven` in the result-line test), §11 decision 15, DL-447. |
+
+Decisions of this revision:
+
+1. The proof of origin is the existing first-effect rule, read in the writer transaction. A session whose start record the station pruned cannot be proven and keeps its old count (§9 item g). A durable origin column with a backfill at migration (station V47 is reserved for this track) was considered and rejected: only sessions from before the upgrade can be recounted, so the column would help only a session whose start effect is pruned between the upgrade and the owner's recount. The migration cost is higher than that gain.
+2. A check of the provider file (the time of its first record against `sessions.created_at`) was rejected as the proof: an agent can edit the file (T3), and some records have no time. It is not added as a second check either; the first-effect rule is sufficient and is a station fact.
+3. `other_history` runs before `origin_unproven`, so that a moved or shared session gets the more specific code.
+
+No task id changed; no task split. Findings not fixed: none.
