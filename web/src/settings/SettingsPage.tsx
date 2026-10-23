@@ -340,11 +340,18 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
       <AccountsTab route={route} stations={stations} navigate={navigate} actions={env.accounts} />
     );
   }
+  // The description is one line on a desktop; a phone gives each sentence a line of its own
+  // (settings.css). The badges of the fields mark the changes that wait for a restart.
   return (
     <Page
       title="Settings"
       className="fd-settings"
-      description="Change how this deck and its stations run. A saved change applies at once, unless the setting says it applies after a restart."
+      description={
+        <>
+          How this deck and its stations run.{' '}
+          <span className="fd-set-desc2">Most changes apply at once.</span>
+        </>
+      }
     >
       <SettingsTabs route={route} stations={stations} navigate={navigate} />
       <div id="fd-set-panel" role="tabpanel" aria-labelledby={`fd-set-tab-${current}`}>

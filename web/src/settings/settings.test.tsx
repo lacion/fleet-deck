@@ -215,13 +215,12 @@ describe('field rendering for each kind', () => {
     expect(html).toContain('value="/work/app"');
   });
 
-  test('trackers are a read-only table with the note', () => {
-    expect(html).toContain('aria-label="Trackers from the config file"');
+  test('trackers are a read-only table; the help sends the owner to the Accounts tab', () => {
+    expect(html).toContain('aria-label="Trackers in the station file"');
     expect(html).toContain('acme.atlassian.net');
     expect(html).toContain('env JIRA_TOKEN');
-    expect(html).toContain(
-      'From the config file of this station. Connect accounts in the Accounts tab.',
-    );
+    expect(html).toContain('Connect Jira and Linear accounts in the Accounts tab.');
+    expect(html).not.toContain('From the config file');
   });
 
   test('the instances table has a row with the env variables as "set"', () => {

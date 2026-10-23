@@ -2,14 +2,36 @@
 // reports an edit; the form keeps the edits.
 import type { DeckSession, FieldMeta, MonitorInfo, StationView } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
-import { monitorLabel, monitorRaw } from '../ui/format';
+import { monitorLabel, monitorRaw, shortModel } from '../ui/format';
 import { Icon, Plus, X } from '../ui/icons';
 import { defaultOptionLabel, fieldLabel, optionLabel, unitOf } from './copy';
 import { asNumber, asPairs, asStrings, asText } from './model';
 import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
 
-/** The text keys whose value is a host name or a path: mono, as every path and id (§1.5). */
-const MONO_KEYS: readonly string[] = ['tailscale_bin', 'tailnet_hostname'];
+/** The text keys whose value is a host name, a path or an id: mono, as every path and id (§1.5). */
+const MONO_KEYS: readonly string[] = [
+  'tailscale_bin',
+  'tailnet_hostname',
+  'model_help.claude_model',
+  'model_help.codex_model',
+];
+
+/** The text keys whose value is a model id: the name of the model follows the field (§5). */
+const MODEL_KEYS: readonly string[] = ['model_help.claude_model', 'model_help.codex_model'];
+
+/** The placeholder of an empty text field, when the empty value has a meaning. */
+const PLACEHOLDERS: Readonly<Record<string, string>> = {
+  tailscale_bin: 'tailscale (found on PATH)',
+};
+
+/** The words of the add button of a list of texts: it names what it adds. */
+const ADD_LABELS: Readonly<Record<string, string>> = {
+  member_deny: 'Add pattern',
+  traits: 'Add label',
+};
+
+/** The lists of short tokens (the station labels): their rows are 200px (settings.css). */
+const SHORT_KEYS: readonly string[] = ['traits'];
 
 export type EditorProps = {
   readonly meta: FieldMeta;
@@ -62,6 +84,7 @@ function TextRows({
   placeholder,
   addLabel,
   mono = false,
+  short = false,
 }: {
   readonly label: string;
   readonly rows: readonly string[];
@@ -70,9 +93,11 @@ function TextRows({
   readonly placeholder?: string | undefined;
   readonly addLabel: string;
   readonly mono?: boolean;
+  /** The values are short tokens: the rows are narrower than a one-value field. */
+  readonly short?: boolean;
 }) {
   return (
-    <div className="fd-set-rows">
+    <div className="fd-set-rows" data-size={short ? 'short' : undefined}>
       {rows.map((row, i) => (
         <div className="fd-set-row" key={i}>
           <input
@@ -509,7 +534,8 @@ export function FieldEditor({
           rows={asStrings(value)}
           onChange={onChange}
           disabled={disabled}
-          addLabel={meta.key === MONITOR_KEY ? ADD_MONITOR : 'Add'}
+          addLabel={meta.key === MONITOR_KEY ? ADD_MONITOR : (ADD_LABELS[meta.key] ?? 'Add')}
+          short={SHORT_KEYS.includes(meta.key)}
         />
       );
     case 'addresses':
@@ -544,15 +570,33 @@ export function FieldEditor({
       );
     case 'text': {
       const mono = MONO_KEYS.includes(meta.key);
-      return (
+      const text = asText(value);
+      const model = MODEL_KEYS.includes(meta.key);
+      const input = (
         <input
-          value={asText(value)}
+          className={model ? 'fd-set-idfield' : undefined}
+          value={text}
           disabled={disabled}
+          placeholder={PLACEHOLDERS[meta.key]}
           autoComplete="off"
           spellCheck={mono ? false : undefined}
           data-mono={mono ? 'true' : undefined}
           onChange={(e) => onChange(e.target.value)}
         />
+      );
+      if (!model) return input;
+      // A model id is mono; the name of the model follows it (`Haiku 5.5`), as on every surface.
+      // The field keeps one place in the tree while the name comes and goes (the focus stays).
+      const name = text === '' ? text : shortModel(text);
+      return (
+        <span className="fd-set-inline">
+          {input}
+          {name === text ? null : (
+            <span className="fd-set-unit" aria-hidden="true">
+              {name}
+            </span>
+          )}
+        </span>
       );
     }
     default:

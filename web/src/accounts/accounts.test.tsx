@@ -152,13 +152,15 @@ describe('the built-in Linear app (DL-185)', () => {
       const html = tabAt('https://deck.example', list);
       expect(html).not.toContain('Uses the built-in Fleet Deck app.');
       expect(html).not.toContain(NOTE);
-      // One line says what to do; there is no disabled Connect button until an app exists.
-      expect(html).toContain('Set up an OAuth app or use an API token.');
+      // One line says what the account gives (the buttons say how it connects); there is no
+      // disabled Connect button until an app exists.
+      expect(html).toContain('Connect Linear to start sessions from its issues.');
+      expect(html).not.toContain('Set up an OAuth app or use an API token.');
       expect(html).not.toContain('No OAuth app yet.');
       expect(html).not.toContain('Set up the OAuth app first.');
       expect(html).toContain('Set up OAuth app…');
       expect(html).not.toContain('Set up your own OAuth app…');
-      expect(html).not.toContain('Connect Linear');
+      expect(html).not.toContain('>Connect Linear<');
     }
   });
 
@@ -290,12 +292,11 @@ describe('the Accounts tab (DL-173)', () => {
       html.indexOf('aria-label="Jira not connected"'),
       html.indexOf('aria-label="Linear not connected"'),
     );
-    expect(jira).toContain('Set up an OAuth app or use an API token.');
-    expect(jira).not.toContain('Connect Jira');
+    expect(jira).toContain('Connect Jira to start sessions from its issues.');
+    expect(jira).not.toContain('>Connect Jira<');
+    // Two ways to do one step: two plain buttons, one look.
     expect(jira).toMatch(/<button type="button" class="fd-sm">Set up OAuth app…<\/button>/);
-    expect(jira).toMatch(
-      /<button type="button" class="fd-ghost fd-sm">Use an API token…<\/button>/,
-    );
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Use an API token…<\/button>/);
   });
 
   test('the account rows: the method and the status in words, the site without its scheme', () => {

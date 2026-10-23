@@ -772,6 +772,7 @@ describe('SettingsTab with the card', () => {
         live={props.live}
         initial={{ view: view() }}
         omarchy={props.omarchy}
+        os="linux"
       />,
     );
   const { actions } = fake({});

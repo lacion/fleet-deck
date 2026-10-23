@@ -152,6 +152,39 @@
   padding-bottom: 0;
   border-bottom: 0;
 }
+/* The height of the tab row: the sticky parts of a tab (the section index, a section that an index
+   link scrolls to) start under it. */
+.fd-settings {
+  --fd-set-tabs-h: 36px;
+}
+@media (pointer: coarse) {
+  .fd-settings {
+    --fd-set-tabs-h: var(--tap-min);
+  }
+}
+/* From 721px the tab row stays in view while a tab scrolls (a station tab is about 5,000px tall):
+   it sticks to the top of the main column on the page --bg, and the fields scroll under it. */
+@media (min-width: 721px) {
+  .fd-set-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background:
+      linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
+      no-repeat border-box,
+      var(--bg);
+  }
+}
+/* A phone: a shorter head. The description sits 8px nearer to the tab row, and each of its two
+   sentences takes a line (a balanced break fell inside the first sentence). */
+@media (max-width: 640px) {
+  .fd-settings > .fd-page-head .fd-page-desc {
+    margin-bottom: calc(-1 * var(--sp-2));
+  }
+  .fd-settings > .fd-page-head .fd-set-desc2 {
+    display: block;
+  }
+}
 
 /* ── a tab ──────────────────────────────────────────────────────── */
 .fd-set-tab {
@@ -231,6 +264,14 @@
   font-size: var(--fs-heading);
   line-height: 1.15;
 }
+/* From 721px the glyph hangs in the 24px page gutter: the name and the build line start on the
+   column edge, with the section headings and the field labels under them. A phone keeps the glyph
+   inside its 16px gutter. */
+@media (min-width: 721px) {
+  .fd-set-ident {
+    margin-left: calc(-12px - var(--sp-2));
+  }
+}
 /* An offline station says it in words, in the hazard ink of its glyph. */
 .fd-set-ident-off {
   color: var(--hazard);
@@ -258,11 +299,12 @@
     column-gap: var(--sp-5);
     align-items: start;
   }
+  /* The index sticks under the sticky tab row. */
   .fd-set-toc {
     display: block;
     position: sticky;
-    top: var(--sp-5);
-    max-height: calc(100dvh - 2 * var(--sp-5));
+    top: calc(var(--fd-set-tabs-h, 36px) + var(--sp-5));
+    max-height: calc(100dvh - var(--fd-set-tabs-h, 36px) - 2 * var(--sp-5));
     overflow-y: auto;
   }
 }
@@ -330,9 +372,15 @@
   padding-top: var(--sp-5);
   border-top: 1px solid var(--border);
 }
-/* A section index link scrolls its heading to the top, with room above it. */
+/* A section index link scrolls its heading to the top, with room above it; from 721px it lands
+   under the sticky tab row. */
 .fd-set-sec {
   scroll-margin-top: var(--sp-5);
+}
+@media (min-width: 721px) {
+  .fd-set-sec {
+    scroll-margin-top: calc(var(--fd-set-tabs-h, 36px) + var(--sp-4));
+  }
 }
 .fd-set-sechead,
 .fd-set-sec > h2 {
@@ -407,11 +455,20 @@
   color: var(--dim);
   font-size: var(--fs-ui);
 }
-/* A number field with a unit keeps the 160px of a number field. */
+/* A number field with a unit keeps the 160px of a number field. The flex basis sets its width:
+   page.css gives every field of a field row `width: 100%` with more weight than this rule, and in a
+   row that hugs its content (a control line with a badge) that width followed the row. */
 .fd-set-inline > input.fd-set-unitnum {
-  flex: none;
+  flex: 0 0 160px;
   width: 160px;
   max-width: 160px;
+}
+/* A typed id with its name after it (a model: `[claude-haiku-5-5]  Haiku 5.5`): the field ends on
+   the 360px edge of the one-value controls, and the name follows it. */
+.fd-set-inline > input.fd-set-idfield {
+  flex: 0 1 360px;
+  width: 100%;
+  max-width: 360px;
 }
 /* An empty minutes field reads "Never": its unit hides, so that it never reads "Never min". */
 .fd-set-minutes:placeholder-shown + .fd-set-unit {
@@ -516,6 +573,11 @@ input[data-mono="true"] {
     flex: 0 1 360px;
     max-width: 360px;
   }
+  /* A list of short tokens (the station labels: gpu, desktop) has 200px rows. */
+  .fd-set-grid .fd-set-rows[data-size="short"] .fd-set-row > input {
+    flex-basis: 200px;
+    max-width: 200px;
+  }
 }
 @media (max-width: 640px), (min-width: 721px) {
   /* A folder in a list: the picker's boxes give their items to the row, so that the remove
@@ -609,12 +671,39 @@ input[data-mono="true"] {
   flex: 0 1 auto;
   min-width: 0;
 }
-/* A folder field keeps the 560px of a folder (its Browse panel opens at that width); the badge
-   follows it, or takes the next line. */
+/* A number and its unit are one part of the control line: they never wrap apart, and the badge
+   follows the unit 8px after it, on the middle of the 28px line. (The choice of the offline policy
+   keeps its wrapping row.) */
+.fd-set-ctlrow > .fd-set-inline:has(> .fd-set-unitnum) {
+  flex: none;
+  flex-wrap: nowrap;
+}
+/* A folder field: the picker hugs its row (the path and Browse…), so that the badge follows
+   Browse… 8px after it, as every badge follows its control. While the Browse panel is open, the
+   picker takes the 560px of a folder (the panel opens at that width). A narrow page keeps the
+   field at the width of the column. */
 .fd-set-ctlrow > .fd-folder {
   flex: 1 1 360px;
   min-width: 0;
   max-width: 560px;
+}
+@media (min-width: 721px) {
+  .fd-set-ctlrow > .fd-folder:not(:has(> .fd-folder-panel)) {
+    flex: 0 1 auto;
+  }
+  /* The path field keeps its 360px there: a picker that hugs its row has no width for the 100% of
+     page.css to follow, and the field fell to the width of its own content. */
+  .fd-set-grid .fd-set-ctlrow > .fd-folder > .fd-folder-row > input {
+    width: 360px;
+  }
+}
+/* An open Browse panel makes the picker tall: the badge stays on the line of the path field, not
+   on the middle of the panel. */
+.fd-set-ctlrow:has(> .fd-folder > .fd-folder-panel) {
+  align-items: flex-start;
+}
+.fd-set-ctlrow:has(> .fd-folder > .fd-folder-panel) > .fd-set-badges {
+  margin-top: calc((var(--ctl-h) - 20px) / 2);
 }
 .fd-set-ctlrow > .fd-switch {
   margin-block: calc((var(--ctl-h) - 18px) / 2);
@@ -641,6 +730,14 @@ input[data-mono="true"] {
   height: auto;
   min-height: 20px;
   white-space: normal;
+}
+@media (min-width: 721px) {
+  /* The label and its badges span the control row and the hint row: a tall label column (the
+     label text over a badge) no longer sets the height of the control row, so the hint sits 4px
+     under its control as in every other field. */
+  .fd-set-grid .fd-fieldwrap[data-layout="row"] > .fd-set-labelbadges {
+    grid-row: 1 / span 2;
+  }
 }
 @media (max-width: 720px) {
   /* The label stacks over its control: the badges follow the label text on its line. */
@@ -755,6 +852,12 @@ input[data-mono="true"] {
   display: grid;
   gap: var(--sp-2);
   scroll-margin-top: var(--sp-4);
+}
+@media (min-width: 721px) {
+  /* A new notice scrolls into view under the sticky tab row. */
+  .fd-set-notices {
+    scroll-margin-top: calc(var(--fd-set-tabs-h, 36px) + var(--sp-4));
+  }
 }
 .fd-set-notices:empty {
   display: none;
@@ -1221,6 +1324,15 @@ input[data-mono="true"] {
   .fd-acc-sec .fd-acc-table tbody tr:last-child td {
     border-bottom: 1px solid var(--border-soft);
   }
+  /* The table sits on the column edges (the edge rule of `.fd-tablepanel`, page.css): the text of
+     the first column starts under the section heading and over the connect buttons, and Log out
+     ends on the right edge of the section rule. */
+  .fd-acc-sec .fd-acc-table :is(th, td):first-child {
+    padding-left: 0;
+  }
+  .fd-acc-sec .fd-acc-table :is(th, td):last-child {
+    padding-right: 0;
+  }
 }
 @media (max-width: 640px) {
   .fd-acc-sec .fd-acc-table tbody tr:last-child {
@@ -1379,6 +1491,28 @@ input[data-mono="true"] {
     order: 7;
     font-size: var(--fs-meta);
   }
+  /* A provider without an account: line 1 the provider and "Not connected" at the right (where an
+     account has its actions), line 2 what the account gives, line 3 its ways to connect as one row
+     of equal buttons. */
+  .fd-acc-table tr[data-absent="true"] > td[data-label="Status"] {
+    order: 2;
+  }
+  /* The name (13px, 600) and the status (12px) share the baseline of line 1. */
+  .fd-acc-table tr[data-absent="true"] > :is(td.fd-cell-name, td[data-label="Status"]) {
+    align-self: baseline;
+  }
+  .fd-acc-table tr[data-absent="true"] > td.fd-cell-actions {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: var(--sp-2);
+    order: 8;
+    margin-top: var(--sp-2);
+  }
+  .fd-acc-table tr[data-absent="true"] > td.fd-cell-actions > button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 /* The connect actions: one row under the table, left-aligned, each with the plus icon; a fold that
    opens takes the room of its form (the server field, the ways of a tracker). */
@@ -1404,8 +1538,16 @@ input[data-mono="true"] {
   justify-self: stretch;
 }
 @media (max-width: 640px) {
+  /* A phone: the folds stack in one column, and each "Connect another … account…" takes the
+     whole width, so that the stacked buttons share one right edge. */
   .fd-set-connectrow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--sp-2);
+  }
+  .fd-set-connectrow > .fd-set-connect > button[aria-expanded] {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 .fd-set-problem {

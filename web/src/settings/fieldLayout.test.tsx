@@ -197,3 +197,64 @@ describe('the words of a monitor', () => {
     expect(html).toContain('Add monitor</button>');
   });
 });
+
+describe('the live UI audit round 3 of the fields', () => {
+  const editor = (key: string, label: string, kind: 'text' | 'texts' | 'int', value: unknown) =>
+    renderToStaticMarkup(
+      <FieldEditor
+        meta={meta(key, label, kind)}
+        value={value}
+        disabled={false}
+        stationId="st-alpha"
+        onChange={noop}
+      />,
+    );
+  const CLAUDE = 'model_help.claude_model';
+
+  test('a model id is mono and its name follows the field', () => {
+    expect(editor(CLAUDE, 'Claude model for help', 'text', 'claude-haiku-5-5')).toMatch(
+      /<span class="fd-set-inline"><input class="fd-set-idfield"[^>]*data-mono="true"[^>]*value="claude-haiku-5-5"\/><span class="fd-set-unit" aria-hidden="true">Haiku 5.5<\/span><\/span>/,
+    );
+    const codex = editor('model_help.codex_model', 'Codex model for help', 'text', 'gpt-5.6-luna');
+    expect(codex).toContain('aria-hidden="true">GPT-5.6 Luna</span>');
+    // An empty field and an id without a known name keep the field alone, in the same place.
+    for (const value of ['', 'my-model']) {
+      const html = editor(CLAUDE, 'Claude model for help', 'text', value);
+      expect(html).toContain('<span class="fd-set-inline"><input class="fd-set-idfield"');
+      expect(html).not.toContain('fd-set-unit');
+    }
+  });
+
+  test('the token numbers have a unit after the field', () => {
+    const html = editor('model_help.daily_token_cap', 'Daily token cap', 'int', 200000);
+    expect(html).toContain('aria-hidden="true">tokens</span>');
+  });
+
+  test('a list names what it adds; the station labels are short rows', () => {
+    expect(editor('member_deny', 'Hidden file patterns', 'texts', [])).toContain(
+      ' Add pattern</button>',
+    );
+    const labels = editor('traits', 'Station labels', 'texts', ['gpu']);
+    expect(labels).toContain('<div class="fd-set-rows" data-size="short">');
+    expect(labels).toContain(' Add label</button>');
+    const other = editor('zz', 'Other list', 'texts', []);
+    expect(other).toContain(' Add</button>');
+    expect(other).not.toContain('data-size');
+  });
+
+  test('an empty Tailscale program says what the empty value does', () => {
+    expect(editor('tailscale_bin', 'Tailscale program', 'text', '')).toContain(
+      'placeholder="tailscale (found on PATH)"',
+    );
+    expect(editor('tailnet_hostname', 'Tailnet name', 'text', '')).not.toContain('placeholder');
+  });
+
+  test('the logins remove with the X icon button of every list; no "none" label', () => {
+    const html = fields();
+    expect(html).toMatch(
+      /<button type="button" class="fd-iconbtn fd-set-remove" aria-label="Remove login claude" title="Remove login claude"><svg/,
+    );
+    expect(html).not.toContain('</svg> Remove</button>');
+    expect(html).not.toContain('>none<');
+  });
+});
