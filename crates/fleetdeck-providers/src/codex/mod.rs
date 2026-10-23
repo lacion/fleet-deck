@@ -21,8 +21,6 @@ mod driver;
 mod host_cmd;
 mod limits;
 mod map;
-/// The local price table of Codex models (R4.6, DL-161).
-pub mod prices;
 mod probe;
 mod requests;
 mod rollback;
@@ -42,6 +40,10 @@ mod tests_review;
 mod tests_rollback;
 #[cfg(test)]
 mod tests_shell;
+#[cfg(test)]
+mod tests_usage;
+/// The per-thread running token totals (B14, DL-445).
+pub mod thread_usage;
 
 use fleetdeck_proto::capability::{BackgroundReporting, TerminalStatusQuality, UsageReporting};
 use fleetdeck_proto::event::ResponseChannel;

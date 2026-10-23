@@ -232,10 +232,14 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 13822,
+        "input_tokens": 3838,
         "output_tokens": 79,
         "cost_usd": 0.0068354999999999996,
-        "cost_inferred": true
+        "cost_inferred": true,
+        "cache_read_tokens": 9984,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -302,10 +306,14 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 13925,
+        "input_tokens": 3941,
         "output_tokens": 5,
         "cost_usd": 0.00622425,
-        "cost_inferred": true
+        "cost_inferred": true,
+        "cache_read_tokens": 9984,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
       },
       "rate_limits": []
     }

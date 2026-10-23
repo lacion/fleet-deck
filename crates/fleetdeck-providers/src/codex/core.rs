@@ -102,6 +102,10 @@ pub struct CodexCore {
     /// uses them, so they are not in the checkpoint.
     #[serde(skip)]
     skill_requests: HashMap<String, &'static str>,
+    /// The per-thread token totals (B14, DL-445); an older checkpoint has
+    /// none (`restore` sets the legacy state).
+    #[serde(default)]
+    pub(super) usage: Option<super::thread_usage::ThreadUsage>,
 }
 
 impl CodexCore {
@@ -145,6 +149,7 @@ impl CodexCore {
             pending_shell: None,
             turns_ended: 0,
             skill_requests: HashMap::new(),
+            usage: Some(super::thread_usage::ThreadUsage::default()),
         }
     }
 
