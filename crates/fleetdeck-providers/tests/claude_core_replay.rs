@@ -125,8 +125,8 @@ fn collect(out: Vec<Output>, report: &mut Report, queue: &mut VecDeque<Value>) {
 
 /// The lifecycle invariants of one replayed fixture.
 fn check_invariants(name: &str, events: &[Event]) {
-    // Only the answers to the host's own control requests come before
-    // `session.started` (DL-141).
+    // Only the answers to the host's own control requests and the command
+    // list come before `session.started` (DL-141, DL-410).
     let opens = events
         .iter()
         .position(|e| matches!(e, Event::SessionStarted { .. }))
@@ -138,9 +138,10 @@ fn check_invariants(name: &str, events: &[Event]) {
                 | Event::ModelChanged { .. }
                 | Event::InterruptResult { .. }
                 | Event::Error { .. }
+                | Event::SlashCommands { .. }
         )),
         "{name}: only the control answers (mode.changed, model.changed, interrupt.result, error) \
-         come before session.started"
+         and slash_commands come before session.started"
     );
     let mut open_turns = BTreeSet::new();
     let mut open_runs = BTreeSet::new();

@@ -18,6 +18,7 @@ use fleetdeck_proto::{
 use serde_json::Value;
 
 use super::args::input_uuid;
+use super::commands::CommandState;
 use super::frames::CliFrame;
 use super::{control, map};
 use crate::adapter::{HostInput, ProviderError, Result};
@@ -220,6 +221,9 @@ pub struct ClaudeCore {
     /// growth since the last one (the fold sums the parts).
     #[serde(default)]
     pub(super) last_total_cost: Option<f64>,
+    /// The command list of this process (B11, DL-410).
+    #[serde(default)]
+    pub(super) commands: CommandState,
 }
 
 impl ClaudeCore {
@@ -254,6 +258,7 @@ impl ClaudeCore {
             usage_stopped: false,
             usage_seq: 0,
             last_total_cost: None,
+            commands: CommandState::default(),
         }
     }
 
@@ -485,8 +490,9 @@ impl ClaudeCore {
     ///
     /// Frames before the first `system/init` are held, except the answers to
     /// the host's own control requests (mode, model, interrupt): they are released at
-    /// once (DL-141). The other events of the frames before `system/init`
-    /// follow `session.started`. Writes are never held.
+    /// once (DL-141). The command list is also released at once (DL-410). The
+    /// other events of the frames before `system/init` follow
+    /// `session.started`. Writes are never held.
     pub fn on_frame(&mut self, frame: CliFrame) -> Vec<Output> {
         if self.ended {
             return Vec::new();
@@ -497,10 +503,12 @@ impl ClaudeCore {
             return out;
         }
         if !self.started {
-            // Writes and identities are never held.
+            // Writes and identities are never held; nor is the command list
+            // (B11, DL-410): a session without a prompt gets no `init`.
             let mut released = Vec::new();
             for o in out {
                 match o {
+                    e @ Output::Emit(Event::SlashCommands { .. }) => released.push(e),
                     Output::Emit(e) => self.early.push(e),
                     w @ (Output::Write(_) | Output::NativeIdentity { .. }) => released.push(w),
                 }

@@ -9,6 +9,7 @@ pub const TESTED_MIN_VERSION: &str = "2.1.289";
 pub const KNOWN_BROKEN: &[&str] = &[];
 
 pub mod args;
+mod commands;
 pub mod control;
 pub mod driver;
 pub mod frames;
@@ -33,6 +34,8 @@ pub use requests::request_kind;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_commands;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]

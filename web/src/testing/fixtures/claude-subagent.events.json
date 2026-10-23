@@ -7,6 +7,70 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "session.slash_commands",
+      "commands": [
+        "__remote-workflow",
+        "advisor",
+        "agents",
+        "auto-mode-setup",
+        "autocompact",
+        "batch",
+        "claude-api",
+        "clear",
+        "code-review",
+        "color",
+        "compact",
+        "config",
+        "context",
+        "dataviz",
+        "debug",
+        "deep-research",
+        "design",
+        "design-consent",
+        "design-revoke",
+        "design-sync",
+        "doctor",
+        "effort",
+        "fast",
+        "fewer-permission-prompts",
+        "focus",
+        "goal",
+        "heapdump",
+        "import",
+        "init",
+        "insights",
+        "list-agents",
+        "loop",
+        "mcp",
+        "model",
+        "output-style",
+        "plugin-authoring",
+        "recap",
+        "reload-plugins",
+        "reload-skills",
+        "rename",
+        "run",
+        "run-skill-generator",
+        "security-review",
+        "simplify",
+        "team-onboarding",
+        "update-config",
+        "usage",
+        "verify",
+        "workflow-authoring",
+        "workflow-launch-exec"
+      ],
+      "skills": []
+    }
+  },
+  {
+    "station_seq": 102,
+    "session_id": "claude-subagent",
+    "session_seq": 2,
+    "at": 1760000002000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "session.started",
       "provider": "claude",
       "provider_instance": "claude",
@@ -55,10 +119,10 @@
     }
   },
   {
-    "station_seq": 102,
+    "station_seq": 103,
     "session_id": "claude-subagent",
-    "session_seq": 2,
-    "at": 1760000002000,
+    "session_seq": 3,
+    "at": 1760000003000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -69,10 +133,10 @@
     }
   },
   {
-    "station_seq": 103,
+    "station_seq": 104,
     "session_id": "claude-subagent",
-    "session_seq": 3,
-    "at": 1760000003000,
+    "session_seq": 4,
+    "at": 1760000004000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -85,10 +149,10 @@
     }
   },
   {
-    "station_seq": 104,
+    "station_seq": 105,
     "session_id": "claude-subagent",
-    "session_seq": 4,
-    "at": 1760000004000,
+    "session_seq": 5,
+    "at": 1760000005000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -101,10 +165,10 @@
     }
   },
   {
-    "station_seq": 105,
+    "station_seq": 106,
     "session_id": "claude-subagent",
-    "session_seq": 5,
-    "at": 1760000005000,
+    "session_seq": 6,
+    "at": 1760000006000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -115,10 +179,10 @@
     }
   },
   {
-    "station_seq": 106,
+    "station_seq": 107,
     "session_id": "claude-subagent",
-    "session_seq": 6,
-    "at": 1760000006000,
+    "session_seq": 7,
+    "at": 1760000007000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -128,10 +192,10 @@
     }
   },
   {
-    "station_seq": 107,
+    "station_seq": 108,
     "session_id": "claude-subagent",
-    "session_seq": 7,
-    "at": 1760000007000,
+    "session_seq": 8,
+    "at": 1760000008000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -306,89 +370,89 @@
     }
   },
   {
-    "station_seq": 108,
+    "station_seq": 109,
     "session_id": "claude-subagent",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
       "kind": "session.slash_commands",
       "commands": [
-        "deep-research",
-        "design",
-        "design-sync",
-        "dataviz",
-        "update-config",
-        "verify",
-        "debug",
-        "code-review",
-        "simplify",
-        "batch",
-        "fewer-permission-prompts",
-        "loop",
-        "claude-api",
-        "workflow-authoring",
-        "run",
-        "run-skill-generator",
-        "plugin-authoring",
+        "__remote-workflow",
         "advisor",
         "agents",
         "auto-mode-setup",
         "autocompact",
+        "batch",
+        "claude-api",
         "clear",
+        "code-review",
         "compact",
         "config",
-        "output-style",
         "context",
-        "effort",
-        "fast",
-        "heapdump",
-        "init",
-        "mcp",
-        "import",
-        "model",
-        "__remote-workflow",
-        "workflow-launch-exec",
-        "reload-skills",
-        "rename",
-        "security-review",
-        "usage",
-        "insights",
-        "recap",
-        "goal",
+        "dataviz",
+        "debug",
+        "deep-research",
+        "design",
         "design-consent",
         "design-revoke",
+        "design-sync",
+        "effort",
+        "fast",
+        "fewer-permission-prompts",
+        "goal",
+        "heapdump",
+        "import",
+        "init",
+        "insights",
         "list-agents",
-        "team-onboarding"
+        "loop",
+        "mcp",
+        "model",
+        "output-style",
+        "plugin-authoring",
+        "recap",
+        "reload-skills",
+        "rename",
+        "run",
+        "run-skill-generator",
+        "security-review",
+        "simplify",
+        "team-onboarding",
+        "update-config",
+        "usage",
+        "verify",
+        "workflow-authoring",
+        "workflow-launch-exec"
       ],
       "skills": [
+        "batch",
+        "claude-api",
+        "code-review",
+        "dataviz",
+        "debug",
         "deep-research",
         "design",
         "design-sync",
-        "dataviz",
-        "update-config",
-        "verify",
-        "debug",
-        "code-review",
-        "simplify",
-        "batch",
-        "fewer-permission-prompts",
         "doctor",
+        "fewer-permission-prompts",
         "loop",
-        "claude-api",
-        "workflow-authoring",
+        "plugin-authoring",
         "run",
         "run-skill-generator",
-        "plugin-authoring"
+        "simplify",
+        "update-config",
+        "verify",
+        "workflow-authoring"
       ]
     }
   },
   {
-    "station_seq": 109,
+    "station_seq": 110,
     "session_id": "claude-subagent",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -405,10 +469,10 @@
     }
   },
   {
-    "station_seq": 110,
+    "station_seq": 111,
     "session_id": "claude-subagent",
-    "session_seq": 10,
-    "at": 1760000010000,
+    "session_seq": 11,
+    "at": 1760000011000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -422,10 +486,10 @@
     }
   },
   {
-    "station_seq": 111,
+    "station_seq": 112,
     "session_id": "claude-subagent",
-    "session_seq": 11,
-    "at": 1760000011000,
+    "session_seq": 12,
+    "at": 1760000012000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -438,10 +502,10 @@
     }
   },
   {
-    "station_seq": 112,
+    "station_seq": 113,
     "session_id": "claude-subagent",
-    "session_seq": 12,
-    "at": 1760000012000,
+    "session_seq": 13,
+    "at": 1760000013000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -456,20 +520,6 @@
     }
   },
   {
-    "station_seq": 113,
-    "session_id": "claude-subagent",
-    "session_seq": 13,
-    "at": 1760000013000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "The"
-    }
-  },
-  {
     "station_seq": 114,
     "session_id": "claude-subagent",
     "session_seq": 14,
@@ -480,7 +530,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " sub"
+      "text": "The"
     }
   },
   {
@@ -494,7 +544,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "agent is running"
+      "text": " sub"
     }
   },
   {
@@ -508,7 +558,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " in the background."
+      "text": "agent is running"
     }
   },
   {
@@ -522,7 +572,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " I'll wait for"
+      "text": " in the background."
     }
   },
   {
@@ -536,7 +586,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": " it to complete."
+      "text": " I'll wait for"
     }
   },
   {
@@ -547,10 +597,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "The subagent is running in the background. I'll wait for it to complete."
+      "text": " it to complete."
     }
   },
   {
@@ -558,6 +608,20 @@
     "session_id": "claude-subagent",
     "session_seq": 20,
     "at": 1760000020000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "The subagent is running in the background. I'll wait for it to complete."
+    }
+  },
+  {
+    "station_seq": 121,
+    "session_id": "claude-subagent",
+    "session_seq": 21,
+    "at": 1760000021000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -572,10 +636,10 @@
     }
   },
   {
-    "station_seq": 121,
+    "station_seq": 122,
     "session_id": "claude-subagent",
-    "session_seq": 21,
-    "at": 1760000021000,
+    "session_seq": 22,
+    "at": 1760000022000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -591,10 +655,10 @@
     }
   },
   {
-    "station_seq": 122,
+    "station_seq": 123,
     "session_id": "claude-subagent",
-    "session_seq": 22,
-    "at": 1760000022000,
+    "session_seq": 23,
+    "at": 1760000023000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -605,10 +669,10 @@
     }
   },
   {
-    "station_seq": 123,
+    "station_seq": 124,
     "session_id": "claude-subagent",
-    "session_seq": 23,
-    "at": 1760000023000,
+    "session_seq": 24,
+    "at": 1760000024000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -619,10 +683,10 @@
     }
   },
   {
-    "station_seq": 124,
+    "station_seq": 125,
     "session_id": "claude-subagent",
-    "session_seq": 24,
-    "at": 1760000024000,
+    "session_seq": 25,
+    "at": 1760000025000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -633,18 +697,6 @@
     }
   },
   {
-    "station_seq": 125,
-    "session_id": "claude-subagent",
-    "session_seq": 25,
-    "at": 1760000025000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "background.updated",
-      "tasks": []
-    }
-  },
-  {
     "station_seq": 126,
     "session_id": "claude-subagent",
     "session_seq": 26,
@@ -652,11 +704,8 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "task.updated",
-      "task_id": "aec7cbebd3902b8ce",
-      "node_id": "node-2",
-      "task_kind": "local_agent",
-      "status": "completed"
+      "kind": "background.updated",
+      "tasks": []
     }
   },
   {
@@ -671,8 +720,7 @@
       "task_id": "aec7cbebd3902b8ce",
       "node_id": "node-2",
       "task_kind": "local_agent",
-      "status": "completed",
-      "summary": "sub-ok"
+      "status": "completed"
     }
   },
   {
@@ -683,10 +731,12 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "run.started",
-      "run_id": "run-2",
-      "input_summary": "provider turn",
-      "origin": "provider"
+      "kind": "task.updated",
+      "task_id": "aec7cbebd3902b8ce",
+      "node_id": "node-2",
+      "task_kind": "local_agent",
+      "status": "completed",
+      "summary": "sub-ok"
     }
   },
   {
@@ -694,6 +744,20 @@
     "session_id": "claude-subagent",
     "session_seq": 29,
     "at": 1760000029000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "run.started",
+      "run_id": "run-2",
+      "input_summary": "provider turn",
+      "origin": "provider"
+    }
+  },
+  {
+    "station_seq": 130,
+    "session_id": "claude-subagent",
+    "session_seq": 30,
+    "at": 1760000030000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -707,20 +771,6 @@
     }
   },
   {
-    "station_seq": 130,
-    "session_id": "claude-subagent",
-    "session_seq": 30,
-    "at": 1760000030000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-3",
-      "parent_node_id": null,
-      "text": "sub"
-    }
-  },
-  {
     "station_seq": 131,
     "session_id": "claude-subagent",
     "session_seq": 31,
@@ -731,7 +781,7 @@
       "kind": "message.delta",
       "turn_id": "turn-3",
       "parent_node_id": null,
-      "text": "-ok"
+      "text": "sub"
     }
   },
   {
@@ -742,10 +792,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-3",
       "parent_node_id": null,
-      "text": "sub-ok"
+      "text": "-ok"
     }
   },
   {
@@ -753,6 +803,20 @@
     "session_id": "claude-subagent",
     "session_seq": 33,
     "at": 1760000033000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "message.completed",
+      "turn_id": "turn-3",
+      "parent_node_id": null,
+      "text": "sub-ok"
+    }
+  },
+  {
+    "station_seq": 134,
+    "session_id": "claude-subagent",
+    "session_seq": 34,
+    "at": 1760000034000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -767,10 +831,10 @@
     }
   },
   {
-    "station_seq": 134,
+    "station_seq": 135,
     "session_id": "claude-subagent",
-    "session_seq": 34,
-    "at": 1760000034000,
+    "session_seq": 35,
+    "at": 1760000035000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -786,10 +850,10 @@
     }
   },
   {
-    "station_seq": 135,
+    "station_seq": 136,
     "session_id": "claude-subagent",
-    "session_seq": 35,
-    "at": 1760000035000,
+    "session_seq": 36,
+    "at": 1760000036000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -800,10 +864,10 @@
     }
   },
   {
-    "station_seq": 136,
+    "station_seq": 137,
     "session_id": "claude-subagent",
-    "session_seq": 36,
-    "at": 1760000036000,
+    "session_seq": 37,
+    "at": 1760000037000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
