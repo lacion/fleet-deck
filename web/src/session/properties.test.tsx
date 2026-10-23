@@ -9,6 +9,7 @@ import { claudeCaps } from '../testing/capabilities';
 import { compactCount } from '../ui/format';
 import { sessionActions } from './commands';
 import { Composer } from './Composer';
+import { Who } from './HeaderBadges';
 import {
   ChangedList,
   changeTotal,
@@ -164,6 +165,21 @@ describe('properties panel facts (§4.5)', () => {
     expect(panel('live')).toMatch(
       /<dd><span class="fd-sh-status" data-status="working">[\s\S]*?<\/span><span class="fd-props-aside">/,
     );
+  });
+
+  test('a reported effort is its own Effort row; without it the row is absent (B18)', () => {
+    const withEffort = { ...session(), summary: { ...session().summary, effort: 'high' } };
+    expect(panel('live', true, { session: withEffort })).toContain(
+      '<dt>Effort</dt><dd><span title="The reasoning effort that the provider reports">high</span></dd>',
+    );
+    expect(panel('live')).not.toContain('<dt>Effort</dt>');
+  });
+
+  test('the header shows the model with its effort and the title of modelTitle (B18)', () => {
+    const withEffort = { ...session(), summary: { ...session().summary, effort: 'high' } };
+    const html = renderToStaticMarkup(<Who session={withEffort} />);
+    expect(html).toContain('title="claude-sonnet-5-5 · reasoning effort high"');
+    expect(html).toContain('>Sonnet 5.5 · high</span>');
   });
 
   test('the context window is a --faint aside of the Model row, not a row of its own', () => {

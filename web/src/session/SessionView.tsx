@@ -65,7 +65,7 @@ import {
 import { buildTimeline, runningSubagents, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns, useDiffTotal } from './workspace';
-import { shortModel } from '../ui/format';
+import { modelText } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
 
 export { readFilesOpen } from './paneLayout';
@@ -639,7 +639,7 @@ export function SessionView(props: SessionViewProps) {
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
-                      model={shortModel(s.model)}
+                      model={modelText(s.model, s.effort)}
                       callsign={s.callsign}
                       {...(guest === null &&
                       caps?.set_model === true &&

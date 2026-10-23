@@ -25,7 +25,7 @@ import {
 import { useIntegrations, useProjects } from '../integrations/context';
 import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
-import { shortModel } from '../ui/format';
+import { modelText } from '../ui/format';
 import { Mark } from '../ui/Mark';
 import { useScrollEdges } from '../ui/Menu';
 import { GeneratedMark } from '../ui/generated';
@@ -142,7 +142,7 @@ function RowNow({ card }: { card: DeckSession }) {
     <>
       <FocusLine summary={s} />
       <span className="fd-srow-meta">
-        <span className="fd-srow-model">{shortModel(s.model)}</span>
+        <span className="fd-srow-model">{modelText(s.model, s.effort)}</span>
         {s.branch != null && s.branch !== '' ? (
           <span className="fd-srow-place">
             <Icon of={GitBranch} size={12} />

@@ -40,6 +40,21 @@ export function shortModel(model: string | null): string {
   return version.length > 0 ? `${name} ${version.join('.')}` : name;
 }
 
+/** The model and the reasoning effort of a session: `Opus 5.5 · high`; the model alone when
+ * the provider reports no effort (B18). */
+export function modelText(model: string | null, effort?: string | null): string {
+  const name = shortModel(model);
+  return effort === undefined || effort === null || effort === '' ? name : `${name} · ${effort}`;
+}
+
+/** The `title` of a model with its effort: the raw model id, then the effort in words. */
+export function modelTitle(model: string | null, effort?: string | null): string {
+  const id = model ?? 'default model';
+  return effort === undefined || effort === null || effort === ''
+    ? id
+    : `${id} · reasoning effort ${effort}`;
+}
+
 /**
  * The context window that a model id names: `claude-opus-5-5[1m]` → `1M context`, `[200k]` →
  * `200K context`; `null` when the id names none (the session shows no Context row then).

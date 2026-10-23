@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { claudeCaps } from '../testing/capabilities';
 import { summary } from '../testing/summary';
 import type { Event, EventEnvelope } from '../gen';
 import { envelopes, nestedSubagents, recorded } from '../testing/timeline';
@@ -605,5 +606,62 @@ describe('the whole prompt of a run (backlog B10)', () => {
     const run = runs(buildTimeline(events).items)[0];
     expect(run?.input).toBe('first line…');
     expect(run?.text).toBe('first line\nsecond line');
+  });
+});
+
+describe('effort notices (B18)', () => {
+  const effort = (value: string | null): Event => ({ kind: 'effort.changed', effort: value });
+  const started: Event = {
+    kind: 'session.started',
+    provider: 'claude',
+    provider_instance: 'claude',
+    provider_version: null,
+    model: null,
+    cwd: '/w',
+    mode: null,
+    capabilities: claudeCaps(),
+    resumed: null,
+    provider_refs: {},
+  };
+  const texts = (events: readonly Event[]): string[] =>
+    buildTimeline(envelopes('e', events)).items.map((i) => (i.type === 'notice' ? i.text : i.type));
+
+  test('the first report adds no notice', () => {
+    expect(texts([effort('high')])).toEqual([]);
+  });
+
+  test('a change adds a notice with the effort in the title', () => {
+    const tree = buildTimeline(envelopes('e', [effort('high'), effort('low')]));
+    expect(tree.items).toEqual([
+      expect.objectContaining({
+        type: 'notice',
+        text: 'Effort changed to low',
+        title: 'Reasoning effort: low',
+        tone: 'info',
+      }),
+    ]);
+  });
+
+  test('the same value twice adds nothing', () => {
+    expect(texts([effort('high'), effort('high')])).toEqual([]);
+  });
+
+  test('null adds nothing, and the last value stays', () => {
+    expect(texts([effort(null)])).toEqual([]);
+    expect(texts([effort('low'), effort(null), effort('low')])).toEqual([]);
+    expect(texts([effort('high'), effort(null), effort('low')])).toEqual(['Effort changed to low']);
+  });
+
+  test('the first report of a new process adds no notice', () => {
+    expect(texts([effort('high'), started, effort('low')])).toEqual([]);
+    expect(texts([effort('high'), started, effort('high'), effort('low')])).toEqual([
+      'Effort changed to low',
+    ]);
+  });
+
+  test('a model change and an effort change give two notices, the model alone in its own', () => {
+    expect(
+      texts([effort('high'), { kind: 'model.changed', model: 'claude-sonnet-5-5' }, effort('low')]),
+    ).toEqual(['Model changed to Sonnet 5.5', 'Effort changed to low']);
   });
 });

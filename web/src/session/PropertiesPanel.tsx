@@ -503,6 +503,11 @@ export function PropertiesPanel({
           <span title={s.model ?? 'default model'}>{shortModel(s.model)}</span>
           {context === null ? null : <span className="fd-props-aside">{context}</span>}
         </Row>
+        {s.effort ? (
+          <Row label="Effort">
+            <span title="The reasoning effort that the provider reports">{s.effort}</span>
+          </Row>
+        ) : null}
         {s.provider === null ? null : <Row label="Provider">{providerLabel(s.provider)}</Row>}
         {s.mode ? (
           <Row label="Mode">

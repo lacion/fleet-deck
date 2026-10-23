@@ -9,7 +9,7 @@ import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { hasChanges } from '../session/changes';
 import type { SessionActions } from '../session/commands';
-import { shortModel } from '../ui/format';
+import { modelText } from '../ui/format';
 import { refOf } from '../watch/tiles';
 import { ChangeFiles, type DisplayEnv, useDisplayChanges } from './displayChanges';
 import { lastDisplayMessage } from './displayLines';
@@ -57,7 +57,7 @@ function Column({
       <h2 className="fd-wall-h">{sessionTitle(card)}</h2>
       <p className="fd-wall-note">
         <span className="fd-dot" data-status={card.status} aria-hidden="true" />{' '}
-        {STATUS_LABEL[card.status]} · {shortModel(s.model)} ·{' '}
+        {STATUS_LABEL[card.status]} · {modelText(s.model, s.effort)} ·{' '}
         {stationName(card.station_id, stations)}
         {s.batch === undefined ? '' : ` · ${s.batch.index} of ${s.batch.size}`}
       </p>

@@ -83,6 +83,12 @@ export function modelNotice(model: string): NoticeText {
   return { text, title: model };
 }
 
+/** A reasoning effort change (B18); the model change notice keeps the model alone. */
+export const effortNotice = (effort: string): NoticeText => ({
+  text: `Effort changed to ${effort}`,
+  title: `Reasoning effort: ${effort}`,
+});
+
 /** A permission mode change, with the one name of the mode (§5 Modes). */
 export const modeNotice = (mode: string): NoticeText => ({
   text: `Mode: ${modeLabel(mode)}`,

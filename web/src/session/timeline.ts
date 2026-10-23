@@ -17,6 +17,7 @@ import type {
 } from '../gen';
 import {
   answeredText,
+  effortNotice,
   errorNotice,
   expiredText,
   modeNotice,
@@ -173,6 +174,10 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
   // list. An old station recovery wrote that list just before the loss, so
   // a loss that follows at once ends them instead (M2 gate correction).
   let justFinished: Subagent[] = [];
+  // The effort notices (B18): the last non-null effort, and whether the current process
+  // reported one (the first report of a process adds no notice).
+  let lastEffort: string | undefined;
+  let effortReported = false;
 
   // A lost or ended process runs nothing more: every running node ends,
   // open messages close with their text, open requests expire. Terminal
@@ -506,6 +511,23 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       case 'model.changed': {
         const e = event as Extract<Event, { kind: 'model.changed' }>;
         add(root, { type: 'notice', key, ...modelNotice(e.model), tone: 'info' });
+        break;
+      }
+      case 'session.started': {
+        effortReported = false;
+        break;
+      }
+      case 'effort.changed': {
+        const e = event as Extract<Event, { kind: 'effort.changed' }>;
+        if (e.effort === null) {
+          effortReported = true;
+          break;
+        }
+        if (effortReported && lastEffort !== undefined && e.effort !== lastEffort) {
+          add(root, { type: 'notice', key, ...effortNotice(e.effort), tone: 'info' });
+        }
+        effortReported = true;
+        lastEffort = e.effort;
         break;
       }
       case 'session.output_gap': {

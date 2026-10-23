@@ -11,6 +11,8 @@ import {
   homeShortIn,
   isRiskyMode,
   modelFamily,
+  modelText,
+  modelTitle,
   monitorLabel,
   monitorRaw,
   pathParts,
@@ -20,6 +22,31 @@ import {
   sizeText,
   usdText,
 } from './format';
+
+describe('modelText and modelTitle (B18)', () => {
+  test('the model and its effort', () => {
+    expect(modelText('claude-opus-5-5[1m]', 'high')).toBe('Opus 5.5 · high');
+    expect(modelText('gpt-6.1-sol', 'xhigh')).toBe('GPT-6.1 Sol · xhigh');
+  });
+
+  test('no effort: the model alone', () => {
+    expect(modelText('claude-opus-5-5', undefined)).toBe('Opus 5.5');
+    expect(modelText('claude-opus-5-5', null)).toBe('Opus 5.5');
+    expect(modelText('claude-opus-5-5', '')).toBe('Opus 5.5');
+  });
+
+  test('no model: default, with the effort', () => {
+    expect(modelText(null, 'high')).toBe('default · high');
+  });
+
+  test('the title is the raw id and the effort in words', () => {
+    expect(modelTitle('claude-opus-5-5[1m]', 'high')).toBe(
+      'claude-opus-5-5[1m] · reasoning effort high',
+    );
+    expect(modelTitle('claude-opus-5-5[1m]')).toBe('claude-opus-5-5[1m]');
+    expect(modelTitle(null, null)).toBe('default model');
+  });
+});
 
 describe('shortModel', () => {
   test('a Claude id becomes the family and the version', () => {
