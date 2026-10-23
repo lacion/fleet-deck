@@ -478,7 +478,10 @@ fn start(
         _ => (
             policy.workspace(&spec.cwd).map_err(|e| match e {
                 WorkspaceError::Missing(_) => reject(RejectCode::InvalidCommand, e.to_string()),
-                WorkspaceError::Outside(_) => reject(RejectCode::Forbidden, e.to_string()),
+                WorkspaceError::Outside(_) => reject(
+                    RejectCode::OutsideRoots,
+                    super::policy_limits::outside_roots_text(&spec.cwd, policy.name()),
+                ),
             })?,
             None,
         ),

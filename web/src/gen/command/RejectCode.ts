@@ -3,4 +3,4 @@
 /**
  * Why a station refused a command.
  */
-export type RejectCode = "unknown_session" | "unknown_provider" | "unknown_request" | "request_closed" | "invalid_state" | "unsupported" | "invalid_command" | "command_id_reused" | "forbidden" | "incarnation_mismatch" | "expired" | "binding_stale" | "spawn_cap_reached" | "answer_cap_reached" | "already_answered" | "unknown";
+export type RejectCode = "unknown_session" | "unknown_provider" | "unknown_request" | "request_closed" | "invalid_state" | "unsupported" | "invalid_command" | "command_id_reused" | "forbidden" | "incarnation_mismatch" | "expired" | "binding_stale" | "spawn_cap_reached" | "answer_cap_reached" | "already_answered" | "outside_roots" | "unknown";

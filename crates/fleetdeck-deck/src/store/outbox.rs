@@ -14,7 +14,7 @@
 //! [`DeckStore::reconcile_outbox`] moves a `sending` item by its command:
 //!
 //! - `done` with an accepted receipt → `delivered`;
-//! - `done` with a stored rejection → `dead` (`rejected: <code>`);
+//! - `done` with a stored rejection → `dead` (`rejected: <code>: <message>`);
 //! - `done` rejected with `invalid_state` while the deck shows the target
 //!   session `starting`, `exited` or `lost` → `queued` and held (`reason =
 //!   session_ended`, `next_at = expires_at`) until the session can take
@@ -250,6 +250,33 @@ pub(crate) fn insert_item(
     get(conn, id)?.ok_or_else(|| DeckError::Corrupt("an inserted outbox item is gone".to_owned()))
 }
 
+/// The most characters of the station text in an outbox reason (G1).
+const REASON_TEXT_CHARS: usize = 300;
+
+/// The reason of a rejected receipt: `rejected: <code>`, then `: ` and
+/// the station text when it has one. Control characters become spaces;
+/// a text above [`REASON_TEXT_CHARS`] is cut and ends with `…`.
+fn rejected_reason(reject: Option<&fleetdeck_proto::Reject>) -> String {
+    let Some(j) = reject else {
+        return "rejected: unknown".to_owned();
+    };
+    let code = reject_code(j.code);
+    let clean: String = j
+        .message
+        .trim()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if clean.is_empty() {
+        return format!("rejected: {code}");
+    }
+    let mut text: String = clean.chars().take(REASON_TEXT_CHARS).collect();
+    if clean.chars().count() > REASON_TEXT_CHARS {
+        text.push('…');
+    }
+    format!("rejected: {code}: {text}")
+}
+
 /// The wire name of a reject code.
 fn reject_code(code: fleetdeck_proto::RejectCode) -> String {
     serde_json::to_value(code)
@@ -273,13 +300,7 @@ fn next(cmd: &commands::DeckCommand) -> Option<(OutboxState, Option<String>)> {
         DeckCommandState::Pending => None,
         DeckCommandState::Done => Some(match &cmd.receipt {
             Some(r) if r.state == ReceiptState::Accepted => (OutboxState::Delivered, None),
-            Some(r) => {
-                let code = r
-                    .reject
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_owned(), |j| reject_code(j.code));
-                (OutboxState::Dead, Some(format!("rejected: {code}")))
-            }
+            Some(r) => (OutboxState::Dead, Some(rejected_reason(r.reject.as_ref()))),
             None => (OutboxState::Dead, Some("rejected: no receipt".to_owned())),
         }),
         DeckCommandState::Failed => {

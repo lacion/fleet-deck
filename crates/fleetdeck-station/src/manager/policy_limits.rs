@@ -125,6 +125,18 @@ impl Policy {
     }
 }
 
+/// The refusal text of a start or an import whose folder `cwd` is outside
+/// the allowed roots (G1). `station` is the station name; an empty name
+/// (a test policy) reads "this station".
+#[must_use]
+pub fn outside_roots_text(cwd: &str, station: &str) -> String {
+    if station.is_empty() {
+        format!("The folder {cwd} is outside the allowed roots of this station.")
+    } else {
+        format!("The folder {cwd} is outside the allowed roots of station {station}.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

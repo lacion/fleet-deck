@@ -149,7 +149,7 @@ async fn an_import_is_refused_for_a_bad_id_a_foreign_workspace_or_a_native_sessi
     assert_eq!(
         st.rejected(import(&elsewhere, "claude", "cli-1", None))
             .await,
-        RejectCode::Forbidden,
+        RejectCode::OutsideRoots,
         "a workspace outside the allowed roots"
     );
     assert_eq!(

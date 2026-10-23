@@ -131,7 +131,10 @@ async fn a_stored_rejection_an_expiry_and_a_station_removal_end_items_dead() {
     let rejected_item = enqueue(&f).await;
     Fixture::answer(&mut station, |id| rejected(id, RejectCode::UnknownSession)).await;
     let dead = until_state(&f, &rejected_item.outbox_id, OutboxState::Dead).await;
-    assert_eq!(dead.reason.as_deref(), Some("rejected: unknown_session"));
+    assert_eq!(
+        dead.reason.as_deref(),
+        Some("rejected: unknown_session: no")
+    );
 
     f.drop_link(station).await;
     let short = f

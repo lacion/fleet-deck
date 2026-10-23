@@ -181,7 +181,10 @@ async fn invalid_state_while_the_session_runs_is_dead() {
     let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
     let dead = rejected(&s, &st, &item, RejectCode::InvalidState).await;
     assert_eq!(dead.state, OutboxState::Dead);
-    assert_eq!(dead.reason.as_deref(), Some("rejected: invalid_state"));
+    assert_eq!(
+        dead.reason.as_deref(),
+        Some("rejected: invalid_state: refused")
+    );
 }
 
 #[tokio::test]
@@ -192,7 +195,10 @@ async fn invalid_state_for_a_session_that_the_deck_does_not_know_is_dead() {
     let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
     let dead = rejected(&s, &st, &item, RejectCode::InvalidState).await;
     assert_eq!(dead.state, OutboxState::Dead);
-    assert_eq!(dead.reason.as_deref(), Some("rejected: invalid_state"));
+    assert_eq!(
+        dead.reason.as_deref(),
+        Some("rejected: invalid_state: refused")
+    );
 }
 
 #[tokio::test]
@@ -203,7 +209,7 @@ async fn another_rejection_while_the_session_is_exited_is_dead() {
     let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
     let dead = rejected(&s, &st, &item, RejectCode::Forbidden).await;
     assert_eq!(dead.state, OutboxState::Dead);
-    assert_eq!(dead.reason.as_deref(), Some("rejected: forbidden"));
+    assert_eq!(dead.reason.as_deref(), Some("rejected: forbidden: refused"));
 }
 
 #[tokio::test]
@@ -218,7 +224,10 @@ async fn a_stop_rejected_while_its_session_is_exited_is_dead() {
     let item = queue(&s, &st, stop, TTL_MS).await;
     let dead = rejected(&s, &st, &item, RejectCode::InvalidState).await;
     assert_eq!(dead.state, OutboxState::Dead);
-    assert_eq!(dead.reason.as_deref(), Some("rejected: invalid_state"));
+    assert_eq!(
+        dead.reason.as_deref(),
+        Some("rejected: invalid_state: refused")
+    );
 }
 
 #[tokio::test]
@@ -375,7 +384,10 @@ async fn a_stopping_session_does_not_hold_an_invalid_state_rejection() {
     let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
     let dead = rejected(&s, &st, &item, RejectCode::InvalidState).await;
     assert_eq!(dead.state, OutboxState::Dead);
-    assert_eq!(dead.reason.as_deref(), Some("rejected: invalid_state"));
+    assert_eq!(
+        dead.reason.as_deref(),
+        Some("rejected: invalid_state: refused")
+    );
 }
 
 #[tokio::test]

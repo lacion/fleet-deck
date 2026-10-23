@@ -619,6 +619,9 @@ pub enum RejectCode {
     AnswerCapReached,
     /// The request has an answer already (ADR-008 §5.3); stored.
     AlreadyAnswered,
+    /// The folder of a start or an import is outside the allowed roots of
+    /// the station (G1, design `fleet-gaps.md` §1); stored.
+    OutsideRoots,
     /// A code of a newer peer.
     #[serde(other)]
     Unknown,
