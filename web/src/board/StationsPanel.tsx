@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { DesktopPanel } from '../desktop/DesktopPanel';
+import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
@@ -33,7 +34,13 @@ type Props = {
   readonly drift?: DriftReference | undefined;
 };
 
-const NONE = '—';
+/** The Connection fact of a link direction (Details); an unknown direction has no fact. */
+const connectionText = (direction: string): string | null =>
+  direction === 'station_dials'
+    ? 'The station connects to this deck'
+    : direction === 'deck_dials'
+      ? 'This deck connects to the station'
+      : null;
 
 /** The most slots that the load meter draws as ticks; a larger station gets a plain bar. */
 const MAX_TICKS = 24;
@@ -55,14 +62,15 @@ const isoTitle = (at: number): string | undefined =>
   Number.isNaN(new Date(at).getTime()) ? undefined : new Date(at).toISOString();
 
 /**
- * A long id (a key fingerprint, a station id) shortened to 12 characters, the whole value in the
- * tooltip, with a button that copies the whole value.
+ * A long id (a key fingerprint, a station id) shortened to its first 8 and last 4 characters, the
+ * whole value in the tooltip, with a button that copies the whole value. The station id is a
+ * prefix of the key: the end of the value tells the two apart.
  */
 function Fingerprint({ value, label }: { readonly value: string; readonly label: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  const short = value.length > 12 ? `${value.slice(0, 12)}…` : value;
+  const short = value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
   return (
     <>
       <span title={value}>{short}</span>
@@ -155,6 +163,7 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
           // age of the link (the Linked fact in Details), never a "Last seen" (principle 7).
           const lastSeen = up ? null : station.last_seen;
           const linkedAt = up ? station.last_seen : null;
+          const connection = connectionText(station.direction);
           return (
             <li
               className="fd-station fd-panel"
@@ -280,9 +289,15 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     <ul className="fd-station-providers" aria-label="Configured providers">
                       {info.providers.map((p) => (
                         <li key={p.instance} data-instance={p.instance} title={p.instance}>
+                          {/* The version is quiet: it matters only where it differs. */}
                           <span>
                             {capitalize(p.provider)}
-                            {p.version === null ? '' : ` ${p.version}`}
+                            {p.version === null ? null : (
+                              <>
+                                {' '}
+                                <span className="fd-station-ver">{p.version}</span>
+                              </>
+                            )}
                           </span>
                           <span
                             className="fd-station-auth"
@@ -301,6 +316,22 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                             />
                             {authLabel(p.auth)}
                           </span>
+                          {/* A signed-out provider names the next step (§5): its station's
+                              accounts in Settings, for the owner. */}
+                          {p.auth === 'signed_out' && actions?.canAdmin === true ? (
+                            <a
+                              className="fd-station-signin fd-tap"
+                              href={formatHash({
+                                name: 'settings',
+                                tab: 'accounts',
+                                station: station.station_id,
+                                finish: null,
+                                oauthError: null,
+                              })}
+                            >
+                              Sign in…
+                            </a>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -328,18 +359,19 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     <dd>
                       <Fingerprint value={station.key} label="Copy the key fingerprint" />
                     </dd>
-                    <dt>Direction</dt>
-                    <dd className="fd-facts-text">
-                      {station.direction === 'deck_dials'
-                        ? 'Deck dials station'
-                        : station.direction === 'station_dials'
-                          ? 'Station dials deck'
-                          : NONE}
-                    </dd>
-                    <dt>Link address</dt>
-                    <dd className={station.dial_url == null ? 'fd-facts-text' : undefined}>
-                      {station.dial_url ?? 'Not stored, the station dials this deck'}
-                    </dd>
+                    {connection === null ? null : (
+                      <>
+                        <dt>Connection</dt>
+                        <dd className="fd-facts-text">{connection}</dd>
+                      </>
+                    )}
+                    {/* A station that connects to the deck has no address here (principle 7). */}
+                    {station.dial_url == null ? null : (
+                      <>
+                        <dt>Link address</dt>
+                        <dd>{station.dial_url}</dd>
+                      </>
+                    )}
                     {linkedAt === null ? null : (
                       <>
                         <dt>Linked</dt>
@@ -365,7 +397,18 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                     {info?.allow_shell === false ? (
                       <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
                         <p className="fd-note">
-                          Shells are off on this station. Set allow_shell = true in station.toml.
+                          Shells are off on this station.{' '}
+                          <a
+                            className="fd-tap"
+                            href={formatHash({
+                              name: 'settings',
+                              tab: 'station',
+                              station: station.station_id,
+                            })}
+                          >
+                            Turn them on in Settings
+                          </a>
+                          .
                         </p>
                       </section>
                     ) : (

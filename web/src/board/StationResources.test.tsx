@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationResources as Resources } from '../gen';
 import { card } from '../testing/fleet';
-import { bytesText } from './resources';
+import { bytesText, loadText } from './resources';
 import { StationBusiest, StationResources } from './StationResources';
 
 const full: Resources = {
@@ -43,6 +43,14 @@ describe('the size text of a station card', () => {
   });
 });
 
+describe('the load text of a station', () => {
+  test('one decimal from the value × 100', () => {
+    expect(loadText(700)).toBe('7.0');
+    expect(loadText(30)).toBe('0.3');
+    expect(loadText(1250)).toBe('12.5');
+  });
+});
+
 describe('station resources (DL-193)', () => {
   test('a full report shows a row for each disk, the memory and the CPU', () => {
     const out = html(full);
@@ -52,7 +60,8 @@ describe('station resources (DL-193)', () => {
     expect(out).toMatch(row('Data', '300 GB of 500 GB', '200 GB free'));
     expect(out).toMatch(row('/work', '400 GB of 1 TB', '600 GB free'));
     expect(out).toMatch(row('Memory', '8 GB of 16 GB', '8 GB free'));
-    expect(out).toMatch(row('CPU', 'load 2.0', '4 cores'));
+    expect(out).toMatch(row('CPU', 'Load 2.0', '4 cores'));
+    expect(out).toContain('<li title="Average load of the last 5 minutes">');
     expect(out).toContain('title="/var/data"');
     expect(out.indexOf('>Data<')).toBeLessThan(out.indexOf('>Memory<'));
     expect(out.indexOf('>Memory<')).toBeLessThan(out.indexOf('>CPU<'));
@@ -61,7 +70,7 @@ describe('station resources (DL-193)', () => {
 
   test('one core is "1 core"', () => {
     expect(html({ ...full, cpu: { cores: 1, load1_x100: 0, load5_x100: 30 } })).toMatch(
-      row('CPU', 'load 0.3', '1 core'),
+      row('CPU', 'Load 0.3', '1 core'),
     );
   });
 
@@ -116,9 +125,10 @@ describe('station resources (DL-193)', () => {
         title: 'A title',
       }),
       card('s-titled', 'working', 'station-a', {
-        callsign: null,
-        title: 'Fix the build',
+        callsign: 'Bravo',
+        title: null,
       }),
+      card('s4', 'working', 'station-a', { callsign: null, title: 'Fix the build' }),
     ];
     const busy: Resources = {
       ...full,
@@ -150,19 +160,35 @@ describe('station resources (DL-193)', () => {
       expect(html(busy)).not.toContain('Busiest sessions');
     });
 
-    test('a row has the callsign (condensed), else the title, else 8 characters of the id', () => {
+    test('a row names the title with the callsign after it, else the callsign, else the id', () => {
       const out = render(busy);
-      expect(out).toMatch(/<a class="fd-callsign" href="[^"]+">Falcon<\/a>/);
-      expect(out).not.toContain('A title');
-      expect(out).toMatch(/<a href="[^"]+">Fix the build<\/a>/);
-      expect(out).toMatch(/<a href="[^"]+">abcdefgh<\/a>/);
+      // The title (the full title in the tooltip), then the callsign (condensed, quiet).
+      expect(out).toMatch(
+        /<a href="[^"]+" title="A title"><span class="fd-station-busy-who"><span class="fd-station-busy-name">A title<\/span> <span class="fd-callsign fd-station-busy-cs">Falcon<\/span><\/span>/,
+      );
+      // No title: the callsign is the name, condensed, with no second callsign.
+      expect(out).toMatch(
+        /<a href="[^"]+"><span class="fd-station-busy-who"><span class="fd-station-busy-name fd-callsign">Bravo<\/span><\/span>/,
+      );
+      // No callsign: the title alone.
+      expect(out).toMatch(
+        /<a href="[^"]+" title="Fix the build"><span class="fd-station-busy-who"><span class="fd-station-busy-name">Fix the build<\/span><\/span>/,
+      );
+      // No title and no callsign: a session that the station does not know is its id.
+      expect(out).toMatch(
+        /<a href="[^"]+"><span class="fd-station-busy-who"><span class="fd-station-busy-name">abcdefgh<\/span><\/span>/,
+      );
+      expect(out.match(/fd-station-busy-cs/g)?.length).toBe(1);
     });
 
-    test('a row shows the CPU with its unit, the memory in GB or MB and a dash for none', () => {
+    test('a row is one link with the CPU and the memory in their columns, a dash for none', () => {
       const out = render(busy);
-      expect(out).toContain('<span>340% CPU</span><span>1.2 GB</span>');
-      expect(out).toContain('<span>120% CPU</span><span>500 MB</span>');
-      expect(out).toContain('<span>—</span><span>—</span>');
+      const cells = (cpu: string, mem: string) =>
+        `<span class="fd-station-busy-num">${cpu}</span> <span class="fd-station-busy-num">${mem}</span></a>`;
+      expect(out).toContain(cells('340% CPU', '1.2 GB'));
+      expect(out).toContain(cells('120% CPU', '500 MB'));
+      expect(out).toContain(cells('—', '—'));
+      expect(out.match(/<a /g)?.length).toBe(5);
     });
 
     test('a row links to the session', () => {

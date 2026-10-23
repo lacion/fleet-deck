@@ -7,7 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
-import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Send, X } from '../ui/icons';
+import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Send } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -77,7 +77,6 @@ export function Start({
     );
   return (
     <>
-      <h3 className="fd-add-question">Where is the new station?</h3>
       <div className="fd-add-choices" ref={choices}>
         {dim ? null : tailnetChoice}
         <Choice
@@ -156,7 +155,11 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
   };
 
   return (
-    <Dialog title="Add station" onClose={close}>
+    <Dialog
+      title="Add station"
+      description={view === 'start' ? 'Where is the new station?' : undefined}
+      onClose={close}
+    >
       <div className="fd-add-dialog">
         {view === 'start' ? null : (
           <div className="fd-add-back">
@@ -181,14 +184,6 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
         {view === 'listen' ? (
           <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
         ) : null}
-        <button
-          type="button"
-          className="fd-iconbtn fd-add-close"
-          aria-label="Close"
-          onClick={close}
-        >
-          <Icon of={X} />
-        </button>
       </div>
     </Dialog>
   );

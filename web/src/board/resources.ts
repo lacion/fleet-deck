@@ -21,6 +21,9 @@ export function bytesText(bytes: number): string {
   return `${trimmed(bytes / 1e12, 2)} TB`;
 }
 
+/** A load average from its value × 100, with one decimal: `700` → `7.0`, `30` → `0.3`. */
+export const loadText = (x100: number): string => (x100 / 100).toFixed(1);
+
 /** The memory of a session (R13 §10): the one size format of the station (`bytesText`). */
 export const memorySize = (bytes: number): string => bytesText(bytes);
 
@@ -52,7 +55,7 @@ export function resourceWarnings(r: StationResources | undefined | null): Resour
   if (c !== null && cpuBusy(c))
     out.push({
       kind: 'cpu',
-      text: `Busy CPU: load ${(c.load5_x100 / 100).toFixed(1)} on ${c.cores} cores`,
+      text: `Busy CPU: load ${loadText(c.load5_x100)} on ${c.cores} cores`,
     });
   return out;
 }

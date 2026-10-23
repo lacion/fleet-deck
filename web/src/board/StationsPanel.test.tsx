@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationInfo, StationView } from '../gen';
 import { SettingsProvider, type SettingsEnv } from '../settings/context';
 import { card, station } from '../testing/fleet';
+import { stationActions } from './pairing';
 import { StationsPanel } from './StationsPanel';
 import { stationsSummary } from './StationSummary';
 
@@ -112,6 +113,37 @@ describe('the station card', () => {
     providers: [],
     ...extra,
   });
+  test('a signed-out provider links the owner to the accounts of its station', () => {
+    const signedOut = info({
+      providers: [
+        {
+          instance: 'work',
+          provider: 'codex',
+          version: '0.163.0',
+          auth: 'signed_out',
+          version_status: 'unknown',
+          capabilities: null,
+        },
+      ],
+    });
+    const render = (canAdmin: boolean) =>
+      renderToStaticMarkup(
+        <StationsPanel
+          stations={[station('station-a', { info: signedOut })]}
+          sessions={[]}
+          freshness="live"
+          actions={stationActions(async () => ({}), canAdmin)}
+        />,
+      );
+    // The version is quiet; the next step follows the state.
+    expect(render(true)).toContain(
+      '<span>Codex <span class="fd-station-ver">0.163.0</span></span><span class="fd-station-auth" data-auth="hazard">',
+    );
+    expect(render(true)).toContain(
+      'signed out</span><a class="fd-station-signin fd-tap" href="#/settings/accounts?station=station-a">Sign in…</a></li>',
+    );
+    expect(render(false)).not.toContain('Sign in…');
+  });
   test('Stations is a wide page, the same width as the other list pages', () => {
     expect(panel([station('station-a')])).toContain(
       '<section class="fd-page fd-stations" data-wide="true" aria-label="Stations">',
@@ -132,7 +164,7 @@ describe('the station card', () => {
   test('the station id is shortened like the key fingerprint, with its own copy button', () => {
     const id = 'f'.repeat(64);
     const html = panel([station(id)]);
-    expect(html).toContain(`<span title="${id}">ffffffffffff…</span>`);
+    expect(html).toContain(`<span title="${id}">ffffffff…ffff</span>`);
     expect(html).toContain('aria-label="Copy the station ID"');
     expect(html).toContain('aria-label="Copy the key fingerprint"');
     expect(html).not.toContain(`>${id}<`);

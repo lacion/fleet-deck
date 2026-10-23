@@ -4,6 +4,7 @@ import {
   bytesText,
   cpuBusy,
   isLow,
+  loadText,
   LOW_DISK_BYTES,
   LOW_MEMORY_BYTES,
   resourceWarnings,
@@ -62,8 +63,10 @@ const BUSIEST = 5;
 
 /**
  * The busiest sessions of a station, as the station sorted them (R13 §10): a property of its own
- * on the card. The name is the callsign (`.fd-callsign`, §2.3), else the title, else 8 characters
- * of the id; the CPU and the memory carry their unit.
+ * on the card. A row is one link to its session: the name, then the CPU and the memory with their
+ * units in two right-aligned columns. The name is the title, as the sidebar and the strips name a
+ * session, with the callsign after it (`.fd-callsign`, §2.3); a session without a title is its
+ * callsign, else 8 characters of its id.
  */
 export function StationBusiest({
   resources,
@@ -83,23 +86,44 @@ export function StationBusiest({
       <ul className="fd-station-busy" aria-label="Busiest sessions">
         {resources.sessions.slice(0, BUSIEST).map((load) => {
           const summary = sessions.find((c) => c.summary.session_id === load.session_id)?.summary;
-          const callsign = summary?.callsign ?? null;
-          const name = callsign ?? summary?.title ?? load.session_id.slice(0, 8);
+          const title = summary?.title || null;
+          const callsign = summary?.callsign || null;
+          // The callsign follows the title; without a title it is the name (condensed).
+          const nameClass =
+            title === null && callsign !== null
+              ? 'fd-station-busy-name fd-callsign'
+              : 'fd-station-busy-name';
           return (
             <li key={load.session_id} data-session={load.session_id}>
+              {/* The spaces between the cells are for the link name only: a grid and a flex
+                  container do not draw them. */}
               <a
-                className={callsign === null ? undefined : 'fd-callsign'}
                 href={formatHash({
                   name: 'session',
                   station,
                   session: load.session_id,
                   tab: 'chat',
                 })}
+                title={title ?? undefined}
               >
-                {name}
+                <span className="fd-station-busy-who">
+                  <span className={nameClass}>
+                    {title ?? callsign ?? load.session_id.slice(0, 8)}
+                  </span>
+                  {title === null || callsign === null ? null : (
+                    <>
+                      {' '}
+                      <span className="fd-callsign fd-station-busy-cs">{callsign}</span>
+                    </>
+                  )}
+                </span>{' '}
+                <span className="fd-station-busy-num">
+                  {load.cpu_pct === null ? '—' : `${load.cpu_pct}% CPU`}
+                </span>{' '}
+                <span className="fd-station-busy-num">
+                  {load.rss_bytes === null ? '—' : bytesText(load.rss_bytes)}
+                </span>
               </a>
-              <span>{load.cpu_pct === null ? '—' : `${load.cpu_pct}% CPU`}</span>
-              <span>{load.rss_bytes === null ? '—' : bytesText(load.rss_bytes)}</span>
             </li>
           );
         })}
@@ -143,7 +167,8 @@ export function StationResources({ resources }: { readonly resources: Resources 
               label="CPU"
               share={usedShare(cpu.load5_x100, cpu.cores * 100)}
               low={cpuBusy(cpu)}
-              value={`load ${(cpu.load5_x100 / 100).toFixed(1)}`}
+              title="Average load of the last 5 minutes"
+              value={`Load ${loadText(cpu.load5_x100)}`}
               aside={cpu.cores === 1 ? '1 core' : `${cpu.cores} cores`}
             />
           )}

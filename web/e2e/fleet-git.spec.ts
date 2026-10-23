@@ -514,7 +514,7 @@ test('the session Artifacts link opens the folder, or shows the address', async 
   await expect(dialog.getByText('report.md')).toBeVisible();
   expect(listed.some((q) => q.includes('artifacts=a1'))).toBe(true);
   expect(await fitsWidth(page)).toBe(true);
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
 
   await goto(page, '#/');
   await openSession(page, 'Remote artifacts');
