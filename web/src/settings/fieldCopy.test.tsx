@@ -86,8 +86,9 @@ describe('the board copy of the fields', () => {
     });
     expect(on).toContain('<p class="fd-set-hazard"><svg');
     expect(on).toContain('Sessions on this station can run every tool without asking.');
+    // Every switch says what it lets happen (one verb form on the page).
     expect(on).toContain(
-      'Offer the Bypass mode, which skips every permission check, for sessions on this station.',
+      'Lets sessions on this station use the Bypass mode, which skips every permission check.',
     );
     expect(on).not.toContain('bypassPermissions');
     const off = fields({
@@ -103,7 +104,7 @@ describe('the board copy of the fields', () => {
     });
     const html = fields({ view: view({ fields: [old], values: { host: 'shim' } }) });
     expect(html).toContain(
-      'Directly: sessions end when the station stops. In a shim: sessions keep running while the station restarts.',
+      'Directly: sessions end when the station stops. Apart from the station: sessions keep running while the station restarts.',
     );
     expect(html).not.toContain('direct: sessions');
   });
@@ -112,7 +113,8 @@ describe('the board copy of the fields', () => {
     const host = meta('host', 'Where sessions run', 'enum', { options: ['direct', 'shim'] });
     const at = (os: string | undefined) =>
       fields({ view: view({ fields: [host], values: { host: 'shim' } }), os });
-    expect(at('linux')).toContain('<option value="">Default (In a shim)</option>');
+    // "Shim" is an internal word: the option says where the sessions run.
+    expect(at('linux')).toContain('<option value="">Default (Apart from the station)</option>');
     expect(at('macos')).toContain('<option value="">Default (Directly)</option>');
     expect(at(undefined)).toContain('<option value="">Default</option>');
   });

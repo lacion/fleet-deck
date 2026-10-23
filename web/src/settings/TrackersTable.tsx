@@ -46,7 +46,9 @@ export function TrackersTable({ value }: { readonly value: unknown }) {
           </table>
         </div>
       )}
-      <p className="fd-note">From station.toml. Connect accounts in the Accounts tab.</p>
+      <p className="fd-note">
+        From the config file of this station. Connect accounts in the Accounts tab.
+      </p>
     </div>
   );
 }

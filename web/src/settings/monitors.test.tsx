@@ -56,7 +56,7 @@ describe('the monitor drop-downs of capture_monitors', () => {
     expect(html).toContain('<option value="DP-1" selected="">DP-1 — Dell U2720Q</option>');
     expect(html).toContain('<option value="HDMI-A-1">HDMI-A-1</option>');
     expect(html).toContain('aria-label="Remove Screenshot monitors 1"');
-    expect(html).toContain('Help of monitors.');
+    expect(html).toContain('The monitors that a screenshot may capture.');
     expect(html).not.toContain('This station reports no monitors');
   });
 
@@ -89,7 +89,7 @@ describe('the monitor drop-downs of capture_monitors', () => {
     expect(html).toContain('<input aria-label="Screenshot monitors 1"');
     expect(html).not.toContain('<select aria-label="Screenshot monitors 1"');
     expect(html).toContain(
-      'Help of monitors. This station reports no monitors, so type the names.',
+      'Leave it empty to allow every monitor. This station reports no monitors, so type the names.',
     );
   });
 });

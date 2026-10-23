@@ -27,8 +27,9 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
       'desktop_control',
       'allow_desktop',
       'allow_desktop_capture',
-      'allow_desktop_click',
+      // The two agent switches that need agent input follow it (copy.ts DEPENDS_ON).
       'allow_desktop_input',
+      'allow_desktop_click',
       'allow_desktop_input_any',
       'capture_monitors',
       'fleet_summary',
@@ -62,7 +63,14 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   },
   {
     title: 'Network',
-    keys: ['listen', 'link_listen', 'tailnet_hostname', 'tailscale_bin', 'tailnet_auto'],
+    keys: [
+      'listen',
+      'link_listen',
+      'tailnet_hostname',
+      'tailscale_bin',
+      'tailnet_auto',
+      'tailscale_cert',
+    ],
   },
   { title: 'Notifications', keys: ['conflict_mail'] },
   { title: 'New sessions', keys: ['clone_host', 'clone_org', 'clone_transport'] },
@@ -124,17 +132,22 @@ export type Group = { readonly title: string; readonly fields: readonly FieldMet
 
 /**
  * The deck keys that the Tailnet card of the Network section shows and saves with its own switches
- * (TailnetCard): the field list leaves them out, so that a setting shows once and saves one way.
+ * (TailnetCard): while the card has its view, the field list leaves them out (`omit`), so that a
+ * setting shows once and saves one way. When the card cannot read Tailscale, the fields stay.
  */
-const CARD_KEYS: readonly string[] = ['tailnet_auto', 'tailscale_cert'];
+export const CARD_KEYS: readonly string[] = ['tailnet_auto', 'tailscale_cert'];
 
 /**
  * The fields in the sections of the page, in order. A key that no section names goes to "Other".
- * A hidden field (a key that only the deck writes) and a key of a card are left out. A section
- * named in `keep` is in the list also without a field (a card of the tab fills it).
+ * A hidden field (a key that only the deck writes) and a key in `omit` (a card shows it) are left
+ * out. A section named in `keep` is in the list also without a field (a card of the tab fills it).
  */
-export function groupFields(all: readonly FieldMeta[], keep: readonly string[] = []): Group[] {
-  const fields = all.filter((f) => f.hidden !== true && !CARD_KEYS.includes(f.key));
+export function groupFields(
+  all: readonly FieldMeta[],
+  keep: readonly string[] = [],
+  omit: readonly string[] = [],
+): Group[] {
+  const fields = all.filter((f) => f.hidden !== true && !omit.includes(f.key));
   const used = new Set<string>();
   const groups: Group[] = [];
   for (const section of SECTIONS) {

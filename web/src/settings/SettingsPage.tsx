@@ -1,5 +1,5 @@
 // DL-172, DL-173: `#/settings`: the Deck tab, one tab for each station and the Accounts tab.
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AccountsTab } from '../accounts/AccountsTab';
 import { DisplaysTab } from '../displays/DisplaysTab';
 import type { DeckSession, StationView } from '../gen';
@@ -8,8 +8,9 @@ import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Page } from '../ui/page';
 import { traitsText } from '../board/StationTraits';
 import { TailnetCard } from '../tailnet/TailnetCard';
+import { CARD_KEYS } from './model';
 import { SettingsTab } from './SettingsTab';
-import { useSettings } from './context';
+import { type SettingsEnv, useSettings } from './context';
 
 export type SettingsRoute = Extract<Route, { name: 'settings' }>;
 
@@ -69,14 +70,44 @@ function markEdges(list: HTMLElement) {
   else delete list.dataset['fadeEnd'];
 }
 
-/** Scrolls the selected tab into the row, clear of the edge fades, then marks the edges. */
+/**
+ * The scroll position that shows `tab` whole, clear of the end fade, with a whole tab at the start
+ * edge: the snap position of a tab start (its start less the scroll padding, settings.css), so that
+ * the row never stops on a fragment of a word. Only the row scrolls, never the page.
+ */
+export function snapLeft(
+  starts: readonly number[],
+  tab: { readonly start: number; readonly end: number },
+  view: { readonly left: number; readonly width: number; readonly max: number },
+  pad: number,
+): number {
+  const clamp = (x: number) => Math.min(Math.max(x, 0), view.max);
+  // The tab is in view and clear of the fade at the end: the row stays.
+  if (tab.start - pad >= view.left - 1 && tab.end + TAB_FADE <= view.left + view.width + 1) {
+    return view.left;
+  }
+  // Before the view: the tab starts the row.
+  if (tab.start - pad < view.left) return clamp(tab.start - pad);
+  // After the view: the first tab start from which the tab ends clear of the fade.
+  const fits = starts.find((s) => tab.end + TAB_FADE - (s - pad) <= view.width);
+  return clamp((fits ?? tab.start) - pad);
+}
+
+/** Scrolls the selected tab into the row (snapLeft), then marks the edges. */
 function reveal(list: HTMLElement) {
   const tab = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
   if (tab !== null) {
     const box = list.getBoundingClientRect();
-    const at = tab.getBoundingClientRect();
-    if (at.left < box.left + TAB_FADE) list.scrollLeft += at.left - box.left - TAB_FADE;
-    else if (at.right > box.right - TAB_FADE) list.scrollLeft += at.right - box.right + TAB_FADE;
+    const at = (el: Element) => el.getBoundingClientRect().left - box.left + list.scrollLeft;
+    const starts = [...list.querySelectorAll('[role="tab"]')].map(at);
+    const start = at(tab);
+    const pad = Number.parseFloat(getComputedStyle(list).scrollPaddingLeft) || 0;
+    list.scrollLeft = snapLeft(
+      starts,
+      { start, end: start + tab.getBoundingClientRect().width },
+      { left: list.scrollLeft, width: list.clientWidth, max: list.scrollWidth - list.clientWidth },
+      pad,
+    );
   }
   markEdges(list);
 }
@@ -150,29 +181,109 @@ export function SettingsTabs({
   );
 }
 
-/** The line above a station tab: reach, name, platform and build (the Stations page facts). */
+/**
+ * The release of a build without its build stamp: `2.0.0-dev.20261022+4b29e272ae` → `2.0.0-dev`.
+ * The commit after `+` and a date stamp of 8 digits or more go; a pre-release name stays (`rc.1`).
+ */
+export function versionText(version: string): string {
+  const core = version.split('+')[0] ?? version;
+  const dash = core.indexOf('-');
+  if (dash < 0) return core;
+  const pre = core
+    .slice(dash + 1)
+    .split('.')
+    .filter((part) => !/^\d{8,}$/.test(part));
+  return pre.length === 0 ? core.slice(0, dash) : `${core.slice(0, dash)}-${pre.join('.')}`;
+}
+
+/**
+ * The head of a station tab: the reach glyph and the station name (a heading in the wide face),
+ * the platform in words after it, and the build on a line of its own. The glyph says "online" (its
+ * words are for screen readers only); an offline station says it in --hazard words. A line breaks
+ * only after a middle dot, so that a line never starts with one.
+ */
 export function StationIdent({ station }: { readonly station: StationView }) {
   const traits = station.info?.traits;
   const version = station.info?.version ?? null;
   return (
-    <p className="fd-set-ident">
+    <div className="fd-set-ident">
       <span
         className="fd-dot"
         data-status={station.reachable ? 'online' : 'unreachable'}
         aria-hidden="true"
       />
-      <span className="fd-wide">{station.name}</span>
-      {traits === undefined || !Array.isArray(traits.labels) ? null : (
-        <span>{traitsText(traits)}</span>
+      <p className="fd-set-ident-line">
+        <span className="fd-wide fd-set-ident-name">{station.name}</span>
+        {station.reachable ? (
+          <span className="fd-vh"> online</span>
+        ) : (
+          <span className="fd-set-ident-off">offline</span>
+        )}
+        {traits === undefined || !Array.isArray(traits.labels) ? null : (
+          <span className="fd-set-ident-facts">
+            {traitsText(traits).replaceAll(' · ', '\u00a0· ')}
+          </span>
+        )}
+      </p>
+      {version === null ? null : (
+        <p className="fd-set-ident-version" title={`Fleet Deck ${version}`}>
+          Fleet Deck {versionText(version)}
+        </p>
       )}
-      <span>{station.reachable ? 'online' : 'offline'}</span>
-      {version === null ? null : <span>Fleet Deck {version}</span>}
       {station.reachable ? null : (
-        <span className="fd-set-ident-note">
-          The settings show and save while the station is online.
-        </span>
+        <p className="fd-set-ident-note">The settings show and save while the station is online.</p>
       )}
-    </p>
+    </div>
+  );
+}
+
+/**
+ * The deck tab: its fields and the Tailnet card in the Network section. While the card has its
+ * view it shows and saves `tailnet_auto` and `tailscale_cert`, and the field list leaves them out.
+ * When its first read fails, the card shows only the error: the two fields come back, so that the
+ * keys can still change. The card's reads pass through `watchView`, which tells the tab how they
+ * end (the card keeps a view that it had when a later read fails).
+ */
+function DeckTab({
+  env,
+  live,
+  list,
+  sessions,
+  stations,
+}: {
+  readonly env: SettingsEnv;
+  readonly live: boolean;
+  readonly list?: ListWorkspaces | undefined;
+  readonly sessions?: readonly DeckSession[] | undefined;
+  readonly stations: readonly StationView[];
+}) {
+  // null: the first read runs; true: the card has a view; false: the first read failed.
+  const [ready, setReady] = useState<boolean | null>(null);
+  const cardEnv = useMemo<SettingsEnv>(() => {
+    const view = async () => {
+      try {
+        const answer = await env.tailnet.view();
+        setReady(true);
+        return answer;
+      } catch (e) {
+        setReady((cur) => (cur === true ? cur : false));
+        throw e;
+      }
+    };
+    return { ...env, tailnet: { ...env.tailnet, view } };
+  }, [env]);
+  return (
+    <SettingsTab
+      stationId={null}
+      name="deck"
+      actions={env.settings}
+      live={live}
+      list={list}
+      sessions={sessions}
+      stations={stations}
+      slots={{ Network: { top: <TailnetCard env={cardEnv} /> } }}
+      omit={ready === false ? [] : CARD_KEYS}
+    />
   );
 }
 
@@ -191,16 +302,13 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
   let panel: React.ReactNode;
   if (route.tab === 'deck') {
     panel = (
-      <SettingsTab
+      <DeckTab
         key="deck"
-        stationId={null}
-        name="deck"
-        actions={env.settings}
+        env={env}
         live={live}
         list={list}
         sessions={sessions}
         stations={stations}
-        slots={{ Network: { top: <TailnetCard env={env} /> } }}
       />
     );
   } else if (route.tab === 'station') {

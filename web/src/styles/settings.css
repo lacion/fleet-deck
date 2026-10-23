@@ -24,9 +24,16 @@
     linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
     no-repeat border-box;
   scrollbar-width: none;
+  /* A row that scrolls rests on a tab start, one gap in from the edge: the tab before it ends at
+     the edge, so the row never stops on a fragment of a word (SettingsTabs snaps the same way). */
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--sp-5);
 }
 .fd-set-tabs::-webkit-scrollbar {
   display: none;
+}
+.fd-set-tabs [role="tab"] {
+  scroll-snap-align: start;
 }
 .fd-set-tabs [role="tab"],
 .fd-set-tabs [role="tab"]:hover:not(:disabled) {
@@ -206,39 +213,58 @@
   color: var(--faint);
 }
 
-/* The line above a station tab: the reach glyph, the station name (wide), the platform, the reach
-   and the build, one fact after the other with a middle dot. */
+/* The head of a station tab: the reach glyph and the station name as a heading (wide, 15px), the
+   platform after it in --dim, the build on a line of its own in --faint (the full build string is
+   its title). A glyph column keeps the lines under the name. The platform breaks only after a
+   middle dot (StationIdent), so that no line starts with one. */
 .fd-set-ident {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-1) var(--sp-2);
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  column-gap: var(--sp-2);
+  row-gap: 2px;
   margin: 0;
-  color: var(--dim);
+}
+/* The glyph sits on the middle of the name line, whatever its size (8px online, 12px offline). */
+.fd-set-ident > .fd-dot[data-status] {
+  grid-row: 1;
+  align-self: start;
+  justify-self: center;
+  margin-top: calc(var(--fs-heading) * 0.575);
+  translate: 0 -50%;
+}
+.fd-set-ident > p {
+  grid-column: 2;
+  margin: 0;
+  color: var(--faint);
   font-size: var(--fs-meta);
 }
-.fd-set-ident > .fd-wide {
+.fd-set-ident > .fd-set-ident-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--sp-3);
+  color: var(--dim);
+}
+.fd-set-ident-name {
   color: var(--text);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-heading);
+  line-height: 1.15;
 }
-/* A middle dot before each fact after the name. */
-.fd-set-ident > .fd-wide ~ span:not(.fd-set-ident-note)::before {
-  content: "·";
-  margin-right: var(--sp-2);
-  color: var(--faint);
-}
-.fd-set-ident > .fd-set-ident-note {
-  flex-basis: 100%;
+/* An offline station says it in words, in the hazard ink of its glyph. */
+.fd-set-ident-off {
+  color: var(--hazard);
+  font-weight: 500;
 }
 
-/* ── the section index (≥ 1600px) ───────────────────────────────── */
-/* A new pattern (DESIGN-SYSTEM §4.7): on a wide window the 1040px column of a settings tab gets a
-   200px index at its right, 32px apart; the link of the section in view has the selected-row fill
-   and the selection bar. Below 1600px there is no room: no index. */
+/* ── the section index (≥ 1400px) ───────────────────────────────── */
+/* A new pattern (DESIGN-SYSTEM §4.7): on a wide window the column of a settings tab gets an index
+   at its right (180px, 24px apart; from 1600px 200px, 32px apart); the link of the section in
+   view has the selected-row fill and the selection bar. Below 1400px there is no room: no index.
+   At 1440px the column is about 940px: it holds the 200 + 24 + 360px field rows and the hints. */
 .fd-set-toc {
   display: none;
 }
-@media (min-width: 1600px) {
+@media (min-width: 1400px) {
   .fd-settings {
     --page-w: 1280px;
   }
@@ -247,8 +273,8 @@
     max-width: 1040px;
   }
   .fd-set-tab:has(> .fd-set-toc) {
-    grid-template-columns: minmax(0, 1040px) 200px;
-    column-gap: var(--sp-6);
+    grid-template-columns: minmax(0, 1040px) 180px;
+    column-gap: var(--sp-5);
     align-items: start;
   }
   .fd-set-toc {
@@ -257,6 +283,12 @@
     top: var(--sp-5);
     max-height: calc(100dvh - 2 * var(--sp-5));
     overflow-y: auto;
+  }
+}
+@media (min-width: 1600px) {
+  .fd-set-tab:has(> .fd-set-toc) {
+    grid-template-columns: minmax(0, 1040px) 200px;
+    column-gap: var(--sp-6);
   }
 }
 .fd-set-toc > ol {
@@ -277,16 +309,22 @@
   text-decoration: none;
   transition: background-color var(--t-fast);
 }
-.fd-set-toc a:hover {
-  background: var(--raised);
-  color: var(--text);
-  text-decoration: none;
+/* The hover is a step under the selected row (--hover-bg): in the light theme the selected row is
+   white and lifted, and a white hover looked selected. The current link keeps its own look. */
+@media (hover: hover) {
+  .fd-set-toc a:hover {
+    text-decoration: none;
+  }
+  .fd-set-toc a:hover:not([aria-current="true"]) {
+    background: var(--hover-bg, var(--raised));
+    color: var(--text);
+  }
 }
 .fd-set-toc a[aria-current="true"] {
   background: var(--selected-bg);
   box-shadow: var(--selected-lift);
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .fd-settings [role="tabpanel"] {
@@ -305,9 +343,11 @@
   gap: var(--sp-3);
   min-width: 0;
 }
+/* §2.1: a section rule is --border (--border-soft is the list separator; on the light canvas it
+   was 1.08:1 and the rule vanished). */
 .fd-set-sec ~ .fd-set-sec {
   padding-top: var(--sp-5);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 /* A section index link scrolls its heading to the top, with room above it. */
 .fd-set-sec {
@@ -370,22 +410,31 @@
   gap: var(--sp-2);
   min-width: 0;
 }
+/* A choice of a few parts ends where every one-value control ends (360px), so the right edges of
+   the controls of a section line up; the time and the unit of a deny take the next line. */
 .fd-set-inline > select {
-  width: auto;
-  max-width: 100%;
+  flex: 0 1 360px;
+  width: 100%;
+  max-width: 360px;
 }
 .fd-set-inline > input.fd-set-num {
   width: 80px;
   max-width: 80px;
 }
+/* The unit after a number field (§5: one notation, `[ 30 ] min`, never "(minutes)" in the label). */
 .fd-set-unit {
   color: var(--dim);
   font-size: var(--fs-ui);
 }
-/* A minutes field: the input keeps the 160px of a number field. */
-.fd-set-inline > input.fd-set-minutes {
+/* A number field with a unit keeps the 160px of a number field. */
+.fd-set-inline > input.fd-set-unitnum {
+  flex: none;
   width: 160px;
   max-width: 160px;
+}
+/* An empty minutes field reads "Never": its unit hides, so that it never reads "Never min". */
+.fd-set-minutes:placeholder-shown + .fd-set-unit {
+  visibility: hidden;
 }
 /* Checkboxes of a choice of stations (the look of the display station choices). */
 .fd-set-stations {
@@ -480,6 +529,12 @@ input[data-mono="true"] {
     flex: 0 1 360px;
     max-width: 360px;
   }
+  /* A row of a list of one value (an address, a monitor) ends on the same 360px edge, and its
+     remove X follows it. A pair keeps its 3:2 split in the 560px of its list. */
+  .fd-set-grid .fd-set-row:not(.fd-set-pair) > :is(input, select) {
+    flex: 0 1 360px;
+    max-width: 360px;
+  }
 }
 @media (max-width: 640px), (min-width: 721px) {
   /* A folder in a list: the picker's boxes give their items to the row, so that the remove
@@ -533,9 +588,9 @@ input[data-mono="true"] {
   gap: var(--sp-3);
   min-width: 0;
 }
-/* A card under the heading (the Tailnet card of Network) is a block of its own: the fields of
-   the section start one gap further down. */
-.fd-set-sechead-row + :not(.fd-set-grid) + .fd-set-grid {
+/* A card under the heading is a block of its own: the fields of the section start one gap further
+   down. The Tailnet card is made of field rows: the fields follow it at the gap of the grid. */
+.fd-set-sechead-row + :not(.fd-set-grid, .fd-tailnet) + .fd-set-grid {
   margin-top: var(--sp-3);
 }
 /* The field rows are `Field layout="row"` of page.css (SettingsFields sets data-layout). */
@@ -543,18 +598,106 @@ input[data-mono="true"] {
 .fd-set-grid > .fd-fieldwrap > .fd-set-rows {
   max-width: 560px;
 }
-/* The badges end the hint line, 8px after the help text (no line of their own). When the help
-   fills the line, they start the next line at the left edge. */
-.fd-set-grid .fd-fieldhint:has(> .fd-set-badges) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-1) var(--sp-2);
-}
+/* The badges of a field ("Applies after a restart") have one place. A one-value control: on the
+   control line, 8px after the control (SettingsFields `.fd-set-ctlrow`); the control keeps the
+   widths of page.css (360px, a number 160px). A list: under the label text, in the label column. */
 .fd-set-badges {
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-set-ctlrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-set-ctlrow > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  flex: 0 1 360px;
+  width: 100%;
+  max-width: 360px;
+  min-width: 0;
+}
+.fd-set-ctlrow > input[type="number"] {
+  flex-basis: 160px;
+  max-width: 160px;
+}
+.fd-set-ctlrow > .fd-set-inline {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* A folder field keeps the 560px of a folder (its Browse panel opens at that width); the badge
+   follows it, or takes the next line. */
+.fd-set-ctlrow > .fd-folder {
+  flex: 1 1 360px;
+  min-width: 0;
+  max-width: 560px;
+}
+.fd-set-ctlrow > .fd-switch {
+  margin-block: calc((var(--ctl-h) - 18px) / 2);
+}
+@media (pointer: coarse) {
+  .fd-set-ctlrow > .fd-switch {
+    margin-block: calc((var(--ctl-h) - 26px) / 2);
+  }
+}
+.fd-set-grid .fd-fieldwrap[data-layout="row"] .fd-set-labelbadges {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--sp-1);
+}
+.fd-set-labelbadges > .fd-set-labeltext {
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+}
+/* A long badge ("Set by the command line (--listen)") wraps in the 200px label column. */
+.fd-set-labelbadges .fd-badge {
+  max-width: 100%;
+  height: auto;
+  min-height: 20px;
+  white-space: normal;
+}
+@media (max-width: 720px) {
+  /* The label stacks over its control: the badges follow the label text on its line. */
+  .fd-set-grid .fd-fieldwrap[data-layout="row"] .fd-set-labelbadges {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-1) var(--sp-2);
+  }
+  .fd-set-labelbadges > .fd-set-labeltext {
+    min-height: 0;
+  }
+  .fd-set-ctlrow > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .fd-set-ctlrow > input[type="number"] {
+    flex-basis: 160px;
+    max-width: 160px;
+  }
+  /* A switch ends the label row, as every switch of a narrow page does; its badges take the line
+     under the label, then the hint. */
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) > .fd-fieldcontrol > .fd-set-ctlrow {
+    display: contents;
+  }
+  .fd-set-ctlrow > .fd-switch {
+    grid-row: 1;
+    grid-column: 2;
+    margin-block: 0;
+  }
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) .fd-set-ctlrow > .fd-set-badges {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+/* A switch that works only while the one above it is on: its label is indented under that one. */
+.fd-set-grid .fd-fieldwrap[data-sub="true"] .fd-fieldlabel {
+  padding-left: var(--sp-5);
 }
 .fd-set-tab .fd-fieldwrap {
   position: relative;
@@ -720,10 +863,14 @@ input[data-mono="true"] {
   border-radius: var(--r-panel);
   box-shadow: var(--shadow-pop);
 }
-.fd-set-bar > .fd-count {
-  height: 20px;
-  padding: 0 8px;
-  font-size: var(--fs-meta);
+/* The words of the bar, then the count as a pill after them (§5: a count after a label). */
+.fd-set-bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
 }
 .fd-set-bar-actions {
   display: flex;
@@ -733,31 +880,44 @@ input[data-mono="true"] {
 }
 
 /* ── the Omarchy and desktop tools sections ─────────────────────── */
-/* Sections like the others (a rule, a heading), with their status lines and their own actions. */
-.fd-omarchy,
-.fd-desktop-tools {
-  gap: var(--sp-1);
+/* Sections like the others (a rule, a heading) on the columns of the field grid: a label row
+   ("Status", "Tools", "Installations", CardRow) and, in the control column, the facts, the notes,
+   the notices and the buttons of the card. */
+.fd-set-cardcol {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
 }
-.fd-omarchy > h2,
-.fd-desktop-tools > h2 {
-  margin-bottom: var(--sp-2);
+.fd-set-cardcol > * {
+  min-width: 0;
+  margin: 0;
 }
-.fd-omarchy > .fd-note,
-.fd-desktop-tools .fd-note {
-  max-width: 80ch;
-  font-size: var(--fs-ui);
+.fd-set-cardcol > .fd-note {
+  max-width: 72ch;
   line-height: 1.45;
 }
-.fd-omarchy > p[role="status"],
-.fd-desktop-tools p[role="status"] {
-  margin: 0;
+.fd-set-cardcol > p[role="status"] {
   color: var(--dim);
 }
-.fd-omarchy > .fd-set-bar-actions,
-.fd-desktop-tools > .fd-set-bar-actions,
-.fd-omarchy > .fd-set-notice,
-.fd-desktop-tools > .fd-set-notice {
-  margin-top: var(--sp-2);
+/* The first line of the column sits on the line of the label (a 28px control line). */
+.fd-set-cardcol > :is(.fd-dt-summary, .fd-set-empty, .fd-loading, .fd-set-loading):first-child {
+  min-height: var(--ctl-h);
+}
+.fd-set-cardcol > .fd-dt-summary:first-child {
+  display: flex;
+  align-items: center;
+}
+.fd-set-cardcol > .fd-set-bar-actions {
+  margin-top: var(--sp-1);
+}
+/* A plain button on the page canvas or on a notice keeps the --btn-edge hairline of a plain button
+   in a panel (base.css): a white fill alone does not show on the light --bg and --surface. */
+:is(.fd-set-cardcol, .fd-acc-sec, .fd-set-notice)
+:is(
+  button:not([class]):not([role]),
+  button.fd-sm:not(.fd-primary, .fd-decide, .fd-ghost, .fd-danger, .fd-iconbtn)
+) {
+  border-color: var(--btn-edge);
 }
 .fd-omarchy-files {
   display: grid;
@@ -790,9 +950,9 @@ input[data-mono="true"] {
 .fd-omarchy-repairs {
   display: grid;
   gap: var(--sp-2);
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-2);
   padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-omarchy-repairs > h3 {
   margin: 0;
@@ -861,9 +1021,12 @@ input[data-mono="true"] {
   list-style: none;
   font-size: var(--fs-ui);
 }
-/* The facts: a grid of rows, each a status glyph, the program name (mono) and its state. */
+/* The facts (Desktop tools and Omarchy): a grid of rows, each a status glyph, the name (a command
+   in mono, a product or a part in sans) and its state in --dim. */
+/* A column holds the longest row ("notify-send  Installed · 0.8.9-1 (package)") whole: two
+   columns in the control column of a settings tab, one on a phone. */
 .fd-dt-tools {
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
   gap: var(--sp-1) var(--sp-4);
   max-width: 920px;
 }
@@ -874,6 +1037,13 @@ input[data-mono="true"] {
   min-width: 0;
   min-height: var(--ctl-h);
 }
+.fd-dt-tools > li > .fd-dot[data-status] {
+  flex: none;
+}
+.fd-dt-tools > li > :not(.fd-dot):not(.fd-note) {
+  flex: none;
+  color: var(--text);
+}
 .fd-dt-tools > li > code {
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -881,6 +1051,8 @@ input[data-mono="true"] {
 .fd-dt-tools > li > .fd-note {
   min-width: 0;
   overflow: hidden;
+  color: var(--dim);
+  font-size: var(--fs-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -903,24 +1075,14 @@ input[data-mono="true"] {
   font-size: var(--fs-data);
 }
 /* The install panel opens under the buttons, divided by a rule. */
-.fd-dt-install,
-.fd-dt-installations {
+.fd-dt-install {
   display: grid;
   gap: var(--sp-2);
   width: 100%;
   min-width: 0;
-}
-.fd-dt-install {
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-2);
   padding-top: var(--sp-3);
   border-top: 1px solid var(--border-soft);
-}
-/* The installations are part of Desktop tools: a small heading, no rule. */
-.fd-dt-installations {
-  margin-top: var(--sp-3);
-}
-.fd-desktop-tools .fd-dt-installations > h3 {
-  margin-top: var(--sp-2);
 }
 .fd-dt-install pre {
   margin: 0;
@@ -1071,56 +1233,53 @@ input[data-mono="true"] {
   font-size: var(--fs-field);
   font-weight: 500;
 }
-/* The groups of accounts have their own actions: a heading, then a --surface panel. */
-.fd-acc .fd-pagesec {
-  gap: var(--sp-3);
-}
-.fd-acc .fd-pagesec-head > .fd-label {
-  color: var(--text);
-  font-size: var(--fs-heading);
-  font-weight: 600;
-  line-height: 1.15;
-}
-.fd-acc .fd-pagesec-body {
-  padding: var(--sp-4);
-}
-/* A table runs to the edges of its panel; its cells keep the 16px inset of the panel. On a phone
-   the rows stack (page.css) and keep the inset of the row instead. */
-.fd-acc .fd-pagesec-body .fd-tablewrap {
-  margin-inline: calc(var(--sp-4) * -1);
-}
+/* The groups of accounts are sections of the page (a heading and a rule, no panel, §4.7): a table on
+   the canvas at the width of the column, then a row of connect actions. The last row closes the
+   table with its divider: the connect row follows under it. */
 @media (min-width: 641px) {
-  .fd-acc .fd-pagesec-body .fd-table :is(th, td):first-child {
-    padding-left: var(--sp-4);
+  .fd-acc-sec .fd-acc-table tbody tr:last-child td {
+    border-bottom: 1px solid var(--border-soft);
   }
-  .fd-acc .fd-pagesec-body .fd-table :is(th, td):last-child {
-    padding-right: var(--sp-4);
+}
+@media (max-width: 640px) {
+  .fd-acc-sec .fd-acc-table tbody tr:last-child {
+    border-bottom: 1px solid var(--border-soft);
   }
-  /* The account tables share their column widths, so that their columns line up; the actions
-     stay near the status. The site takes what is left. */
-  .fd-acc .fd-acc-table {
+}
+.fd-set-connect > p {
+  margin: 0;
+}
+/* On a wide window the account tables share their column widths, so that their columns line up;
+   the site takes what is left, and the actions end on the right edge of the column. A narrower
+   window sizes the columns by their content. */
+@media (min-width: 1200px) {
+  .fd-acc-table {
     table-layout: fixed;
-    max-width: calc(880px + 2 * var(--sp-4));
   }
   .fd-acc-col-account {
-    width: calc(176px + var(--sp-4));
+    width: 200px;
   }
   .fd-acc-col-user {
-    width: 170px;
-  }
-  .fd-acc-col-status {
     width: 160px;
   }
-  .fd-acc-col-actions {
-    width: calc(176px + var(--sp-4));
+  .fd-acc-col-status {
+    width: 150px;
   }
-  .fd-acc-table td {
+  .fd-acc-col-actions {
+    width: 280px;
+  }
+}
+@media (min-width: 641px) {
+  .fd-acc-table td:not(.fd-cell-actions, .fd-acc-desc) {
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .fd-acc-table td.fd-cell-path,
   .fd-acc-table td[data-label="User"] {
     white-space: nowrap;
+  }
+  .fd-acc-table .fd-cell-actions {
+    text-align: right;
   }
 }
 .fd-acc-name {
@@ -1135,60 +1294,138 @@ input[data-mono="true"] {
   align-items: center;
   gap: var(--sp-2);
 }
-/* A phone: each account is a block of label rows inset 16px from the panel edge, with Log out at
-   the right of its first row (the account). */
+/* A provider without an account: how it connects, in the Site and User columns. */
+.fd-acc-table .fd-acc-desc {
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.fd-acc-ways,
+.fd-acc-app {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+}
+.fd-acc-app > code {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+/* A phone: each account is a compact card with no column names. Line 1: the provider (600) and
+   its method, the actions at the right. Line 2: the user and the site in mono --faint (or how a
+   provider without an account connects). Line 3: the status. */
 @media (max-width: 640px) {
-  .fd-acc .fd-acc-table tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    column-gap: var(--sp-2);
+  .fd-acc-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    padding: var(--sp-3) var(--sp-4);
+    gap: 2px var(--sp-2);
+    padding: var(--sp-3) 0;
   }
-  .fd-acc .fd-acc-table td {
-    grid-column: 1;
+  .fd-acc-table tbody tr:first-child {
+    padding-top: var(--sp-1);
   }
-  .fd-acc .fd-acc-table .fd-cell-actions {
-    grid-column: 2;
-    grid-row: 1;
-    margin-top: 0;
-    text-align: right;
+  .fd-acc-table td,
+  .fd-acc-table td[data-label] {
+    display: block;
+    min-height: 0;
+    padding: 0;
   }
-  .fd-acc .fd-acc-table .fd-cell-actions > :is(.fd-ghost, .fd-danger):first-child {
+  .fd-acc-table td[data-label]::before {
+    content: none;
+  }
+  /* The two line breaks of the card. */
+  .fd-acc-table tbody tr::before,
+  .fd-acc-table tbody tr::after {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+  }
+  .fd-acc-table tbody tr::before {
+    order: 3;
+  }
+  .fd-acc-table tbody tr::after {
+    order: 6;
+  }
+  .fd-acc-table td.fd-cell-name {
+    flex: 1 1 0;
+    order: 1;
+    min-width: 0;
+    font-weight: 600;
+  }
+  .fd-acc-table td.fd-cell-actions {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--sp-1);
+    order: 2;
+    margin: 0;
+  }
+  .fd-acc-table .fd-cell-actions > * + * {
     margin-left: 0;
   }
-}
-.fd-set-forges {
-  display: grid;
-  gap: var(--sp-4);
-  min-width: 0;
-}
-.fd-set-connectrow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--sp-5);
-  padding-top: var(--sp-4);
-  border-top: 1px solid var(--border-soft);
-}
-@media (min-width: 900px) {
-  .fd-set-connectrow {
-    grid-template-columns: repeat(2, minmax(0, 360px));
+  .fd-acc-table td[data-label="User"],
+  .fd-acc-table td[data-label="Site"] {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--faint);
+    font-family: var(--font-data);
+    font-size: var(--fs-data);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .fd-acc-table td[data-label="User"] {
+    flex: none;
+    max-width: 50%;
+    order: 4;
+  }
+  .fd-acc-table td[data-label="Site"] {
+    flex: 0 1 auto;
+    order: 5;
+  }
+  /* "lacion · github.com": a middle dot between the user and the site when both are there. */
+  .fd-acc-table
+    tr:has(> td[data-label="Site"]:not(:empty))
+    > td[data-label="User"]:not(:empty)::after {
+    content: "\00a0·";
+  }
+  .fd-acc-table td.fd-acc-desc {
+    flex: 1 1 100%;
+    order: 4;
+    font-size: var(--fs-meta);
+  }
+  .fd-acc-table td[data-label="Status"] {
+    order: 7;
+    font-size: var(--fs-meta);
+  }
+}
+/* The connect actions: one row under the table, left-aligned, each with the plus icon; a fold that
+   opens takes the room of its form (the server field, the ways of a tracker). */
+.fd-set-connectrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sp-3) var(--sp-4);
+  min-width: 0;
 }
 .fd-set-connect {
   display: grid;
+  flex: 0 1 auto;
   gap: var(--sp-2);
   align-content: start;
+  justify-items: start;
   min-width: 0;
 }
-.fd-set-connect > button {
-  justify-self: start;
+.fd-set-connect:has(> .fd-fieldwrap, > .fd-set-trackeractions) {
+  flex: 0 1 360px;
 }
-/* "Connect another … account…": a ghost button whose words start on the text edge (its hover fill
-   reaches into the gutter). */
-.fd-set-connect > button.fd-ghost:first-child,
-.fd-set-tracker > div > button.fd-ghost:only-child {
-  margin-left: calc(-1 * var(--sp-2));
+.fd-set-connect > :is(.fd-fieldwrap, .fd-set-device, .fd-set-problem) {
+  justify-self: stretch;
+}
+@media (max-width: 640px) {
+  .fd-set-connectrow {
+    gap: var(--sp-2);
+  }
 }
 .fd-set-problem {
   display: flex;
@@ -1230,28 +1467,8 @@ input[data-mono="true"] {
   color: var(--ok);
   font-size: var(--fs-ui);
 }
-.fd-set-trackerlist {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--sp-4);
-}
-.fd-set-tracker {
-  display: grid;
-  gap: var(--sp-2);
-  align-content: start;
-  min-width: 0;
-}
-.fd-set-tracker + .fd-set-tracker {
-  padding-top: var(--sp-4);
-  border-top: 1px solid var(--border-soft);
-}
-.fd-set-tracker > p {
+.fd-acc-sec > .fd-note {
   margin: 0;
-}
-.fd-set-trackerhead {
-  margin: 0;
-  font-size: var(--fs-title);
-  font-weight: 600;
 }
 .fd-set-trackeractions {
   display: flex;

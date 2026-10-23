@@ -3,9 +3,13 @@
 import type { DeckSession, FieldMeta, MonitorInfo, StationView } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, X } from '../ui/icons';
-import { defaultOptionLabel, optionLabel } from './copy';
+import { defaultOptionLabel, fieldLabel, optionLabel, unitOf } from './copy';
 import { asNumber, asPairs, asStrings, asText } from './model';
+import { monitorText, monitorTitleOf } from './monitorText';
 import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
+
+/** The text keys whose value is a host name or a path: mono, as every path and id (§1.5). */
+const MONO_KEYS: readonly string[] = ['tailscale_bin', 'tailnet_hostname'];
 
 export type EditorProps = {
   readonly meta: FieldMeta;
@@ -105,11 +109,10 @@ function TextRows({
 /** The key of the field whose names are picked from the monitors of the station. */
 export const MONITOR_KEY = 'capture_monitors';
 
-/** One option text of a monitor: `<name> — <description>`, or only the name. */
-const monitorText = (m: MonitorInfo): string =>
-  m.description === '' ? m.name : `${m.name} — ${m.description}`;
+/** The words of the add button of the monitor rows (typed or picked). */
+const ADD_MONITOR = 'Add monitor';
 
-/** The rows of the monitor names: a drop-down of the station's monitors for each, then "Add". */
+/** The rows of the monitor names: a drop-down of the station's monitors for each, then "Add monitor". */
 function MonitorRows({
   label,
   rows,
@@ -138,7 +141,7 @@ function MonitorRows({
               <option value={row}>{`${row} (not connected)`}</option>
             )}
             {monitors.map((m) => (
-              <option key={m.name} value={m.name}>
+              <option key={m.name} value={m.name} title={monitorTitleOf(m)}>
                 {monitorText(m)}
               </option>
             ))}
@@ -158,7 +161,7 @@ function MonitorRows({
           title={unused === undefined ? 'Every monitor is in the list.' : undefined}
           onClick={() => unused !== undefined && onChange([...rows, unused.name])}
         >
-          <Icon of={Plus} size={14} /> Add
+          <Icon of={Plus} size={14} /> {ADD_MONITOR}
         </button>
       </div>
     </div>
@@ -406,16 +409,30 @@ export function FieldEditor({
       );
     case 'int': {
       const n = asNumber(value);
-      return (
+      const unit = unitOf(meta);
+      const input = (
         <input
           type="number"
           inputMode="numeric"
+          className={unit === null ? undefined : 'fd-set-unitnum'}
+          aria-label={unit === null ? undefined : `${fieldLabel(meta)} in ${unit.words}`}
           value={n ?? ''}
           min={meta.min ?? undefined}
           max={meta.max ?? undefined}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
         />
+      );
+      // One notation for every unit (§5): the unit follows the field, never in its label.
+      return unit === null ? (
+        input
+      ) : (
+        <span className="fd-set-inline">
+          {input}
+          <span className="fd-set-unit" aria-hidden="true">
+            {unit.short}
+          </span>
+        </span>
       );
     }
     case 'enum': {
@@ -492,7 +509,7 @@ export function FieldEditor({
           rows={asStrings(value)}
           onChange={onChange}
           disabled={disabled}
-          addLabel="Add"
+          addLabel={meta.key === MONITOR_KEY ? ADD_MONITOR : 'Add'}
         />
       );
     case 'addresses':
@@ -525,15 +542,19 @@ export function FieldEditor({
           disabled={disabled}
         />
       );
-    case 'text':
+    case 'text': {
+      const mono = MONO_KEYS.includes(meta.key);
       return (
         <input
           value={asText(value)}
           disabled={disabled}
           autoComplete="off"
+          spellCheck={mono ? false : undefined}
+          data-mono={mono ? 'true' : undefined}
           onChange={(e) => onChange(e.target.value)}
         />
       );
+    }
     default:
       return null;
   }

@@ -130,10 +130,10 @@ describe('the idle stop minutes', () => {
       />,
     );
 
-  test('0 is the empty field with "Off"; a time shows its minutes and the unit', () => {
+  test('0 is the empty field with "Never"; a time shows its minutes and the unit', () => {
     const off = editor(0);
     expect(off).toMatch(
-      /aria-label="Stop idle sessions after \(minutes\)" placeholder="Off"[^>]*value=""/,
+      /aria-label="Stop idle sessions after \(minutes\)" placeholder="Never"[^>]*value=""/,
     );
     expect(off).toContain('>min</span>');
     expect(editor(30)).toMatch(/value="30"/);

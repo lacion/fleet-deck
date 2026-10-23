@@ -2,6 +2,7 @@
 // the code and the page of the forge, and asks for the state every two seconds until it ends.
 import { useEffect, useRef, useState } from 'react';
 import type { AccountKind, AccountView, ForgeLogin } from '../gen';
+import { Icon, Plus } from '../ui/icons';
 import { Field } from '../ui/page';
 import type { AccountActions } from './actions';
 import { CopyButton } from './CopyButton';
@@ -67,6 +68,24 @@ export type Run =
   | { readonly phase: 'running'; readonly login: ForgeLogin; readonly state: LoginView }
   | { readonly phase: 'error'; readonly text: string; readonly token: boolean };
 
+/**
+ * The fold of a connect block. Without an account of its kind the block is open. With one, it
+ * folds under "Connect another … account…"; a login that runs or just ended keeps it open, and a
+ * press closes it and forgets that login (ForgeConnect). While a login starts or waits for the
+ * owner, the button is off (`locked`): a fold would hide the code.
+ */
+export function foldOf(
+  connected: boolean,
+  open: boolean,
+  run: Run,
+): { readonly shown: boolean; readonly locked: boolean } {
+  const pending = run.phase === 'running' && run.state.state === 'pending';
+  return {
+    shown: !connected || open || run.phase !== 'idle',
+    locked: run.phase === 'starting' || pending,
+  };
+}
+
 export function ForgeConnect({
   kind,
   station,
@@ -122,17 +141,28 @@ export function ForgeConnect({
         : { phase: 'error', text: out.text, token: out.token },
     );
   };
-  // A login that runs (or just ended) keeps the block open.
-  const shown = !connected || open || run.phase !== 'idle';
+  const { shown, locked } = foldOf(connected, open, run);
+  const toggle = () => {
+    if (!shown) {
+      setOpen(true);
+      return;
+    }
+    // Closing the block ends what it showed: the next open starts from the server field.
+    polling.current?.abort();
+    setRun({ phase: 'idle' });
+    setOpen(false);
+  };
   return (
     <div className="fd-set-connect" role="group" aria-label={`Connect ${label}`}>
       {connected ? (
         <button
           type="button"
-          className="fd-ghost fd-sm"
+          className="fd-sm"
           aria-expanded={shown}
-          onClick={() => setOpen(!shown)}
+          disabled={locked}
+          onClick={toggle}
         >
+          <Icon of={Plus} size={14} />
           Connect another {label} account…
         </button>
       ) : null}
