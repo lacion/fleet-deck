@@ -14,6 +14,10 @@ use std::time::Duration;
 
 use super::wire::ProviderIdentity;
 
+#[path = "inspect_exit.rs"]
+mod exit;
+pub use exit::{exit_census, exit_members};
+
 /// The longest process name that a check reports.
 pub const COMMAND_CHARS: usize = 120;
 /// The longest parent chain that the escaped-descendant search follows.
@@ -158,7 +162,10 @@ fn in_group_or_session(p: &ProcStat, leader: u32) -> bool {
 ///
 /// A pass is clean when no listed pid vanished and no zombie is the leader
 /// or belongs to the leader's group or session (a leader that forked and
-/// died before its read is such a zombie). The argument for a clean pass: a process
+/// died before its read is such a zombie). With `pinned` the zombie of the
+/// leader itself does not count: the caller confirmed that the leader ended
+/// before the first listing and keeps it unreaped, so it cannot fork during
+/// any pass. The argument for a clean pass: a process
 /// cannot join a session from outside it, so a member that is alive at the
 /// end of a clean pass descends from a member that was listed at the start
 /// of the pass and was alive when read (then it is counted), or that died
@@ -168,7 +175,7 @@ fn in_group_or_session(p: &ProcStat, leader: u32) -> bool {
 /// alive when read. Only a clean pass proves "no members".
 fn census(
     root: &Path,
-    (leader, budget): (u32, Duration),
+    (leader, budget, pinned): (u32, Duration, bool),
     pause: Duration,
     (between_passes, after_listing): (&mut dyn FnMut(), &mut dyn FnMut()),
     settled: &dyn Fn(&[ProcStat]) -> bool,
@@ -186,10 +193,9 @@ fn census(
         }
         let scan = scan_with(root, after_listing)?;
         let clean = scan.vanished == 0
-            && !scan
-                .procs
-                .iter()
-                .any(|p| p.is_zombie() && in_group_or_session(p, leader));
+            && !scan.procs.iter().any(|p| {
+                p.is_zombie() && in_group_or_session(p, leader) && !(pinned && p.pid == leader)
+            });
         if clean || settled(&scan.procs) {
             return Ok(Some(scan.procs));
         }
@@ -220,7 +226,7 @@ pub fn group_members_in(root: &Path, leader: u32) -> Option<u32> {
 /// child that ends during the census leaves no zombie in every pass.
 #[must_use]
 pub fn group_members_reaping(leader: u32, reap: &mut dyn FnMut()) -> Option<u32> {
-    group_members_with(Path::new(PROC), leader, PASS_PAUSE, reap, &mut || {})
+    exit_census(leader, false, reap)
 }
 
 fn live_members(procs: &[ProcStat], leader: u32) -> usize {
@@ -239,18 +245,8 @@ fn group_members_with(
     between_passes: &mut dyn FnMut(),
     after_listing: &mut dyn FnMut(),
 ) -> Option<u32> {
-    if !cfg!(target_os = "linux") {
-        return None;
-    }
-    let procs = census(
-        root,
-        (leader, EXIT_BUDGET),
-        pause,
-        (between_passes, after_listing),
-        &|procs| live_members(procs, leader) > 0,
-    )
-    .ok()??;
-    Some(u32::try_from(live_members(&procs, leader)).unwrap_or(u32::MAX))
+    let live = exit::live_with(root, leader, false, pause, between_passes, after_listing)?;
+    Some(u32::try_from(live.len()).unwrap_or(u32::MAX))
 }
 
 /// One process in an inspection answer.
@@ -324,7 +320,7 @@ fn inspect_with(
         |p: &ProcStat| p.pid == leader && p.start_time == identity.start_time && !p.is_zombie();
     let found = census(
         root,
-        (leader, CHECK_BUDGET),
+        (leader, CHECK_BUDGET, false),
         pause,
         (&mut || {}, after_listing),
         &|procs| procs.iter().any(alive) || live_members(procs, leader) > 0,

@@ -187,7 +187,31 @@ pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
 /// zombies do not count). `None` when the inspection is incomplete or the
 /// platform has no reader: the count then proves nothing (DL-182 §1a).
 pub(super) fn group_members(leader: u32) -> Option<u32> {
-    crate::host::shim::inspect::group_members_reaping(leader, &mut reap_orphans)
+    crate::host::shim::inspect::exit_census(leader, false, &mut reap_orphans)
+}
+
+/// The live members of the provider's group or session with the leader
+/// pinned (a zombie that the shim keeps unreaped, `LeaderWait::Ended`). The
+/// census reaps every ended child except the leader between passes.
+pub(super) fn pinned_members(leader: u32) -> Option<Vec<crate::host::shim::inspect::ProcStat>> {
+    crate::host::shim::inspect::exit_members(leader, true, &mut || {
+        reap_orphans_except(Some(leader));
+    })
+}
+
+/// Signals the process group `pid` and nothing else: no fallback to the
+/// single process. For the exit sweep, while the leader is a pinned zombie
+/// (the number is allocated, so the group is this run's). `pid <= 1` is
+/// refused. `ESRCH` (the group is empty) is returned to the caller.
+pub(super) fn kill_group_only(pid: u32, sig: rustix::process::Signal) -> rustix::io::Result<()> {
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .filter(|p| *p > 1)
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return Err(rustix::io::Errno::INVAL);
+    };
+    rustix::process::kill_process_group(pid, sig)
 }
 
 /// Reaps every ended child of the shim (`waitpid(-1)`). Only for the exit

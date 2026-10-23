@@ -46,8 +46,40 @@ async fn resume(rig: &mut Rig, station: &Station, session: &SessionId) -> Decide
         .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_stays_refused() {
+/// The live `sleep` processes whose working directory is under `root`: the
+/// children that the simulated app-server leaves behind.
+fn sleepers_under(root: &Path) -> Vec<u32> {
+    let root = std::fs::canonicalize(root).unwrap();
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        let zombie = stat
+            .rfind(')')
+            .is_some_and(|i| stat[i + 1..].trim_start().starts_with('Z'));
+        let is_sleep =
+            std::fs::read_to_string(entry.path().join("comm")).is_ok_and(|c| c.trim() == "sleep");
+        let under =
+            std::fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| cwd.starts_with(&root));
+        if is_sleep && under && !zombie {
+            found.push(pid);
+        }
+    }
+    found
+}
+
+/// Runs one turn that ends the app-server with a child left behind
+/// (`mode`), waits for the child, then for the closed row, and checks that
+/// the shim stopped the child and the end is proven (DL-431).
+async fn left_child_is_stopped_and_the_resume_is_admitted(mode: &str) {
     let mut rig = Rig::new();
     let station = rig.station().await;
     let session = start_session(&mut rig, &station, "hello").await;
@@ -63,52 +95,40 @@ async fn a_live_shim_exit_with_a_surviving_child_keeps_the_evidence_and_resume_s
         &station,
         SessionCommand::Prompt {
             session_id: session.clone(),
-            input: UserInput::new("exit-leaving-child bye".to_owned()),
+            input: UserInput::new(format!("{mode} bye")),
         },
     )
     .await;
-    // The station runs; its observer ends the session from the live exit.
+    // The child exists while the shim sweeps; the session ends after it.
+    let deadline = Instant::now() + WAIT;
+    while sleepers_under(rig.tmp.path()).is_empty() {
+        assert!(Instant::now() < deadline, "the child never started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let row = ended_row(&station.store, &session, &shim_id).await;
     assert_eq!(row.state, fleetdeck_station::store::ShimState::Exited);
-    assert_eq!(
-        row.reason.as_deref(),
-        Some("exited_descendants_remaining"),
-        "{row:?}"
-    );
-    let summary = station
-        .store
-        .summary(session.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(summary.state, SessionState::Exited);
-    assert!(summary.capabilities.as_ref().unwrap().resume);
-    let before = station
-        .store
-        .session_effects(session.clone())
-        .await
-        .unwrap()
-        .len();
-    let decided = resume(&mut rig, &station, &session).await;
-    assert_eq!(decided.receipt.state, ReceiptState::Rejected, "{decided:?}");
-    let reject = decided.receipt.reject.clone().unwrap();
+    assert_eq!(row.reason.as_deref(), Some("exited"), "{row:?}");
     assert!(
-        reject.message.contains("not_resumable")
-            && reject.message.contains("exited_descendants_remaining"),
-        "{reject:?}"
+        sleepers_under(rig.tmp.path()).is_empty(),
+        "the shim stopped the child"
     );
-    assert_eq!(
-        station
-            .store
-            .session_effects(session.clone())
-            .await
-            .unwrap()
-            .len(),
-        before,
-        "nothing queued"
-    );
-    assert_eq!(rig.method_count("thread/resume"), 0);
+    let decided = resume(&mut rig, &station, &session).await;
+    // The shim host may refuse the resume launch itself (DL-118); that is
+    // not a `not_resumable` rejection.
+    if let Some(reject) = decided.receipt.reject.as_ref() {
+        assert!(!reject.message.contains("not_resumable"), "{reject:?}");
+    }
     station.manager.shutdown(StopMode::Graceful).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_live_shim_exit_with_a_surviving_child_stops_it_and_the_resume_is_admitted() {
+    left_child_is_stopped_and_the_resume_is_admitted("exit-leaving-child").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_live_exit_with_a_child_in_another_group_is_proven() {
+    left_child_is_stopped_and_the_resume_is_admitted("exit-leaving-group-child").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

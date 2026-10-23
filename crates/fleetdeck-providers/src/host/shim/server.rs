@@ -36,14 +36,20 @@ use crate::host::STDERR_TAIL_BYTES;
 
 #[path = "server_conn.rs"]
 mod conn;
+#[path = "server_exit.rs"]
+mod exit;
+#[path = "server_leader.rs"]
+mod leader;
 #[path = "server_proc.rs"]
 mod process;
 #[path = "server_secrets.rs"]
 mod secrets;
 
+use leader::{Leader, LeaderWait, Lifecycle};
 pub use process::{ExecOptions, exec_provider, exec_provider_with};
 use process::{
-    REAP_EVERY, bind, group_members, reap_orphans, reap_while_running, signal_group, spawn_provider,
+    REAP_EVERY, bind, group_members, kill_group_only, pinned_members, reap_orphans,
+    reap_orphans_except, reap_while_running, signal_group, spawn_provider,
 };
 
 /// The largest `output` frame payload.
@@ -186,6 +192,10 @@ async fn serve(shim_id: &str) -> i32 {
     let Some(pid) = child.id() else {
         return failed(true, "the provider has no process id");
     };
+    // The leader stays a zombie when it ends (`waitid` with `WNOWAIT`): its
+    // pid number stays allocated until the exit path reaps it (DL-431).
+    let leader_fd = leader::open_leader_fd(pid);
+    let leader_wait = leader::start_wait(pid);
     let identity = match identity_of(pid) {
         Ok(identity) => identity,
         Err(e) => {
@@ -197,8 +207,13 @@ async fn serve(shim_id: &str) -> i32 {
     reply(&LaunchReply::Ready {
         provider_identity: identity.clone(),
     });
-    let shim = Shim::new(spec, key, files, identity, lock);
-    shim.run(&mut child, listener).await
+    let shim = Shim::new(
+        (spec, key, files),
+        identity,
+        lock,
+        Leader::new(pid, leader_fd),
+    );
+    shim.run(&mut child, listener, leader_wait).await
 }
 
 /// DL-182 §4.1: the shim spawns the provider only on the boot that the
@@ -260,6 +275,8 @@ struct Shim {
     key: AttachKey,
     files: ShimFiles,
     identity: ProviderIdentity,
+    /// The gate of every signal to the provider (DL-431).
+    leader: Leader,
     state: Mutex<State>,
     /// Stdout bytes or a replay: the streamer runs.
     streamed: Notify,
@@ -281,11 +298,10 @@ struct Shim {
 
 impl Shim {
     fn new(
-        spec: LaunchSpec,
-        key: AttachKey,
-        files: ShimFiles,
+        (spec, key, files): (LaunchSpec, AttachKey, ShimFiles),
         identity: ProviderIdentity,
         lock: LaunchLock,
+        leader: Leader,
     ) -> Arc<Self> {
         let buffer = OutputBuffer::new(spec.buffer_bytes);
         Arc::new(Self {
@@ -293,6 +309,7 @@ impl Shim {
             key,
             files,
             identity,
+            leader,
             state: Mutex::new(State {
                 buffer,
                 writes: WriteTable::new(),
@@ -359,11 +376,16 @@ impl Shim {
         }
     }
 
-    async fn run(self: Arc<Self>, child: &mut Child, listener: UnixListener) -> i32 {
+    async fn run(
+        self: Arc<Self>,
+        child: &mut Child,
+        listener: UnixListener,
+        leader_wait: tokio::sync::oneshot::Receiver<LeaderWait>,
+    ) -> i32 {
         let (Some(stdout), Some(stderr), Some(stdin)) =
             (child.stdout.take(), child.stderr.take(), child.stdin.take())
         else {
-            signal_group(self.pid(), rustix::process::Signal::KILL);
+            self.leader.signal(rustix::process::Signal::KILL, || {});
             return 1;
         };
         let (eof_tx, eof_rx) = watch::channel(false);
@@ -379,63 +401,14 @@ impl Shim {
             REAP_EVERY,
             self.exited.subscribe(),
         ));
-        let status = child.wait().await;
-        self.exited.send_replace(true);
-        self.on_exit(status, eof_rx).await;
+        // Nothing polls `child.wait()` before the exit path: tokio does not
+        // reap the leader before then (DL-431).
+        let waited = leader_wait
+            .await
+            .unwrap_or(LeaderWait::Failed(rustix::io::Errno::IO));
+        self.on_exit(child, waited, eof_rx).await;
         self.finished.notified().await;
         0
-    }
-
-    async fn on_exit(
-        self: &Arc<Self>,
-        status: std::io::Result<std::process::ExitStatus>,
-        eof: watch::Receiver<bool>,
-    ) {
-        use std::os::unix::process::ExitStatusExt as _;
-        let termination = match &status {
-            Ok(s) => match (s.code(), s.signal()) {
-                (Some(code), _) => format!("code:{code}"),
-                (None, Some(sig)) => format!("signal:{sig}"),
-                (None, None) => "unknown".to_owned(),
-            },
-            Err(_) => "unknown".to_owned(),
-        };
-        // The shim reaps its own ended children first, so that they leave
-        // no zombie that makes every pass of the census unclean. The census
-        // sleeps between passes: it runs on a blocking thread.
-        let leader = self.pid();
-        let descendants_remaining = tokio::task::spawn_blocking(move || {
-            reap_orphans();
-            group_members(leader)
-        })
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "the process inspection did not run");
-            None
-        });
-        if descendants_remaining.is_none() {
-            tracing::warn!("the process inspection was incomplete; the exit is unverified");
-        }
-        signal_group(self.pid(), rustix::process::Signal::KILL);
-        self.wait_stdout_end(eof).await;
-        reap_orphans();
-        let exit = {
-            let mut state = self.lock();
-            let stderr_tail =
-                String::from_utf8_lossy(state.stderr_tail.make_contiguous()).into_owned();
-            let exit = ExitState {
-                termination,
-                cause: state.cause.unwrap_or("exited").to_owned(),
-                stderr_tail,
-                descendants_remaining,
-                final_offset: state.buffer.end(),
-                inspection: INSPECTION,
-            };
-            state.exit = Some(exit.clone());
-            exit
-        };
-        self.notify_exit(&exit);
-        tokio::spawn(Arc::clone(self).publish_exit(exit));
     }
 
     /// The final cursor is the end of the provider's output (ADR-005
@@ -726,13 +699,13 @@ impl Shim {
                 state.cause = Some(forced);
             }
         }
-        signal_group(self.pid(), rustix::process::Signal::TERM);
+        self.leader.signal(rustix::process::Signal::TERM, || {});
         if tokio::time::timeout(term_grace, exited.wait_for(|e| *e))
             .await
             .is_ok()
         {
             return;
         }
-        signal_group(self.pid(), rustix::process::Signal::KILL);
+        self.leader.signal(rustix::process::Signal::KILL, || {});
     }
 }
