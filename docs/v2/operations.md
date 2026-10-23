@@ -409,12 +409,14 @@ This section covers the Omarchy integration of a station. The design is in `desi
 
 What the integration gives you on the desktop of the station:
 
-- **A bar widget and a panel.** The widget shows the number of working sessions and, when a session needs you, the number of those sessions with a warning sign. The widget is dim when the deck is down or sends no data. A left click opens the panel. A right click opens the board. A middle click shows the wall window.
+- **A bar widget and a panel.** The widget shows the Fleet Deck mark, the number of working sessions and, when a session needs you, the number of those sessions with a warning sign. The widget is dim when the deck is down or sends no data. A left click opens the panel. A right click opens the board. A middle click shows the wall window.
 - **Notifications.** A new request that needs you shows a notification with the title "<callsign> needs you". The text is "<Kind> on <station>", where Kind is Approval or Question. A click opens the board at that request. A notification never answers a request.
 - **Hotkeys.** See the table below.
 - **The screensaver.** The screensaver text shows the number of sessions that need you, the counts of the other states and the usage. It is off by default. The install records it only with the option `--screensaver`. You turn it on and off on the board: see the part "Omarchy from the board".
 - **The theme sync.** The station sends the colors of the Omarchy theme to the deck each time the theme changes.
 - **The crash diagnosis.** The Omarchy menu has the rows "Fleet", "Open the board" and "Diagnose the last crash". The last row starts one supervised session that investigates the newest crash that systemd-coredump recorded.
+
+**A launcher for the board (optional).** Fleet Deck installs no app launcher. To add one to the Omarchy app menu, run on the station: `omarchy-webapp-install "Fleet Deck" <board URL> <board URL>/apple-touch-icon.png`. Give the icon URL: without it, the script asks a public favicon service for the icon of your board's address.
 
 The widget, the panel and the notifications show only counts, station names, callsigns and request kinds. They show no session title, no tool name and no chat text. The panel has no approval control. You answer a request on the board.
 
