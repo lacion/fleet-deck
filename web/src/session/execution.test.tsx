@@ -5,9 +5,10 @@ import type { DeckSession, ExecutionCheck } from '../gen';
 import { ownerEnv, PeopleProvider } from '../sharing/context';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
-import { sessionActions } from './commands';
+import { type Outcome, sessionActions } from './commands';
 import { type Controller, sessionFlags } from './controller';
-import { ExecutionDialog, executionView } from './ExecutionDialog';
+import { ExecutionBody, ExecutionDialog, executionView, finishResume } from './ExecutionDialog';
+import { markAndResume, RESUME_TEXTS, withResumeCheck } from './resumeRefusal';
 import { SessionHeader } from './SessionHeader';
 
 const key = { station_id: 'station a', session_id: 's/1' };
@@ -93,6 +94,124 @@ describe('execution dialog markup', () => {
     expect(html).toContain('Checking the processes…');
     expect(html).toContain('Check again');
     expect(html).toContain('Close');
+  });
+
+  test('the dialog has the head close button and no text Close button', () => {
+    const actions = sessionActions(async () => ({}), key, ['admin']);
+    const html = renderToStaticMarkup(<ExecutionDialog actions={actions} onClose={() => {}} />);
+    expect(html).toContain('fd-dialog-head');
+    expect(html).toContain('class="fd-iconbtn"');
+    expect(html).toContain('aria-label="Close"');
+    expect(html).not.toMatch(/>\s*Close\s*</);
+    expect(html).toContain('Check again');
+  });
+
+  test('the resume mode has its own head', () => {
+    const actions = sessionActions(async () => ({}), key, ['admin']);
+    const html = renderToStaticMarkup(
+      <ExecutionDialog
+        actions={actions}
+        purpose="resume"
+        onResumed={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain('Resume needs the previous run to end');
+    expect(html).toContain(RESUME_TEXTS.description);
+    expect(html).toContain('aria-label="Previous run of this session"');
+  });
+
+  test('the menu mode has no description', () => {
+    const actions = sessionActions(async () => ({}), key, ['admin']);
+    const html = renderToStaticMarkup(<ExecutionDialog actions={actions} onClose={() => {}} />);
+    expect(html).not.toContain('Resume needs the previous run to end');
+  });
+});
+
+describe('execution dialog body', () => {
+  const actions = sessionActions(async () => ({}), key, ['admin']);
+  const body = (purpose: 'menu' | 'resume', c: ExecutionCheck, markError: string | null = null) =>
+    renderToStaticMarkup(
+      <ExecutionBody
+        check={c}
+        purpose={purpose}
+        actions={actions}
+        busy={false}
+        marked={false}
+        markError={markError}
+        onAct={() => {}}
+        onCheck={() => {}}
+      />,
+    );
+
+  test('resume mode, nothing lives: the note and Mark as ended and resume', () => {
+    const html = body('resume', check());
+    expect(html).toContain(RESUME_TEXTS.nothingLives);
+    expect(html).toContain('Mark as ended and resume');
+    expect(html).toContain('fd-danger');
+    expect(html).not.toContain('Stop them and resume');
+  });
+
+  test('resume mode with nothing unresolved offers Resume', () => {
+    const html = body('resume', check({ shim_id: null, reason: 'nothing unresolved' }));
+    expect(html).toContain('Nothing to reconcile: no earlier run of this session is unresolved.');
+    expect(html).toContain('<button type="button" class="fd-primary">Resume</button>');
+    expect(html).not.toContain('Mark as ended');
+  });
+
+  test('the menu mode with nothing unresolved has no Resume', () => {
+    const html = body('menu', check({ shim_id: null, reason: 'nothing unresolved' }));
+    expect(html).not.toContain('fd-primary');
+  });
+
+  test('resume mode, live processes: Stop them and resume, and no mark', () => {
+    const html = body('resume', check({ group_members: [{ pid: 4242, command: 'node' }] }));
+    expect(html).toContain('Stop them and resume');
+    expect(html).not.toContain('Stop these processes');
+    expect(html).not.toContain('Mark as ended and resume');
+  });
+
+  test('resume mode, incomplete check: its text and no mark button', () => {
+    const html = body('resume', check({ complete: false, error: 'cannot read /proc/9' }));
+    expect(html).toContain('The check is incomplete: cannot read /proc/9.');
+    expect(html).not.toContain('Mark as ended');
+  });
+
+  test('a refusal of the mark or the resume shows its text as an alert', () => {
+    const html = body('resume', check(), 'Refused: a process lives');
+    expect(html).toContain('role="alert">Refused: a process lives');
+  });
+
+  test('the menu mode keeps its texts', () => {
+    const html = body('menu', check());
+    expect(html).toContain('Mark as ended');
+    expect(html).not.toContain('Mark as ended and resume');
+    expect(html).toContain('Mark it as ended only when you know that the previous run stopped.');
+  });
+});
+
+describe('a refused resume (DL-433)', () => {
+  const refusal = 'Refused: not_resumable: the previous execution may still run (shim x)';
+  const wrapped = (scopes: string[]) => {
+    const base = sessionActions(async () => ({}), key, scopes);
+    const outcome: Outcome = { ok: false, text: refusal };
+    let opened = 0;
+    const actions = withResumeCheck({ ...base, resume: async () => outcome }, () => {
+      opened += 1;
+    });
+    return { actions, opened: () => opened };
+  };
+
+  test('a refused resume opens the dialog in resume mode (owner)', async () => {
+    const t = wrapped(['admin']);
+    expect((await t.actions.resume()).text).toBe(refusal);
+    expect(t.opened()).toBe(1);
+  });
+
+  test('a member sees only the refusal', async () => {
+    const t = wrapped(['read', 'drive']);
+    expect((await t.actions.resume()).text).toBe(refusal);
+    expect(t.opened()).toBe(0);
   });
 });
 
@@ -194,5 +313,62 @@ describe('session menu entry', () => {
     expect(render(() => {})).toContain('Check the previous run');
     expect(render(undefined)).not.toContain('Check the previous run');
     expect(render(() => {}, true)).not.toContain('Check the previous run');
+  });
+});
+
+describe('the resume steps of the dialog', () => {
+  const spy = (marked: Outcome) => {
+    const calls: string[] = [];
+    const actions = {
+      reconcileExecution: async (id: string) => {
+        calls.push(`reconcile ${id}`);
+        return marked;
+      },
+      resume: async () => {
+        calls.push('resume');
+        return { ok: true, text: 'Done.' };
+      },
+    };
+    return { calls, actions };
+  };
+
+  test('mark as ended and resume calls reconcile then resume and closes', async () => {
+    const t = spy({ ok: true, text: 'Done.' });
+    let closed = 0;
+    const text = await finishResume(
+      () => markAndResume(t.actions, 'shim-1'),
+      () => {
+        closed += 1;
+      },
+    );
+    expect(text).toBeNull();
+    expect(t.calls).toEqual(['reconcile shim-1', 'resume']);
+    expect(closed).toBe(1);
+  });
+
+  test('a refused reconcile shows its text and does not resume', async () => {
+    const t = spy({ ok: false, text: 'Refused: a process of the run lives' });
+    let closed = 0;
+    const text = await finishResume(
+      () => markAndResume(t.actions, 'shim-1'),
+      () => {
+        closed += 1;
+      },
+    );
+    expect(text).toBe('Refused: a process of the run lives');
+    expect(t.calls).toEqual(['reconcile shim-1']);
+    expect(closed).toBe(0);
+  });
+
+  test('a refused resume keeps the dialog open', async () => {
+    let closed = 0;
+    const text = await finishResume(
+      async () => ({ ok: false, text: 'Refused: busy' }),
+      () => {
+        closed += 1;
+      },
+    );
+    expect(text).toBe('Refused: busy');
+    expect(closed).toBe(0);
   });
 });
