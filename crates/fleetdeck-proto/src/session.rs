@@ -97,6 +97,34 @@ pub struct SessionSummary {
     /// call completed (D15). Absent in a summary stored before M2 P4-3.
     #[serde(default)]
     pub background_agents: u32,
+    /// How many of `background_tasks` are workflows
+    /// ([`WORKFLOW_TASK_KINDS`], B19).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[ts(optional, as = "Option<u32>")]
+    pub background_workflows: u32,
+    /// The workflows that run, with their running agents (B12, at most
+    /// [`MAX_RUNNING_WORKFLOWS`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<RunningWorkflow>>")]
+    pub running_workflows: Vec<RunningWorkflow>,
+    /// True: the fold did not add a running workflow because
+    /// `running_workflows` was full, and no `background.updated` has proved
+    /// since that every running workflow has an entry (design §4.3). Only
+    /// that proof or the end of the process clears it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub workflows_overflow: bool,
+    /// Running subagent tools + `background_agents` + the running agents of
+    /// `running_workflows` (B19). Derived by the fold after every event.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[ts(optional, as = "Option<u32>")]
+    pub running_agents: u32,
+    /// True: `running_agents` is a lower bound. Derived by the fold after
+    /// every event: `workflows_overflow` or an entry of `running_workflows`
+    /// with `untracked`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub agents_partial: bool,
     /// Tools that started and did not complete yet, oldest first, at most
     /// [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).
     /// Absent in a summary stored before M2 P3-6.
@@ -232,6 +260,11 @@ impl SessionSummary {
             open_requests: Vec::new(),
             background_tasks: Vec::new(),
             background_agents: 0,
+            background_workflows: 0,
+            running_workflows: Vec::new(),
+            workflows_overflow: false,
+            running_agents: 0,
+            agents_partial: false,
             running_tools: Vec::new(),
             usage: Usage::default(),
             rate_limits: Vec::new(),
@@ -350,6 +383,39 @@ pub struct RepoInfo {
 /// Background task kinds that are subagents (D15): Claude reports a
 /// backgrounded `Agent`/`Task` call as `local_agent`.
 pub const SUBAGENT_TASK_KINDS: &[&str] = &["local_agent", "remote_agent"];
+
+/// Background task kinds that are workflows (B19): Claude reports a running
+/// `Workflow` call as `local_workflow`.
+pub const WORKFLOW_TASK_KINDS: &[&str] = &["local_workflow"];
+
+/// Running workflows that the Claude core follows with their agents, per
+/// session.
+pub const MAX_TRACKED_WORKFLOWS: usize = 64;
+
+/// Entries of `running_workflows` (tracked and untracked).
+pub const MAX_RUNNING_WORKFLOWS: usize = 256;
+
+/// A workflow that runs now, as the summary keeps it (B12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct RunningWorkflow {
+    pub task_id: String,
+    pub running_agents: u32,
+    pub agents_total: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub untracked: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
 
 /// A tool call that runs now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

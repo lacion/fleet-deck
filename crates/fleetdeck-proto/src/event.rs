@@ -27,6 +27,9 @@ pub use body::*;
 #[path = "event_types.rs"]
 mod types;
 pub use types::*;
+#[path = "event_workflow.rs"]
+mod workflow;
+pub use workflow::*;
 
 /// A canonical event of a known kind.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -451,6 +454,13 @@ pub enum Event {
     /// `summary.moved_to` when `move_id` matches.
     #[serde(rename = "session.move_undone")]
     SessionMoveUndone { move_id: String },
+    /// A Claude workflow run changed (B12). `phases` and `agents` hold only
+    /// the entries that are new or changed (merge by `index`; an agent entry
+    /// replaces the earlier entry of its index); the other fields are
+    /// absolute. One frame can give several events (§4.1 rule 9). Older
+    /// peers decode this kind as unknown.
+    #[serde(rename = "workflow.updated")]
+    WorkflowUpdated(Box<WorkflowUpdate>),
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

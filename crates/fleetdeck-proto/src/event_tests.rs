@@ -369,6 +369,18 @@ fn samples() -> Vec<Event> {
         Event::SessionMoveUndone {
             move_id: "mv-1".into(),
         },
+        Event::WorkflowUpdated(Box::new(WorkflowUpdate {
+            task_id: "wf-1".into(),
+            node_id: None,
+            name: None,
+            run_id: None,
+            status: "running".into(),
+            untracked: false,
+            phases: Vec::new(),
+            agents: Vec::new(),
+            running_agents: 0,
+            agents_total: 0,
+        })),
     ]
 }
 

@@ -13,11 +13,16 @@
 //!   background work runs, else `idle`.
 //! - An unknown event kind changes only the sequence and the time (L16).
 
-use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
+use std::collections::HashSet;
+
+use crate::event::{
+    BackgroundTask, Event, EventEnvelope, RateLimit, SessionState, ToolKind, Usage, WorkflowUpdate,
+};
 use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
-    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
-    SessionError, SessionRevert, SessionSummary, TerminalHold,
+    Activity, MAX_RUNNING_TOOLS, MAX_RUNNING_WORKFLOWS, OpenRequest, RunningTool, RunningWorkflow,
+    SUBAGENT_TASK_KINDS, SessionBase, SessionError, SessionRevert, SessionSummary, TerminalHold,
+    WORKFLOW_TASK_KINDS,
 };
 
 impl SessionSummary {
@@ -33,6 +38,7 @@ impl SessionSummary {
             self.fold(event, envelope.at);
         }
         self.activity = self.derive_activity();
+        self.derive_agents();
     }
 
     fn fold(&mut self, event: &Event, at: i64) {
@@ -162,7 +168,9 @@ impl SessionSummary {
                     .filter(|t| SUBAGENT_TASK_KINDS.contains(&t.task_kind.as_str()))
                     .count();
                 self.background_agents = u32::try_from(agents).unwrap_or(u32::MAX);
+                self.fold_workflow_list(tasks);
             }
+            Event::WorkflowUpdated(update) => self.fold_workflow(update),
             Event::Error {
                 code,
                 message,
@@ -345,7 +353,82 @@ impl SessionSummary {
         self.current_turn = None;
         self.background_tasks.clear();
         self.background_agents = 0;
+        self.background_workflows = 0;
+        self.running_workflows.clear();
+        self.workflows_overflow = false;
         self.running_tools.clear();
+    }
+
+    /// `workflow.updated` (B12, design §4.3): a `running` status upserts the
+    /// entry of the task; any other status removes it and leaves
+    /// `workflows_overflow` alone (an omitted workflow can still run).
+    fn fold_workflow(&mut self, update: &WorkflowUpdate) {
+        if update.status != "running" {
+            self.running_workflows
+                .retain(|w| w.task_id != update.task_id);
+            return;
+        }
+        let entry = RunningWorkflow {
+            task_id: update.task_id.clone(),
+            running_agents: update.running_agents,
+            agents_total: update.agents_total,
+            untracked: update.untracked,
+        };
+        if let Some(kept) = self
+            .running_workflows
+            .iter_mut()
+            .find(|w| w.task_id == update.task_id)
+        {
+            *kept = entry;
+        } else if self.running_workflows.len() >= MAX_RUNNING_WORKFLOWS {
+            self.workflows_overflow = true;
+        } else {
+            self.running_workflows.push(entry);
+        }
+    }
+
+    /// `background.updated` is the complete task set: count its workflows,
+    /// remove every running workflow that it does not list, and clear
+    /// `workflows_overflow` only when every listed workflow has an entry.
+    fn fold_workflow_list(&mut self, tasks: &[BackgroundTask]) {
+        let listed: HashSet<&str> = tasks.iter().map(|t| t.task_id.as_str()).collect();
+        self.running_workflows
+            .retain(|w| listed.contains(w.task_id.as_str()));
+        let mut count = 0_usize;
+        let mut all_known = true;
+        for task in tasks
+            .iter()
+            .filter(|t| WORKFLOW_TASK_KINDS.contains(&t.task_kind.as_str()))
+        {
+            count += 1;
+            all_known &= self
+                .running_workflows
+                .iter()
+                .any(|w| w.task_id == task.task_id);
+        }
+        self.background_workflows = u32::try_from(count).unwrap_or(u32::MAX);
+        if all_known {
+            self.workflows_overflow = false;
+        }
+    }
+
+    /// `running_agents` and `agents_partial` (B19), derived after every event.
+    fn derive_agents(&mut self) {
+        let tools = self
+            .running_tools
+            .iter()
+            .filter(|t| t.tool_kind == ToolKind::Subagent)
+            .count();
+        let tools = u32::try_from(tools).unwrap_or(u32::MAX);
+        let workflows = self
+            .running_workflows
+            .iter()
+            .fold(0_u32, |sum, w| sum.saturating_add(w.running_agents));
+        self.running_agents = tools
+            .saturating_add(self.background_agents)
+            .saturating_add(workflows);
+        self.agents_partial =
+            self.workflows_overflow || self.running_workflows.iter().any(|w| w.untracked);
     }
 
     fn derive_activity(&self) -> Activity {
@@ -397,3 +480,7 @@ fn merge_rate_limits(kept: &mut Vec<RateLimit>, more: &[RateLimit]) {
 #[cfg(test)]
 #[path = "fold_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fold_tests_workflow.rs"]
+mod tests_workflow;

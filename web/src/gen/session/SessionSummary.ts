@@ -21,6 +21,7 @@ import type { BatchRef } from "./BatchRef";
 import type { OpenRequest } from "./OpenRequest";
 import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
+import type { RunningWorkflow } from "./RunningWorkflow";
 import type { SessionBase } from "./SessionBase";
 import type { SessionError } from "./SessionError";
 import type { SessionRevert } from "./SessionRevert";
@@ -69,6 +70,34 @@ background_tasks: Array<string>,
  * call completed (D15). Absent in a summary stored before M2 P4-3.
  */
 background_agents: number, 
+/**
+ * How many of `background_tasks` are workflows
+ * ([`WORKFLOW_TASK_KINDS`], B19).
+ */
+background_workflows?: number, 
+/**
+ * The workflows that run, with their running agents (B12, at most
+ * [`MAX_RUNNING_WORKFLOWS`]).
+ */
+running_workflows?: Array<RunningWorkflow>, 
+/**
+ * True: the fold did not add a running workflow because
+ * `running_workflows` was full, and no `background.updated` has proved
+ * since that every running workflow has an entry (design §4.3). Only
+ * that proof or the end of the process clears it.
+ */
+workflows_overflow?: boolean, 
+/**
+ * Running subagent tools + `background_agents` + the running agents of
+ * `running_workflows` (B19). Derived by the fold after every event.
+ */
+running_agents?: number, 
+/**
+ * True: `running_agents` is a lower bound. Derived by the fold after
+ * every event: `workflows_overflow` or an entry of `running_workflows`
+ * with `untracked`.
+ */
+agents_partial?: boolean, 
 /**
  * Tools that started and did not complete yet, oldest first, at most
  * [`MAX_RUNNING_TOOLS`]. The deck derives `verifying` from them (§7.2).
