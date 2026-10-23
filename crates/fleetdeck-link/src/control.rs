@@ -653,7 +653,11 @@ where
     };
     loop {
         let msg = stream.next().await;
-        shared.touch();
+        // Only a message from the peer counts as heard; an EOF or a read
+        // error is the end of the link, not a frame (B22).
+        if matches!(msg, Some(Ok(_))) {
+            shared.touch();
+        }
         let text = match msg {
             None | Some(Ok(Message::Close(_))) => {
                 return left(end(reason::EOF, "the peer closed the control channel"));
