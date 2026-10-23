@@ -5,7 +5,7 @@ import type { GrantView } from '../gen';
 import { type SettingsEnv, SettingsProvider } from '../settings/context';
 import { FleetControlFields } from '../spawn/FleetControlFields';
 import { NO_FLEET } from '../spawn/fleetControl';
-import { accessRows, FleetAccess, grantState } from './FleetAccess';
+import { accessRows, FleetAccess, grantRowText, grantState } from './FleetAccess';
 import { card, station } from '../testing/fleet';
 import type { FleetActions, GrantBody } from './fleet';
 import { FleetPanel } from './FleetPanel';
@@ -432,13 +432,33 @@ describe('the fleet access rows', () => {
     );
   });
 
-  test('the rows: active grants first; the state says waiting, active, expired (idle)', () => {
+  test('the rows: active grants first; the state says waiting, active, expired after idle time', () => {
     const waiting: GrantView = { ...grant, grant_id: 'w', generation: null };
     const idle: GrantView = { ...grant, grant_id: 'i', state: 'expired', revoked_reason: 'idle' };
     expect(accessRows([idle, grant, waiting]).map((g) => g.grant_id)).toEqual(['g', 'w', 'i']);
     expect(grantState(waiting)).toBe('waiting for its session');
-    expect(grantState(idle)).toBe('expired (idle)');
+    expect(grantState(idle)).toBe('expired after idle time');
     expect(grantState({ ...idle, revoked_reason: 'ttl' })).toBe('expired');
+  });
+
+  test('the expired grants fold under a collapsed Expired row; the heading counts the others', () => {
+    const idle: GrantView = { ...grant, grant_id: 'i', state: 'expired', revoked_reason: 'idle' };
+    const html = rows([grant, idle]);
+    expect(html).toMatch(
+      /<h2 class="fd-ops-h"><svg[\s\S]*?<\/svg> Fleet access<span class="fd-count">1<\/span><\/h2>/,
+    );
+    expect(html).toContain(
+      '<details class="fd-access-expired"><summary>Expired <span class="fd-count">1</span></summary>',
+    );
+    expect(html).toMatch(/<details class="fd-access-expired">[\s\S]*aria-label="Expired grants"/);
+    expect(html).toContain(
+      '<span class="fd-ops-row-sub" data-state="expired">Coordinator · expired after idle time</span>',
+    );
+    // Only expired grants: no count in the heading, the fold holds them.
+    const only = rows([idle]);
+    expect(only).not.toContain('aria-label="Coordinator grants"');
+    expect(only).toMatch(/<\/svg> Fleet access<\/h2>/);
+    expect(rows([grant])).not.toContain('fd-access-expired');
   });
 
   test('a row opens the session dialog with Change…; no inline Revoke, Renew or form', () => {
@@ -450,10 +470,20 @@ describe('the fleet access rows', () => {
 
   test('a grant of a session that is not on the board has its row and Change… too', () => {
     const html = rows([{ ...grant, session_id: 'gone' }]);
+    // The kind and the station name the row; the line under it says the state once.
     expect(html).toContain(
-      '<span class="fd-ops-row-title" id="fd-grant-g">Coordinator gone</span>',
+      '<span class="fd-ops-row-title" id="fd-grant-g">Coordinator on Alpha</span>',
     );
+    expect(html).toContain('<span class="fd-ops-row-sub" data-state="active">Active</span>');
     expect(html).toContain('aria-describedby="fd-grant-g">Change…</button>');
+    const waiting = rows([{ ...grant, session_id: '', generation: null }]);
+    expect(waiting).toContain('>Coordinator on Alpha</span>');
+    expect(waiting).toContain(
+      '<span class="fd-ops-row-sub" data-state="active">Waiting for its session</span>',
+    );
+    expect(waiting).not.toContain('Coordinator ·');
+    const nowhere = grantRowText({ ...grant, station_id: '', kind: 'worker' }, undefined, []);
+    expect(nowhere).toEqual({ title: 'New worker', sub: 'Active' });
   });
 
   test('no grant and nothing to give: no section', () => {

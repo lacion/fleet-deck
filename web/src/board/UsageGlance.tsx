@@ -40,7 +40,7 @@ export function UsageGlance({
   // Each total has its exact value as its title: the row shows a count short ("1.5M").
   const totals = [
     { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
-    { label: 'output tokens', value: usage.output.known, text: compactCount, exact: tokens },
+    { label: 'output', value: usage.output.known, text: compactCount, exact: tokens },
     {
       label: 'cost',
       value: usage.cost.known,
@@ -82,9 +82,10 @@ export function UsageGlance({
       )}
       {totals.length === 0 ? null : (
         <>
-          {/* The scope of the totals: the shown sessions, since they started. */}
+          {/* The scope of the totals: the sessions on the board (the archived ones only while
+              Filters shows them), each since it started. */}
           <p className="fd-glance-span">
-            {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} · all time
+            {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} on the board
           </p>
           <dl className="fd-glance-totals">
             {totals.map((t) => (
