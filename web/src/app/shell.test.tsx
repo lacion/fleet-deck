@@ -279,8 +279,21 @@ describe('help overlay (DL-141)', () => {
       'New session',
     ]);
     expect(html).toContain('Start an agent on a station');
-    // No parentheses as labels: the Steer now and Start key says where it works in words.
-    expect(html).toContain('Steer now in the message box, or Start a new session');
+    // No parentheses as labels; sentence case: the Steer now and Start key in one short phrase,
+    // and every action is a verb phrase ("Go to the fleet", not "Fleet").
+    expect(html).toContain('Steer now, or start the new session');
+    expect(html).not.toContain('Start a new session');
+    expect(html).toContain('<td>Go to the fleet</td>');
+    expect(html).toContain('<td>Focus the message box or the search</td>');
+  });
+
+  test('a key row: the action at the left, its keys at the right edge', () => {
+    expect(html).toContain('<th scope="col">Action</th><th scope="col">Key</th>');
+    expect(html).toContain('<col/><col class="fd-keys-key"/>');
+    expect(html).toContain('<td>Next session</td><td><kbd class="fd-kbd">j</kbd></td>');
+    expect(html).toContain(
+      '<td>Select the previous or next request</td><td><kbd class="fd-kbd">[</kbd> <kbd class="fd-kbd">]</kbd></td>',
+    );
   });
 
   test('the header stays; the body under it scrolls, with the two key groups', () => {
@@ -321,12 +334,16 @@ describe('the phone top bar (§4.8)', () => {
 });
 
 describe('sidebar stars and archive (DL-141)', () => {
-  const render = () =>
+  const render = (
+    route: Parameters<typeof Sidebar>[0]['route'] = { name: 'home' },
+    variant: 'full' | 'list' = 'full',
+  ) =>
     renderToStaticMarkup(
       <Sidebar
         sessions={[card('s1'), card('e1', 'ended')]}
         stations={[station()]}
-        route={{ name: 'home' }}
+        route={route}
+        variant={variant}
         terminalCount={0}
         onNavigate={() => {}}
         onOpenTerminals={() => {}}
@@ -334,12 +351,24 @@ describe('sidebar stars and archive (DL-141)', () => {
     );
 
   test('New session and the search share one row (§4.2)', () => {
-    const html = render();
+    const html = render({ name: 'stations' });
     const row = html.slice(html.indexOf('class="fd-sidebar-actions"'));
     expect(row.indexOf('fd-newbtn')).toBeGreaterThan(-1);
     expect(row.indexOf('fd-newbtn')).toBeLessThan(row.indexOf('fd-sidebar-search'));
     expect(row).toContain('aria-label="Search sessions"');
     expect(row).toContain('<span class="fd-newbtn-text">New session</span>');
+  });
+
+  test('the fleet home has one search: the desktop sidebar shows none there', () => {
+    for (const route of [{ name: 'home' }, { name: 'fleet' }] as const) {
+      const html = render(route);
+      expect(html).toContain('<span class="fd-newbtn-text">New session</span>');
+      expect(html).not.toContain('fd-sidebar-search');
+      expect(html).not.toContain('Search sessions');
+    }
+    // Every other page keeps it, and so does the phone Sessions list (the phone home).
+    expect(render({ name: 'activity' })).toContain('aria-label="Search sessions"');
+    expect(render({ name: 'home' }, 'list')).toContain('aria-label="Search sessions"');
   });
 
   test('an empty phone list names the New of the bottom bar; the desktop does not', () => {

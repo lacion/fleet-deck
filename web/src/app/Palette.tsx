@@ -3,7 +3,7 @@ import { STATUS_LANES, stationName } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import { archived } from '../ui/archive';
 import { useDismiss } from '../ui/dismiss';
-import { Icon, Plus } from '../ui/icons';
+import { ArrowDown, ArrowUp, Icon, Plus } from '../ui/icons';
 import { isHibernated } from '../views/hibernate';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
@@ -176,13 +176,23 @@ export function Palette({
         {matches.length === 0 && !canStart ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : null}
+        {/* The arrow keys are icons: Mona Sans has no arrow glyph, and the fallback glyph drew
+            about 5px tall and above the center of its chip. Return is a word, as Esc is (the help
+            says Ctrl+Enter too). */}
         <div className="fd-palette-foot" aria-hidden="true">
           <span>
-            <kbd className="fd-kbd">↑</kbd>
-            <kbd className="fd-kbd">↓</kbd> Move
+            <kbd className="fd-kbd fd-kbd-icon">
+              <Icon of={ArrowUp} size={12} />
+              <span className="fd-vh">Up</span>
+            </kbd>
+            <kbd className="fd-kbd fd-kbd-icon">
+              <Icon of={ArrowDown} size={12} />
+              <span className="fd-vh">Down</span>
+            </kbd>{' '}
+            Move
           </span>
           <span>
-            <kbd className="fd-kbd">↵</kbd> Open
+            <kbd className="fd-kbd">Enter</kbd> Open
           </span>
           <span>
             <kbd className="fd-kbd">Esc</kbd> Close

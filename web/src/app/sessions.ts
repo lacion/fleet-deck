@@ -1,4 +1,4 @@
-import { stationName } from '../board/fleet';
+import { cardKey, stationName } from '../board/fleet';
 import type { CardStatus, DeckSession, Project, StationView } from '../gen';
 import { projectGroups } from '../integrations/projectGroups';
 import { sessionRef } from '../ui/localSet';
@@ -43,6 +43,38 @@ export function basename(path: string): string {
 }
 
 const byNewest = (a: DeckSession, b: DeckSession) => b.summary.updated_at - a.summary.updated_at;
+
+/**
+ * The order in which the board first saw each session in its status: a row keeps its place while
+ * its status stays, and a session that enters a status goes after the ones that were in it. The
+ * rows no longer change places on every event of a session (the row under the pointer moved while
+ * the owner went to click it). The sessions of one snapshot that are new in their status are
+ * numbered the last activity first, so a fresh board opens with the newest rows on top. One record
+ * for the whole board: the sidebar rows and the j/k keys follow one order.
+ */
+const statusSeen = new Map<string, { readonly status: CardStatus; readonly seq: number }>();
+let nextSeq = 0;
+
+/** Numbers the sessions that are new in their status, after the ones that the board knows. */
+export function noteStatusOrder(cards: readonly DeckSession[]): void {
+  const fresh = cards
+    .filter((c) => statusSeen.get(cardKey(c))?.status !== c.status)
+    .sort((a, b) => byNewest(a, b) || cardKey(a).localeCompare(cardKey(b)));
+  for (const c of fresh) statusSeen.set(cardKey(c), { status: c.status, seq: nextSeq++ });
+}
+
+const seqOf = (card: DeckSession): number =>
+  statusSeen.get(cardKey(card))?.seq ?? Number.MAX_SAFE_INTEGER;
+
+/** The status order of two sessions that `noteStatusOrder` numbered: the first seen first. */
+export const byStatusOrder = (a: DeckSession, b: DeckSession): number =>
+  seqOf(a) - seqOf(b) || cardKey(a).localeCompare(cardKey(b));
+
+/** Forgets the status order (tests: every test starts as a fresh board). */
+export function resetStatusOrder(): void {
+  statusSeen.clear();
+  nextSeq = 0;
+}
 
 /** When a session started to wait: its oldest open request, else its last update. */
 const waitingSince = (card: DeckSession): number =>
@@ -106,7 +138,9 @@ export function stationOrder(ids: readonly string[], stations: readonly StationV
 
 /**
  * The sidebar groups: needs you, then one group per station in the lane order of the board
- * (`stationOrder`). Starred rows first.
+ * (`stationOrder`). Starred rows first; the live rows then by status, and in a status in the
+ * order that the board first saw them there (`byStatusOrder`: they keep their places on an
+ * event); the ended rows the newest first (they do not change while the owner looks).
  * With `projects` (DL-176) the groups are the projects that hold a shown session, by name, and "No
  * project" last; their `reachable` is always true.
  */
@@ -117,6 +151,8 @@ export function sidebarModel(
   sets: SidebarSets = NO_SETS,
   projects?: readonly Project[],
 ): SidebarModel {
+  // Every session, also one that the query hides: it keeps its place when the query clears.
+  noteStatusOrder(sessions);
   const matching = sessions.filter((c) => matchesQuery(c, query));
   const shown = matching.filter((c) => !isHidden(c, sets.archived));
   const starFirst = (a: DeckSession, b: DeckSession) =>
@@ -131,7 +167,9 @@ export function sidebarModel(
     name,
     reachable,
     count: own.length,
-    live: own.filter(isLive).sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b)),
+    live: own
+      .filter(isLive)
+      .sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byStatusOrder(a, b)),
     ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
   });
   // The sidebar lists a needs-you session once, in "Needs you": a group shows only its other rows.

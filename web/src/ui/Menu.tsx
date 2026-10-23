@@ -1,4 +1,12 @@
-import { type KeyboardEvent, type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useDismiss } from './dismiss';
 
 /**
@@ -8,6 +16,42 @@ import { useDismiss } from './dismiss';
 function markEdges(el: HTMLElement) {
   el.toggleAttribute('data-scrolled', el.scrollTop > 0);
   el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
+
+/**
+ * The edge marks of `markEdges` on a scroll body that is not a menu (the desktop sidebar list): set
+ * at once, after each scroll, and when the body or a child of it changes size (a fold opens, rows
+ * come or go, the window resizes). A child that comes later is watched too.
+ */
+export function useScrollEdges(ref: RefObject<HTMLElement | null>, on = true): void {
+  useEffect(() => {
+    const el = ref.current;
+    if (!on || el === null) return undefined;
+    const mark = () => markEdges(el);
+    mark();
+    el.addEventListener('scroll', mark, { passive: true });
+    const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(mark);
+    const watch = () => {
+      if (sizes === null) return;
+      sizes.disconnect();
+      sizes.observe(el);
+      for (const child of Array.from(el.children)) sizes.observe(child);
+    };
+    watch();
+    const children =
+      typeof MutationObserver === 'undefined'
+        ? null
+        : new MutationObserver(() => {
+            watch();
+            mark();
+          });
+    children?.observe(el, { childList: true });
+    return () => {
+      el.removeEventListener('scroll', mark);
+      sizes?.disconnect();
+      children?.disconnect();
+    };
+  }, [ref, on]);
 }
 
 /**

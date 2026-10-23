@@ -22,17 +22,14 @@ export function shortcuts(apple: boolean = applePlatform()): readonly Row[] {
   return [
     { keys: 'j', does: 'Next session' },
     { keys: 'k', does: 'Previous session' },
-    { keys: '/', does: 'Focus the message box or search' },
+    { keys: '/', does: 'Focus the message box or the search' },
     { keys: 'n', does: 'New session' },
-    { keys: 'f', does: 'Fleet' },
+    { keys: 'f', does: 'Go to the fleet' },
     { keys: 'c', does: 'Open the mail form' },
     { keys: 't', does: 'Show or hide terminals' },
     { keys: '?', does: 'Show this help' },
     { keys: `${mod}K`, does: 'Go to session' },
-    {
-      keys: apple ? '⌘↵' : 'Ctrl+Enter',
-      does: 'Steer now in the message box, or Start a new session',
-    },
+    { keys: apple ? '⌘↵' : 'Ctrl+Enter', does: 'Steer now, or start the new session' },
   ];
 }
 
@@ -102,27 +99,31 @@ function Keys({ keys }: { readonly keys: string }) {
   ));
 }
 
+/**
+ * A key table: the action at the left, its keys at the right edge (the pattern of Linear and
+ * Raycast), so that a one-letter key does not sit across a gap from its action.
+ */
 function KeyTable({ rows, label }: { readonly rows: readonly Row[]; readonly label: string }) {
   return (
     <table className="fd-keys" aria-label={label}>
       {/* The key column has one width in every key table (the fixed layout takes it from here). */}
       <colgroup>
-        <col className="fd-keys-key" />
         <col />
+        <col className="fd-keys-key" />
       </colgroup>
       <thead>
         <tr>
-          <th scope="col">Key</th>
           <th scope="col">Action</th>
+          <th scope="col">Key</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row) => (
           <tr key={row.keys}>
+            <td>{row.does}</td>
             <td>
               <Keys keys={row.keys} />
             </td>
-            <td>{row.does}</td>
           </tr>
         ))}
       </tbody>
@@ -204,9 +205,11 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
             <Icon of={X} />
           </button>
         </div>
-        {/* The body scrolls under the fixed header; its bottom fades while more is below. */}
+        {/* The body scrolls under the fixed header; its bottom fades while more is below. A wide
+            window shows two columns (shell.css): the general keys over the concepts at the left,
+            the fleet-home keys over the pages at the right. */}
         <div ref={body} className="fd-help-body" data-more={more ? 'true' : undefined}>
-          <section aria-label="Keys">
+          <section aria-label="Keys" data-part="keys">
             <h3 className="fd-help-section">Keys</h3>
             <div className="fd-help-keys">
               <div className="fd-help-keygroup">
@@ -219,11 +222,11 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
               </div>
             </div>
           </section>
-          <section aria-label="Concepts">
+          <section aria-label="Concepts" data-part="concepts">
             <h3 className="fd-help-section">Concepts</h3>
             <Terms items={CONCEPTS} />
           </section>
-          <section aria-label="Pages">
+          <section aria-label="Pages" data-part="pages">
             <h3 className="fd-help-section">Pages</h3>
             <Terms items={PAGES} />
           </section>

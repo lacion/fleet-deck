@@ -291,8 +291,18 @@ export function PhoneBar({
     route.name !== 'more' && MORE_TAB.includes(route.name)
       ? (PARENT[route.name] ?? BACK_TO_MORE)
       : undefined;
+  // The bar sticks to the top (shell.css); while the page is scrolled it shows a rule under it.
+  const bar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = bar.current;
+    if (el === null) return undefined;
+    const mark = () => el.toggleAttribute('data-scrolled', window.scrollY > 0);
+    mark();
+    window.addEventListener('scroll', mark, { passive: true });
+    return () => window.removeEventListener('scroll', mark);
+  }, []);
   return (
-    <header className="fd-phonebar">
+    <header ref={bar} className="fd-phonebar">
       {back !== undefined ? (
         <a href={back.href} className="fd-iconbtn fd-phonebar-back" aria-label={back.label}>
           <Icon of={ChevronLeft} />
