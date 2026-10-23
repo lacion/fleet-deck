@@ -199,6 +199,13 @@ pub enum SessionCommand {
         session_id: SessionId,
         model: String,
     },
+    /// Choose the reasoning effort of a live session (B18 Phase 2, design
+    /// `docs/v2/design/effort.md` §9.1). `effort` is checked with
+    /// `valid_effort` by the station.
+    SetEffort {
+        session_id: SessionId,
+        effort: String,
+    },
     Fork {
         session_id: SessionId,
     },
@@ -424,6 +431,7 @@ impl SessionCommand {
             Self::Answer { .. } => "approval.answer",
             Self::SetMode { .. } => "session.set_mode",
             Self::SetModel { .. } => "session.set_model",
+            Self::SetEffort { .. } => "session.set_effort",
             Self::Fork { .. } => "session.fork",
             Self::Stop { .. } => "session.stop",
             Self::Revert { .. } => "session.revert",
@@ -475,6 +483,7 @@ impl SessionCommand {
             | Self::Answer { session_id, .. }
             | Self::SetMode { session_id, .. }
             | Self::SetModel { session_id, .. }
+            | Self::SetEffort { session_id, .. }
             | Self::Fork { session_id }
             | Self::Stop { session_id, .. }
             | Self::Revert { session_id, .. }

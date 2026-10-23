@@ -498,6 +498,7 @@ pub const API_REST: &[ApiMethod] = &[
     cmd("session.interrupt", Scope::Drive).member(),
     cmd("session.set_mode", Scope::Drive),
     cmd("session.set_model", Scope::Drive),
+    cmd("session.set_effort", Scope::Drive),
     cmd("session.fork", Scope::Drive),
     cmd("session.stop", Scope::Drive),
     cmd("session.revert", Scope::Drive),

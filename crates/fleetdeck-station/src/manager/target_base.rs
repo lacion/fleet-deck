@@ -290,6 +290,14 @@ impl SessionTarget {
                 session.set_mode(PermissionMode(mode.clone())).await
             }
             EffectPayload::SetModel { model } => session.set_model(ModelId(model.clone())).await,
+            EffectPayload::SetEffort { effort } => {
+                session
+                    .set_effort(
+                        effort.clone(),
+                        Some(ControlId(effect.effect_id.as_str().to_owned())),
+                    )
+                    .await
+            }
             EffectPayload::Revert { revert_id, .. } => {
                 let env = crate::manager::revert_run::RevertEnv {
                     store: &self.store,

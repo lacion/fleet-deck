@@ -80,6 +80,7 @@ pub(crate) fn sample(method: &str) -> Value {
                     "decision": {"option_id": "allow", "updated_input": null, "text": null}}),
                 "set_mode" => json!({"op": op, "session_id": s, "mode": "plan"}),
                 "set_model" => json!({"op": op, "session_id": s, "model": "haiku"}),
+                "set_effort" => json!({"op": op, "session_id": s, "effort": "high"}),
                 "stop" => json!({"op": op, "session_id": s, "how": "graceful"}),
                 "revert" => json!({"op": op, "session_id": s, "turn_id": "turn-1"}),
                 "rename" => json!({"op": op, "session_id": s, "title": "docs"}),

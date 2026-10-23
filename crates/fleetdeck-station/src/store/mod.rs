@@ -33,6 +33,7 @@ pub mod capture_ops;
 pub mod coordinator_outbox;
 pub mod desktop_ops;
 pub mod effects;
+mod effects_observe;
 pub mod execution_stops;
 pub mod git_cleanup;
 pub mod git_state;

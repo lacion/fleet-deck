@@ -21,6 +21,8 @@ use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
 use workspace::fleet_git::move_in_decide::decide_in;
 
+#[path = "decide_effort.rs"]
+mod effort;
 #[path = "decide_workspace.rs"]
 mod workspace;
 
@@ -299,6 +301,7 @@ pub fn decide(
             live_session(d, &session_id, Operation::SetModel)?;
             plain_effect(d, &session_id, EffectPayload::SetModel { model })
         }
+        SessionCommand::SetEffort { session_id, effort } => effort::set(d, &session_id, effort),
         SessionCommand::Revert {
             session_id,
             turn_id,
@@ -434,6 +437,7 @@ fn start(
             ),
         )
     })?;
+    effort::check(spec.effort.as_deref())?;
     if facts.origin_text {
         spec.mode = Some(restrict_mode(provider, spec.mode.as_deref())?);
     }
@@ -605,6 +609,7 @@ fn start(
             fleetdeck_proto::event::Event::SessionIssue { issue }.into(),
         )?;
     }
+    effort::record(d, &session_id, spec.effort.as_deref())?;
     let prompt = prompt.map(|input| InputRecord {
         input_id: d.new_id(),
         origin,

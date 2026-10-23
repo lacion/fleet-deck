@@ -99,6 +99,7 @@ fn commands() -> Vec<SessionCommand> {
             "decision": {"option_id": "allow", "updated_input": null, "text": null}}),
         json!({"op": "set_mode", "session_id": s, "mode": "plan"}),
         json!({"op": "set_model", "session_id": s, "model": "haiku"}),
+        json!({"op": "set_effort", "session_id": s, "effort": "high"}),
         json!({"op": "fork", "session_id": s}),
         json!({"op": "stop", "session_id": s, "how": "graceful"}),
         json!({"op": "revert", "session_id": s, "turn_id": "turn-1"}),
@@ -147,6 +148,7 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::Answer { .. }
             | SessionCommand::SetMode { .. }
             | SessionCommand::SetModel { .. }
+            | SessionCommand::SetEffort { .. }
             | SessionCommand::Fork { .. }
             | SessionCommand::Stop { .. }
             | SessionCommand::Revert { .. }
@@ -178,7 +180,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 29);
+    assert_eq!(commands.len(), 30);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());

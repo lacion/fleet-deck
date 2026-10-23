@@ -110,6 +110,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   answer: 'approval.answer',
   set_mode: 'session.set_mode',
   set_model: 'session.set_model',
+  set_effort: 'session.set_effort',
   fork: 'session.fork',
   stop: 'session.stop',
   revert: 'session.revert',

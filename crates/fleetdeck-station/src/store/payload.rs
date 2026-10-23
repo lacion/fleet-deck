@@ -174,6 +174,11 @@ pub enum EffectPayload {
     SetModel {
         model: String,
     },
+    /// The owner's reasoning effort for a live session (B18 Phase 2). The
+    /// provider settles it with `effort.set_result` and the effect id.
+    SetEffort {
+        effort: String,
+    },
     Stop {
         how: StopMode,
         /// The authority of a fleet-control command (ADR-008 section 6.1). An
@@ -268,6 +273,7 @@ impl EffectPayload {
             Self::Answer { .. } => "answer",
             Self::SetMode { .. } => "set_mode",
             Self::SetModel { .. } => "set_model",
+            Self::SetEffort { .. } => "set_effort",
             Self::Stop { .. } => "stop",
             Self::Revert { .. } => "revert",
             Self::Worktree { .. } => "worktree",
@@ -337,6 +343,7 @@ impl EffectPayload {
             | Self::Land { authority, .. }
             | Self::MoveIn { authority, .. } => authority.as_ref(),
             Self::SetModel { .. }
+            | Self::SetEffort { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
             | Self::ShellCommand { .. }
@@ -361,6 +368,7 @@ impl EffectPayload {
             | Self::Land { authority, .. }
             | Self::MoveIn { authority, .. } => *authority = value,
             Self::SetModel { .. }
+            | Self::SetEffort { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
             | Self::ShellCommand { .. }
@@ -390,6 +398,7 @@ impl EffectPayload {
             Self::Answer { request_id, .. } => Some(request_id.0.clone()),
             Self::SetMode { mode, .. } => Some(mode.clone()),
             Self::SetModel { model } => Some(model.clone()),
+            Self::SetEffort { effort } => Some(effort.clone()),
             _ => None,
         }
     }

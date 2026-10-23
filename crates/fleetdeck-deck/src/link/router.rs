@@ -471,6 +471,33 @@ impl DeckLink {
                 }
             }
         }
+        // An effort command goes only to a link that negotiated
+        // `session_effort.v1`, at every send and resend, so a reconnect to
+        // an older station never sends a spec without its effort (B18 Phase 2
+        // §9.2 item 1). A link that is down waits.
+        if effort_command(&cmd.envelope) {
+            match self
+                .store
+                .link_feature(&cmd.station_id, feature::SESSION_EFFORT)
+            {
+                LinkFeature::Negotiated => {}
+                LinkFeature::Down => return,
+                LinkFeature::Without => {
+                    let refused = Settle::Refused {
+                        code: EFFORT_UNSUPPORTED.to_owned(),
+                        message: EFFORT_UNSUPPORTED_TEXT.to_owned(),
+                    };
+                    if let Err(e) = self
+                        .store
+                        .settle_command(cmd.command_id.clone(), refused)
+                        .await
+                    {
+                        tracing::warn!(error = %e, "command settle");
+                    }
+                    return;
+                }
+            }
+        }
         // A start with a worker grant goes only to a link that negotiated
         // `worker_grant.v1`, so no older station decodes `kind`. Otherwise it
         // waits for a compatible link or its expiry (MCP P4a §6.3).
@@ -606,6 +633,37 @@ fn pinned_import(envelope: &serde_json::Value) -> bool {
         )
     })
 }
+
+/// The refusal code of an effort command for a station without
+/// `session_effort.v1` (B18 Phase 2).
+pub(crate) const EFFORT_UNSUPPORTED: &str = "effort_unsupported";
+/// The text of that refusal.
+pub(crate) const EFFORT_UNSUPPORTED_TEXT: &str = "This station cannot set the effort. Update it.";
+
+/// True for a command that needs `session_effort.v1`: a `session.start` or
+/// `session.import` whose `spec.effort` is set, or a `session.set_effort`
+/// (B18 Phase 2, design §9.2 item 1).
+#[must_use]
+pub(crate) fn is_effort_command(command: &SessionCommand) -> bool {
+    match command {
+        SessionCommand::Start { spec, .. } | SessionCommand::Import { spec, .. } => {
+            spec.effort.is_some()
+        }
+        SessionCommand::SetEffort { .. } => true,
+        _ => false,
+    }
+}
+
+/// [`is_effort_command`] for a stored envelope.
+#[must_use]
+pub(crate) fn effort_command(envelope: &serde_json::Value) -> bool {
+    serde_json::from_value::<CommandEnvelope>(envelope.clone())
+        .is_ok_and(|env| is_effort_command(&env.command))
+}
+
+#[cfg(test)]
+#[path = "router_effort_tests.rs"]
+mod router_effort_tests;
 
 #[cfg(test)]
 mod tests {

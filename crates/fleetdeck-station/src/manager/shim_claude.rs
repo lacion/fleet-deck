@@ -82,6 +82,9 @@ impl DurableCore for ClaudeCore {
             }),
             EffectPayload::SetMode { mode, .. } => self.set_mode(mode),
             EffectPayload::SetModel { model } => self.set_model(model),
+            EffectPayload::SetEffort { effort } => {
+                self.set_effort(effort, Some(effect.effect_id.as_str().to_owned()))
+            }
             // The first input of a launch (the start or resume effect is
             // claimed while it is written, DL-113, DL-182).
             EffectPayload::Start {

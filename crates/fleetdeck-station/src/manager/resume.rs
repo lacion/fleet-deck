@@ -244,8 +244,9 @@ pub fn admit_resume(
             ),
         ));
     }
+    // The owner's choice, never the observed value (design §9.2 item 5).
     let spec = SessionSpec {
-        effort: None,
+        effort: r.summary.effort_choice.clone(),
         provider_instance: r.instance,
         cwd: r.cwd,
         mode: r.summary.mode.clone(),

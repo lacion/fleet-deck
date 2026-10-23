@@ -22,7 +22,8 @@ pub const CONTINUATION_TEXT: &str =
 
 /// Effect kinds that are owner work (rule 5). Answers, interrupts and stops
 /// are not.
-const OWNER_WORK: &str = "('prompt', 'steer', 'follow_up', 'set_mode', 'set_model', 'revert')";
+const OWNER_WORK: &str =
+    "('prompt', 'steer', 'follow_up', 'set_mode', 'set_model', 'set_effort', 'revert')";
 /// Effect kinds that carry provider input (rule 11).
 const INPUTS: &str = "('prompt', 'steer', 'follow_up', 'answer')";
 

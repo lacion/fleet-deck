@@ -283,6 +283,20 @@ fn a_land_command_has_the_op_land_and_the_session_land_method() {
 }
 
 #[test]
+fn a_set_effort_command_has_the_op_set_effort_and_the_session_set_effort_method() {
+    let value = serde_json::json!({"op": "set_effort", "session_id": "s1", "effort": "high"});
+    let cmd: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+    assert!(matches!(
+        &cmd,
+        SessionCommand::SetEffort { effort, .. } if effort == "high"
+    ));
+    assert_eq!(cmd.method(), "session.set_effort");
+    assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
+    assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
+    assert!(crate::mutation::SESSION_METHODS.contains(&"session.set_effort"));
+}
+
+#[test]
 fn a_coordinator_set_command_round_trips_with_and_without_a_spec() {
     let spec = serde_json::json!({
         "grant_id": "g-1", "classes": ["observe"], "idle_ttl_ms": 60_000,

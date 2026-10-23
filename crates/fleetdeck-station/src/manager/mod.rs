@@ -793,5 +793,7 @@ mod shell_run_tests;
 mod session_holds_wired_tests;
 
 #[cfg(test)]
+mod effort_tests;
+#[cfg(test)]
 #[path = "worker_grant_tests.rs"]
 mod worker_grant_tests;

@@ -114,7 +114,8 @@ pub use fleetdeck_proto::board::StationView;
 pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
     let info = store.station_info(&st.station_id);
     StationView {
-        session_effort: false,
+        session_effort: store.link_feature(&st.station_id, feature::SESSION_EFFORT)
+            == LinkFeature::Negotiated,
         station_id: st.station_id.clone(),
         name: st.name.clone(),
         key: st.key.fingerprint().short(),
