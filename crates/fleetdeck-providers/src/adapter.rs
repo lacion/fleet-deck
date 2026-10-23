@@ -7,6 +7,7 @@
 //! answered, for `approval.resolved.by`).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
@@ -14,6 +15,7 @@ use fleetdeck_proto::event::{ExpiredReason, ProviderKind, RawRef, ResolvedBy, Ru
 use fleetdeck_proto::{Capabilities, Event, InputId, Operation, RequestId, Unsupported};
 use tokio::sync::mpsc;
 
+use crate::apps::{AppBridge, AppCandidate};
 use crate::host::HostError;
 
 /// The native session (Claude) or thread (Codex) id. It goes into
@@ -242,6 +244,12 @@ pub trait ProviderAdapter: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     /// Version and sign-in state only. A probe never opens a provider session.
     async fn probe(&self) -> Result<ProviderProbe>;
+    /// Whether a session that this adapter starts offers the MCP Apps
+    /// extension to its MCP servers (B15). The station asks before a durable
+    /// launch; an adapter that is not verified for its CLI version says no.
+    async fn offers_mcp_apps(&self) -> bool {
+        false
+    }
     async fn start(&self, spec: SessionSpec, sink: EventSink) -> Result<Box<dyn LiveSession>>;
     /// [`Self::start`] with the coordinator credential handoff (ADR-006
     /// §5.4, DL-216). An adapter without a handoff refuses: the start
@@ -329,6 +337,14 @@ pub trait LiveSession: Send {
     fn capabilities(&self) -> &Capabilities;
     /// The pid of the provider process, when this session has one (R13 §10).
     fn pid(&self) -> Option<u32> {
+        None
+    }
+    /// The app operations of this session (B15); `None` when the provider has none.
+    fn app_bridge(&self) -> Option<Arc<dyn AppBridge>> {
+        None
+    }
+    /// The candidates of completed MCP tool calls; the station takes it once after the start.
+    fn take_app_candidates(&mut self) -> Option<mpsc::Receiver<AppCandidate>> {
         None
     }
     async fn prompt(&mut self, input: HostInput) -> Result<()>;

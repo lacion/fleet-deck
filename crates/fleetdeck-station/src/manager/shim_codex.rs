@@ -29,6 +29,8 @@ pub(super) fn split(out: Vec<Output>) -> Steps {
                 native_id,
                 after: steps.events.len(),
             }),
+            // B15: the capture path of a shim session comes with mcp-apps T5a.
+            Output::AppCandidate(_) => {}
         }
     }
     steps

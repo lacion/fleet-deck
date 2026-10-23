@@ -19,6 +19,9 @@ mod agents;
 #[path = "map_tools.rs"]
 mod map_tools;
 use map_tools::{tool_kind, tool_title};
+// The app candidate and the app requests (B15).
+#[path = "apps.rs"]
+pub(super) mod apps;
 
 /// Pages of `model/list` that follow the first one (DL-151).
 const MODEL_LIST_MORE_PAGES: u8 = 4;
@@ -593,12 +596,17 @@ impl CodexCore {
             .and_then(Value::as_i64)
             .and_then(|c| i32::try_from(c).ok());
         out.push(Output::Emit(Event::ToolCompleted {
-            node_id,
+            node_id: node_id.clone(),
             status,
             files,
             exit_code,
             provider_refs: ProviderRefs::new(),
         }));
+        // B15: the candidate of an MCP app comes after the close of its call.
+        if item_type == "mcpToolCall" && self.own_thread(p) {
+            let candidate = apps::candidate(item, &node_id);
+            out.extend(candidate.map(Output::AppCandidate));
+        }
         out
     }
 

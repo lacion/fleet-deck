@@ -172,7 +172,7 @@ pub(crate) fn replay_codex(scenario: &str) -> Replay {
             match o {
                 codex::Output::Emit(e) => processes.last_mut().unwrap().push(e),
                 codex::Output::Write(w) => writes.push(w),
-                codex::Output::NativeIdentity { .. } => {}
+                codex::Output::NativeIdentity { .. } | codex::Output::AppCandidate(_) => {}
             }
         }
     }
