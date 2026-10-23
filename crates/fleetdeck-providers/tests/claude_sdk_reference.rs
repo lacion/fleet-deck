@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use fleetdeck_proto::Event;
 use fleetdeck_providers::claude::frames::parse_value;
-use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, HostCmd, Output, capabilities};
+use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, HostCmd, Output, capabilities, effort};
 use serde_json::{Map, Value, json};
 
 fn sdk_fixtures() -> Vec<PathBuf> {
@@ -94,6 +94,8 @@ fn replay(path: &Path) -> Report {
                         Output::Emit(e) => report.events.push(e),
                         // The SDK never asked `get_usage` (R4.5): only the core does.
                         Output::Write(v) if v["request"]["subtype"] == "get_usage" => {}
+                        // Nor `get_settings` (B18).
+                        Output::Write(v) if v["request"]["subtype"] == "get_settings" => {}
                         Output::Write(v) => p.spontaneous.push_back(v),
                         Output::NativeIdentity { .. } => {}
                     }
@@ -135,7 +137,8 @@ fn readdress(p: &Process, frame: &Value) -> Option<Value> {
     let sdk_id = frame
         .pointer("/response/request_id")
         .and_then(Value::as_str)?;
-    if p.skipped.contains(sdk_id) {
+    // The SDK sent no `fd-settings-N` request (B18): nothing to re-address.
+    if p.skipped.contains(sdk_id) || sdk_id.starts_with(effort::SETTINGS_ID_PREFIX) {
         return None;
     }
     let mut out = frame.clone();

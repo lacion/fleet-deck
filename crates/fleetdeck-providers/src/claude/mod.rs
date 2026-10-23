@@ -11,6 +11,7 @@ pub const KNOWN_BROKEN: &[&str] = &[];
 pub mod args;
 pub mod control;
 pub mod driver;
+pub mod effort;
 pub mod frames;
 mod host_cmd;
 mod map;
@@ -33,6 +34,8 @@ pub use requests::request_kind;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_effort;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]

@@ -114,6 +114,13 @@ pub fn get_usage(request_id: &str) -> Value {
     control_request(request_id, "get_usage", json!({"skip_behaviors": true}))
 }
 
+/// `get_settings`: the settings that apply to the session. The host reads
+/// only `applied.effort` of the answer (B18).
+#[must_use]
+pub fn get_settings(request_id: &str) -> Value {
+    control_request(request_id, "get_settings", json!({}))
+}
+
 /// The host's decision for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionDecision {

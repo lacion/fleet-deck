@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, watch};
 
 use super::Shared;
 use crate::adapter::ProviderError;
+use crate::claude::effort;
 use crate::claude::frames::{CliFrame, parse_value};
 use crate::host::ProcessControl;
 use crate::rawlog::RawDir;
@@ -135,7 +136,7 @@ async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<W
     let (frame, raw_ref) = match serde_json::from_str::<Value>(line) {
         Ok(v) => {
             let raw_ref = (!is_token_delta(&v))
-                .then(|| shared.log(RawDir::Out, &v))
+                .then(|| shared.log(RawDir::Out, &effort::raw_view(&v)))
                 .flatten();
             let frame = parse_value(v).unwrap_or(CliFrame::Unknown(Value::Null));
             (frame, raw_ref)

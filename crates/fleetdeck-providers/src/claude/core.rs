@@ -220,6 +220,27 @@ pub struct ClaudeCore {
     /// growth since the last one (the fold sums the parts).
     #[serde(default)]
     pub(super) last_total_cost: Option<f64>,
+    /// Counter of the `fd-settings-N` request ids (B18).
+    #[serde(default)]
+    pub(super) settings_seq: u64,
+    /// The `N` of the open `get_settings` request. It is not in
+    /// `host_requests`, so an older build restores this checkpoint
+    /// (docs/v2/design/effort.md §4.3.1).
+    #[serde(default)]
+    pub(super) settings_open: Option<u64>,
+    /// When the open request was written. Not in the checkpoint: a restored
+    /// open request counts as stale.
+    #[serde(skip)]
+    pub(super) settings_asked: Option<std::time::Instant>,
+    /// A `get_settings` is due when the open one is answered.
+    #[serde(default)]
+    pub(super) settings_again: bool,
+    /// The CLI refused `get_settings` or answered in another shape.
+    #[serde(default)]
+    pub(super) settings_stopped: bool,
+    /// The last effort that this core emitted (a valid id, B18).
+    #[serde(default)]
+    pub(super) effort: Option<String>,
 }
 
 impl ClaudeCore {
@@ -254,6 +275,12 @@ impl ClaudeCore {
             usage_stopped: false,
             usage_seq: 0,
             last_total_cost: None,
+            settings_seq: 0,
+            settings_open: None,
+            settings_asked: None,
+            settings_again: false,
+            settings_stopped: false,
+            effort: None,
         }
     }
 

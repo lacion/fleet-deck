@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
-use super::{requests, usage};
+use super::{effort, requests, usage};
 
 // The `task_*` frames and the tools under a running task (B6).
 #[path = "tasks.rs"]
@@ -151,6 +151,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 out.push(Output::Emit(Event::SlashCommands { commands, skills }));
             }
             out.extend(core.usage_request());
+            out.extend(core.settings_request());
             out
         }
         "background_tasks_changed" => {
@@ -577,6 +578,7 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     }));
     out.extend(core.end_turn(status, Some(usage)));
     out.extend(core.usage_request());
+    out.extend(core.settings_request());
     out
 }
 
@@ -681,6 +683,9 @@ fn advertised_models(response: &Value) -> Vec<String> {
 }
 
 fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Output> {
+    if resp.request_id.starts_with(effort::SETTINGS_ID_PREFIX) {
+        return effort::on_response(core, resp);
+    }
     // The CLI also echoes responses to its own requests: ignore unknown ids.
     let Some(kind) = core.host_requests.remove(&resp.request_id) else {
         return Vec::new();
@@ -735,7 +740,10 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
         HostRequest::SetModel(model) => {
             let model = model.unwrap_or_else(|| "default".to_owned());
             core.model = Some(model.clone());
-            vec![Output::Emit(Event::ModelChanged { model })]
+            // A model change can change or clamp the effort (B18).
+            let mut out = vec![Output::Emit(Event::ModelChanged { model })];
+            out.extend(core.settings_request());
+            out
         }
         // Answered above.
         HostRequest::Interrupt(_) | HostRequest::Usage => Vec::new(),
