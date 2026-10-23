@@ -8,26 +8,36 @@
 //!   `session.branches` and returns `RepoBranches`.
 //! - `GET /api/sessions/{station}/{session}/branches/{head}/diff` forwards
 //!   `files.branch_diff` and returns a `SessionDiff`.
+//! - `GET /api/sessions/{station}/{session}/workflows?after_order=&after_index=`
+//!   forwards `session.workflows` and returns a `WorkflowsPage` (B12, design
+//!   `docs/v2/design/workflow-agents.md` 4.5).
+//! - `GET /api/sessions/{station}/{session}/workflow-agents/{agent_id}`
+//!   forwards `session.workflow_agent` and returns a `SubagentLog`.
 //!
 //! Only the owner's board login reads them: a member and a bearer token get
-//! 403 `owner_only`. The deck stores and caches nothing. The text of the
-//! station never goes to the answer.
+//! 403 `owner_only`. The exception is the workflow page: the owner and the
+//! members of the session read it (it holds what the events of the session
+//! hold). The deck stores and caches nothing. The text of the station never
+//! goes to the answer.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::branches::{
     BranchDiffQuery, BranchesQuery, RepoBranches, code as branch_code,
 };
+use fleetdeck_proto::event::{WorkflowsCursor, WorkflowsPage, WorkflowsQuery};
 use fleetdeck_proto::files::SessionDiff;
 use fleetdeck_proto::history::code;
 use fleetdeck_proto::link::Outcome;
-use fleetdeck_proto::subagent::{SubagentLog, SubagentQuery};
+use fleetdeck_proto::subagent::{SubagentLog, SubagentQuery, WorkflowAgentQuery};
 use fleetdeck_proto::version::feature;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use super::Board;
@@ -43,7 +53,7 @@ const MAX_SESSION_CHARS: usize = 128;
 /// The text of a station that does not offer the feature.
 const OLDER_STATION: &str = "This station runs an older Fleet Deck. On that computer, install the new version, then run `fleetdeck service start`.";
 
-/// What differs between the three routes.
+/// What differs between the routes.
 struct Route {
     /// The audit action.
     action: &'static str,
@@ -86,6 +96,32 @@ const BRANCH_DIFF: Route = Route {
     failed: "the station could not read the branch diff",
 };
 
+const WORKFLOWS: Route = Route {
+    action: "sessions.workflows",
+    method: "session.workflows",
+    feature: feature::WORKFLOWS,
+    unsupported: "workflows_unsupported",
+    what: "reads the workflows of a session",
+    failed: "the station could not read the workflows",
+};
+
+const WORKFLOW_AGENT: Route = Route {
+    action: "sessions.workflow_agent",
+    method: "session.workflow_agent",
+    feature: feature::WORKFLOWS,
+    unsupported: "workflows_unsupported",
+    what: "reads the work of a workflow agent",
+    failed: "the station could not read the workflow agent",
+};
+
+/// The query of the workflow page: both cursor values or none.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowsParams {
+    after_order: Option<u64>,
+    after_index: Option<u32>,
+}
+
 fn bad(message: &'static str) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_params", message)
 }
@@ -109,6 +145,27 @@ fn tool_use_id_ok(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+/// True for a workflow agent id: 1 to 64 of `a-z0-9`.
+fn workflow_agent_id_ok(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9'))
+}
+
+/// The page cursor of the query: both values, or none. A value that does not
+/// parse, an unknown key, or one value alone is a 400.
+fn workflow_cursor(
+    query: Result<Query<WorkflowsParams>, QueryRejection>,
+) -> Result<Option<WorkflowsCursor>, ApiError> {
+    let Query(p) = query.map_err(|_| bad("the page cursor is not valid"))?;
+    match (p.after_order, p.after_index) {
+        (Some(run_order), Some(agent_index)) => Ok(Some(WorkflowsCursor {
+            run_order,
+            agent_index,
+        })),
+        (None, None) => Ok(None),
+        _ => Err(bad("the page cursor is not valid")),
+    }
 }
 
 /// True for a full hex object id (SHA-1 or SHA-256).
@@ -371,3 +428,96 @@ pub async fn branch_diff(
     .await;
     result.map(Json)
 }
+
+/// `GET /api/sessions/{station}/{session}/workflows`.
+///
+/// The owner and the members of the session read the page.
+///
+/// # Errors
+/// 400 `invalid_params`; 404 `unknown_station`, `unknown_session`; 409
+/// `station_unreachable`, `workflows_unsupported`; 502 `station_error`; 503
+/// `busy`; 504 `timeout`.
+pub async fn workflows(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path((station, session)): Path<(String, String)>,
+    query: Result<Query<WorkflowsParams>, QueryRejection>,
+) -> Result<Json<WorkflowsPage>, ApiError> {
+    let result = async {
+        if !plain_session(&session) {
+            return Err(bad("the session id is not valid"));
+        }
+        let after = workflow_cursor(query)?;
+        read(&board, &principal, &station, &session, &WORKFLOWS, || {
+            serde_json::to_value(WorkflowsQuery {
+                session_id: SessionId::from(session.as_str()),
+                after,
+            })
+            .map_err(ApiError::internal)
+        })
+        .await
+    }
+    .await;
+    audit(
+        &board,
+        &principal,
+        &station,
+        &session,
+        &WORKFLOWS,
+        result.as_ref().err(),
+    )
+    .await;
+    result.map(Json)
+}
+
+/// `GET /api/sessions/{station}/{session}/workflow-agents/{agent_id}`.
+///
+/// # Errors
+/// 400 `invalid_params`; 403 `owner_only`; 404 `unknown_station`,
+/// `unknown_session`; 409 `station_unreachable`, `workflows_unsupported`; 502
+/// `station_error`; 503 `busy`; 504 `timeout`.
+pub async fn workflow_agent(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path((station, session, agent_id)): Path<(String, String, String)>,
+) -> Result<Json<SubagentLog>, ApiError> {
+    let result = async {
+        owner_only(&principal, WORKFLOW_AGENT.what)?;
+        if !plain_session(&session) {
+            return Err(bad("the session id is not valid"));
+        }
+        if !workflow_agent_id_ok(&agent_id) {
+            return Err(bad("the agent id is not valid"));
+        }
+        read(
+            &board,
+            &principal,
+            &station,
+            &session,
+            &WORKFLOW_AGENT,
+            || {
+                serde_json::to_value(WorkflowAgentQuery {
+                    session_id: SessionId::from(session.as_str()),
+                    agent_id: agent_id.clone(),
+                })
+                .map_err(ApiError::internal)
+            },
+        )
+        .await
+    }
+    .await;
+    audit(
+        &board,
+        &principal,
+        &station,
+        &session,
+        &WORKFLOW_AGENT,
+        result.as_ref().err(),
+    )
+    .await;
+    result.map(Json)
+}
+
+#[cfg(test)]
+#[path = "session_work_workflow_tests.rs"]
+mod workflow_tests;

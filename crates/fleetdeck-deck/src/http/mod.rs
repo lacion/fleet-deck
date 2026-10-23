@@ -581,6 +581,14 @@ pub fn router(board: Arc<Board>) -> Router {
             get(session_work_routes::branch_diff),
         )
         .route(
+            "/api/sessions/{station}/{session}/workflows",
+            get(session_work_routes::workflows),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/workflow-agents/{agent_id}",
+            get(session_work_routes::workflow_agent),
+        )
+        .route(
             "/api/stations/{station}/native-sessions",
             get(native_routes::list),
         )
