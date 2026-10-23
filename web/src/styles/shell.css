@@ -82,6 +82,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   overflow: auto;
 }
 
+/* A page (`Page` of ui/page.tsx: Stations, Activity, Settings, the More pages) keeps the room of
+   the 8px scrollbar with or without one: its header rule, its tab row and its right-hand
+   controls end at one x on every page and every tab, whether the page scrolls or not. The fleet
+   home and the session scroll inside their own parts and fill the column to the window edge. The
+   right gutter stays 24px from the scrollport, as the left one. */
+.fd-app[data-layout="desktop"] .fd-route:has(> .fd-page),
+.fd-app[data-layout="tablet"] .fd-route:has(> .fd-page) {
+  scrollbar-gutter: stable;
+}
+
 /* The session pane fills the route and scrolls inside. */
 .fd-app[data-route="session"] .fd-route {
   display: flex;
@@ -389,24 +399,31 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-3) var(--sp-3);
 }
 
-/* The desktop list scrolls under the footer rule: its last 16px fade out, so that a row cut at
-   the edge reads as "more below", not as a glitch. (The mask needs an opaque color: --text.)
-   The list keeps the room of its 8px scrollbar (base.css) with or without one, so that the ages
-   and the grouping segments stay at one x on every page; the right padding gives the 8px back,
-   so that the rows end on the 12px inset of the nav rows. */
+/* The desktop list scrolls under the footer rule. The list keeps the room of its 8px scrollbar
+   (base.css) with or without one, so that the ages and the grouping segments stay at one x on
+   every page; the right padding gives the 8px back, so that the rows end on the 12px inset of the
+   nav rows. */
 .fd-sidebar[data-variant="full"] .fd-sidebar-list {
   scrollbar-gutter: stable;
   padding-right: var(--sp-1);
-  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 16px), transparent);
+}
+
+/* While rows hide below the footer rule (`data-more-below`, Sidebar), the last 40px fade out: more
+   than a row, so the last visible row is always dimmed, also when the edge falls between two rows
+   (a list cut there looked complete, and Ended and Archived were out of sight). At the end of the
+   list there is no fade, and its bottom padding stays. (The mask needs an opaque color: --text.) */
+.fd-sidebar[data-variant="full"] .fd-sidebar-list[data-more-below] {
+  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 40px), transparent);
 }
 
 /* With a pointer, the thumb shows while the pointer is on the list or a row has the focus (as in
-   Linear and Raycast): at rest the --ctl-edge bar was the loudest line of the sidebar, and the
-   fade above already says that more is below. A touch screen keeps the thumb (it has no hover).
-   Chromium draws the ::-webkit-scrollbar thumb; Firefox reads scrollbar-color (base.css). */
+   Linear and Raycast), and while rows hide below: then it says how much more there is. A list
+   that shows all its rows has no loud --ctl-edge bar at rest. A touch screen keeps the thumb (it
+   has no hover). Chromium draws the ::-webkit-scrollbar thumb; Firefox reads scrollbar-color
+   (base.css). */
 @media (hover: hover) and (pointer: fine) {
   .fd-sidebar[data-variant="full"]
-    .fd-sidebar-list:not(:hover, :focus-within)::-webkit-scrollbar-thumb {
+    .fd-sidebar-list:not(:hover, :focus-within):not([data-more-below])::-webkit-scrollbar-thumb {
     background: transparent;
   }
 
@@ -415,7 +432,8 @@ body:has(.fd-app[data-layout="tablet"]) {
       scrollbar-width: thin;
     }
 
-    .fd-sidebar[data-variant="full"] .fd-sidebar-list:not(:hover, :focus-within) {
+    .fd-sidebar[data-variant="full"]
+      .fd-sidebar-list:not(:hover, :focus-within):not([data-more-below]) {
       scrollbar-color: transparent transparent;
     }
   }
@@ -1017,8 +1035,16 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* ---------- Phone top bar (§4.8) ---------- */
 
-/* 52px on the deck: the mark (or Back), the page name, the connection, the avatar. */
+/* 52px on the deck: the mark (or Back), the page name, the connection, the avatar. The bar stays
+   at the top while the page scrolls (concept A): the page name, the connection and the account
+   stay in reach. (It sticks because the phone main column clips with `overflow-x: clip`, which
+   makes no scroll container.) Its stacking layer is above the bottom bar, so the account sheet
+   inside it covers the bottom bar. Once the page is scrolled (`data-scrolled`, Layout), a
+   --border-soft line under it parts it from the page that passes under it. */
 .fd-phonebar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   flex: none;
   display: flex;
   align-items: center;
@@ -1027,6 +1053,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   height: 52px;
   padding: env(safe-area-inset-top) var(--sp-4) 0;
   background: var(--bg);
+}
+
+.fd-phonebar[data-scrolled] {
+  box-shadow: 0 1px 0 var(--border-soft);
+}
+
+/* A scroll into view (Browse…, a notice) stops under the bar, not behind it: the bar is the top
+   of the visible page. A part adds its own scroll-margin to this. */
+:root:has(.fd-app[data-phonebar="true"]) {
+  scroll-padding-top: calc(env(safe-area-inset-top) + 52px);
 }
 
 .fd-phonebar-title {
@@ -1492,21 +1528,16 @@ button.fd-phonebar-back {
   gap: var(--sp-2);
 }
 
+/* The sections are divided by a rule, not by size: every section after the first starts with a
+   --border-soft rule and a step of space above its heading. */
+.fd-help-body > section + section {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+
 /* The key groups: stacked with a step of space, or side by side in a wide window. */
 .fd-help-keys {
   gap: var(--sp-4) var(--sp-5);
-}
-
-/* A wide window shows the two key tables side by side: more of the help in the first view. */
-@media (min-width: 900px) {
-  .fd-overlay .fd-help {
-    width: min(880px, 100%);
-  }
-
-  .fd-help-keys {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
 }
 
 .fd-help h3,
@@ -1514,11 +1545,13 @@ button.fd-phonebar-back {
   margin: 0;
 }
 
-/* Two heading levels (§4.7): a section (Keys, Concepts, Pages) is a 15px heading in --text; a
-   sub-heading inside it (On every page) stays a 12px .fd-label. */
+/* Two heading levels (§4.7) under the 15px dialog title, which leads: a section (Keys, Concepts,
+   Pages) is a 13px 600 heading in --text after its rule; a sub-heading inside it (On every page)
+   stays a 12px .fd-label. A term of a list is 500, so that a section heading reads as more than
+   one more term. */
 .fd-help-section {
   font-family: var(--font-ui);
-  font-size: var(--fs-heading);
+  font-size: var(--fs-ui);
   font-weight: 600;
   line-height: 1.15;
   color: var(--text);
@@ -1545,22 +1578,28 @@ button.fd-phonebar-back {
   line-height: 1.4;
   border-bottom: 1px solid var(--border-soft);
   font-size: var(--fs-ui);
+  text-wrap: pretty;
 }
 
-/* The key column: wide enough for the widest keys of one platform ("Ctrl+Enter"), and no wider, so
-   that a single key sits near its action; the general and the fleet-home tables start their
-   actions at the same place. The fixed layout takes the column width from the <col> (the first
-   row is the visually hidden header), whatever the content. */
+/* The action at the left on the edge of the column, its keys at the right edge (the pattern of
+   Linear and Raycast): a one-letter key no longer sits across a gap from its action. The key
+   column is wide enough for the widest keys of one platform ("Ctrl+Enter") and has one width in
+   every key table (the fixed layout takes it from the <col>; the first row is the visually
+   hidden header). */
 .fd-keys-key {
-  width: 88px;
+  width: 96px;
 }
 .fd-keys td:first-child {
   padding-left: 0;
+}
+.fd-keys td:last-child {
+  padding-right: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
+  text-align: right;
   white-space: nowrap;
 }
-.fd-keys td:first-child .fd-kbd {
+.fd-keys td:last-child .fd-kbd {
   min-width: 20px;
   height: 20px;
   font-size: var(--fs-meta);
@@ -1585,7 +1624,7 @@ button.fd-phonebar-back {
 
 .fd-help-terms dt {
   font-size: var(--fs-ui);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .fd-help-terms dd {
@@ -1593,6 +1632,62 @@ button.fd-phonebar-back {
   color: var(--dim);
   font-size: var(--fs-meta);
   line-height: 1.45;
+}
+
+/* A wide window: two columns, so that more of the help shows in the first view and no column
+   ends in an empty block. The general keys (10 rows) and the concepts under them at the left; the
+   fleet-home keys (4 rows) and the pages under them at the right. The Keys section and its key
+   groups give their parts to the grid of the body (`display: contents`; the DOM order, and so the
+   reading order, stays Keys, Concepts, Pages). The general keys span two rows and the pages span
+   two rows, so each column runs on without a gap: the pages start under the fleet-home keys and
+   the concepts start under the general keys. Each column lists its terms in one column. */
+@media (min-width: 900px) {
+  .fd-overlay .fd-help {
+    width: min(880px, 100%);
+  }
+
+  .fd-help-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "keys keys"
+      "every fleet"
+      "every pages"
+      "concepts pages";
+    column-gap: var(--sp-5);
+    align-items: start;
+  }
+
+  .fd-help-body > section[data-part="keys"],
+  .fd-help-keys {
+    display: contents;
+  }
+
+  /* The heading keeps the 8px of its section to the sub-headings under it (the body rows are
+     16px apart). */
+  .fd-help-body > section[data-part="keys"] > .fd-help-section {
+    grid-area: keys;
+    margin-bottom: calc(var(--sp-2) - var(--sp-4));
+  }
+
+  .fd-help-keygroup:first-child {
+    grid-area: every;
+  }
+
+  .fd-help-keygroup:last-child {
+    grid-area: fleet;
+  }
+
+  .fd-help-body > section[data-part="concepts"] {
+    grid-area: concepts;
+  }
+
+  .fd-help-body > section[data-part="pages"] {
+    grid-area: pages;
+  }
+
+  .fd-help .fd-help-terms {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* The session palette (⌘K): a search line, the rows, the key hints. */

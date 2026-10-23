@@ -1,10 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { card, station } from '../testing/fleet';
 import {
   basename,
   matchesQuery,
   paletteMatches,
   relativeAge,
+  resetStatusOrder,
   sessionTitle,
   sidebarModel,
   sidebarOrder,
@@ -13,6 +14,9 @@ import {
 
 const ids = (cards: readonly { summary: { session_id: string } }[]) =>
   cards.map((c) => c.summary.session_id);
+
+// Every test starts as a fresh board: no status order is known yet.
+beforeEach(() => resetStatusOrder());
 
 describe('relativeAge', () => {
   test('now, minutes, hours and days', () => {
@@ -134,6 +138,60 @@ describe('sidebar model', () => {
     const model = sidebarModel([card('x', 'working', 'station-z')], [], '');
     expect(model.groups.map((g) => g.id)).toEqual(['station-z']);
     expect(model.groups[0]?.reachable).toBe(false);
+  });
+});
+
+describe('the status order of the live rows', () => {
+  const stations = [station('station-a')];
+  const at = (id: string, status: 'working' | 'idle', updated_at: number) =>
+    card(id, status, 'station-a', { updated_at });
+  const rows = (list: ReturnType<typeof card>[]) =>
+    ids(sidebarModel(list, stations, '').groups[0]?.live ?? []);
+
+  test('a fresh board lists each status the last activity first', () => {
+    expect(rows([at('w1', 'working', 1), at('w2', 'working', 5), at('i1', 'idle', 9)])).toEqual([
+      'w2',
+      'w1',
+      'i1',
+    ]);
+  });
+
+  test('an event keeps every row in place; a new status puts the row after that status', () => {
+    expect(rows([at('a', 'working', 3), at('b', 'working', 2), at('c', 'idle', 9)])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    // b has a newer event in the same status: it stays under a (it went first before).
+    expect(rows([at('a', 'working', 3), at('b', 'working', 8), at('c', 'idle', 9)])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    // c starts to work: after a and b, which were working before it.
+    expect(rows([at('a', 'working', 3), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    // a waits, then works again: each time after the rows already in its status.
+    expect(rows([at('a', 'idle', 11), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
+      'b',
+      'c',
+      'a',
+    ]);
+    expect(rows([at('a', 'working', 12), at('b', 'working', 13), at('c', 'working', 14)])).toEqual([
+      'b',
+      'c',
+      'a',
+    ]);
+  });
+
+  test('the j/k keys follow the rows; a session hidden by the query keeps its place', () => {
+    const list = [at('a', 'working', 1), at('b', 'working', 2)];
+    expect(ids(sidebarOrder(sidebarModel(list, stations, 'a')))).toEqual(['a']);
+    const later = [at('a', 'working', 9), at('b', 'working', 2)];
+    expect(ids(sidebarOrder(sidebarModel(later, stations, '')))).toEqual(['b', 'a']);
   });
 });
 

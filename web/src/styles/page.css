@@ -30,13 +30,27 @@
 
 /* The page header (§4.3): at the left a column of the title row (title + count, --header-h)
    and the one summary sentence under it; at the right the actions, level with the title row; a
-   soft rule closes it. */
+   soft rule closes it. The header runs the full main column (its rule has one length on every
+   page, the fleet home and the session tabs too) and keeps its content on the page gutter. */
 .fd-page-head {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2) var(--sp-4);
   min-width: 0;
-  padding-bottom: var(--sp-3);
+  margin-inline: calc(-1 * var(--page-pad));
+  padding: 0 var(--page-pad) var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+/* A tab row right under the header (Settings, a project) closes the header: one rule, the tab
+   row's, divides the head of the page from its panel, not two rules with the tabs between them.
+   The tab row runs the full column as the header does, its tabs on the page gutter. */
+.fd-page-head:has(+ [role="tablist"]) {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.fd-page > .fd-page-head + [role="tablist"] {
+  margin-inline: calc(-1 * var(--page-pad));
+  padding-inline: var(--page-pad);
   border-bottom: 1px solid var(--border-soft);
 }
 .fd-page-titles {
@@ -176,12 +190,19 @@
   }
 }
 /* The phone top bar carries the title (shell.css): a lone icon action of a page without filters
-   sits at the right end of the description and centers on it. */
+   sits at the right end of the description and centers on its first line. The title row is empty
+   there (the h1 stays for screen readers only) and the 2px gap of the title column comes before
+   the description, whose line is --fs-ui × 1.45 high: the target (--ctl-h) reaches out by half of
+   what it is taller than that line above and below it, so it takes the room of the line only and
+   the rule stays 12px under the description. (Centered on the whole column, it sat about 11px
+   low.) */
 .fd-app[data-phonebar="true"]
   .fd-page-head:not(:has(> .fd-page-filters))
   > .fd-page-actions:has(> .fd-iconbtn:only-child) {
-  align-self: center;
+  align-self: flex-start;
   min-height: 0;
+  margin-block: calc(2px + (var(--fs-ui) * 1.45 - var(--ctl-h)) / 2)
+    calc((var(--fs-ui) * 1.45 - var(--ctl-h)) / 2);
 }
 
 /* ── links ──────────────────────────────────────────────────────── */
@@ -854,8 +875,9 @@
   .fd-folder-panel > .fd-folder-list[data-more-below] {
     mask-image: none;
   }
+  /* The top bar and the safe area are in the scroll-padding of the page (shell.css). */
   .fd-folder {
-    scroll-margin-top: calc(env(safe-area-inset-top) + var(--sp-3));
+    scroll-margin-top: var(--sp-3);
     scroll-margin-bottom: calc(60px + env(safe-area-inset-bottom) + var(--sp-3));
   }
 }

@@ -350,6 +350,11 @@ export function App({
         composer.focus();
         return;
       }
+      // The fleet home has one search, the filter of its header (the sidebar hides its own there).
+      if (route.name === 'fleet' || (route.name === 'home' && !phone)) {
+        document.querySelector<HTMLInputElement>('.fd-home-search input')?.focus();
+        return;
+      }
       // The search box lives in the list: show the list first (phone home, tablet drawer).
       if (phone && route.name !== 'home') navigate({ name: 'home' });
       if (layout === 'tablet') setDrawerAt(routeKey);

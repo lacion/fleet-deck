@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, StationView } from '../gen';
 import {
@@ -27,6 +27,7 @@ import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
 import { Mark } from '../ui/Mark';
+import { useScrollEdges } from '../ui/Menu';
 import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
@@ -607,8 +608,20 @@ export function Sidebar({
   onOpenTerminals,
   now: givenNow,
 }: Props) {
-  const [query, setQuery] = useState('');
+  const full = variant === 'full';
+  // One search on the fleet home (§4.2, §4.3): the filter of its header filters the lanes, so the
+  // desktop sidebar shows no second field with another scope there ("/" focuses the header one).
+  const homeSearch = full && (route.name === 'home' || route.name === 'fleet');
+  const [typed, setQuery] = useState('');
+  const query = homeSearch ? '' : typed;
+  useEffect(() => {
+    if (homeSearch) setQuery('');
+  }, [homeSearch]);
   const now = useNow(givenNow, 30000);
+  // The desktop list marks `data-more-below` while rows hide under the footer: its fade and its
+  // scrollbar thumb say so (shell.css); at the end of the list neither shows.
+  const list = useRef<HTMLDivElement>(null);
+  useScrollEdges(list, full);
   const starred = priority.use();
   const archived = archivedSet.use();
   const projects = useProjects();
@@ -625,7 +638,6 @@ export function Sidebar({
   const empty = sessions.length === 0;
   const nothingFound =
     !empty && model.groups.length === 0 && model.needs.length === 0 && model.archived.length === 0;
-  const full = variant === 'full';
   // R3: the projects are the owner's (the deck answers 403 to any other login).
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
   // DL-172: the settings are the owner's login only (no token, no member).
@@ -662,7 +674,8 @@ export function Sidebar({
           </div>
         ) : null}
         {/* One row (§4.2): New session, then the search. On the desktop the search folds to its
-            icon and "/" until it has the focus or a text; then New session folds to its icon. */}
+            icon and "/" until it has the focus or a text; then New session folds to its icon. On
+            the fleet home New session takes the row: the header filter is the search there. */}
         <div className="fd-sidebar-actions" data-query={query === '' ? undefined : 'true'}>
           {full && !guest ? (
             // On #/new the button is the current nav row, not a second general primary (§2.2).
@@ -678,22 +691,24 @@ export function Sidebar({
               </span>
             </button>
           ) : null}
-          <div className="fd-field fd-sidebar-search">
-            <Icon of={Search} />
-            <input
-              id="fd-sidebar-search"
-              type="search"
-              aria-label="Search sessions"
-              aria-keyshortcuts="/"
-              placeholder="Search sessions"
-              autoComplete="off"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <span className="fd-kbd" aria-hidden="true">
-              /
-            </span>
-          </div>
+          {homeSearch ? null : (
+            <div className="fd-field fd-sidebar-search">
+              <Icon of={Search} />
+              <input
+                id="fd-sidebar-search"
+                type="search"
+                aria-label="Search sessions"
+                aria-keyshortcuts="/"
+                placeholder="Search sessions"
+                autoComplete="off"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <span className="fd-kbd" aria-hidden="true">
+                /
+              </span>
+            </div>
+          )}
           {/* The phone: the grouping sits in the search row; the list has no head row. */}
           {full ? null : groupSeg}
           {/* The phone starts a session with New in the bottom bar (§4.8): no second button here. */}
@@ -710,7 +725,7 @@ export function Sidebar({
           onOpenTerminals={onOpenTerminals}
         />
       ) : null}
-      <div className="fd-sidebar-list">
+      <div className="fd-sidebar-list" ref={list}>
         {full ? (
           <div className="fd-sidebar-listhead">
             <span className="fd-label">Sessions</span>
