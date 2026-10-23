@@ -21,7 +21,7 @@ import { refOf } from '../watch/tiles';
 import { MAX_TILES } from '../watch/tiles';
 import { AmbientPane } from './AmbientPane';
 import { ambientOffset, AMBIENT_AFTER_MIN } from './ambient';
-import { ArtifactPane } from './ArtifactPane';
+import { ArtifactCard, ArtifactPane } from './ArtifactPane';
 import { NeedsArea, SideArea, StreamArea, TilesArea } from './Areas';
 import { type AutoState, initialAuto, nextAutoFocus } from './autofocus';
 import { ChatPane } from './ChatPane';
@@ -440,6 +440,10 @@ function Wall({
               frameTenths={remoteState.frame_tenths}
             />
           );
+        }
+        // B17: the mirror of the Remote page shows a card; it never asks for a view link or loads a frame.
+        if (mirror === true) {
+          return <ArtifactCard id={route.artifact.id} version={route.artifact.version} />;
         }
         return (
           <ArtifactPane

@@ -73,11 +73,33 @@ export function browserEnvironment(features: string = VIDEO_FEATURES): Environme
 }
 type Watch = { key: SessionKey; users: number; idle: Cancel | null; pending: Cancel | null };
 
+/** Calls a wall control listener; a listener of the wall must not end the connection. */
+function callControl(listener: (frame: WallControlFrame) => void, frame: WallControlFrame): void {
+  try {
+    listener(frame);
+  } catch {
+    // Ignored on purpose.
+  }
+}
+
+/** The frame to keep for a new listener: a frame of another relay incarnation replaces the kept
+ * one (the deck restarted); in the same incarnation only a frame with the same or a higher `seq`
+ * does (a `sync` repeats the current `seq`), so a late frame never moves the checkpoint back. */
+export function newerControl(
+  kept: WallControlFrame | null,
+  frame: WallControlFrame,
+): WallControlFrame {
+  if (kept === null || kept.incarnation !== frame.incarnation) return frame;
+  return frame.seq >= kept.seq ? frame : kept;
+}
+
 /** One instance per browser page owns every reconnect and timeline subscription. */
 export class Connection {
   private state: RuntimeState = emptyState();
   private listeners = new Set<() => void>();
   private controlListeners = new Set<(frame: WallControlFrame) => void>();
+  /** The newest wall control frame (B17): its checkpoint is the deck's state after it. */
+  private lastControl: WallControlFrame | null = null;
   private watches = new Map<string, Watch>();
   private socket: Socket | null = null;
   private retry: Cancel | null = null;
@@ -98,9 +120,12 @@ export class Connection {
     };
   };
   /** The wall control frames (B17). A listener never changes the read model; one that throws does
-   * not end the connection. */
+   * not end the connection. A new listener first gets the newest frame as a `sync` frame (the
+   * checkpoint without its event), so a `sync` that came before the wall listened is not lost. */
   onControl = (listener: (frame: WallControlFrame) => void): Cancel => {
     this.controlListeners.add(listener);
+    const last = this.lastControl;
+    if (last !== null) callControl(listener, { ...last, event: { kind: 'sync' } });
     return () => {
       this.controlListeners.delete(listener);
     };
@@ -284,13 +309,8 @@ export class Connection {
           this.hello = true;
         } else if (!this.hello) throw new Error('The deck did not send a protocol hello');
         if (msg.type === 'wall_control') {
-          for (const listener of this.controlListeners) {
-            try {
-              listener(msg.frame);
-            } catch {
-              // A listener of the wall must not end the connection.
-            }
-          }
+          this.lastControl = newerControl(this.lastControl, msg.frame);
+          for (const listener of this.controlListeners) callControl(listener, msg.frame);
           return;
         }
         if (msg.type === 'snapshot' && this.state.freshness === 'live') return;

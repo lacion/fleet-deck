@@ -73,6 +73,14 @@ fn too_many() -> ApiError {
     )
 }
 
+fn wall_changed() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "wall_changed",
+        "The wall changed its view. Try again.",
+    )
+}
+
 fn ack(frame: &WallControlFrame) -> WallControlAck {
     WallControlAck {
         incarnation: frame.incarnation.clone(),
@@ -124,7 +132,8 @@ async fn selectable(board: &Board, id: &str, control: &WallControl) -> Result<()
 ///
 /// # Errors
 /// 400 `invalid_control`, 404 `display_unknown`, 409 `wall_offline`, 409
-/// `wall_controls_unsupported`, 413 `too_large`, 429 `too_many_controls`.
+/// `wall_controls_unsupported`, 409 `wall_changed`, 413 `too_large`, 429
+/// `too_many_controls`.
 async fn control(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
@@ -139,6 +148,9 @@ async fn control(
             invalid_control()
         }
     })?;
+    // The turn of the display: the generation, the selection check and the
+    // push stay together (no request of this display runs between them).
+    let turn = board.wall_controls.turn(&id).await;
     let view = effective_directive(&board.link, &id)
         .await
         .map_err(ApiError::internal)?
@@ -165,7 +177,11 @@ async fn control(
     let frame = board
         .wall_controls
         .push(&id, view.generation, PushEvent::Control(control), now)
-        .map_err(|PushError::TooMany| too_many())?;
+        .map_err(|e| match e {
+            PushError::TooMany => too_many(),
+            PushError::Stale => wall_changed(),
+        })?;
+    drop(turn);
     audit_start(&board, &id, now).await;
     Ok(Json(ack(&frame)))
 }
@@ -174,7 +190,9 @@ async fn control(
 /// `navigate` frame. There is no link check: the directive is durable.
 ///
 /// # Errors
-/// The errors of the directive route, and 429 `too_many_controls`.
+/// The errors of the directive route, and 429 `too_many_controls`. The
+/// store and the push run in the turn of the display, so a slower request
+/// never pushes an older generation after a newer one.
 async fn navigate(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
@@ -186,16 +204,18 @@ async fn navigate(
         return Err(too_many());
     }
     let body = body.map(|Json(b)| b.directive).map_err(|e| rejection(&e));
+    let turn = board.wall_controls.turn(&id).await;
     let stored = owner_set(&board, &principal, &id, body).await?;
     let answer = match board
         .wall_controls
         .push(&id, stored.generation, PushEvent::Navigate, now)
     {
         Ok(frame) => ack(&frame),
-        Err(PushError::TooMany) => {
-            // A race with another sender: the directive is stored, and the
-            // wall reads it with its next poll.
-            tracing::debug!(display = %id, "the navigate frame was not pushed: too many");
+        Err(e @ (PushError::TooMany | PushError::Stale)) => {
+            // A race with another sender (too many), or a newer directive
+            // already has frames (stale): the directive is stored, and the
+            // wall reads the directive that holds with its next poll.
+            tracing::debug!(display = %id, error = ?e, "the navigate frame was not pushed");
             let parts = board
                 .wall_controls
                 .view(&id, stored.generation, u64::MAX, now);
@@ -206,6 +226,7 @@ async fn navigate(
             }
         }
     };
+    drop(turn);
     audit_start(&board, &id, now).await;
     Ok(Json(answer))
 }

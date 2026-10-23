@@ -104,6 +104,53 @@ fn hub_resets_the_checkpoint_on_a_new_generation() {
 }
 
 #[test]
+fn hub_refuses_an_older_generation_and_keeps_the_newer_checkpoint() {
+    // The review's interleaving: a control of generation 4 is delayed; the
+    // navigation to 5 and a selection in 5 arrive first.
+    let hub = hub();
+    let t0 = Instant::now();
+    hub.push("d1", 4, page_down(), t0).unwrap();
+    hub.push("d1", 5, PushEvent::Navigate, t0).unwrap();
+    let chosen = hub.push("d1", 5, select("s5"), t0).unwrap();
+    let moved = hub.push("d1", 5, page_down(), t0).unwrap();
+    assert_eq!(moved.seq, 4);
+    // The delayed request of generation 4 is refused and records nothing.
+    assert_eq!(hub.push("d1", 4, select("s4"), t0), Err(PushError::Stale));
+    assert_eq!(
+        hub.push("d1", 4, PushEvent::Navigate, t0),
+        Err(PushError::Stale)
+    );
+    let parts = hub.view("d1", 5, 0, t0);
+    assert_eq!(parts.seq, 4, "no frame for the stale requests");
+    assert_eq!(parts.state.selected, chosen.state.selected);
+    assert_eq!(parts.state.frame_tenths, 9);
+    assert_eq!(hub.sync("d1", 5).state, parts.state);
+    // A stale request takes no place in the rate window.
+    for _ in 0..6 {
+        hub.push("d1", 5, page_down(), t0).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_turn_of_a_display_serializes_its_requests_only() {
+    use futures_util::FutureExt as _;
+    let hub = hub();
+    let first = hub.turn("d1").await;
+    // A second request of d1 waits while the first holds the turn.
+    assert!(hub.turn("d1").now_or_never().is_none());
+    // Another display does not wait.
+    let other = hub.turn("d2").now_or_never();
+    assert!(other.is_some());
+    drop(other);
+    drop(first);
+    // Released: the next request of d1 gets the turn at once.
+    let again = hub.turn("d1").now_or_never();
+    assert!(again.is_some());
+    drop(again);
+    assert!(hub.turns.lock().unwrap().is_empty(), "no entry stays");
+}
+
+#[test]
 fn hub_view_is_complete_only_without_a_gap() {
     let hub = hub();
     let t0 = Instant::now();

@@ -4,6 +4,7 @@ import { expect, type Page, test } from '@playwright/test';
 import type { DeckSession } from '../src/gen';
 import { claudeCaps } from '../src/testing/capabilities';
 import { summary } from '../src/testing/summary';
+import { scrollTopFor } from '../src/wall/control';
 import { type FakeDeck, fitsWidth, logIn } from './fake-deck';
 import { ALPHA, NOW, bashRequest, threeSessionDeck } from './scenes';
 
@@ -21,25 +22,25 @@ const patch = [
   '',
 ].join('\n');
 
-async function open(page: Page, size: { width: number; height: number }, hash = '#/wall') {
+const said = (text: string, at: number, seq: number) => ({
+  station_id: ALPHA,
+  session_id: 's2',
+  session_title: 'Write the docs',
+  repo: null,
+  kind: 'message',
+  text,
+  at,
+  station_seq: seq,
+});
+
+async function open(
+  page: Page,
+  size: { width: number; height: number },
+  hash = '#/wall',
+  items = [said('Finished the intro', NOW, 5)],
+) {
   const deck = threeSessionDeck();
-  deck.on('/api/activity', () => ({
-    status: 200,
-    body: {
-      items: [
-        {
-          station_id: ALPHA,
-          session_id: 's2',
-          session_title: 'Write the docs',
-          repo: null,
-          kind: 'message',
-          text: 'Finished the intro',
-          at: NOW,
-          station_seq: 5,
-        },
-      ],
-    },
-  }));
+  deck.on('/api/activity', () => ({ status: 200, body: { items } }));
   deck.on(`/api/stations/${ALPHA}/sessions/s2/diff`, () => ({
     status: 200,
     body: {
@@ -184,4 +185,44 @@ test('1080×1920 gives the portrait layout with no sideways scroll', async ({ pa
   const box = await wall.boundingBox();
   expect(box?.width).toBeLessThanOrEqual(1080);
   expect(box?.height).toBeLessThanOrEqual(1920);
+});
+
+test('a remote scroll reaches the oldest Activity row: one column, no wrap (B17)', async ({
+  page,
+}) => {
+  // 50 rows, newest first: more than the stream shows. The older rows must overflow at the bottom
+  // of the one column (where `scrollTop` reaches them), never into a second column beside it.
+  const items = Array.from({ length: 50 }, (_, n) =>
+    said(`Step ${n + 1} of the docs`, NOW - n * 1000, 100 - n),
+  );
+  await open(page, { width: 1920, height: 1080 }, '#/wall', items);
+  const list = page.getByTestId('wall').locator('[data-wall-scroll="stream"]');
+  await expect(list.locator('li')).toHaveCount(50);
+  await expect(list.locator('li').last()).toContainText('Step 50 of the docs');
+  const oldestShows = () =>
+    list.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const row = el.lastElementChild?.getBoundingClientRect();
+      return (
+        row !== undefined &&
+        row.top >= box.top - 1 &&
+        row.bottom <= box.bottom + 1 &&
+        row.left >= box.left - 1 &&
+        row.right <= box.right + 1
+      );
+    });
+  const metrics = await list.evaluate((el) => ({
+    scrollTop: el.scrollTop,
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+  }));
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  expect(await oldestShows()).toBe(false);
+  // The scroll of a remote `bottom` control (the same `scrollTopFor` as `applyScroll`).
+  const top = scrollTopFor('bottom', metrics);
+  await list.evaluate((el, at) => el.scrollTo({ top: at, behavior: 'auto' }), top);
+  await expect.poll(oldestShows).toBe(true);
 });

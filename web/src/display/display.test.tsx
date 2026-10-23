@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { wallDefaults } from '../app/routes';
 import type { DirectiveBody, WallControlFrame, WallRemoteState } from '../gen';
 import { ApiError } from '../runtime/api';
-import { Connection, socketUrl } from '../runtime/connection';
+import { Connection, newerControl, socketUrl } from '../runtime/connection';
 import { FakeEnvironment, settle } from '../runtime/testing';
 import { applyFrame, initialControl, shownRemote } from '../wall/control';
 import {
@@ -168,6 +168,44 @@ describe('the wall control frames (B17)', () => {
       now: 0,
     });
     expect(same.reread).toBe(false);
+  });
+
+  test('a_sync_before_the_wall_listens_is_replayed_as_sync', async () => {
+    // The first frame of a display socket is the `sync` of the checkpoint; it can come before the
+    // effect of `WallPage` subscribes. The connection keeps the newest frame and gives it to a new
+    // listener as a `sync` (no event, no hold, no scroll effect).
+    const { env, connection } = await live();
+    env.latest().message({ type: 'wall_control', frame: frame(4, 2, { kind: 'sync' }, picked) });
+    const seen: WallControlFrame[] = [];
+    connection.onControl((f) => seen.push(f));
+    expect(seen).toEqual([frame(4, 2, { kind: 'sync' }, picked)]);
+    let state = initialControl;
+    for (const f of seen) state = applyFrame(state, f, { shown: 2, now: 7 }).state;
+    expect(shownRemote(state, 2)).toEqual(picked);
+    expect(state.holdUntil).toBe(0);
+    // A control that came before the listener is replayed as a `sync`, never as a second scroll.
+    const scroll = frame(
+      5,
+      2,
+      { kind: 'control', control: { op: 'scroll', area: 'stream', step: 'page_down' } },
+      picked,
+    );
+    env.latest().message({ type: 'wall_control', frame: scroll });
+    const late: WallControlFrame[] = [];
+    connection.onControl((f) => late.push(f));
+    expect(late).toEqual([{ ...scroll, event: { kind: 'sync' } }]);
+  });
+
+  test('the_kept_frame_never_moves_back_in_one_incarnation', () => {
+    const moved: WallRemoteState = { selected: null, frame_tenths: 50 };
+    const newer = frame(6, 3, { kind: 'navigate' }, moved);
+    expect(newerControl(newer, frame(5, 2, { kind: 'sync' }, picked))).toBe(newer);
+    const same = frame(6, 3, { kind: 'sync' }, moved);
+    expect(newerControl(newer, same)).toBe(same);
+    // A restarted deck (a new incarnation) starts again at a low `seq`.
+    const restarted = frame(0, 3, { kind: 'sync' }, picked, 'inc-2');
+    expect(newerControl(newer, restarted)).toBe(restarted);
+    expect(newerControl(null, newer)).toBe(newer);
   });
 
   test('the_sync_frame_restores_the_selection_after_a_reconnect', async () => {

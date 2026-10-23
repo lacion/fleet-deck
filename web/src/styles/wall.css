@@ -980,10 +980,12 @@
 .fd-wall-stream {
   display: flex;
   flex: 1 1 auto;
-  /* the list runs newest first, from the top down (the DOM order is the reading order) */
-  flex-flow: column wrap;
+  /* the list runs newest first, from the top down (the DOM order is the reading order). One
+     column, no wrap (B17): the older rows overflow at the bottom, where a remote scroll (the
+     `scrollTop` of `data-wall-scroll="stream"`) reaches them; a wrapped column put them in extra
+     columns outside the width, out of reach. */
+  flex-direction: column;
   justify-content: flex-start;
-  align-content: flex-start;
   min-height: 0;
   overflow: hidden;
   margin: 0;

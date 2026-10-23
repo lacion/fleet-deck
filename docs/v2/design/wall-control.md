@@ -358,8 +358,9 @@ impl WallControlHub {
     pub fn link(&self, display_id: &str) -> WallLink;
     /// The `sync` frame for `generation` (also after a lag).
     pub fn sync(&self, display_id: &str, generation: u64) -> WallControlFrame;
-    /// Rate check; when `generation` differs from `slot.generation`, the state
-    /// resets to the default and `slot.generation = generation`; seq + 1; the
+    /// Rate check; a `generation` below `slot.generation` is Err(Stale) and
+    /// records nothing (build answer 2); a newer `generation` resets the state
+    /// to the default and `slot.generation = generation`; seq + 1; the
     /// new state (`after` for a control, unchanged for navigate); the hold;
     /// keep; broadcast. All of it under the slot lock, so the broadcast order
     /// is the `seq` order. Err(TooMany) above the rate.
@@ -383,7 +384,7 @@ impl WallControlHub {
 3. `effective_directive(&board.link, &id)` (`crates/fleetdeck-deck/src/coordinator_desktop/directive.rs:159`). `None` → `404 display_unknown`.
 4. For `select` with `Some(item)`: `effective_scope(&board.link, &id)` (`directive.rs:178`), then `board.store.session_summary(item.station_id, item.session_id)`; the session must exist and `display_view::in_scope(&scope, &item.station_id, repo_root)` (`crates/fleetdeck-deck/src/http/display_view.rs:106`) must be true. Else `400 invalid_control` with the same fixed text.
 5. `link(id)`: `Offline` → `409 wall_offline` "The wall is not connected."; `Older` → `409 wall_controls_unsupported` "This wall runs an older board. Reload the wall to use the remote."
-6. `push(id, view.generation, PushEvent::Control(control))`. Above 10 in one second → `429 too_many_controls` "Too many controls. Wait a moment."
+6. `push(id, view.generation, PushEvent::Control(control))`. Above 10 in one second → `429 too_many_controls` "Too many controls. Wait a moment." A `Stale` push → `409 wall_changed` "The wall changed its view. Try again." Steps 3 to 6 run inside `hub.turn(id)` (build answer 2).
 7. Audit: one row `display.remote`, target the display id, detail `start` for the first accepted control or navigation of a display after 10 minutes without one. No row for each control (10 per second would flood the audit). A refused POST writes no row.
 8. Answer `WallControlAck { incarnation, seq, generation }`.
 
@@ -391,7 +392,7 @@ impl WallControlHub {
 
 1. The rate check of the hub (without a push): above 10 in one second → `429 too_many_controls`.
 2. The same function as `POST /api/displays/{id}/directive` (`display_directive_routes.rs:131-149`): extract its body after the parse into `pub(super) async fn owner_set(board, principal, id, body) -> Result<DirectiveView, ApiError>`, and call it from both routes. The owner check, the checks of `write_directive`, the errors (`400 invalid_directive`, `403 outside_ceiling`, `403 not_granted`, `404 display_unknown`) and the `display.directive` audit row are the same as for the directive route.
-3. `push(id, stored.generation, PushEvent::Navigate)`. A `TooMany` here (a race with another sender after step 1) is ignored and logged at `debug`: the directive is stored, and the wall reads it with its next poll.
+3. `push(id, stored.generation, PushEvent::Navigate)`. A `TooMany` here (a race with another sender after step 1) or a `Stale` is ignored and logged at `debug`: the directive is stored, and the wall reads the directive that holds with its next poll. Steps 2 and 3 run inside `hub.turn(id)` (build answer 2).
 4. The `display.remote` audit rule of the control route (step 7).
 5. Answer `WallControlAck`.
 
@@ -476,7 +477,7 @@ readonly mirror?: boolean | undefined;
 - **Selection look:** the selected tile, needs item or race column gets `data-selected="true"` and an outline in `--focus` (the selection color, DESIGN-SYSTEM §2.2), 3 wall units, offset 2 wall units, in `wall.css`. Forced colors: `outline-color: Highlight`. No new token. A selected ref that the wall does not show has no outline.
 - The kiosk keys keep working and stay local (fact 9).
 
-`DisplayRuntime` gives `WallPage` a `controls` feed from its `Connection`, keeps the `ControlState`, and calls `reread()` of `useDirective`. `Connection` (`web/src/runtime/connection.ts`) gets an optional features list: the display environment declares `artifacts_video.v1 wall_control.v1 wall_pages.v1` in `features=`; `decode.ts` validates `wall_control` (an object `frame` with a text `incarnation`, `sequence(seq)`, `sequence(generation)`, an object `event` with a text `kind`, an object `state`) and the connection passes each frame to its control listeners. It does not change the read model.
+`DisplayRuntime` gives `WallPage` a `controls` feed from its `Connection`, keeps the `ControlState`, and calls `reread()` of `useDirective`. `Connection` (`web/src/runtime/connection.ts`) gets an optional features list: the display environment declares `artifacts_video.v1 wall_control.v1 wall_pages.v1` in `features=`; `decode.ts` validates `wall_control` (an object `frame` with a text `incarnation`, `sequence(seq)`, `sequence(generation)`, an object `event` with a text `kind`, an object `state`) and the connection passes each frame to its control listeners. It keeps the newest frame and gives it to a new listener at once as a `sync` frame (build answer 3). It does not change the read model.
 
 ### 3.2 Wall pages (want 2)
 
@@ -1082,3 +1083,13 @@ Review: `~/fleetdeck-briefs/backlog/wall-control/adv-design-r1.md` (adversary, v
 - Remaining approximation (stated in §2.3): the relative scroll positions of the needs list, the activity stream, the chat, the change pane and a Markdown or image artifact are not in the checkpoint. After a rebase, the mirror shows them at their default position. The view, the selection and the long-frame position are exact.
 - Residual (§5.2 item 4a): Chromium's Local Network Access rules can block an `http://localhost` page when the kiosk loads the deck by a non-loopback address. The B3 manual check records the result.
 
+---
+
+## Build answers
+
+Pre-PR review `~/fleetdeck-briefs/backlog/wall-control/adv-prepr-final.md` (commit `955b66e0`). Each line is a build decision that the sections above now state.
+
+1. **The mirror shows an artifact as a card** (BLOCKER). The owner's `#/wall` reads an `/a/` view link and shows it in `ArtifactFrame`, whose policy allows scripts; a wall shows the same file inert (fact 12). In artifact mode the mirror (`mirror` prop of `WallPage`) renders `ArtifactCard` (the id and the version, and the line "The wall shows this artifact. The remote does not open it.") before any view link is asked for. The rule "a mirror never loads a frame" (§3.3) now covers artifacts too. Tests: `page.test.tsx` `the_mirror_shows_an_artifact_as_a_card_and_asks_for_no_view_link`; browser `web/e2e/remote.spec.ts`.
+2. **No older generation moves the relay back** (MAJOR). `push` refuses a generation below the slot's generation with `PushError::Stale` and records nothing (no `seq`, no rate entry, no frame). The control route and the navigate route take `hub.turn(id)`, one async lock for each display, from the read of the generation (control: `effective_directive` and the `select` check; navigate: `owner_set`) to the push; the audit runs after the turn. The control route answers a `Stale` push with `409 wall_changed`; the navigate route ignores it as it ignores `TooMany`. Tests: `wall_control_tests.rs` `hub_refuses_an_older_generation_and_keeps_the_newer_checkpoint`, `the_turn_of_a_display_serializes_its_requests_only`.
+3. **The first `sync` reaches a wall that listens late** (MAJOR). The display socket sends its `sync` frame at once, possibly before `WallPage` subscribes. `Connection` keeps the newest `wall_control` frame (a frame of another incarnation replaces it; in the same incarnation only a frame with the same or a higher `seq` does) and calls a new listener with it at once as a `sync` frame (no event: no hold and no second scroll). Tests: `display.test.tsx` `a_sync_before_the_wall_listens_is_replayed_as_sync`, `the_kept_frame_never_moves_back_in_one_incarnation`.
+4. **The Activity stream is one column** (MAJOR). `.fd-wall-stream` was `flex-flow: column wrap`: the older rows went into extra columns outside the width, where `scrollTop` cannot reach them. It is now `flex-direction: column` with no wrap; the older rows overflow at the bottom of the `overflow: hidden` list, and a remote scroll reaches them. Test: browser `web/e2e/wall.spec.ts` `a remote scroll reaches the oldest Activity row: one column, no wrap (B17)`.

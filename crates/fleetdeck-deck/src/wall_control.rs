@@ -36,6 +36,9 @@ pub enum PushEvent {
 pub enum PushError {
     /// More than [`MAX_CONTROLS_PER_SECOND`] in one second.
     TooMany,
+    /// The slot already holds a newer directive generation: an older request
+    /// never moves the slot back or erases the newer checkpoint.
+    Stale,
 }
 
 /// The parts of a remote view that the hub knows.
@@ -119,6 +122,7 @@ impl Slot {
 }
 
 type Slots = Arc<Mutex<HashMap<String, Slot>>>;
+type Turns = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 
 fn lock(slots: &Mutex<HashMap<String, Slot>>) -> MutexGuard<'_, HashMap<String, Slot>> {
     slots.lock().unwrap_or_else(PoisonError::into_inner)
@@ -129,6 +133,9 @@ fn lock(slots: &Mutex<HashMap<String, Slot>>) -> MutexGuard<'_, HashMap<String, 
 pub struct WallControlHub {
     incarnation: String,
     slots: Slots,
+    /// One async lock for each display with a request in flight: the routes
+    /// hold it from the read of the generation (and its checks) to the push.
+    turns: Turns,
     /// Added to the clock; only a test moves it ([`Self::advance_clock`]).
     skew: Mutex<Duration>,
 }
@@ -136,6 +143,32 @@ pub struct WallControlHub {
 impl std::fmt::Debug for Slot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Slot").field("seq", &self.seq).finish()
+    }
+}
+
+/// The turn of one request of a display (see [`WallControlHub::turn`]). On
+/// drop it releases the lock and removes the entry when no other request
+/// holds or waits for it.
+#[derive(Debug)]
+pub struct Turn {
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    turns: Turns,
+    display_id: String,
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        // Release first: the guard holds one reference to the lock.
+        drop(self.guard.take());
+        let mut turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+        // A new reference is made only under this map lock, so a count of 1
+        // (the map's own) means that no request holds or waits for it.
+        if turns
+            .get(&self.display_id)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            turns.remove(&self.display_id);
+        }
     }
 }
 
@@ -168,6 +201,7 @@ impl WallControlHub {
         Ok(Self {
             incarnation: random_token()?,
             slots: Arc::default(),
+            turns: Arc::default(),
             skew: Mutex::new(Duration::ZERO),
         })
     }
@@ -188,6 +222,26 @@ impl WallControlHub {
     /// expire by time.
     pub fn advance_clock(&self, by: Duration) {
         *self.skew.lock().unwrap_or_else(PoisonError::into_inner) += by;
+    }
+
+    /// Waits for the turn of `display_id`. The control and the navigate
+    /// routes hold it from the read of the effective generation (and the
+    /// checks that they await) to the push, so two requests of one display
+    /// never interleave between the read and the push. Other displays do not
+    /// wait.
+    pub async fn turn(&self, display_id: &str) -> Turn {
+        let lock = Arc::clone(
+            self.turns
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(display_id.to_owned())
+                .or_default(),
+        );
+        Turn {
+            guard: Some(lock.lock_owned().await),
+            turns: Arc::clone(&self.turns),
+            display_id: display_id.to_owned(),
+        }
     }
 
     fn frame(&self, slot: &Slot, generation: u64, event: WallEvent) -> WallControlFrame {
@@ -274,14 +328,16 @@ impl WallControlHub {
         }
     }
 
-    /// Rate check; when `generation` differs from the generation of the
-    /// slot, the state resets to the default; `seq` + 1; the new state
+    /// Rate check; a `generation` below the generation of the slot is
+    /// refused and records nothing; a newer `generation` resets the state to
+    /// the default; `seq` + 1; the new state
     /// (`after` for a control, unchanged for a navigation); the hold; keep;
     /// broadcast. All of it under the slot lock, so the broadcast order is
     /// the `seq` order.
     ///
     /// # Errors
-    /// [`PushError::TooMany`] above the rate.
+    /// [`PushError::TooMany`] above the rate; [`PushError::Stale`] for a
+    /// generation below the generation of the slot.
     pub fn push(
         &self,
         display_id: &str,
@@ -294,6 +350,9 @@ impl WallControlHub {
         slot.drop_old_rates(now);
         if slot.recent.len() >= MAX_CONTROLS_PER_SECOND {
             return Err(PushError::TooMany);
+        }
+        if generation < slot.generation {
+            return Err(PushError::Stale);
         }
         slot.recent.push_back(now);
         if slot.generation != generation {

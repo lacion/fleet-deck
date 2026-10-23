@@ -4,7 +4,9 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { wallDefaults } from '../app/routes';
+import type { ArtifactActions } from '../artifacts/actions';
 import type { DisplayPage, WallPage as WallPageEntry } from '../gen';
+import { MIRROR_ARTIFACT_TEXT } from './ArtifactPane';
 import { FRAME_TENTHS_MAX, longFrameTop } from './control';
 import type { DisplayEnv } from './displayChanges';
 import {
@@ -207,6 +209,48 @@ describe('the owner wall and the mirror', () => {
     expect(card).toContain('class="fd-wall-pagehost">grafana.example<');
     expect(card).not.toContain('<iframe');
     expect(card).not.toContain('token=x');
+  });
+
+  test('the_mirror_shows_an_artifact_as_a_card_and_asks_for_no_view_link', () => {
+    // A wall shows an artifact inert; an owner view link would run its scripts on this device.
+    let views = 0;
+    const artifacts = {
+      view: () => {
+        views += 1;
+        return Promise.reject(new Error('no view link in a mirror'));
+      },
+    } as unknown as ArtifactActions;
+    const html = (mirror: boolean) =>
+      renderToStaticMarkup(
+        <WallPage
+          route={{
+            ...wallDefaults,
+            mode: 'artifact',
+            artifact: { station: 'station-a', id: 'art', version: 2 },
+          }}
+          navigate={() => {}}
+          owner
+          sessions={[]}
+          stations={[]}
+          freshness="live"
+          initialSize={{ w: 1920, h: 1080 }}
+          now={1_000_000}
+          origin={ORIGIN}
+          artifacts={artifacts}
+          mirror={mirror}
+        />,
+      );
+    const card = html(true);
+    expect(card).toContain(MIRROR_ARTIFACT_TEXT);
+    expect(card).toContain('art · version 2');
+    expect(card).not.toContain('<iframe');
+    // The pane of the owner wall (which asks for the link) is not there.
+    expect(card).not.toContain('Loading…');
+    expect(views).toBe(0);
+    // The owner's own wall keeps its pane.
+    const own = html(false);
+    expect(own).not.toContain(MIRROR_ARTIFACT_TEXT);
+    expect(own).toContain('Loading…');
   });
 
   test('the_card_counts_screen_n_of_8_from_frame_tenths', () => {
