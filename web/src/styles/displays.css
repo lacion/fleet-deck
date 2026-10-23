@@ -390,6 +390,87 @@
   background-color: var(--badge-bg);
 }
 
+/* ── Wall pages (B17): the allow-list under the displays ─────────────────────────────────── */
+/* One panel: the heading, the notes, the add form, then the list. The notes keep a readable measure;
+   the warning about a secret in an address is in --hazard (its words say it too). */
+.fd-wp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+}
+
+.fd-wp p {
+  margin: 0;
+}
+
+.fd-wp > .fd-note {
+  max-width: 72ch;
+}
+
+.fd-wp > .fd-note.fd-wp-hazard {
+  color: var(--hazard);
+}
+
+.fd-wp-form {
+  min-width: 0;
+}
+
+/* The list: one row for each page, a rule between them. The host is data, so it is mono. */
+.fd-wp-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-wp-row:first-child {
+  border-top: 0;
+}
+
+.fd-wp-name {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.fd-wp-host {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-data);
+}
+
+.fd-wp-fit {
+  grid-column: 2;
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+.fd-wp-delete {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.fd-wp-confirm,
+.fd-wp-error {
+  grid-column: 1 / -1;
+}
+
 /* ── the Desktop panel of a station card (Computer Use) ───────────────────────────────────── */
 .fd-desk {
   display: flex;

@@ -5,6 +5,7 @@ import type {
   DirectiveBody,
   DirectiveView,
   DisplayChanges,
+  DisplayPage,
   PairingPoll,
   PairingStarted,
 } from '../gen';
@@ -145,15 +146,14 @@ export function directiveView(v: unknown): DirectiveView {
  * directive is not used here, because the deck enforces it.
  */
 export function directiveRoute(body: DirectiveBody, base: WallRoute = wallDefaults): WallRoute {
-  const { session: _s, batch: _b, artifact: _a, ...keep } = base;
+  const { session: _s, batch: _b, artifact: _a, page: _p, ...keep } = base;
   const common = { ...keep, name: 'wall' as const, pin: body.pin, stations: [], repo: '' };
   switch (body.mode) {
     case 'mission':
     case 'ambient':
       return { ...common, mode: body.mode };
     case 'page':
-      // B17: the wall draws no page yet, so a page directive shows Mission until the page pane.
-      return { ...common, mode: 'mission' };
+      return { ...common, mode: 'page', page: { id: body.page.page_id } };
     case 'focus':
     case 'review':
       return {
@@ -197,3 +197,21 @@ export function displayChanges(v: unknown): DisplayChanges {
 /** The path of the one file of an artifact version (`_` is the one file, R15). */
 export const artifactPath = (station: string, id: string, version: number): string =>
   `/api/displays/self/artifact/${encodeURIComponent(station)}/${encodeURIComponent(id)}/${version}/_`;
+
+/** The path of the wall page that the directive of this display shows (B17 §3.2.4). */
+export const pagePath = (pageId: string): string =>
+  `/api/displays/self/page/${encodeURIComponent(pageId)}`;
+
+/** Validates the answer of `GET /api/displays/self/page/{page_id}`. */
+export function displayPage(v: unknown): DisplayPage {
+  if (
+    !record(v) ||
+    typeof v['page_id'] !== 'string' ||
+    typeof v['label'] !== 'string' ||
+    typeof v['url'] !== 'string' ||
+    (v['fit'] !== 'screen' && v['fit'] !== 'long')
+  ) {
+    throw new Error('The deck sent an invalid page.');
+  }
+  return v as DisplayPage;
+}

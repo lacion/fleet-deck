@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 export type Tab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
 /** R13 P1: the modes of the wall. */
-export type WallMode = 'mission' | 'focus' | 'review' | 'race' | 'artifact' | 'ambient';
+export type WallMode = 'mission' | 'focus' | 'review' | 'race' | 'artifact' | 'page' | 'ambient';
 /** R13 P1: the shape classes of the wall. */
 export type WallShape = 'ultra' | 'wide' | 'standard' | 'portrait';
 
@@ -13,6 +13,7 @@ export const WALL_MODES: readonly WallMode[] = [
   'review',
   'race',
   'artifact',
+  'page',
   'ambient',
 ];
 export const WALL_SHAPES: readonly WallShape[] = ['ultra', 'wide', 'standard', 'portrait'];
@@ -36,6 +37,8 @@ export type WallRoute = {
     readonly id: string;
     readonly version?: number;
   };
+  /** B17: the wall page (an entry of the allow-list, by id, never a URL) that the `page` mode shows. */
+  readonly page?: { readonly id: string };
   /** `pin=1`: auto-focus is off. */
   readonly pin: boolean;
 };
@@ -173,7 +176,7 @@ export const wallDefaults: WallRoute = {
   pin: false,
 };
 
-/** `#/wall?mode=&stations=&repo=&scale=&shape=&session=&batch=&artifact=&pin=` (R13 P1). */
+/** `#/wall?mode=&stations=&repo=&scale=&shape=&session=&batch=&artifact=&page=&pin=` (R13 P1, B17). */
 function parseWall(query: string): WallRoute {
   const q = new URLSearchParams(query);
   const mode = q.get('mode');
@@ -194,11 +197,14 @@ function parseWall(query: string): WallRoute {
         : artifactRef;
   const batchText = q.get('batch');
   const batch = batchText === null || batchText === '' ? undefined : batchText;
+  const pageText = q.get('page');
+  const page = pageText === null || pageText === '' ? undefined : { id: pageText };
   const wanted = WALL_MODES.find((m) => m === mode) ?? 'mission';
   const mode2 =
     ((wanted === 'focus' || wanted === 'review') && session === undefined) ||
     (wanted === 'race' && batch === undefined) ||
-    (wanted === 'artifact' && artifact === undefined)
+    (wanted === 'artifact' && artifact === undefined) ||
+    (wanted === 'page' && page === undefined)
       ? 'mission'
       : wanted;
   return {
@@ -211,6 +217,7 @@ function parseWall(query: string): WallRoute {
     ...(session === undefined ? {} : { session }),
     ...(batch === undefined ? {} : { batch }),
     ...(artifact === undefined ? {} : { artifact }),
+    ...(page === undefined ? {} : { page }),
     pin: q.get('pin') === '1',
   };
 }
@@ -228,6 +235,7 @@ function formatWall(route: WallRoute): string {
     q.set('artifact', `${route.artifact.station}/${route.artifact.id}`);
     if (route.artifact.version !== undefined) q.set('version', String(route.artifact.version));
   }
+  if (route.page !== undefined) q.set('page', route.page.id);
   if (route.pin) q.set('pin', '1');
   return `#/wall?${q.toString()}`;
 }

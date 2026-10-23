@@ -26,6 +26,7 @@ export const MODE_NAME: Readonly<Record<WallMode, string>> = {
   review: 'Review',
   race: 'Race',
   artifact: 'Artifact',
+  page: 'Page',
   ambient: 'Ambient',
 };
 

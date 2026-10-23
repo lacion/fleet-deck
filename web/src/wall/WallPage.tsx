@@ -41,6 +41,7 @@ import { DisplayArtifactPane } from './DisplayArtifactPane';
 import { DisplayChangesPane, type DisplayEnv } from './displayChanges';
 import { DiffPane } from './DiffPane';
 import { keyOf, timelineOf, useSize, useTimelines } from './hooks';
+import { DisplayPagePane, OwnerPagePane } from './PagePane';
 import { asksOf, fleetSignature, needsList, stepMode, tileSessions, wallSessions } from './model';
 import { RacePane } from './RacePane';
 import { ReviewPane } from './ReviewPane';
@@ -445,6 +446,20 @@ function Wall({
             station={route.artifact.station}
             id={route.artifact.id}
             artifacts={artifacts}
+          />
+        );
+      case 'page':
+        if (route.page === undefined) return null;
+        // A display shows the frame; the owner wall and the mirror show the card (never a frame).
+        return display === undefined ? (
+          <OwnerPagePane pageId={route.page.id} tenths={remoteState.frame_tenths} />
+        ) : (
+          <DisplayPagePane
+            // A new directive of the same page starts again (the reload check, the read).
+            key={`${route.page.id}/${display.generation ?? 0}`}
+            pageId={route.page.id}
+            env={display}
+            tenths={remoteState.frame_tenths}
           />
         );
       case 'ambient':

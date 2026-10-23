@@ -312,3 +312,23 @@ describe('the remote route (B17)', () => {
     expect(parseHash('#/remote/%E0%A4%A')).toEqual({ name: 'home' });
   });
 });
+
+describe('the page mode of the wall (B17)', () => {
+  test('page_mode_round_trips', () => {
+    const route: WallRoute = {
+      ...wallDefaults,
+      mode: 'page',
+      page: { id: '01JABCDEFGHJKMNPQRSTVWXYZ0' },
+      pin: true,
+    };
+    expect(formatHash(route)).toContain('mode=page');
+    expect(formatHash(route)).toContain('page=01JABCDEFGHJKMNPQRSTVWXYZ0');
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+
+  test('page_mode_without_a_page_is_mission', () => {
+    expect((parseHash('#/wall?mode=page') as WallRoute).mode).toBe('mission');
+    expect((parseHash('#/wall?mode=page&page=') as WallRoute).mode).toBe('mission');
+    expect(parseHash('#/wall?mode=page')).not.toHaveProperty('page');
+  });
+});

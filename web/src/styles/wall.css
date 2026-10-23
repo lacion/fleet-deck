@@ -1465,6 +1465,51 @@
   height: 800%;
 }
 
+/* ── page (B17) ───────────────────────────────────────────────────────────────────────────── */
+/* A wall page in a closed frame. At the one-screen fit the frame is the height of the pane; at the
+   long fit it is 8 screens tall and the pane scrolls it by program to `frame_tenths`. */
+.fd-wall-page {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--r-panel);
+}
+
+.fd-wall-pageframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.fd-wall-page[data-fit="long"] .fd-wall-pageframe {
+  height: 800%;
+}
+
+/* The card of the owner wall and of the mirror: the page name, its host, the screen of a long page. */
+.fd-wall-pagecard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 0;
+  text-align: center;
+}
+
+.fd-wall-pagecard .fd-wall-h {
+  justify-content: center;
+  margin: 0;
+  font-size: var(--fs-page);
+}
+
+.fd-wall-pagehost {
+  margin: 0;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-title);
+}
+
 /* ── ambient: dark in every theme, low motion ─────────────────────────────────────────────── */
 /* A wall in the light theme keeps the night deck here (the screen idles, often in a dark room):
    WallPage adds .fd-scope-dark, and tokens.css gives that scope the dark color tokens. */

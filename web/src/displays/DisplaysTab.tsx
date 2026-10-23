@@ -2,7 +2,7 @@
 // display" at the right of their heading (the add panel opens under the heading), then the
 // pairings that wait for a code, only when there are some. It is the owner's page: the settings
 // context is present only for the owner's login.
-import { type ReactNode, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import type { StationView } from '../gen';
 import type { SettingsEnv } from '../settings/context';
 import { type ElevationAsk, useElevation } from '../settings/elevation';
@@ -15,9 +15,26 @@ import { AddDisplay } from './AddDisplay';
 import { DisplayRow } from './DisplayRow';
 import { PendingPairings } from './PendingPairings';
 import { type ListState, useDisplayList } from './useDisplayList';
+import { WALL_PAGES_FEATURE, WallPages } from './WallPages';
 
 /** The text of the button that opens the add panel (the heading row and the empty state). */
 export const ADD_TEXT = 'Add a wall display';
+
+/** The deck has the wall pages (`GET /api/features` lists `wall_pages.v1`). */
+function useWallPagesFeature(capture: SettingsEnv['capture']): boolean {
+  const [has, setHas] = useState(false);
+  useEffect(() => {
+    let live = true;
+    capture.features().then(
+      (list) => live && setHas(list?.includes(WALL_PAGES_FEATURE) === true),
+      () => live && setHas(false),
+    );
+    return () => {
+      live = false;
+    };
+  }, [capture]);
+  return has;
+}
 
 export function DisplaysTab({
   env,
@@ -32,8 +49,10 @@ export function DisplaysTab({
   const { state, refresh } = useDisplayList(env.displays, live);
   const elevation = useElevation(env.settings);
   const now = useNow(undefined, 30_000);
+  const wallPages = useWallPagesFeature(env.capture);
   return (
     <DisplaysView
+      wallPages={wallPages}
       state={state}
       refresh={refresh}
       env={env}
@@ -54,6 +73,7 @@ export function DisplaysView({
   stations,
   ask,
   now,
+  wallPages = false,
   children,
 }: {
   readonly state: ListState;
@@ -62,6 +82,8 @@ export function DisplaysView({
   readonly stations: readonly StationView[];
   readonly ask: ElevationAsk;
   readonly now: number;
+  /** The deck has the wall pages: "Show a page…" and the section "Wall pages" show. */
+  readonly wallPages?: boolean;
   /** The elevation dialog. */
   readonly children?: ReactNode;
 }) {
@@ -145,6 +167,7 @@ export function DisplaysView({
                 ask={ask}
                 onDone={refresh}
                 now={now}
+                pages={wallPages}
               />
             ))}
           </ul>
@@ -160,6 +183,9 @@ export function DisplaysView({
           ask={ask}
           onDone={refresh}
         />
+      ) : null}
+      {wallPages && state.kind === 'ready' ? (
+        <WallPages actions={env.displays} settings={env.settings} ask={ask} />
       ) : null}
     </div>
   );

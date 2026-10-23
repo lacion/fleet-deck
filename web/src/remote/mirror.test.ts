@@ -215,6 +215,7 @@ describe('route_directive_is_the_inverse_of_directive_route', () => {
       pin: false,
       filter: null,
     },
+    { mode: 'page', page: { page_id: 'P'.repeat(26) }, pin: true, filter },
   ];
   test('every mode comes back as it was', () => {
     for (const body of bodies) {
@@ -226,6 +227,7 @@ describe('route_directive_is_the_inverse_of_directive_route', () => {
     expect(routeDirective({ ...wallDefaults, mode: 'focus' }, false, null)).toBeNull();
     expect(routeDirective({ ...wallDefaults, mode: 'review' }, false, null)).toBeNull();
     expect(routeDirective({ ...wallDefaults, mode: 'race' }, false, null)).toBeNull();
+    expect(routeDirective({ ...wallDefaults, mode: 'page' }, false, null)).toBeNull();
     expect(
       routeDirective(
         { ...wallDefaults, mode: 'artifact', artifact: { station: 'a', id: 'x' } },
@@ -337,6 +339,7 @@ describe('the scroll areas and the keys', () => {
     expect(scrollAreas('focus').map((a) => a.label)).toEqual(['Chat', 'Changes']);
     expect(scrollAreas('review').map((a) => a.label)).toEqual(['Changes']);
     expect(scrollAreas('artifact').map((a) => a.label)).toEqual(['Artifact']);
+    expect(scrollAreas('page').map((a) => a.label)).toEqual(['Page']);
     expect(scrollAreas('race')).toEqual([]);
     expect(scrollAreas('ambient')).toEqual([]);
     // The chosen area counts only when the mode has it; else the first of the mode; else none.

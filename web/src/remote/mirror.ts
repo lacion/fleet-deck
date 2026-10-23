@@ -234,6 +234,10 @@ export function routeDirective(
             pin,
             filter,
           };
+    case 'page':
+      return route.page === undefined
+        ? null
+        : { mode: 'page', page: { page_id: route.page.id }, pin, filter };
   }
 }
 
@@ -246,8 +250,8 @@ function refPair(ref: string): SessionRef | null {
 /** The two routes show the same thing: the same mode and the same target. */
 const sameRoute = (a: WallRoute, b: WallRoute): boolean =>
   a.mode === b.mode &&
-  JSON.stringify([a.session, a.batch, a.artifact]) ===
-    JSON.stringify([b.session, b.batch, b.artifact]);
+  JSON.stringify([a.session, a.batch, a.artifact, a.page]) ===
+    JSON.stringify([b.session, b.batch, b.artifact, b.page]);
 
 const STEP_OF: Readonly<Record<string, ScrollStep>> = {
   line_up: 'line_up',
@@ -370,6 +374,8 @@ export function scrollAreas(mode: WallMode): readonly AreaChoice[] {
       return [{ area: 'changes', label: 'Changes' }];
     case 'artifact':
       return [{ area: 'artifact', label: 'Artifact' }];
+    case 'page':
+      return [{ area: 'page', label: 'Page' }];
     case 'race':
     case 'ambient':
       return [];
