@@ -227,7 +227,7 @@
 }
 @media (hover: hover) {
   :is(.fd-chat-reasoning, .fd-chat-toolgroup) > summary:hover {
-    background: var(--surface);
+    background: var(--raised);
     color: var(--text);
   }
 }

@@ -173,9 +173,9 @@ report "a diff on a --raised fill (diff fills sit on --code or --bg only)" \
 # element that was tapped last, so a tapped row kept its hover fill and looked selected. A rule
 # with `:hover` in its selector sits in a `@media (hover: hover)` block (alone, or with another
 # feature: `(forced-colors: active) and (hover: hover)`). The awk parser reads one file; it
-# ignores comments. The budget is the count of older rules of a file that are not in such a block
-# yet: it only goes down (a file that moves a rule into the block lowers its number; a new
-# unguarded rule fails). A file that is not listed has a budget of 0.
+# ignores comments. The budget of older rules outside such a block is 0 for every file (it was
+# 40 rules before DL-506): a new unguarded rule fails. A file that is listed in the budget (none
+# today) would allow that count.
 hover_awk='
 function trim(s) { gsub(/^[ \t\n]+|[ \t\n]+$/, "", s); gsub(/[ \t\n]+/, " ", s); return s }
 {
@@ -206,7 +206,7 @@ function trim(s) { gsub(/^[ \t\n]+|[ \t\n]+$/, "", s); gsub(/[ \t\n]+/, " ", s);
     }
 }
 '
-hover_budget='displays.css=1 home.css=14 integrations.css=9 page.css=2 settings.css=9 terminal.css=5'
+hover_budget=''
 hover_out=""
 for f in $(find "$styles" -name '*.css' ! -name 'tokens.css' | sort); do
     found=$(awk "$hover_awk" "$f")

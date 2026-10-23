@@ -462,9 +462,6 @@
    tap). A choice steps up to --badge-bg with the --ctl-edge edge of the other filled answers on
    a --raised layer (§4.1), and its chevron moves toward the next step. */
 @media (hover: hover) {
-  .fd-add-dialog :where(button:not([class])):hover:not(:disabled) {
-    background: var(--raised-hi);
-  }
   .fd-add-text-btn:hover:not(:disabled) {
     background: transparent;
     border-color: transparent;

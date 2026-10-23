@@ -499,7 +499,7 @@
 
 @media (hover: hover) {
   .fd-achan:hover:not(:disabled) {
-    background: var(--raised);
+    background: var(--hover-bg);
     color: var(--text);
   }
 }
@@ -569,7 +569,7 @@
 
 @media (hover: hover) {
   .fd-achan-ended:hover:not(:disabled) {
-    background: var(--raised);
+    background: var(--hover-bg);
     color: var(--text);
   }
 }

@@ -142,11 +142,17 @@
   height: 16px;
 }
 /* Ctrl is armed: the selected look (a fill step and the blue edge). */
-.fd-keybar-key[aria-pressed="true"],
-.fd-keybar-key[aria-pressed="true"]:hover:not(:disabled) {
+.fd-keybar-key[aria-pressed="true"] {
   background: var(--focus-bg);
   color: var(--focus);
   box-shadow: inset 0 0 0 1px var(--focus);
+}
+@media (hover: hover) {
+  .fd-keybar-key[aria-pressed="true"]:hover:not(:disabled) {
+    background: var(--focus-bg);
+    color: var(--focus);
+    box-shadow: inset 0 0 0 1px var(--focus);
+  }
 }
 
 /* ── dock ───────────────────────────────────────────────────────── */
@@ -190,9 +196,13 @@
   opacity: 0;
   transition: opacity var(--t-fast);
 }
-.fd-tdock-handle:hover::after,
 .fd-tdock-handle:focus-visible::after {
   opacity: 1;
+}
+@media (hover: hover) {
+  .fd-tdock-handle:hover::after {
+    opacity: 1;
+  }
 }
 
 /* The bar: tabs at the left, tools at the right. */
@@ -236,8 +246,10 @@
   font-size: var(--fs-ui);
   transition: color var(--t-fast);
 }
-.fd-tdock-tabwrap:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-tdock-tabwrap:hover {
+    color: var(--text);
+  }
 }
 .fd-tdock-tabwrap[data-selected="true"] {
   color: var(--text);
@@ -258,8 +270,10 @@
   font-size: inherit;
   font-weight: 500;
 }
-.fd-tdock-tab:hover:not(:disabled) {
-  background: transparent;
+@media (hover: hover) {
+  .fd-tdock-tab:hover:not(:disabled) {
+    background: transparent;
+  }
 }
 .fd-tdock-tab:focus-visible {
   outline-offset: -2px;
@@ -284,10 +298,14 @@
 .fd-tdock-detach {
   opacity: 0;
 }
-.fd-tdock-tabwrap:hover .fd-tdock-detach,
 .fd-tdock-tabwrap[data-selected="true"] .fd-tdock-detach,
 .fd-tdock-detach:focus-visible {
   opacity: 1;
+}
+@media (hover: hover) {
+  .fd-tdock-tabwrap:hover .fd-tdock-detach {
+    opacity: 1;
+  }
 }
 @media (pointer: coarse) {
   .fd-tdock-detach {
