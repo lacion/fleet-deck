@@ -25,6 +25,7 @@ use fleetdeck_proto::version::feature;
 use super::execution_routes::{StopAudit, stop_gates, watch_outcome};
 use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
+use super::recount_audit::{RecountAudit, watch_recount};
 use super::{Board, access};
 use crate::link::CommandKind;
 use crate::store::worker_grant::{Provenance, WorkerStart};
@@ -62,15 +63,38 @@ pub async fn command(
         Ok(Json(req)) if method == STOP_METHOD => StopAudit::of(req),
         _ => None,
     };
+    // B20: a recount has a submitted row, a refused row and an outcome row,
+    // all with the session target (`recount_audit.rs`).
+    let recount = match &body {
+        Ok(Json(req)) => RecountAudit::of(req),
+        Err(_) => None,
+    };
     match route(&board, &method, &principal, body).await {
         Ok((cmd, new)) => {
             let mut row = NewAudit::new(principal.actor(), method, AuditResult::Ok)
                 .target(cmd.station_id.0.clone())
                 .command(cmd.command_id.clone());
-            if !new {
+            if let Some(recount) = &recount {
+                row = row
+                    .target(recount.target(&cmd.station_id.0))
+                    .detail(if new {
+                        "stage=submitted"
+                    } else {
+                        "stage=submitted duplicate"
+                    });
+            } else if !new {
                 row = row.detail("duplicate");
             }
             board.store.audit_or_log(row).await;
+            if let Some(recount) = recount.filter(|_| new) {
+                // The outcome row does not wait for a browser.
+                watch_recount(
+                    Arc::clone(&board),
+                    principal.actor(),
+                    cmd.station_id.clone(),
+                    recount,
+                );
+            }
             if let Some(stop) = stop.as_ref().filter(|_| new) {
                 stop.accepted(&board, &principal.actor(), &cmd.station_id.0)
                     .await;
@@ -100,7 +124,9 @@ pub async fn command(
                 .await;
             }
             let mut row = audit.detail(e.code);
-            if let Some(station) = station {
+            if let Some(recount) = &recount {
+                row = recount.refused_row(row, station.as_deref().unwrap_or("-"), e.code);
+            } else if let Some(station) = station {
                 row = row.target(station);
             }
             if let Some(id) = id {
@@ -335,6 +361,36 @@ async fn route(
                 "only the owner's board login runs shell commands".to_owned(),
             ),
         ));
+    }
+    // A usage recount replaces a stored total (B20): only the owner's board
+    // login sends one, and only to a station that negotiated the feature.
+    if matches!(command, SessionCommand::UsageRecount { .. }) {
+        if !owner {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "owner_only",
+                    "only the owner's board login recounts usage".to_owned(),
+                ),
+            ));
+        }
+        if board
+            .store
+            .link_feature(&rec.station_id, feature::USAGE_RECOUNT)
+            != LinkFeature::Negotiated
+        {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "not_supported",
+                    "this station cannot recount usage".to_owned(),
+                ),
+            ));
+        }
     }
     if matches!(command, SessionCommand::ShellCommand { .. }) {
         let shells_on = board

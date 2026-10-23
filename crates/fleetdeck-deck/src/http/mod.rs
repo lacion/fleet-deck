@@ -65,6 +65,7 @@ pub mod project_writes;
 pub mod projects_routes;
 pub mod provision_report_routes;
 pub mod read_routes;
+mod recount_audit;
 pub mod review_anchor_cache;
 pub mod review_routes;
 pub mod schedule_routes;
