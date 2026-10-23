@@ -404,6 +404,13 @@
     min-height: 44px;
   }
 }
+/* On a touch screen the panel bar takes the field size of its version select, as the page header
+   does (base.css): the select label and the actions are not in two type sizes. */
+@media (pointer: coarse) {
+  .fd-art-bar:has(> .fd-art-version > select.fd-ghost) > .fd-art-action {
+    font-size: var(--fs-field);
+  }
+}
 
 /* A wide viewer: one row; Download and Share… sit in the bar, the menu holds Send to wall… and
    Delete artifact (and is absent when it has nothing else). */
@@ -439,6 +446,11 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
+  }
+  /* The select label then sits on the gutter, as in a page (page.css): the version moves back by
+     the padding of the ghost select. */
+  .fd-art-bar > .fd-art-version:has(> select.fd-ghost.fd-sm) {
+    margin-inline-start: -8px;
   }
 }
 
@@ -670,6 +682,11 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* The version badge is the neutral one of the list; on the raised chip its fill is as light as the
+   chip's, so it gets the edge of a key chip on a raised fill. */
+.fd-art-chip > .fd-badge {
+  box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
 }
 @media (hover: hover) {
   .fd-art-chip:hover:not(:disabled) {

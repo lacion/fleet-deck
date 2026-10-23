@@ -32,9 +32,7 @@ export function ArtifactChip({
     <>
       <Icon of={Paperclip} size={12} />
       <span className="fd-art-chip-text">{chipText(chip)}</span>
-      {chip.version > 1 ? (
-        <span className="fd-badge" data-tone="muted">{`v${chip.version}`}</span>
-      ) : null}
+      {chip.version > 1 ? <span className="fd-badge fd-art-ver">{`v${chip.version}`}</span> : null}
     </>
   );
   if (env?.open !== undefined) {
