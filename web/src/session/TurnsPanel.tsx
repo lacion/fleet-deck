@@ -8,6 +8,7 @@ import type {
   SessionSummary,
   TurnDiff,
 } from '../gen';
+import { providerLabel } from '../board/lanes';
 import { diffReview, type ReviewProps } from '../review/diffReview';
 import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
@@ -15,11 +16,20 @@ import { ReviewBar } from '../review/ReviewBar';
 import { addedText, removedText } from '../ui/format';
 import { ChevronRight, Icon, RefreshCw } from '../ui/icons';
 import { sessionRef } from '../ui/localSet';
+import { EmptyState } from '../ui/page';
 import { BranchesView } from './BranchesView';
 import { allChangedPaths, turnForPath } from './changedFiles';
-import { checkpointText, NOT_A_GIT_WORKTREE, sharedNote, sharedReason } from './checkpoint';
+import {
+  checkpointText,
+  hasSnapshot,
+  NOT_A_GIT_WORKTREE,
+  outsideGit,
+  sharedNote,
+  sharedReason,
+} from './checkpoint';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
+import { FileDiff } from './icons';
 import {
   type FinalizedTurn,
   mergeTurnPaths,
@@ -149,13 +159,13 @@ export function SinceNotes({
   return (
     <>
       {scope === 'session_files' ? (
-        <p className="fd-note" data-note="shared-folder">
+        <p className="fd-note fd-since-note" data-note="shared-folder">
           This session works in a shared folder. The diff shows only the files that this session
           changed.
         </p>
       ) : null}
       {base?.inferred === true ? (
-        <p className="fd-note" data-note="guessed-base">
+        <p className="fd-note fd-since-note" data-note="guessed-base">
           The start commit was guessed ({base.git_ref ?? 'a commit'}), because this session started
           before Fleet Deck recorded it.
         </p>
@@ -237,25 +247,27 @@ function SinceSpawn({
     if (diff === null || target === undefined) return;
     if (focusFileHead(box.current, target.path)) onTargetShown?.();
   }, [diff, shown]);
+  const hasPatch = diff !== null && diff.patch.trim() !== '';
   return (
     <div className="fd-since" data-view="spawn" ref={box}>
-      {/* One text run (the period stays on the last word), then Refresh at the end of the line. */}
-      <p className="fd-note">
-        <span>
-          Changes since the session started
+      {/* One head row: the totals first (the key fact), then where they count from in --dim,
+          then Refresh at the end of the row; the notes follow as --faint lines. */}
+      <div className="fd-since-head">
+        {diff !== null && hasPatch ? <SinceTotal stat={diff.summary} /> : null}
+        <span className="fd-since-base">
+          {hasPatch ? 'since' : 'Changes since'}{' '}
           {base ? (
             <>
-              {' from '}
               {base.git_ref ? (
                 <>
                   <code>{base.git_ref}</code> at{' '}
                 </>
               ) : null}
               <code>{base.oid.slice(0, 8)}</code>
-              {base.inferred ? ' (guessed)' : ''}
             </>
-          ) : null}
-          .
+          ) : (
+            'the session started'
+          )}
         </span>
         <button
           type="button"
@@ -267,7 +279,7 @@ function SinceSpawn({
         >
           <Icon of={RefreshCw} size={14} />
         </button>
-      </p>
+      </div>
       <SinceNotes base={base} scope={diff?.scope} />
       {review !== undefined && diff !== null ? (
         <ImportPrompt
@@ -287,21 +299,16 @@ function SinceSpawn({
       {diff !== null && !hasChanges(diff.summary) && diff.patch.trim() === '' ? (
         <p className="fd-note">No file changes since the session started.</p>
       ) : null}
-      {diff !== null && diff.patch.trim() !== '' ? (
-        <>
-          <p className="fd-turn-stat">
-            <TurnStat stat={diff.summary} />
-          </p>
-          <Diff
-            patch={diff.patch}
-            truncated={diff.truncated}
-            id="since-spawn"
-            onOpenFile={onOpenFile}
-            review={
-              review === undefined ? undefined : diffReview(review, spawnSnapshot(diff.base_oid))
-            }
-          />
-        </>
+      {diff !== null && hasPatch ? (
+        <Diff
+          patch={diff.patch}
+          truncated={diff.truncated}
+          id="since-spawn"
+          onOpenFile={onOpenFile}
+          review={
+            review === undefined ? undefined : diffReview(review, spawnSnapshot(diff.base_oid))
+          }
+        />
       ) : null}
     </div>
   );
@@ -320,6 +327,21 @@ function TurnStat({ stat }: { readonly stat: DiffSummary }) {
         {stat.files_changed} {stat.files_changed === 1 ? 'file' : 'files'}
       </span>
     </>
+  );
+}
+
+/** The totals of the session diff, the key fact of its head row: `+1,286 −400 · 3 files`. */
+export function SinceTotal({ stat }: { readonly stat: DiffSummary }) {
+  const lines = stat.insertions > 0 || stat.deletions > 0;
+  return (
+    <span className="fd-since-total">
+      {stat.insertions > 0 ? <span className="fd-add">{addedText(stat.insertions)}</span> : null}
+      {stat.deletions > 0 ? <span className="fd-del">{removedText(stat.deletions)}</span> : null}
+      <span className="fd-since-files">
+        {lines ? '· ' : ''}
+        {stat.files_changed} {stat.files_changed === 1 ? 'file' : 'files'}
+      </span>
+    </span>
   );
 }
 
@@ -343,6 +365,13 @@ export type LoadedDiff = {
  */
 export function diffOpen(diff: LoadedDiff | string | undefined): boolean {
   return diff !== undefined && typeof diff !== 'string';
+}
+
+/** Why the turn list offers no revert, with the name of the provider. */
+export function rollbackNote(provider: SessionSummary['provider']): string {
+  return provider === null || provider === 'unknown'
+    ? 'This session cannot be rolled back, so the board offers no revert.'
+    : `${providerLabel(provider)} sessions cannot be rolled back, so the board offers no revert.`;
 }
 
 /** The review bar of the Changes tab. */
@@ -475,11 +504,13 @@ export function TurnsPanel(props: Props) {
     if (turn !== undefined) latest.current(turn.turnId);
     // Only a new click (the nonce) moves the view; a reload of the threads does not.
   }, [focusNonce]);
+  // A folder outside Git has no branches: no Branches view.
+  const noGit = outsideGit(turns);
   // A guessed start commit makes the whole-session diff unreliable: open "By turn" (DL-159).
   const views: readonly View[] = [
     ...(hasBase ? (['spawn'] as const) : []),
     'turns',
-    ...(hasBranches ? (['branches'] as const) : []),
+    ...(hasBranches && !noGit ? (['branches'] as const) : []),
   ];
   const fallback: View = hasBase && summary.base?.inferred !== true ? 'spawn' : 'turns';
   const view: View = chosen !== null && views.includes(chosen) ? chosen : fallback;
@@ -552,9 +583,24 @@ export function TurnsPanel(props: Props) {
       </section>
     );
   }
+  // A folder outside Git: no turn can have a file snapshot. One empty state (§4.7), not a list
+  // of rows that all say "No snapshot".
+  if (noGit) {
+    return (
+      <section className="fd-turns" aria-label="Turns">
+        {toggle}
+        <EmptyState
+          icon={FileDiff}
+          title="No changes to show"
+          body="This folder is not a Git repository, so the board keeps no file snapshots for this session."
+        />
+        <Bar review={review} />
+      </section>
+    );
+  }
   const caps = summary.capabilities;
   // No turn has a snapshot: the reason shows once above the list, and the rows that share it
-  // only say "No snapshot" (a folder outside Git explains every row).
+  // only say "No snapshot".
   const shared = sharedReason(turns);
   const sharedBy = (reason: string) =>
     shared !== null && (shared === NOT_A_GIT_WORKTREE || reason === shared);
@@ -562,10 +608,9 @@ export function TurnsPanel(props: Props) {
     <section className="fd-turns" aria-label="Turns">
       {toggle}
       <h3 className="fd-vh">Turns</h3>
-      {caps?.rollback === true ? null : (
-        <p className="fd-note">
-          This provider cannot roll back its conversation, so the board offers no revert.
-        </p>
+      {/* Without a snapshot no revert is possible anyway: the note would explain nothing. */}
+      {caps?.rollback === true || !hasSnapshot(turns) ? null : (
+        <p className="fd-note">{rollbackNote(summary.provider)}</p>
       )}
       {shared === null ? null : (
         <p className="fd-note" data-note="no-snapshots">

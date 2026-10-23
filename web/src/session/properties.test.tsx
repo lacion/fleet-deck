@@ -1,5 +1,5 @@
 // §4.5: the Properties panel, its header toggle, the changed files it lists, and the composer's
-// model chip that opens the model picker of the session menu.
+// model chip with its own popover of models.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { DeckSession } from '../gen';
@@ -12,14 +12,15 @@ import { Composer } from './Composer';
 import {
   ChangedList,
   changeTotal,
+  NEW_INPUT_TITLE,
   PROPS_FILES_MAX,
   PropertiesPanel,
   scopeLabel,
   sinceText,
+  tokensText,
   usePropsOpen,
 } from './PropertiesPanel';
 import type { FinalizedTurn } from './workspace';
-import { openPicker } from './SessionSettings';
 import { SessionView } from './SessionView';
 
 const key = { station_id: 'station-a', session_id: 's1' };
@@ -39,7 +40,7 @@ function session(held = false): DeckSession {
   };
 }
 
-const view = (held = false) =>
+const view = (held = false, layout: 'desktop' | 'phone' = 'desktop') =>
   renderToStaticMarkup(
     <SessionView
       session={session(held)}
@@ -54,7 +55,7 @@ const view = (held = false) =>
         ready: true,
       }}
       actions={sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])}
-      layout="desktop"
+      layout={layout}
       tab="chat"
     />,
   );
@@ -150,6 +151,79 @@ describe('properties panel facts (§4.5)', () => {
     );
   });
 
+  test('the status says since when on a line of its own (the CSS gives the aside a full line)', () => {
+    expect(panel('live')).toMatch(
+      /<dd><span class="fd-sh-status" data-status="working">[\s\S]*?<\/span><span class="fd-props-aside">/,
+    );
+  });
+
+  test('the context window is a --faint aside of the Model row, not a row of its own', () => {
+    const opus = { ...session(), summary: { ...session().summary, model: 'claude-opus-5-5[1m]' } };
+    const html = panel('live', true, { session: opus });
+    expect(html).toContain(
+      '<dt>Model</dt><dd><span title="claude-opus-5-5[1m]">Opus 5.5</span><span class="fd-props-aside">1M context</span></dd>',
+    );
+    expect(html).not.toContain('<dt>Context</dt>');
+    expect(panel('live')).not.toContain('context</span>');
+  });
+
+  test('the tokens say "new in": the station counts the input outside the prompt cache only', () => {
+    expect(tokensText(682, 309_000)).toBe('682 new in · 309K out');
+    expect(tokensText(null, 309_000)).toBe('309K out');
+    expect(tokensText(1200, null)).toBe('1.2K new in');
+    const usage = { input_tokens: 682, output_tokens: 309_000, cost_usd: 1, cost_inferred: false };
+    const html = panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, usage } },
+    });
+    expect(html).toContain(
+      `<dt>Tokens</dt><dd><span class="fd-props-fuel" title="${NEW_INPUT_TITLE}">682 new in · 309K out</span>`,
+    );
+  });
+
+  test('the session id (with Copy) and the event count close the panel', () => {
+    const html = panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, session_seq: 7405 } },
+    });
+    expect(html).toContain(
+      '<dt>Session</dt><dd><code class="fd-props-mono fd-props-sid" title="s1">s1</code><button type="button" class="fd-iconbtn fd-sm" aria-label="Copy the session id"',
+    );
+    expect(html).toContain('<dt>Events</dt><dd>7,405</dd>');
+    expect(html).not.toContain('<dt>Summary</dt>');
+    const digest = panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, digest: '- One\n- Two' } },
+    });
+    expect(digest).toContain('<dt>Summary</dt><dd><span class="fd-generated" role="img"');
+    expect(digest).toContain(
+      '<dd class="fd-props-filelist fd-props-digest"><ul class="fd-sh-digest"><li>One</li><li>Two</li></ul></dd>',
+    );
+  });
+
+  test('the Mode row: a plain fact, or a ghost menu with the mode ladder when it can be set', () => {
+    const planned = { ...session(), summary: { ...session().summary, mode: 'bypassPermissions' } };
+    const plain = panel('live', true, { session: planned });
+    expect(plain).toContain(
+      '<span class="fd-props-mode" data-tone="hazard" title="Permission mode: bypassPermissions">',
+    );
+    expect(plain).not.toContain('fd-props-modemenu');
+    const menu = panel('live', true, {
+      session: planned,
+      mode: { modes: ['default', 'plan', 'bypassPermissions'], enabled: true, onSet: () => {} },
+    });
+    expect(menu).toMatch(
+      /<span class="fd-props-mode fd-props-modemenu" data-tone="hazard"><details class="fd-menu"><summary class="fd-ghost fd-sm" data-variant="toggle" aria-label="Mode: Bypass permissions" title="Change the permission mode">/,
+    );
+    expect(menu).toContain('<legend>Mode</legend>');
+    expect(menu).toMatch(/title="bypassPermissions" aria-pressed="true" disabled=""/);
+  });
+
+  test('a folder never cuts its last name (the CSS wraps it); the earlier ones stay whole', () => {
+    const cwd = '/home/me/projects/obsurvive/fleet-deck--fd-raven-b6df';
+    const html = panel('live', true, {
+      session: { ...session(), summary: { ...session().summary, cwd } },
+    });
+    expect(html).toContain('<span class="fd-props-seg">fleet-deck--fd-raven-b6df</span></code>');
+  });
+
   test('the fleet-control fact is a row of the panel when given', () => {
     expect(panel('live')).not.toContain('Fleet control');
     const html = panel('live', true, { fleet: <button type="button">0 answers</button> });
@@ -168,6 +242,25 @@ describe('properties panel facts (§4.5)', () => {
 });
 
 describe('the size of the session changes (§4.5)', () => {
+  test('a failed read of the session diff falls back to the turns (pending only while it loads)', () => {
+    // SessionView passes pending = has a base and files && the read is 'loading'; a failed read
+    // is not pending, so the sum of the kept turns shows.
+    const turns: FinalizedTurn[] = [
+      {
+        turnId: 't1',
+        start: null,
+        end: null,
+        diff: { files_changed: 2, insertions: 5, deletions: 1 },
+        reverted: false,
+      },
+    ];
+    expect(changeTotal(undefined, turns, false)).toEqual({
+      files_changed: 2,
+      insertions: 5,
+      deletions: 1,
+    });
+  });
+
   const turn = (files: number): FinalizedTurn => ({
     turnId: `t${files}`,
     start: null,
@@ -273,7 +366,7 @@ describe('properties panel changed files (§4.5)', () => {
 });
 
 describe('composer model chip (§4.5)', () => {
-  test('the chip is a button named after the model', () => {
+  test('the chip is the summary of its own popover of models', () => {
     const html = renderToStaticMarkup(
       <Composer
         enabled
@@ -282,52 +375,40 @@ describe('composer model chip (§4.5)', () => {
         nativeQueue={false}
         onSend={() => {}}
         model="Sonnet 5.5"
-        onModel={() => {}}
+        modelChoice={{
+          current: 'claude-sonnet-5-5',
+          models: [{ value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', description: null }],
+          onSet: () => {},
+        }}
       />,
     );
-    expect(html).toContain('aria-label="Model: Sonnet 5.5"');
+    expect(html).toMatch(
+      /<details class="fd-menu"><summary class="fd-sm fd-composer-model" aria-label="Model: Sonnet 5.5" title="Change the model">Sonnet 5.5<svg/,
+    );
+    // The popover lists the models; the current one has its check.
+    expect(html).toContain('<legend>Model</legend>');
+    expect(html).toMatch(/title="claude-sonnet-5-5" aria-pressed="true"/);
   });
 
-  test('the chip is a button while the model can be changed', () => {
+  test('the chip opens its popover while the model can be changed', () => {
     const html = view();
-    expect(html).toMatch(/<button[^>]*aria-label="Model: Sonnet 5\.5"/);
+    expect(html).toMatch(
+      /<summary class="fd-sm fd-composer-model" aria-label="Model: Sonnet 5\.5"/,
+    );
   });
 
-  test('a held session (a terminal holds it) shows the model as plain text, not a button', () => {
+  test('a held session (a terminal holds it) shows the model as plain text, not a menu', () => {
     const html = view(true);
     expect(html).toContain('<span class="fd-composer-model">Sonnet 5.5</span>');
     expect(html).not.toContain('aria-label="Model: ');
   });
 
-  test('the session menu holds the model select that the chip opens', () => {
-    const html = view();
-    expect(html).toMatch(/<summary[^>]*aria-label="Session menu"/);
-    expect(html).toContain('class="fd-sm fd-model-select"');
-  });
-
-  test('openPicker opens the menu of the control and focuses the control', () => {
-    const menu = { open: false };
-    let focused = false;
-    let frames = 0;
-    const control = {
-      closest: (selector: string) => (selector === 'details' ? menu : null),
-      focus: () => {
-        focused = true;
-      },
-    } as unknown as HTMLElement;
-    const opened = openPicker(control, (run) => {
-      frames += 1;
-      run();
-    });
-    expect(opened).toBe(true);
-    expect(menu.open).toBe(true);
-    expect(frames).toBe(1);
-    expect(focused).toBe(true);
-  });
-
-  test('openPicker does nothing without a control or outside a menu', () => {
-    expect(openPicker(null, () => {})).toBe(false);
-    const loose = { closest: () => null, focus: () => {} } as unknown as HTMLElement;
-    expect(openPicker(loose, () => {})).toBe(false);
+  test('one model picker on a screen: the composer on the desktop, the session menu on the phone', () => {
+    const desktop = view();
+    expect(desktop.match(/<legend>Model<\/legend>/g)?.length).toBe(1);
+    expect(desktop).not.toContain('fd-model-select');
+    const phone = view(false, 'phone');
+    expect(phone.match(/<legend>Model<\/legend>/g)?.length).toBe(1);
+    expect(phone).not.toContain('aria-label="Model: ');
   });
 });

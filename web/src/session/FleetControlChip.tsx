@@ -1,10 +1,10 @@
 // ADR-008 §5.3 "Owner visibility": the fleet-control fact of a coordinator's session. It is a fact
 // of the session, not a row of its own between the header and the tabs: a "Fleet control" row of
 // the Properties panel, or of the details of the session menu when the panel is not open. Its value
-// is a link with the answers of the last hour; a press opens the list of the answers.
+// is a link with the answers (and those of the last hour); a press opens the list of the answers.
 import { type ReactNode, useEffect, useState } from 'react';
 import type { SessionActions } from './commands';
-import { type FleetAnswers, answersText } from './fleetAnswers';
+import { answersText, answersTotal, type FleetAnswers, NO_ANSWERS_TEXT } from './fleetAnswers';
 import { FleetAnswersDialog } from './FleetAnswersDialog';
 
 /** The deck is asked again after this time (ms). */
@@ -15,12 +15,18 @@ type ButtonProps = {
   readonly onOpen: () => void;
 };
 
-/** The value of the fact: a link button; nothing when the session has no fleet-control grant. */
+/**
+ * The value of the fact: a link button with the answers ("12 answers · 2 in the last hour"); plain
+ * --dim text before the first answer (a link to an empty list read like a broken counter);
+ * nothing when the session has no fleet-control grant.
+ */
 export function FleetChipButton({ data, onOpen }: ButtonProps) {
   if (!data.fleet_control) return null;
+  const total = answersTotal(data);
+  if (total === 0) return <span className="fd-fleet-none">{NO_ANSWERS_TEXT}</span>;
   return (
     <button type="button" className="fd-link fd-props-link fd-fleet-link" onClick={onOpen}>
-      {answersText(data.last_hour)}
+      {answersText(total, data.last_hour)}
     </button>
   );
 }

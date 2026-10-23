@@ -38,6 +38,7 @@ import type { SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
 import { useSessionController } from './controller';
+import { useArtifactRows } from './artifactRows';
 import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
@@ -53,7 +54,7 @@ import { changeTotal, PropertiesPanel, usePropsOpen, useSessionChanges } from '.
 import { SessionHeader } from './SessionHeader';
 import { useTabReserve } from './tabReserve';
 import { hasAgents, isLive, runningCount, shownStatus, taskStates, toolTitles } from './tasks';
-import { buildTimeline, sessionModels, slashCommands } from './timeline';
+import { buildTimeline, runningSubagents, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns, useDiffTotal } from './workspace';
 import { shortModel } from '../ui/format';
@@ -229,8 +230,6 @@ export function SessionView(props: SessionViewProps) {
   const move = useMove(session, moveOwner);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
-  // The composer model chip opens the header menu on its model picker (the header sets it).
-  const openModel = useRef<(() => void) | null>(null);
   const tabRow = useRef<HTMLDivElement>(null);
   useTabReserve(tabRow);
   // A viewer has no drive scope but sees the files of the shared session.
@@ -238,13 +237,28 @@ export function SessionView(props: SessionViewProps) {
   const changesRef = sessionRef(session.station_id, s.session_id);
   const files = actions?.files ?? null;
   // §4.5: one size of the session's changes on every tab and layout: the Changes tab label (the
-  // changed files) and the Properties Changes row. The session diff loads when the session opens.
+  // changed files) and the Properties Changes row. The session diff loads when the session opens;
+  // a failed read falls back to the sum of the turn diffs.
   const hasBase = Boolean(s.base);
-  useSessionChanges(changesRef, filesReady ? files : null, hasBase, turns.length);
+  const changesRead = useSessionChanges(
+    changesRef,
+    filesReady ? files : null,
+    hasBase,
+    turns.length,
+  );
   const total = changeTotal(
     useDiffTotal(changesRef),
     turns,
-    hasBase && filesReady && files !== null,
+    hasBase && filesReady && files !== null && changesRead === 'loading',
+  );
+  // The running agents: the loaded timeline, or the summary when an agent started before the
+  // loaded history (DL-189 paging); the Agents row and the fleet strip show one number.
+  const running = Math.max(runningCount(tree.subagents, tasks), runningSubagents(s));
+  const artifactRows = useArtifactRows(
+    artifactsEnv?.actions,
+    session.station_id,
+    s.session_id,
+    s.artifacts_count,
   );
   const changedFiles = total?.files_changed ?? 0;
   const propsShown = propsRail && propsOpen;
@@ -279,10 +293,11 @@ export function SessionView(props: SessionViewProps) {
         'Changes'
       ),
     files: 'Files',
+    // The rows that the list shows (the older copies of a title fold under its row).
     artifacts:
-      s.artifacts_count > 0 ? (
+      artifactRows !== null && artifactRows > 0 ? (
         <>
-          Artifacts <span className="fd-count">{s.artifacts_count}</span>
+          Artifacts <span className="fd-count">{artifactRows}</span>
         </>
       ) : (
         'Artifacts'
@@ -387,7 +402,6 @@ export function SessionView(props: SessionViewProps) {
         }
         onMoveStarted={move.reload}
         fleet={props.fleet}
-        openModel={openModel}
         fleetControl={propsShown ? null : fleetControl.link}
         composerResume={resumeBar}
       />
@@ -624,8 +638,16 @@ export function SessionView(props: SessionViewProps) {
                       {...(guest === null &&
                       caps?.set_model === true &&
                       flags.drive &&
-                      busy === null
-                        ? { onModel: () => openModel.current?.() }
+                      busy === null &&
+                      layout !== 'phone'
+                        ? {
+                            modelChoice: {
+                              current: s.model,
+                              models: s.models ?? sessionModels(events),
+                              onSet: (m: string) =>
+                                actions && controller.act('model', () => actions.setModel(m)),
+                            },
+                          }
                         : {})}
                     />
                   </>
@@ -740,12 +762,21 @@ export function SessionView(props: SessionViewProps) {
             stations={stations}
             turns={turns}
             total={total}
-            agents={tree.subagents.length}
-            runningAgents={runningCount(tree.subagents, tasks)}
+            agents={Math.max(tree.subagents.length, runningSubagents(s))}
+            runningAgents={running}
             onOpenChange={onOpenChange}
             onOpenAll={() => onTab('changes')}
             freshness={freshness}
             fleet={fleetControl.link?.()}
+            mode={
+              guest === null && caps?.set_mode === true && caps.modes.length > 0
+                ? {
+                    modes: caps.modes,
+                    enabled: flags.drive && busy === null,
+                    onSet: (m) => actions && controller.act('mode', () => actions.setMode(m)),
+                  }
+                : undefined
+            }
           />
         ) : null}
       </div>

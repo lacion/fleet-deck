@@ -7,9 +7,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ImageInput } from '../gen';
+import type { ImageInput, ModelChoice } from '../gen';
 import { useDismiss } from '../ui/dismiss';
-import { ArrowUp, ChevronDown, Icon, Paperclip, Play } from '../ui/icons';
+import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
@@ -17,6 +17,7 @@ import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
 import { submitKeyHint } from '../spawn/keyHint';
+import { ModelMenu } from './SessionSettings';
 
 type Props = {
   readonly enabled: boolean;
@@ -51,14 +52,18 @@ type Props = {
   readonly onRemoveChip?: (id: string) => void;
   /** The short model name of the session (`Sonnet 5.5`): the model chip of the toolbar. */
   readonly model?: string;
-  /** Opens the model picker of the session menu; absent: the chip only shows the model. */
-  readonly onModel?: () => void;
+  /**
+   * The model can be changed: the chip is the summary of its own popover of models (§4.5); absent:
+   * the chip only shows the model.
+   */
+  readonly modelChoice?: {
+    readonly current: string | null;
+    readonly models: readonly ModelChoice[] | null;
+    readonly onSet: (model: string) => void;
+  };
   /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
   readonly callsign?: string | null;
-  /**
-   * The phone layout: Send is a round icon button at the right (concept A), and the Resume bar has
-   * the one primary of the screen (the phone header shows no Resume next to it).
-   */
+  /** The phone layout: Send is a round icon button at the right (concept A). */
   readonly phone?: boolean;
 };
 
@@ -449,13 +454,13 @@ export function Composer(props: Props) {
       : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
-    // The desktop header has the primary Resume; the bar repeats it as a plain button (§2.2).
+    // The header shows no Resume next to the bar: the bar has the one primary of the screen (§2.2).
     return (
       <div className="fd-composer-resume">
         <span className="fd-composer-note">{props.disabledReason || 'The session ended.'}</span>
         <button
           type="button"
-          className={props.phone === true ? 'fd-primary' : undefined}
+          className="fd-primary"
           disabled={props.resumeBusy === true}
           onClick={props.onResume}
         >
@@ -564,19 +569,10 @@ export function Composer(props: Props) {
             }}
           />
         </label>
-        {props.model === undefined ? null : props.onModel === undefined ? (
+        {props.model === undefined ? null : props.modelChoice === undefined ? (
           <span className="fd-composer-model">{props.model}</span>
         ) : (
-          <button
-            type="button"
-            className="fd-sm fd-composer-model"
-            aria-label={`Model: ${props.model}`}
-            title="Change the model"
-            onClick={props.onModel}
-          >
-            {props.model}
-            <Icon of={ChevronDown} size={12} />
-          </button>
+          <ModelMenu name={props.model} {...props.modelChoice} />
         )}
         {reason ? (
           <span className="fd-composer-note">{reason}</span>

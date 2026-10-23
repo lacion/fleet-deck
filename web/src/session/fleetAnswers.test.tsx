@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { type SessionActions, sessionActions } from './commands';
-import { answersText, type FleetAnswers, resultText } from './fleetAnswers';
+import { answersText, answersTotal, type FleetAnswers, resultText } from './fleetAnswers';
 import { FleetAnswersDialog } from './FleetAnswersDialog';
 import { FleetChipButton, useFleetControl } from './FleetControlChip';
 
@@ -45,16 +45,30 @@ function Fact({ actions }: { readonly actions: SessionActions | null }) {
 }
 
 describe('fleet control fact', () => {
-  test('the value for 0, 1 and 2 answers is a link button, not a filter chip', () => {
-    expect(answersText(0)).toBe('0 answers in the last hour');
-    expect(answersText(1)).toBe('1 answer in the last hour');
-    expect(answersText(2)).toBe('2 answers in the last hour');
+  test('the value is a link with the answers and those of the last hour, not a filter chip', () => {
+    expect(answersText(1, 1)).toBe('1 answer · 1 in the last hour');
+    expect(answersText(12, 2)).toBe('12 answers · 2 in the last hour');
+    expect(answersText(3, 0)).toBe('3 answers · none in the last hour');
+    expect(answersText(1200, 0)).toBe('1,200 answers · none in the last hour');
+    // The total: the use of the grant, or the rows of the list, whichever is larger.
+    expect(answersTotal(data())).toBe(3);
+    expect(answersTotal(data({ answer_used: 12 }))).toBe(12);
     const html = renderToStaticMarkup(
       <FleetChipButton data={data({ last_hour: 1 })} onOpen={() => {}} />,
     );
     expect(html).toContain('class="fd-link fd-props-link fd-fleet-link"');
     expect(html).not.toContain('fd-chip');
-    expect(html).toContain('>1 answer in the last hour</button>');
+    expect(html).toContain('>3 answers · 1 in the last hour</button>');
+  });
+
+  test('before the first answer: plain text, no link to an empty list', () => {
+    const html = renderToStaticMarkup(
+      <FleetChipButton
+        data={data({ answers: [], answer_used: 0, last_hour: 0 })}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toBe('<span class="fd-fleet-none">On · no answers yet</span>');
   });
 
   test('nothing without a fleet-control grant', () => {

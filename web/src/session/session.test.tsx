@@ -121,13 +121,14 @@ const request = (id: string, at = 1) => ({
 });
 
 describe('session pane (DL-140)', () => {
-  test('the header model selector takes the models of the summary (DL-151)', () => {
+  test('the composer model chip lists the models of the summary (DL-151)', () => {
     const models = [{ value: 'opus', label: 'Opus', description: null }];
     const html = view(session({ models }), timeline());
-    expect(html).toContain('aria-label="Model"');
-    expect(html).toContain('<option value="opus">Opus</option>');
+    expect(html).toContain('aria-label="Model: default"');
+    expect(html).toContain('<legend>Model</legend>');
+    expect(html).toContain('<span class="fd-model-name">Opus</span>');
     expect(html).toContain('Other…');
-    expect(view(session(), timeline())).not.toContain('<option value="opus">Opus</option>');
+    expect(view(session(), timeline())).not.toContain('<span class="fd-model-name">Opus</span>');
   });
 
   test('the header shows the title and the pane has the three views', () => {
@@ -305,9 +306,11 @@ describe('session pane (DL-140)', () => {
       });
     const off = open(false);
     expect(off).not.toContain('Open in terminal…');
+    // A station setting is changed on the board: the note links the station tab of Settings.
     expect(off).toContain(
-      'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
+      'Shells are off on this station. <a href="#/settings/station/station-a">Turn on Allow terminals in Settings</a>',
     );
+    expect(off).not.toContain('station.toml');
     for (const allowed of [true, null]) {
       const html = open(allowed);
       expect(html).toContain('Open in terminal…');
@@ -509,14 +512,17 @@ describe('session pane (DL-140)', () => {
 
 describe('auto-continue (ADR-007, DL-127)', () => {
   test('the toggle is off by default and needs drive and a live board', () => {
+    // A named switch row of the menu (the account menu has the same rows).
+    const row = (attrs: string, label = '') =>
+      new RegExp(
+        `<label class="fd-menu-switch"${label}><span class="fd-menu-switch-label"><svg[^>]*>.*?</svg>Continue after a station restart</span><input type="checkbox" role="switch" class="fd-switch" ${attrs}/>`,
+      );
     const html = view(session(), timeline());
-    expect(html).toMatch(/<input type="checkbox"\/> Continue after a station restart/);
+    expect(html).toMatch(row('aria-checked="false"'));
     const on = view(session({ auto_continue: true }), timeline());
-    expect(on).toMatch(/<input type="checkbox" checked=""\/> Continue after a station restart/);
+    expect(on).toMatch(row('aria-checked="true" checked=""'));
     const readOnly = view(session(), timeline(), { scopes: ['read'] });
-    expect(readOnly).toMatch(
-      /<input type="checkbox" disabled=""\/> Continue after a station restart/,
-    );
+    expect(readOnly).toMatch(row('aria-checked="false" disabled=""', ' data-disabled="true"'));
   });
 
   test('a continuation run and a skipped continuation are shown', () => {

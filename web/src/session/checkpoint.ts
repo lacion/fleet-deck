@@ -54,6 +54,25 @@ export function sharedReason(turns: readonly FinalizedTurn[]): string | null {
   return best;
 }
 
+/**
+ * The session folder is outside Git: a turn says so and no turn has a snapshot or a change. The
+ * Changes tab then shows one empty state (§4.7) in place of a list of turns that only say "No
+ * snapshot", and offers no Branches view.
+ */
+export function outsideGit(turns: readonly FinalizedTurn[]): boolean {
+  return (
+    turns.some((t) => t.end?.state === 'unavailable' && t.end.reason === NOT_A_GIT_WORKTREE) &&
+    turns.every(
+      (t) => t.start?.state !== 'available' && t.end?.state !== 'available' && !hasChanges(t.diff),
+    )
+  );
+}
+
+/** A turn of the list has a snapshot at its start or its end. */
+export function hasSnapshot(turns: readonly FinalizedTurn[]): boolean {
+  return turns.some((t) => t.start?.state === 'available' || t.end?.state === 'available');
+}
+
 /** The note above a turn list that has no snapshot at all (`sharedReason`). */
 export function sharedNote(reason: string): string {
   if (reason === NOT_A_GIT_WORKTREE) {
