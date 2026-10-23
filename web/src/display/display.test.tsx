@@ -301,6 +301,22 @@ describe('the directive', () => {
     });
   }
 
+  test('a page directive shows Mission until the page pane exists', () => {
+    const route = directiveRoute({
+      mode: 'page',
+      page: { page_id: '01J0000000000000000000000A' },
+      pin: true,
+      filter: null,
+    });
+    expect(route).toMatchObject({
+      name: 'wall',
+      mode: 'mission',
+      pin: true,
+      stations: [],
+      repo: '',
+    });
+  });
+
   test('the scale and the shape stay and a stale target goes', () => {
     const base = {
       ...wallDefaults,

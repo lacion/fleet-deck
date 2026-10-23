@@ -3,4 +3,4 @@
 /**
  * The mode of a directive.
  */
-export type DirectiveMode = "mission" | "focus" | "review" | "race" | "artifact" | "ambient";
+export type DirectiveMode = "mission" | "focus" | "review" | "race" | "artifact" | "ambient" | "page";

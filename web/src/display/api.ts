@@ -151,6 +151,9 @@ export function directiveRoute(body: DirectiveBody, base: WallRoute = wallDefaul
     case 'mission':
     case 'ambient':
       return { ...common, mode: body.mode };
+    case 'page':
+      // B17: the wall draws no page yet, so a page directive shows Mission until the page pane.
+      return { ...common, mode: 'mission' };
     case 'focus':
     case 'review':
       return {

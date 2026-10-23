@@ -71,6 +71,14 @@ pub(super) const API_DISPLAY: &[ApiMethod] = &[
     )
     .display(),
     m(
+        "displays.self_page",
+        Method::GET,
+        "/api/displays/self/page/{page_id}",
+        Some(Scope::Read),
+        false,
+    )
+    .display(),
+    m(
         "displays.session_changes",
         Method::GET,
         "/api/displays/self/sessions/{station}/{session}/changes",

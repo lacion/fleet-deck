@@ -12,13 +12,15 @@ use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use fleetdeck_proto::display_directive::{DirectiveBody, DirectiveView, MAX_DIRECTIVE_BODY};
+use fleetdeck_proto::version::feature;
 
 use super::Board;
 use super::account_routes::body_error;
+use super::artifact_projection::declares;
 use super::guard::ApiError;
 use super::settings_routes::owner;
 use crate::coordinator_desktop::effective_directive;
@@ -79,6 +81,7 @@ fn detail(body: &DirectiveBody, members: usize) -> String {
     let mut text = match body {
         DirectiveBody::Mission { .. } => "mode=mission".to_owned(),
         DirectiveBody::Ambient { .. } => "mode=ambient".to_owned(),
+        DirectiveBody::Page { page, .. } => format!("mode=page page={}", page.page_id),
         DirectiveBody::Focus { session, .. } => format!(
             "mode=focus session={}/{}",
             session.station_id.as_str(),
@@ -165,13 +168,17 @@ async fn set(
     owner_set(&board, &principal, &id, body).await.map(Json)
 }
 
-/// `GET /api/displays/self/directive`.
+/// `GET /api/displays/self/directive`. A wall that does not declare
+/// `wall_pages.v1` reads `mission`, with the same generation, for a stored
+/// `page` directive (B17 §3.2.5): an older wall never gets a mode that it
+/// cannot draw.
 ///
 /// # Errors
 /// 403 `display_only`; 401 `login_required` for a revoked display.
 async fn read(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
 ) -> Result<Json<DirectiveView>, ApiError> {
     let Principal::Display(login) = principal else {
         return Err(ApiError::new(
@@ -180,9 +187,14 @@ async fn read(
             "only a wall display login does this",
         ));
     };
-    effective_directive(&board.link, &login.display_id)
+    let mut view = effective_directive(&board.link, &login.display_id)
         .await
         .map_err(ApiError::internal)?
-        .map(Json)
-        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first"))
+        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first"))?;
+    if matches!(view.directive, DirectiveBody::Page { .. })
+        && !declares(&headers, &[], feature::WALL_PAGES)
+    {
+        view.directive = DirectiveBody::mission();
+    }
+    Ok(Json(view))
 }

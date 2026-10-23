@@ -788,7 +788,7 @@ async fn preconditions_answer_304_and_412_before_the_range_and_if_range_gates_th
 #[test]
 fn the_board_csp_allows_media_from_self_and_the_display_policy_is_unchanged() {
     assert!(CSP.contains("media-src 'self'"), "{CSP}");
-    assert!(display_csp(None).contains("media-src 'self'"));
+    assert!(display_csp(None, None).contains("media-src 'self'"));
     let inert = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:; font-src data:";
     assert_eq!(INERT_CSP, inert);
 }

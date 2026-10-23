@@ -28,6 +28,7 @@ pub mod display_bodies;
 pub mod display_changes;
 pub mod display_directive_routes;
 pub mod display_document;
+pub mod display_page;
 pub mod display_routes;
 pub mod display_view;
 pub mod endpoints;
@@ -659,6 +660,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(wall_page_routes::routes())
         .merge(display_changes::routes())
         .merge(display_artifact::routes())
+        .merge(display_page::routes())
         .merge(desktop_routes::routes())
         .merge(desktop_capture_routes::routes())
         .merge(desktop_recording_routes::routes())

@@ -6,15 +6,19 @@ use std::collections::BTreeSet;
 
 use fleetdeck_core::identity::Identity;
 use fleetdeck_proto::artifacts::{Artifact, ArtifactKind};
+use fleetdeck_proto::display::DisplayBinding;
 use fleetdeck_proto::display_directive::{ArtifactRef, DirectiveBody, DirectiveFilter, SessionRef};
 use fleetdeck_proto::session::BatchRef;
+use fleetdeck_proto::wall_pages::{PageFit, PageRef};
 use fleetdeck_proto::{IncarnationId, SessionSummary, StationId};
 use fleetdeck_testkit::Det;
 
 use super::{DirectiveError, DirectiveSender, EffectiveScope};
+use crate::link::display_directive::DisplayIntent;
 use crate::store::display_directives_coordinator::CoordinatorSender;
 use crate::store::displays::{DisplayChange, NewDisplay};
 use crate::store::stations::NewStation;
+use crate::store::wall_pages::CheckedPage;
 use crate::store::{DeckStore, call};
 
 fn card(id: &str, batch: Option<(&str, u32, u32)>) -> SessionSummary {
@@ -592,4 +596,167 @@ async fn the_directive_survives_a_restart() {
         .unwrap();
     let v = s.display_directive(d).await.unwrap().unwrap();
     assert_eq!((v.generation, v.directive), (1, focus(&a, "s1")));
+}
+
+/// A stored wall page entry; answers its id.
+async fn page_entry(s: &DeckStore) -> String {
+    s.wall_page_add(CheckedPage {
+        label: "Grafana".to_owned(),
+        url: "https://grafana.example/d".to_owned(),
+        origin: "https://grafana.example".to_owned(),
+        fit: PageFit::Screen,
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .page_id
+}
+
+fn page(id: &str) -> DirectiveBody {
+    DirectiveBody::Page {
+        page: PageRef {
+            page_id: id.to_owned(),
+        },
+        pin: true,
+        filter: None,
+    }
+}
+
+#[tokio::test]
+async fn page_directive_needs_an_existing_entry() {
+    let r = rig().await;
+    let d = r.display(&[&r.a]).await;
+    // A well formed id that names no entry.
+    let gone = r.set(&d, page("0123456789ABCDEFGHJKMNPQRS")).await;
+    assert!(
+        matches!(gone, Err(DirectiveError::Invalid("unknown reference"))),
+        "{gone:?}"
+    );
+    // An id that is not 26 characters of `[0-9A-Za-z]`.
+    for bad in [
+        "",
+        "short",
+        "0123456789ABCDEFGHJKMNPQR-",
+        "0123456789ABCDEFGHJKMNPQRST",
+    ] {
+        let out = r.set(&d, page(bad)).await;
+        assert!(
+            matches!(
+                out,
+                Err(DirectiveError::Invalid("the page reference is not valid"))
+            ),
+            "{bad}: {out:?}"
+        );
+    }
+    assert_eq!(r.rows(&d).await, 0);
+    assert_eq!(r.read(&d).await.0, 0);
+    // An existing entry is stored, with no session reference.
+    let id = page_entry(&r.s).await;
+    assert_eq!(r.set(&d, page(&id)).await.unwrap(), 1);
+    assert_eq!(r.read(&d).await, (1, page(&id)));
+    assert_eq!(r.sender(&d).await.0, "owner");
+    let mode: String = call(&r.s.inner.db, {
+        let d = d.clone();
+        move |conn| {
+            Ok(conn.query_row(
+                "SELECT mode FROM display_directives WHERE display_id = ?1",
+                [d],
+                |row| row.get(0),
+            )?)
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(mode, "page");
+    // A filter outside the ceiling is refused as for every mode.
+    let outside = DirectiveBody::Page {
+        page: PageRef { page_id: id },
+        pin: false,
+        filter: Some(DirectiveFilter {
+            stations: vec![r.b.clone()],
+            repo: None,
+        }),
+    };
+    assert!(matches!(
+        r.set(&d, outside).await,
+        Err(DirectiveError::OutsideCeiling)
+    ));
+}
+
+#[tokio::test]
+async fn only_the_owner_may_store_a_page_directive() {
+    let r = rig().await;
+    let d = r.display(&[&r.a]).await;
+    let id = page_entry(&r.s).await;
+    let station =
+        r.s.display_directive_set(d.clone(), DirectiveSender::Station(r.a.clone()), page(&id))
+            .await;
+    assert!(
+        matches!(station, Err(DirectiveError::NotGranted)),
+        "{station:?}"
+    );
+    let coordinator =
+        r.s.display_directive_set(
+            d.clone(),
+            DirectiveSender::Coordinator(CoordinatorSender::new(
+                "g1".to_owned(),
+                1,
+                r.a.clone(),
+                "c1".into(),
+            )),
+            page(&id),
+        )
+        .await;
+    assert!(
+        matches!(coordinator, Err(DirectiveError::NotGranted)),
+        "{coordinator:?}"
+    );
+    assert_eq!(r.rows(&d).await, 0);
+    assert_eq!(r.read(&d).await.0, 0);
+    // The owner may.
+    assert_eq!(r.set(&d, page(&id)).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn deleted_entry_reads_as_mission() {
+    let r = rig().await;
+    let d = r.display(&[&r.a]).await;
+    let id = page_entry(&r.s).await;
+    r.set(&d, page(&id)).await.unwrap();
+    assert_eq!(r.read(&d).await, (1, page(&id)));
+    // The entry goes without the delete transaction: the live check reads
+    // `mission`, and the generation stays.
+    call(&r.s.inner.db, {
+        let id = id.clone();
+        move |conn| {
+            conn.execute("DELETE FROM wall_pages WHERE page_id = ?1", [id])?;
+            Ok(())
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(r.read(&d).await, (1, DirectiveBody::mission()));
+}
+
+#[tokio::test]
+async fn next_mode_from_a_page_goes_to_mission() {
+    let r = rig().await;
+    let d = r.display(&[&r.a]).await;
+    r.s.display_set_binding(
+        d.clone(),
+        Some(DisplayBinding {
+            station_id: r.a.clone(),
+            monitor: "DP-1".to_owned(),
+        }),
+    )
+    .await
+    .unwrap();
+    let id = page_entry(&r.s).await;
+    r.set(&d, page(&id)).await.unwrap();
+    let view =
+        r.s.display_directive_station(r.a.clone(), d.clone(), DisplayIntent::NextMode)
+            .await
+            .unwrap();
+    assert_eq!(view.directive, DirectiveBody::mission());
+    assert_eq!(r.read(&d).await.1, view.directive);
 }

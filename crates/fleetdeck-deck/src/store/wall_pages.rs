@@ -196,6 +196,14 @@ pub fn find(conn: &Connection, page_id: &str) -> Result<Option<WallPage>> {
 }
 
 impl DeckStore {
+    /// The entry `page_id`, if it exists.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn wall_page(&self, page_id: String) -> Result<Option<WallPage>> {
+        call(&self.inner.db, move |conn| find(conn, &page_id)).await
+    }
+
     /// The entries, oldest first.
     ///
     /// # Errors
