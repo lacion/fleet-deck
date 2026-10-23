@@ -16,6 +16,8 @@ const ROUTES: readonly Route[] = [
   { name: 'compare', batch: 'b1' },
 ];
 
+const chrome = { label: 'Connected', freshness: 'live' as const, onLogout: () => {}, notices: [] };
+
 function page(layout: LayoutName, route: Route, terminalsOpen = false): string {
   return renderToStaticMarkup(
     <Layout
@@ -28,6 +30,7 @@ function page(layout: LayoutName, route: Route, terminalsOpen = false): string {
       dock={null}
       onTerminalsBack={() => {}}
       overlays={null}
+      chrome={chrome}
       terminalsOpen={terminalsOpen}
     >
       <p>page</p>
@@ -65,7 +68,7 @@ describe('the phone bottom bar (more routes)', () => {
 });
 
 describe('the phone Terminals page', () => {
-  test('has the phone bar of §4.8 with a Back button, the title, Live and the avatar', () => {
+  test('has the phone bar of §4.8 with a Back button, the title, Live and the account menu', () => {
     const html = page('phone', { name: 'terminals' }, true);
     expect(html).toContain('<header class="fd-phonebar">');
     expect(html).toContain(
@@ -73,7 +76,9 @@ describe('the phone Terminals page', () => {
     );
     expect(html).toContain('<h1 class="fd-phonebar-title fd-wide">Terminals</h1>');
     expect(html).toContain('class="fd-wspill"');
-    expect(html).toContain('class="fd-avatar"');
+    expect(html).toMatch(
+      /<summary class="fd-iconbtn" aria-label="Account"><span class="fd-avatar"/,
+    );
     expect(html).not.toContain('fd-topbar');
   });
 });

@@ -13,7 +13,10 @@ function applePlatform(): boolean {
   return /mac|iphone|ipad/i.test(data?.platform || navigator.platform || '');
 }
 
-/** The keys of every page; the modifier keys of the person's platform only. */
+/**
+ * The keys of every page; the modifier keys of the person's platform only. Return is a word off
+ * an Apple system: the ↵ glyph is not in the board font and drew small and raised in its chip.
+ */
 export function shortcuts(apple: boolean = applePlatform()): readonly Row[] {
   const mod = apple ? '⌘' : 'Ctrl+';
   return [
@@ -26,16 +29,22 @@ export function shortcuts(apple: boolean = applePlatform()): readonly Row[] {
     { keys: 't', does: 'Show or hide terminals' },
     { keys: '?', does: 'Show this help' },
     { keys: `${mod}K`, does: 'Go to session' },
-    { keys: `${mod}↵`, does: 'Steer now (composer) or Start (New session)' },
+    {
+      keys: apple ? '⌘↵' : 'Ctrl+Enter',
+      does: 'Steer now in the message box, or Start a new session',
+    },
   ];
 }
 
-/** The keys of the fleet home (the Needs you panel). */
+/**
+ * The keys of the fleet home (the Needs you panel), as its legend says them (§4.4): `a` is the
+ * first option, `d` the last, a number key one of the options between them.
+ */
 export const FLEET_SHORTCUTS: readonly Row[] = [
   { keys: '[ ]', does: 'Select the previous or next request' },
   { keys: 'a', does: 'Answer the selected request with its first option' },
   { keys: 'd', does: 'Answer with its last option' },
-  { keys: '1–9', does: 'Answer with option N' },
+  { keys: '2–9', does: 'Answer with the option of that number' },
 ];
 
 const CONCEPTS: readonly (readonly [string, string])[] = [
@@ -67,10 +76,19 @@ const CONCEPTS: readonly (readonly [string, string])[] = [
   ],
 ];
 
+/** Every page of the sidebar, in its order, then New session. */
 const PAGES: readonly (readonly [string, string])[] = [
   ['Fleet', 'Every live session by station, the Needs you panel, usage and mail'],
-  ['Plans', 'Proposed plans'],
+  ['Watch', 'A live tile for each session; Focus goes through the ones that need you'],
+  ['Activity', 'What the sessions did, newest first'],
   ['Stations', 'Machines, providers and shells'],
+  ['Plans', 'Plans that sessions proposed; start one as a new session'],
+  ['Automations', 'Sessions that start on a schedule'],
+  ['Artifacts', 'Reports, diagrams and previews that sessions published'],
+  ['Projects', 'Repositories with their forge and trackers'],
+  ['Files', 'Browse and open the files of a station'],
+  ['Shares', 'Links that give other people access to sessions of this board'],
+  ['Terminals', 'The shells that you opened on stations and in sessions'],
   ['New session', 'Start an agent on a station'],
 ];
 

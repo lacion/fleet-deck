@@ -85,6 +85,17 @@
 .fd-page-filters + .fd-page-actions {
   margin-left: 0;
 }
+/* A back link is a row of its own above the title row (§4.3): the filters and the actions start
+   on the next line with the title column, so they stay level with the title row (they lined up
+   with the back link, 32px above the title). */
+.fd-page-head:has(> .fd-page-backrow) {
+  flex-wrap: wrap;
+}
+.fd-page-backrow {
+  display: flex;
+  flex: 0 0 100%;
+  min-width: 0;
+}
 .fd-page-desc {
   max-width: min(80ch, 100%);
   margin: calc(-1 * var(--sp-2)) 0 0;
@@ -105,7 +116,8 @@
     gap: var(--sp-4);
     padding-top: var(--sp-3);
   }
-  /* The title column stays first; the actions take the next line. */
+  /* The title column stays first. The filters take the next line; actions with a text button
+     take a line of their own. */
   .fd-page-head {
     flex-wrap: wrap;
   }
@@ -114,11 +126,62 @@
   }
   .fd-page-filters,
   .fd-page-actions {
-    flex-basis: 100%;
     justify-content: flex-start;
     min-height: 0;
     margin-left: 0;
   }
+  .fd-page-filters {
+    flex: 1 1 auto;
+  }
+  .fd-page-actions {
+    flex-basis: 100%;
+  }
+  /* A lone icon action (Refresh) takes no line of its own: it ends the filters line, or it sits
+     at the right of the title column when the page has no filters. The icon ends on the gutter.
+     (`:only-child`, not a :has() inside a :has(): the browser drops such a selector.) */
+  .fd-page-actions:has(> .fd-iconbtn:only-child) {
+    flex: none;
+    margin-left: auto;
+  }
+  .fd-page-actions > .fd-iconbtn:only-child {
+    margin-inline-end: calc((16px - var(--ctl-h)) / 2);
+  }
+  .fd-page-head:not(:has(> .fd-page-filters)):has(> .fd-page-actions > .fd-iconbtn:only-child)
+    > .fd-page-titles {
+    flex: 1 1 0;
+  }
+  /* Without the phone top bar the title row shows: the icon stays level with it. */
+  .fd-page-head:not(:has(> .fd-page-filters)) > .fd-page-actions:has(> .fd-iconbtn:only-child) {
+    min-height: var(--header-h);
+  }
+  /* A quiet control at the start of a line has its label on the gutter, not 8–10px in from the
+     description (its hover or pressed fill reaches into the gutter, as the back link's does).
+     The filters wrap, so every ghost filter moves back by its padding, and the wider gap keeps
+     the labels 24px apart; in the actions only the first control starts a line. */
+  .fd-page-filters {
+    column-gap: calc(var(--sp-2) + 8px);
+  }
+  .fd-page-filters > :is(.fd-ghost.fd-sm, :has(> select.fd-ghost.fd-sm)) {
+    margin-inline-start: -8px;
+  }
+  .fd-page-filters > .fd-ghost:not(.fd-sm),
+  .fd-page-actions > .fd-ghost:not(.fd-sm):first-child {
+    margin-inline-start: -10px;
+  }
+  .fd-page-actions > .fd-ghost.fd-sm:first-child {
+    margin-inline-start: -8px;
+  }
+  .fd-page-actions > .fd-iconbtn:first-child:not(:only-child) {
+    margin-inline-start: calc((16px - var(--ctl-h)) / 2);
+  }
+}
+/* The phone top bar carries the title (shell.css): a lone icon action of a page without filters
+   sits at the right end of the description and centers on it. */
+.fd-app[data-phonebar="true"]
+  .fd-page-head:not(:has(> .fd-page-filters))
+  > .fd-page-actions:has(> .fd-iconbtn:only-child) {
+  align-self: center;
+  min-height: 0;
 }
 
 /* ── links ──────────────────────────────────────────────────────── */
@@ -175,8 +238,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  justify-self: start;
-  margin: 0 0 var(--sp-1) calc(-1 * var(--sp-2));
+  margin: 0 0 0 calc(-1 * var(--sp-2));
   text-decoration: none;
 }
 @media (pointer: coarse) {
@@ -184,7 +246,7 @@
     min-height: var(--tap-min);
   }
 }
-.fd-app[data-layout="phone"] .fd-page-back {
+.fd-app[data-layout="phone"] .fd-page-backrow {
   display: none;
 }
 .fd-emptystate > .fd-icon {

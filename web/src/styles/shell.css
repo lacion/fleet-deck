@@ -55,6 +55,12 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-app[data-layout="phone"] > .fd-main {
   flex: 1 1 auto;
+  /* No part of a page may widen the phone page: a mobile browser then widens the layout viewport
+     and moves the sticky bottom bar below the screen. `clip`, not `hidden`: hidden makes a scroll
+     container, and the sticky parts of a page (the New session footer) would stick to it. A long
+     word (a path, a version) breaks at the screen edge, so the clip never hides its end. */
+  overflow-x: clip;
+  overflow-wrap: break-word;
 }
 
 .fd-app[data-layout="desktop"] .fd-main,
@@ -371,9 +377,35 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 /* The desktop list scrolls under the footer rule: its last 16px fade out, so that a row cut at
-   the edge reads as "more below", not as a glitch. (The mask needs an opaque color: --text.) */
+   the edge reads as "more below", not as a glitch. (The mask needs an opaque color: --text.)
+   The list keeps the room of its 8px scrollbar (base.css) with or without one, so that the ages
+   and the grouping segments stay at one x on every page; the right padding gives the 8px back,
+   so that the rows end on the 12px inset of the nav rows. */
 .fd-sidebar[data-variant="full"] .fd-sidebar-list {
+  scrollbar-gutter: stable;
+  padding-right: var(--sp-1);
   mask-image: linear-gradient(to bottom, var(--text) calc(100% - 16px), transparent);
+}
+
+/* With a pointer, the thumb shows while the pointer is on the list or a row has the focus (as in
+   Linear and Raycast): at rest the --ctl-edge bar was the loudest line of the sidebar, and the
+   fade above already says that more is below. A touch screen keeps the thumb (it has no hover).
+   Chromium draws the ::-webkit-scrollbar thumb; Firefox reads scrollbar-color (base.css). */
+@media (hover: hover) and (pointer: fine) {
+  .fd-sidebar[data-variant="full"]
+    .fd-sidebar-list:not(:hover, :focus-within)::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  @supports (-moz-appearance: none) {
+    .fd-sidebar[data-variant="full"] .fd-sidebar-list {
+      scrollbar-width: thin;
+    }
+
+    .fd-sidebar[data-variant="full"] .fd-sidebar-list:not(:hover, :focus-within) {
+      scrollbar-color: transparent transparent;
+    }
+  }
 }
 
 /* The head of the list: the "Sessions" label, and the grouping (Station | Project) at the right. */
@@ -406,12 +438,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-size: var(--fs-meta);
 }
 
+/* Every group, the first one under the list head too, has one step of space above it: the head
+   names the whole list, it is not a part of the first group. */
 .fd-sgroup {
   margin-top: var(--sp-2);
-}
-
-.fd-sidebar-listhead + .fd-sgroup {
-  margin-top: 0;
 }
 
 .fd-sgroup-title {
@@ -993,6 +1023,44 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: 0;
 }
 
+/* The account (§4.8): the avatar is the account menu, in a round target of --ctl-h (44px on a
+   touch screen) whose 24px avatar stays on the gutter. */
+.fd-phonebar-account {
+  display: flex;
+  flex: none;
+  margin-inline-end: calc((24px - var(--ctl-h)) / 2);
+}
+
+.fd-phonebar-account > .fd-menu > summary.fd-iconbtn {
+  border-radius: var(--r-pill);
+}
+
+/* The menu is a bottom sheet (§4.8: every dialog of the phone is one): the full width at the
+   bottom edge, in thumb reach, over the one --scrim; a tap on the scrim closes it. */
+.fd-phonebar-account .fd-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  background: var(--scrim);
+}
+
+.fd-phonebar-account .fd-menu-body {
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-width: 0;
+  max-height: 85dvh;
+  padding: var(--sp-2) var(--sp-2) calc(var(--sp-2) + env(safe-area-inset-bottom));
+  border-width: 1px 0 0;
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+}
+
+.fd-phonebar-account .fd-account-who {
+  padding: var(--sp-2);
+}
+
 /* The chevron sits on the gutter: its tap target reaches into the edge. A link on a page of the
    More tab; a button on the phone Terminals page (Back closes the terminals). */
 a.fd-phonebar-back,
@@ -1108,6 +1176,13 @@ button.fd-phonebar-back {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The Dismiss X at the end of a notice row: its 14px glyph ends on the padding edge of the row,
+   as the X of a dialog head does. */
+.fd-notice-row > .fd-iconbtn:last-child,
+.fd-hintnotice > .fd-iconbtn:last-child {
+  margin-inline-end: calc((14px - var(--ctl-h-sm)) / 2);
 }
 
 /* ---------- Bottom bar (phone, §4.8) ---------- */
@@ -1357,7 +1432,9 @@ button.fd-phonebar-back {
 
 .fd-help-head {
   flex: none;
-  padding: var(--sp-4) var(--sp-3) var(--sp-3) 20px;
+  /* The 20px side padding of every dialog (and of the body under it): the Close X stays 14px in
+     from the edge, and its focus ring clears the rounded corner and the scrollbar. */
+  padding: var(--sp-4) 20px var(--sp-3);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -1435,7 +1512,7 @@ button.fd-phonebar-back {
   font-size: var(--fs-ui);
 }
 
-/* The key column: wide enough for the widest keys of one platform ("Ctrl+↵"), and no wider, so
+/* The key column: wide enough for the widest keys of one platform ("Ctrl+Enter"), and no wider, so
    that a single key sits near its action; the general and the fleet-home tables start their
    actions at the same place. The fixed layout takes the column width from the <col> (the first
    row is the visually hidden header), whatever the content. */

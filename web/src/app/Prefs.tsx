@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { StationView } from '../gen';
-import { usePeople } from '../sharing/context';
+import { type PeopleEnv, usePeople } from '../sharing/context';
 import { useDensity } from '../ui/density';
 import {
   CirclePause,
@@ -12,13 +12,49 @@ import {
   Rows3,
   Smartphone,
   Sun,
+  User,
 } from '../ui/icons';
 import { Menu } from '../ui/Menu';
 import { type ThemeChoice, useReduceMotion, useTheme } from '../ui/theme';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
-import { accountName, Avatar } from './Layout';
 import { type GetPalette, OmarchyThemeSelect } from './OmarchyTheme';
+
+/** One or two initials of a login actor (`owner`, `member:<name>`, `token:<name>`). */
+export function initials(actor: string): string {
+  const name = actor.slice(actor.indexOf(':') + 1);
+  const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== '');
+  const letters = parts
+    .slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join('');
+  return letters === '' ? '?' : letters.toUpperCase();
+}
+
+/** The name of this login in words: "owner", a member's display name, or a token's name. */
+export function accountName(people: Pick<PeopleEnv, 'self' | 'member'>): string {
+  if (people.member !== null) return people.member.name;
+  const at = people.self.indexOf(':');
+  return at < 0 ? people.self : people.self.slice(at + 1);
+}
+
+/** True for the owner's own login: the deck knows no name for its owner ("owner" is a role). */
+const isOwner = (people: Pick<PeopleEnv, 'self' | 'member'>): boolean =>
+  people.self === 'owner' && people.member === null;
+
+/**
+ * The account avatar (§4.2, §4.8): a 24px circle with the initials of this login. The deck knows
+ * no name for its owner, so the owner's avatar is a person glyph (the "O" of the actor word
+ * "owner" is nobody's initial).
+ */
+export function Avatar() {
+  const people = usePeople();
+  return (
+    <span className="fd-avatar" aria-hidden="true">
+      {isOwner(people) ? <Icon of={User} size={14} /> : initials(accountName(people))}
+    </span>
+  );
+}
 
 const THEMES: readonly {
   readonly choice: ThemeChoice;
@@ -140,24 +176,44 @@ export function MotionSwitch({ place = 'more' }: { readonly place?: Place } = {}
 }
 
 /**
- * The account menu of the sidebar footer (§4.2 item 5): who is signed in, the named switches of
- * this browser (Compact cards, Reduce motion), Add a device, then Log out after a rule.
+ * The account menu (§4.2 item 5, §4.8): who is signed in, the named switches of this browser
+ * (Compact cards, Reduce motion), Add a device, then Log out after a rule. In the sidebar footer
+ * it opens upward. In the phone top bar it is a bottom sheet over a scrim, without the switches:
+ * the More page has them as rows.
  */
-export function AccountMenu({ chrome }: { readonly chrome: Chrome }) {
+export function AccountMenu({
+  chrome,
+  place = 'sidebar',
+}: {
+  readonly chrome: Chrome;
+  readonly place?: 'sidebar' | 'phone';
+}) {
   const people = usePeople();
   const [addingDevice, setAddingDevice] = useState(false);
   const addDevice = chrome.addDevice;
+  const phone = place === 'phone';
   return (
-    <div className="fd-sidebar-account">
-      <Menu summary={<Avatar />} summaryClass="fd-iconbtn" label="Account">
+    <div className={phone ? 'fd-phonebar-account' : 'fd-sidebar-account'}>
+      <Menu summary={<Avatar />} summaryClass="fd-iconbtn" label="Account" scrim={phone}>
         {(close) => (
           <>
+            {/* "owner" is the role of the login, not a name: the owner reads a sentence. */}
             <p className="fd-menu-text fd-account-who">
-              Signed in as <span className="fd-account-name">{accountName(people)}</span>
+              {isOwner(people) ? (
+                'Signed in as the deck owner'
+              ) : (
+                <>
+                  Signed in as <span className="fd-account-name">{accountName(people)}</span>
+                </>
+              )}
             </p>
-            <div className="fd-menu-sep" />
-            <CompactSwitch place="menu" />
-            <MotionSwitch place="menu" />
+            {phone ? null : (
+              <>
+                <div className="fd-menu-sep" />
+                <CompactSwitch place="menu" />
+                <MotionSwitch place="menu" />
+              </>
+            )}
             {addDevice === undefined ? null : (
               <>
                 <div className="fd-menu-sep" />

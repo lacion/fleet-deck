@@ -343,8 +343,9 @@ function Groups({
       })}
       {model.archived.length > 0 ? (
         <section className="fd-sgroup" data-group="archived" aria-label="Archived">
-          {/* The same disclosure row as "Ended" (chevron, name, count pill); a button, so that it
-              keeps its aria-expanded and renders its rows only when it opens. */}
+          {/* The same disclosure row as "Ended" (chevron, name, count pill: the two labels start
+              at one x); a button, so that it keeps its aria-expanded and renders its rows only
+              when it opens. */}
           <button
             type="button"
             className="fd-sidebar-archived"
@@ -354,7 +355,6 @@ function Groups({
             <span className="fd-sidebar-chev">
               <Icon of={ChevronRight} size={14} />
             </span>
-            <Icon of={Archive} size={14} />
             Archived <span className="fd-count">{model.archived.length}</span>
           </button>
           {showArchived ? (
@@ -388,6 +388,8 @@ function EndedFold({
   useEffect(() => {
     if (current) setOpen(true);
   }, [current]);
+  // The rows that Archive takes: ended and lost (an unreachable session may come back).
+  const clearable = group.ended.filter((c) => c.status === 'ended' || c.status === 'lost');
   return (
     <details
       className="fd-sended"
@@ -398,20 +400,21 @@ function EndedFold({
         Ended <span className="fd-count">{group.ended.length}</span>
       </summary>
       <Rows cards={group.ended} route={route} now={now} starred={starred} list={list} />
-      <button
-        type="button"
-        className="fd-ghost fd-sm fd-sended-clear"
-        aria-label={`Archive the ended sessions of ${group.name}`}
-        onClick={() =>
-          archivedSet.add(
-            group.ended
-              .filter((c) => c.status === 'ended' || c.status === 'lost')
-              .map((c) => sessionRef(c.station_id, c.summary.session_id)),
-          )
-        }
-      >
-        <Icon of={Archive} size={14} /> Clear
-      </button>
+      {/* One name for one action (§5): the fleet board says "Archive" with its count pill too.
+          The accessible name starts with the visible word (WCAG 2.5.3). */}
+      {clearable.length === 0 ? null : (
+        <button
+          type="button"
+          className="fd-ghost fd-sm fd-sended-clear"
+          aria-label={`Archive the ended sessions of ${group.name}`}
+          onClick={() =>
+            archivedSet.add(clearable.map((c) => sessionRef(c.station_id, c.summary.session_id)))
+          }
+        >
+          <Icon of={Archive} size={14} /> Archive{' '}
+          <span className="fd-count">{clearable.length}</span>
+        </button>
+      )}
     </details>
   );
 }

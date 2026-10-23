@@ -33,7 +33,8 @@ type PageProps = {
 /**
  * The page frame: padding, a left-aligned column, and the page header (DESIGN-SYSTEM §4.3): the
  * title and its count with the description under them at the left, the filters and then the
- * actions at the right, then a rule.
+ * actions at the right, then a rule. A back link is a row of its own above them all, so that the
+ * filters and the actions stay level with the title row.
  */
 export function Page({
   title,
@@ -54,12 +55,14 @@ export function Page({
       aria-label={label ?? title}
     >
       <header className="fd-page-head">
-        <div className="fd-page-titles">
-          {back === undefined ? null : (
+        {back === undefined ? null : (
+          <div className="fd-page-backrow">
             <a className="fd-btn fd-ghost fd-sm fd-page-back" href={back.href}>
               <Icon of={ChevronLeft} size={14} /> {back.label}
             </a>
-          )}
+          </div>
+        )}
+        <div className="fd-page-titles">
           <div className="fd-page-titlerow">
             <h1 className="fd-page-title">{title}</h1>
             {count === undefined ? null : <span className="fd-count">{count}</span>}

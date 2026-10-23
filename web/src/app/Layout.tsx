@@ -18,16 +18,16 @@ import {
   OctagonAlert,
   PanelLeft,
   Plus,
-  User,
   X,
 } from '../ui/icons';
 import { Mark } from '../ui/Mark';
-import { type PeopleEnv, usePeople } from '../sharing/context';
+import { usePeople } from '../sharing/context';
 import { MemberBanner } from '../sharing/MemberBanner';
 import type { Chrome, Notice } from './chrome';
 import { failureText, type StartFailure } from './failures';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
+import { AccountMenu } from './Prefs';
 import type { Route } from './routes';
 import type { Layout as LayoutName } from './viewport';
 
@@ -38,7 +38,7 @@ type Props = {
   readonly sidebar: ReactNode;
   readonly drawerOpen: boolean;
   readonly onDrawer: (open: boolean) => void;
-  readonly notices: readonly Notice[];
+  readonly notices: readonly FrameNotice[];
   /** A strip under the notices (the one-time help notice). */
   readonly banner?: ReactNode;
   /** The sessions that did not start (R7.1), one banner for each. */
@@ -108,42 +108,6 @@ export function LivePill({ chrome }: { readonly chrome: Chrome | undefined }) {
   );
 }
 
-/** One or two initials of a login actor (`owner`, `member:<name>`, `token:<name>`). */
-export function initials(actor: string): string {
-  const name = actor.slice(actor.indexOf(':') + 1);
-  const parts = name.split(/[^\p{L}\p{N}]+/u).filter((part) => part !== '');
-  const letters = parts
-    .slice(0, 2)
-    .map((part) => part.charAt(0))
-    .join('');
-  return letters === '' ? '?' : letters.toUpperCase();
-}
-
-/** The name of this login in words: "owner", a member's display name, or a token's name. */
-export function accountName(people: Pick<PeopleEnv, 'self' | 'member'>): string {
-  if (people.member !== null) return people.member.name;
-  const at = people.self.indexOf(':');
-  return at < 0 ? people.self : people.self.slice(at + 1);
-}
-
-/**
- * The account avatar (§4.2, §4.8): a 24px circle with the initials of this login. The deck knows
- * no name for its owner, so the owner's avatar is a person glyph (the "O" of the actor word
- * "owner" is nobody's initial).
- */
-export function Avatar() {
-  const people = usePeople();
-  return (
-    <span className="fd-avatar" aria-hidden="true">
-      {people.self === 'owner' && people.member === null ? (
-        <Icon of={User} size={14} />
-      ) : (
-        initials(accountName(people))
-      )}
-    </span>
-  );
-}
-
 /**
  * The phone top bar names the page; a detail page names its thing (the project, the artifact)
  * with `usePhoneTitle`. The bar keeps the route's page name while the data loads.
@@ -161,20 +125,38 @@ export function usePhoneTitle(title: string | null | undefined): void {
   }, [set, name]);
 }
 
-export function Notices({ notices }: { readonly notices: readonly Notice[] }) {
+/** A notice of the frame; one with `onDismiss` ends in a Dismiss X (as a start failure does). */
+export type FrameNotice = Notice & { readonly onDismiss?: (() => void) | undefined };
+
+export function Notices({ notices }: { readonly notices: readonly FrameNotice[] }) {
   if (notices.length === 0) return null;
   return (
     <div className="fd-notices">
       {notices.map((n) => (
         <p
           key={`${n.tone}:${n.text}`}
-          className="fd-notice"
+          className={n.onDismiss === undefined ? 'fd-notice' : 'fd-notice fd-notice-row'}
           data-tone={n.tone}
           role={n.tone === 'error' ? 'alert' : 'status'}
         >
           {/* The tone is also a shape (WCAG 1.4.1): an octagon for an error, an "i" for info. */}
           <Icon of={n.tone === 'error' ? OctagonAlert : Info} size={14} />
-          {n.text}
+          {n.onDismiss === undefined ? (
+            n.text
+          ) : (
+            <>
+              <span className="fd-notice-text">{n.text}</span>
+              <button
+                type="button"
+                className="fd-iconbtn fd-sm"
+                aria-label="Dismiss"
+                title="Dismiss"
+                onClick={n.onDismiss}
+              >
+                <Icon of={X} size={14} />
+              </button>
+            </>
+          )}
         </p>
       ))}
     </div>
@@ -291,8 +273,9 @@ const BACK_TO_MORE = { href: '#/more', label: 'Back to More' };
 
 /**
  * The phone top bar (§4.8, 52px): the mark (or Back on a page of the More tab: to its parent
- * list, else to More), the page name, the connection and the avatar. The page keeps its own
- * heading for screen readers.
+ * list, else to More), the page name, the connection and the avatar. The avatar is the account
+ * menu (a 44px target, a bottom sheet), as in the sidebar footer. The page keeps its own heading
+ * for screen readers.
  */
 export function PhoneBar({
   route,
@@ -321,7 +304,7 @@ export function PhoneBar({
         {title ?? PHONE_TITLES[route.name]}
       </span>
       <LivePill chrome={chrome} />
-      <Avatar />
+      {chrome === undefined ? null : <AccountMenu chrome={chrome} place="phone" />}
     </header>
   );
 }
@@ -487,7 +470,7 @@ export function Layout({
             </button>
             <h1 className="fd-phonebar-title fd-wide">Terminals</h1>
             <LivePill chrome={chrome} />
-            <Avatar />
+            {chrome === undefined ? null : <AccountMenu chrome={chrome} place="phone" />}
           </header>
         ) : null}
         {people.member === null ? null : (

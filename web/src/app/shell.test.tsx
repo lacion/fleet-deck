@@ -4,9 +4,9 @@ import { card, station } from '../testing/fleet';
 import { readDensity } from '../ui/density';
 import { readTheme } from '../ui/theme';
 import { HelpOverlay, shortcuts } from './HelpOverlay';
-import { Avatar, PhoneBar, accountName } from './Layout';
+import { Notices, PhoneBar } from './Layout';
 import { More, TerminalsEmpty } from './More';
-import { PrefsRow } from './Prefs';
+import { accountName, Avatar, PrefsRow } from './Prefs';
 import { Sidebar } from './Sidebar';
 import { PeopleProvider, ownerEnv } from '../sharing/context';
 
@@ -112,14 +112,77 @@ describe('preferences row (DL-141)', () => {
     const html = sidebarWithAccount();
     const menu = html.slice(html.indexOf('class="fd-menu-body"'));
     const at = (text: string) => menu.indexOf(text);
+    // "owner" is the role of the login, not a name: the owner reads a sentence, with no name span.
     expect(menu).toStartWith(
-      'class="fd-menu-body"><p class="fd-menu-text fd-account-who">Signed in as <span class="fd-account-name">owner</span></p><div class="fd-menu-sep"></div>',
+      'class="fd-menu-body"><p class="fd-menu-text fd-account-who">Signed in as the deck owner</p><div class="fd-menu-sep"></div>',
     );
     expect(at('Compact cards')).toBeLessThan(at('Reduce motion'));
     expect(at('Reduce motion')).toBeLessThan(at('Add a device'));
     const rest = menu.slice(at('Add a device'));
     expect(rest.indexOf('<div class="fd-menu-sep"></div>')).toBeLessThan(rest.indexOf('Log out'));
     expect(menu.match(/class="fd-menu-sep"/g)?.length).toBe(3);
+  });
+
+  test('a member and a token are signed in by their name', () => {
+    const member = {
+      ...ownerEnv,
+      self: 'member:ana',
+      member: { role: 'viewer' as const, name: 'Ana Ruiz', scope: null },
+    };
+    const html = renderToStaticMarkup(
+      <PeopleProvider value={member}>
+        <Sidebar
+          sessions={[card('s1')]}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+        />
+      </PeopleProvider>,
+    );
+    expect(html).toContain(
+      '<p class="fd-menu-text fd-account-who">Signed in as <span class="fd-account-name">Ana Ruiz</span></p>',
+    );
+    expect(html).not.toContain('the deck owner');
+  });
+});
+
+describe('the phone account menu (§4.8)', () => {
+  const phoneBar = (withChrome: boolean) =>
+    renderToStaticMarkup(
+      <PhoneBar
+        route={{ name: 'home' }}
+        chrome={withChrome ? { ...chrome, addDevice: (() => {}) as never } : undefined}
+      />,
+    );
+
+  test('the avatar is the Account menu: a sheet with who, Add a device and Log out', () => {
+    const html = phoneBar(true);
+    expect(html).toContain('<div class="fd-phonebar-account"><details class="fd-menu">');
+    expect(html).toMatch(
+      /<summary class="fd-iconbtn" aria-label="Account"><span class="fd-avatar" aria-hidden="true">/,
+    );
+    // The sheet has a scrim that closes it, then the body.
+    expect(html).toContain(
+      '<div class="fd-menu-scrim" aria-hidden="true"></div><div class="fd-menu-body">',
+    );
+    const menu = html.slice(html.indexOf('class="fd-menu-body"'));
+    expect(menu).toContain('Signed in as the deck owner');
+    expect(menu.indexOf('Add a device')).toBeLessThan(menu.indexOf('Log out'));
+    // The switches are rows of the More page; the sheet does not repeat them.
+    expect(menu).not.toContain('Compact cards');
+    expect(menu).not.toContain('Reduce motion');
+    expect(menu.match(/class="fd-menu-sep"/g)?.length).toBe(2);
+  });
+
+  test('no avatar without a login: it would be a control with no action', () => {
+    expect(phoneBar(false)).not.toContain('fd-avatar');
+  });
+
+  test('the sidebar menu has no scrim', () => {
+    expect(sidebarWithAccount()).not.toContain('fd-menu-scrim');
   });
 });
 
@@ -190,13 +253,34 @@ describe('help overlay (DL-141)', () => {
     expect(html).toContain('aria-label="Keyboard and help"');
     expect(html).toContain('Open the mail form');
     expect(html).toContain('On the fleet home');
-    expect(html).toContain('Answer with option N');
+    expect(html).toContain('Answer with the option of that number');
+    // The number keys of the Needs you legend (§4.4): 1 is the a key, so they start at 2.
+    expect(html).toContain('<kbd class="fd-kbd">2–9</kbd>');
+    expect(html).not.toContain('1–9');
+    expect(html).not.toContain('option N');
   });
 
-  test('explains the concepts and the pages', () => {
+  test('explains the concepts and every page of the sidebar, then New session', () => {
     for (const text of ['Concepts', 'Pages', 'Needs you', 'Worktree', 'Return to board control'])
       expect(html).toContain(text);
+    const pages = html.slice(html.indexOf('aria-label="Pages"'));
+    expect([...pages.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1])).toEqual([
+      'Fleet',
+      'Watch',
+      'Activity',
+      'Stations',
+      'Plans',
+      'Automations',
+      'Artifacts',
+      'Projects',
+      'Files',
+      'Shares',
+      'Terminals',
+      'New session',
+    ]);
     expect(html).toContain('Start an agent on a station');
+    // No parentheses as labels: the Steer now and Start key says where it works in words.
+    expect(html).toContain('Steer now in the message box, or Start a new session');
   });
 
   test('the header stays; the body under it scrolls, with the two key groups', () => {
@@ -276,11 +360,30 @@ describe('sidebar stars and archive (DL-141)', () => {
     expect(empty('full')).not.toContain('Start one with');
   });
 
-  test('an ended group offers Clear for its station', () => {
+  test('an ended group offers Archive with its count for its station (§5: one name)', () => {
     const html = render();
-    expect(html).toContain('aria-label="Archive the ended sessions of Alpha"');
+    const button = html.slice(html.indexOf('aria-label="Archive the ended sessions of Alpha"'));
+    expect(button).toMatch(
+      /^aria-label="Archive the ended sessions of Alpha"><svg[^>]*>.*?<\/svg> Archive <span class="fd-count">1<\/span><\/button>/,
+    );
+    expect(html).not.toContain('> Clear<');
     expect(html).not.toContain('fd-sidebar-archived');
     expect(html).not.toContain('fd-srow-star');
+  });
+
+  test('an Ended group with nothing to archive has no Archive button', () => {
+    const html = renderToStaticMarkup(
+      <Sidebar
+        sessions={[card('s1'), card('u1', 'unreachable')]}
+        stations={[station()]}
+        route={{ name: 'home' }}
+        terminalCount={0}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(html).toContain('class="fd-sended"');
+    expect(html).not.toContain('fd-sended-clear');
   });
 });
 
@@ -317,7 +420,9 @@ describe('the help keys and copy', () => {
     expect(keys(true)).toContain('⌘K');
     expect(keys(true)).toContain('⌘↵');
     expect(keys(false)).toContain('Ctrl+K');
-    expect(keys(false)).toContain('Ctrl+↵');
+    expect(keys(false)).toContain('Ctrl+Enter');
+    // The ↵ glyph is not in the board font: off an Apple system the key is a word.
+    for (const k of keys(false)) expect(k).not.toContain('↵');
     for (const k of [...keys(true), ...keys(false)]) expect(k).not.toContain(' or ');
   });
 
@@ -370,5 +475,26 @@ describe('the More Stations row', () => {
     expect(row([station(), station('station-b', { reachable: false })])).toContain(
       'Stations<span class="fd-badge" data-tone="hazard">1 offline</span>',
     );
+  });
+});
+
+describe('the frame notices (§4.7)', () => {
+  test('a notice with a Dismiss ends in an X; one without has none', () => {
+    const html = renderToStaticMarkup(
+      <Notices
+        notices={[
+          { text: 'No terminal is open.', tone: 'info', onDismiss: () => {} },
+          { text: 'The deck did not answer.', tone: 'error' },
+        ]}
+      />,
+    );
+    expect(html).toContain(
+      '<p class="fd-notice fd-notice-row" data-tone="info" role="status"><svg',
+    );
+    expect(html).toContain(
+      '<span class="fd-notice-text">No terminal is open.</span><button type="button" class="fd-iconbtn fd-sm" aria-label="Dismiss" title="Dismiss">',
+    );
+    expect(html).toContain('<p class="fd-notice" data-tone="error" role="alert"><svg');
+    expect(html.match(/aria-label="Dismiss"/g)?.length).toBe(1);
   });
 });
