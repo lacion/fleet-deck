@@ -112,6 +112,9 @@ export function SaveBar({
   );
 }
 
+/** The systems (`traits.os`) of a Linux station: the only ones with Omarchy and the desktop tools. */
+const LINUX_SYSTEMS: readonly string[] = ['linux', 'omarchy'];
+
 const withoutNotice = (list: readonly NoticeItem[], ...ids: NoticeItem['id'][]) =>
   list.filter((n) => !ids.includes(n.id));
 
@@ -421,9 +424,20 @@ export function SettingsTab({
     load();
   };
 
+  // Omarchy, the desktop tools (Wayland and pacman) and the summary for the Omarchy bar exist on a
+  // Linux station only: another system shows none of them.
+  const linux = os !== undefined && LINUX_SYSTEMS.includes(os.toLowerCase());
+  // The trackers of the station file show only when the file has some: Jira and Linear connect in
+  // the Accounts tab, so an empty list needs no section.
+  const trackers = view.values['trackers'];
+  const hidden = [
+    ...(omit ?? []),
+    ...(stationId === null || linux ? [] : ['fleet_summary']),
+    ...(Array.isArray(trackers) && trackers.length > 0 ? [] : ['trackers']),
+  ];
   // The station cards sit right after the Desktop section, where their settings are.
   const cards =
-    live && omarchy !== undefined && stationId !== null ? (
+    live && linux && omarchy !== undefined && stationId !== null ? (
       <>
         <OmarchyCard station={name} actions={omarchy} ask={ask} />
         {desktopTools === undefined ? null : (
@@ -477,7 +491,7 @@ export function SettingsTab({
           stations={stations}
           os={os}
           slots={allSlots}
-          omit={omit}
+          omit={hidden}
         />
         {changed.length === 0 ? null : (
           <SaveBar

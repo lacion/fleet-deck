@@ -122,14 +122,16 @@ export function InstancesEditor({
                         />
                       </td>
                       <td className="fd-cell-actions">
+                        {/* The X icon button of every list of the page (RemoveButton). */}
                         <button
                           type="button"
-                          className="fd-ghost fd-sm"
+                          className="fd-iconbtn fd-set-remove"
                           disabled={disabled}
                           aria-label={`Remove login ${r.id || i + 1}`}
+                          title={`Remove login ${r.id || i + 1}`}
                           onClick={() => onChange(rows.filter((_, at) => at !== i))}
                         >
-                          <Icon of={X} size={14} /> Remove
+                          <Icon of={X} size={16} />
                         </button>
                       </td>
                     </tr>
@@ -141,7 +143,6 @@ export function InstancesEditor({
                           aria-label={`Variables of ${r.id}`}
                         >
                           <span className="fd-label">Variables</span>
-                          {vars.length === 0 ? <span className="fd-set-faint">none</span> : null}
                           {vars.map(([name]) => (
                             <span className="fd-set-envvar" key={name}>
                               <code>{name}</code>

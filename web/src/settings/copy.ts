@@ -21,31 +21,47 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   // Two fields of Time limits keep apart without their units.
   'limits.scrollback_lines': 'Terminal history',
   'limits.scrollback_mib': 'Terminal history size',
+  trackers: 'Trackers in the station file',
 };
 
 /** The unit of a number field: its short form after the field and its words for the name. */
 export type Unit = { readonly short: string; readonly words: string };
 
-/** The units that a registry label names at its end: `Login idle time (days)`. */
+/**
+ * The units that a registry label names at its end: `Login idle time (days)`. The short form of a
+ * time is the one of every other time on the board (§5: `12 s`, `2 min`, `2 h`, `1 d`), so that the
+ * units of one section have one form; a help says the unit in words (`Default: 60 seconds.`).
+ */
 const UNITS: Readonly<Record<string, Unit>> = {
   characters: { short: 'characters', words: 'characters' },
   lines: { short: 'lines', words: 'lines' },
   seconds: { short: 's', words: 'seconds' },
   minutes: { short: 'min', words: 'minutes' },
-  hours: { short: 'hours', words: 'hours' },
-  days: { short: 'days', words: 'days' },
+  hours: { short: 'h', words: 'hours' },
+  days: { short: 'd', words: 'days' },
   MiB: { short: 'MiB', words: 'MiB' },
   GiB: { short: 'GiB', words: 'GiB' },
+};
+
+const TOKENS: Unit = { short: 'tokens', words: 'tokens' };
+
+/** The units of the number fields whose registry label does not name one. */
+const KEY_UNITS: Readonly<Record<string, Unit>> = {
+  'model_help.per_call_max_output_tokens': TOKENS,
+  'model_help.daily_token_cap': TOKENS,
 };
 
 const UNIT_END = /^(.*\S) \(([A-Za-z]+)\)$/;
 
 /**
- * The unit of a number field, from the end of its registry label; `null` for a field without one.
- * The page shows it after the field (one notation for every unit), not in the label.
+ * The unit of a number field: the unit of its key, else the one at the end of its registry label;
+ * `null` for a field without one. The page shows it after the field (one notation for every unit),
+ * not in the label.
  */
-export function unitOf(meta: Pick<FieldMeta, 'kind' | 'label'>): Unit | null {
+export function unitOf(meta: Pick<FieldMeta, 'key' | 'kind' | 'label'>): Unit | null {
   if (meta.kind !== 'int') return null;
+  const own = KEY_UNITS[meta.key];
+  if (own !== undefined) return own;
   const m = UNIT_END.exec(meta.label);
   return m === null ? null : (UNITS[m[2] ?? ''] ?? null);
 }
@@ -95,10 +111,29 @@ const HELP: Readonly<Record<string, string>> = {
     'Lets each session that you start from the board start a few helper sessions. Off stops new worker grants; grants that exist stay.',
   clone_transport: 'HTTPS uses your Git credential helper. SSH uses your SSH keys.',
   'worker_grant.stations': 'The stations where a worker grant works.',
+  // A mode name is one piece: no-break spaces keep it on one line (U+00A0).
   'worker_grant.claude_mode':
-    'The most permissive mode that a worker can give to a session that it starts. Default: Accept edits.',
+    'The most permissive mode that a worker can give to a session that it starts. Default: Accept\u00a0edits.',
   'worker_grant.codex_mode':
-    'The most permissive mode that a worker can give to a session that it starts. Default: Ask when needed · workspace write.',
+    'The most permissive mode that a worker can give to a session that it starts. Default: Ask\u00a0when\u00a0needed\u00a0·\u00a0workspace\u00a0write.',
+  // Station desktop: the hints speak to the owner ("you"), as the hints around them do.
+  allow_desktop:
+    "Lets you control this machine's desktop through the fleet: screens, the wall, notifications and previews. Off stops new actions at once.",
+  allow_desktop_capture:
+    "Lets you take a screenshot of this machine's monitors from the board. Each screenshot is kept as an artifact. Off stops new screenshots at once.",
+  // The station file is on the station: the hint sends the owner to the board, not to the file.
+  trackers: 'Read from the station file. Connect Jira and Linear accounts in the Accounts tab.',
+  // The select has a Default option that says what the default is: the hint does not repeat it.
+  'model_help.provider': 'The provider that model help uses.',
+  // The unit follows the field (tokens): the hint does not name it.
+  'model_help.per_call_max_output_tokens': 'The longest answer of one model help call.',
+  'model_help.daily_token_cap': 'The most tokens that model help spends in one day (UTC).',
+  tailscale_bin:
+    'The full path of the tailscale program. Leave it empty to use tailscale from PATH.',
+  clone_root:
+    'Fleet Git clones new project homes into this folder. It must be inside an allowed folder. Default: the projects folder in the first allowed folder.',
+  repo_groups:
+    'The conflict check compares the clones of one group as one repository. Use it for a repository with several remotes, or with no remote.',
 };
 
 /** `Default 200000.` → `Default: 200,000.`: one form of a default in every help. */
@@ -106,11 +141,29 @@ const withDefault = (help: string): string =>
   help.replace(/\bDefault (\d+)\b/g, (_, n: string) => `Default: ${countText(Number(n))}`);
 
 /**
+ * `Default: 60.` → `Default: 60 seconds.`: the default of a field with a unit names its unit, so
+ * that the owner does not look back at the field. A no-break space keeps the number with its unit.
+ */
+const withUnit = (help: string, unit: Unit | null): string =>
+  unit === null
+    ? help
+    : help.replace(
+        /\bDefault: ([\d,.]+)\./g,
+        (_, n: string) => `Default: ${n}\u00a0${unit.words}.`,
+      );
+
+/**
  * The help of a field: the board's words, else the registry help. `deck` is true on the deck tab,
  * where a key of the deck file can have its own words.
  */
-export const helpOf = (meta: Pick<FieldMeta, 'key' | 'help'>, deck = false): string =>
-  withDefault((deck ? HELP[`deck:${meta.key}`] : undefined) ?? HELP[meta.key] ?? meta.help);
+export const helpOf = (
+  meta: Pick<FieldMeta, 'key' | 'help' | 'kind' | 'label'>,
+  deck = false,
+): string =>
+  withUnit(
+    withDefault((deck ? HELP[`deck:${meta.key}`] : undefined) ?? HELP[meta.key] ?? meta.help),
+    unitOf(meta),
+  );
 
 /**
  * The fields whose switch works only while another one is on: the page indents them under it, and

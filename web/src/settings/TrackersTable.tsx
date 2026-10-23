@@ -1,4 +1,5 @@
-// DL-172: the `[[trackers]]` entries of station.toml, read-only.
+// DL-172: the `[[trackers]]` entries of station.toml, read-only. The settings tab shows the field
+// only while the file has an entry (SettingsTab); its help sends the owner to the Accounts tab.
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -17,10 +18,10 @@ export function TrackersTable({ value }: { readonly value: unknown }) {
   return (
     <div className="fd-set-trackers">
       {rows.length === 0 ? (
-        <p className="fd-note">No trackers in the config file.</p>
+        <p className="fd-note">No trackers in the station file.</p>
       ) : (
         <div className="fd-tablewrap">
-          <table className="fd-table" aria-label="Trackers from the config file">
+          <table className="fd-table" aria-label="Trackers in the station file">
             <thead>
               <tr>
                 <th scope="col">Id</th>
@@ -46,9 +47,6 @@ export function TrackersTable({ value }: { readonly value: unknown }) {
           </table>
         </div>
       )}
-      <p className="fd-note">
-        From the config file of this station. Connect accounts in the Accounts tab.
-      </p>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 // opens the installation terminal (with the elevation) and lists the earlier installations.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DesktopToolsPlan, MaintenanceInfo, StationTools } from '../gen';
-import { Icon, Wrench } from '../ui/icons';
+import { ErrorNotice } from '../ui/page';
 import {
   type DesktopToolsActions,
   LOADING_TEXT,
@@ -138,6 +138,16 @@ type InstallProps = {
   readonly onClose: () => void;
 };
 
+/** A failure of the install panel: the settings notice row in the error tone (§4.7). */
+function InstallFailure({ text }: { readonly text: string }) {
+  return (
+    <div className="fd-set-notice" data-tone="error" role="alert">
+      <NoticeIcon tone="error" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
 /** The install dialog (an inline panel): the plan states of the design. */
 export function InstallView({ state, onOpen, onClose }: InstallProps) {
   const close = (label: string) => (
@@ -147,11 +157,11 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
   );
   let body: React.ReactNode;
   if (state.kind === 'reading') {
-    body = <p role="status">{PLAN_LOADING_TEXT}</p>;
+    body = <Loading text={PLAN_LOADING_TEXT} />;
   } else if (state.kind === 'error') {
     body = (
       <>
-        <p role="alert">{state.text}</p>
+        <InstallFailure text={state.text} />
         <div className="fd-set-bar-actions">{close('Close')}</div>
       </>
     );
@@ -174,7 +184,7 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
           </>
         )}
         {view.open ? <p>{CONFIRM_TEXT}</p> : null}
-        {state.notice === null ? null : <p role="alert">{state.notice}</p>}
+        {state.notice === null ? null : <InstallFailure text={state.notice} />}
         <div className="fd-set-bar-actions">
           {view.open ? (
             <>
@@ -211,26 +221,26 @@ export const RUN_DATE: Intl.DateTimeFormatOptions = {
 const dateOf = (run: MaintenanceInfo): string =>
   new Date(run.created_at).toLocaleString(undefined, RUN_DATE);
 
-/** The Installations list; nothing for the state `hidden`. */
+/**
+ * The Installations list; nothing for the state `hidden`, and nothing before the first
+ * installation (§1.7: an empty list is an absent row, not a row that says so).
+ */
 export function InstallationsView({
   state,
   onOpen,
+  onRetry,
 }: {
   readonly state: RunsState;
   readonly onOpen: (id: string) => void;
+  /** Read the list again (the Try again of a failed read). */
+  readonly onRetry?: (() => void) | undefined;
 }) {
   if (state.kind === 'hidden') return null;
+  if (state.kind === 'ready' && state.runs.length === 0) return null;
   let body: React.ReactNode;
   if (state.kind === 'loading') body = <Loading text="Loading the installations…" />;
   else if (state.kind === 'error') {
-    body = <p role="alert">The installations could not be read.</p>;
-  } else if (state.runs.length === 0) {
-    body = (
-      <p className="fd-set-empty">
-        <Icon of={Wrench} size={20} />
-        Installations of desktop tools show here.
-      </p>
-    );
+    body = <ErrorNotice text="The installations could not be read." onRetry={onRetry} />;
   } else {
     body = (
       <ul className="fd-dt-runs">
@@ -266,6 +276,8 @@ type ViewProps = {
   readonly onOpenTerminal: () => void;
   readonly onCloseInstall: () => void;
   readonly onOpenRun: (id: string) => void;
+  /** Read the list of installations again. */
+  readonly onRetryRuns?: (() => void) | undefined;
   /** The installation panel, when one is open. */
   readonly panel?: React.ReactNode;
 };
@@ -320,7 +332,11 @@ export function DesktopToolsView(props: ViewProps) {
       <h2>Desktop tools</h2>
       <CardRow label="Tools">{body}</CardRow>
       {tools.kind === 'ready' ? (
-        <InstallationsView state={props.runs} onOpen={props.onOpenRun} />
+        <InstallationsView
+          state={props.runs}
+          onOpen={props.onOpenRun}
+          onRetry={props.onRetryRuns}
+        />
       ) : null}
     </section>
   );
@@ -445,6 +461,10 @@ export function DesktopToolsCard({ station, actions: direct, ask }: Props) {
       onOpenTerminal={() => void openTerminal()}
       onCloseInstall={() => setInstall(null)}
       onOpenRun={setOpen}
+      onRetryRuns={() => {
+        setRuns({ kind: 'loading' });
+        void loadRuns();
+      }}
       panel={panel}
     />
   );

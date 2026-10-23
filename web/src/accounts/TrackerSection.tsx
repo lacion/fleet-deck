@@ -1,7 +1,8 @@
 // DL-173: Jira and Linear. The owner registers an OAuth app once, then connects with it. An API
 // token is the fallback. The section has the structure of GitHub and GitLab: one table with a row
-// for each account and a "Not connected" row for a provider without one (it says how the provider
-// connects and has the buttons to connect), then one row of "Connect another … account…" folds.
+// for each account and a "Not connected" row for a provider without one (it says what the account
+// gives, or which app it connects with, and has the buttons to connect), then one row of "Connect
+// another … account…" folds.
 import { useState } from 'react';
 import type { AccountView, AppView } from '../gen';
 import { Icon, Plus } from '../ui/icons';
@@ -19,8 +20,12 @@ const BUILTIN_ORIGINS: readonly string[] = ['https://127.0.0.1:7420', 'https://l
 export const BUILTIN_LOCALHOST_TEXT =
   'The built-in Linear app works only from the board on the deck machine at https://127.0.0.1:7420 or https://localhost:7420. Open the board there, or set up your own Linear app.';
 
-/** The line of a provider without an account and without an app. */
-export const NO_APP_TEXT = 'Set up an OAuth app or use an API token.';
+/**
+ * The line of a provider without an account and without an app: what the account gives. The two
+ * ways to connect are the buttons of the row; the line does not repeat them.
+ */
+export const noAppText = (label: string): string =>
+  `Connect ${label} to start sessions from its issues.`;
 /** The words of the built-in Linear app. */
 export const BUILTIN_TEXT = 'Uses the built-in Fleet Deck app.';
 /** The button that opens the app dialog; with the built-in app, "your own". */
@@ -56,9 +61,12 @@ type Handlers = {
   readonly onToken: (kind: TrackerKind) => void;
 };
 
-/** The note of a "Not connected" row: how the provider connects, with the app setup when it has one. */
+/**
+ * The note of a "Not connected" row: what the account gives, or, with an app, which app it connects
+ * with and the setup of the owner's own app.
+ */
 function absentNote(w: Ways, on: Handlers) {
-  if (w.app === undefined && !w.builtin) return NO_APP_TEXT;
+  if (w.app === undefined && !w.builtin) return noAppText(w.label);
   return (
     <span className="fd-acc-ways">
       {w.app === undefined ? BUILTIN_TEXT : <AppStatus app={w.app} />}
@@ -69,7 +77,10 @@ function absentNote(w: Ways, on: Handlers) {
   );
 }
 
-/** The buttons of a "Not connected" row: Connect (with an app) or the app setup, then the token. */
+/**
+ * The buttons of a "Not connected" row: Connect (with an app) or the app setup, then the token. They
+ * are two ways to do one step: two plain buttons, one look.
+ */
 function absentActions(w: Ways, on: Handlers) {
   const canConnect = w.app !== undefined || w.builtin;
   return (
@@ -83,7 +94,7 @@ function absentActions(w: Ways, on: Handlers) {
           {SETUP_TEXT}
         </button>
       )}
-      <button type="button" className="fd-ghost fd-sm" onClick={() => on.onToken(w.kind)}>
+      <button type="button" className="fd-sm" onClick={() => on.onToken(w.kind)}>
         {TOKEN_TEXT}
       </button>
     </>

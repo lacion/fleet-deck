@@ -218,7 +218,29 @@ export async function watchStatus(
   }
 }
 
-/** The card for a state. No card for an older deck (404). */
+/**
+ * A station without Omarchy whose card would only say so: no fact (no screensaver, no
+ * provisioning), no button, no repair of before, nothing that runs or failed. The page leaves the
+ * section out (§1.7: a missing thing is an absent element).
+ */
+export function onlyAbsence(
+  status: OmarchyStatus,
+  repairs: RepairsState,
+  busy: boolean,
+  failure: Failure | null,
+): boolean {
+  return (
+    !status.omarchy.present &&
+    status.running === null &&
+    !busy &&
+    failure === null &&
+    buttons(status).length === 0 &&
+    cardView(status).facts.length === 0 &&
+    !(repairs.kind === 'ready' && repairs.journals.length > 0)
+  );
+}
+
+/** The card for a state. No card for an older deck (404), nor for a station without Omarchy. */
 export function OmarchyView({
   state,
   busy,
@@ -234,6 +256,7 @@ export function OmarchyView({
   onRestore = none,
 }: ViewProps) {
   if (state.kind === 'hidden') return null;
+  if (state.kind === 'ready' && onlyAbsence(state.status, repairs, busy, failure)) return null;
   let body: React.ReactNode;
   let version: string | null = null;
   if (state.kind === 'loading') {
@@ -267,7 +290,7 @@ export function OmarchyView({
             {line}
           </p>
         ))}
-        {busy && state.status.running === null ? <p role="status">{WORKING_TEXT}</p> : null}
+        {busy && state.status.running === null ? <Loading text={WORKING_TEXT} /> : null}
         {failure === null ? null : (
           <div
             className="fd-set-notice"

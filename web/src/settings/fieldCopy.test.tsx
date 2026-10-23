@@ -2,6 +2,7 @@
 // the registry (copy.ts): labels, help, option names, the bypass warning, the section slots.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { fieldLabel, helpOf, unitOf } from './copy';
 import { FIELDS, meta, view } from './fixtures';
 import { badgesOf, labelOf, sectionId } from './model';
 import { SettingsFields } from './SettingsFields';
@@ -158,9 +159,49 @@ describe('the board copy of the fields', () => {
     );
     expect(html).toContain('<option value="">Default (HTTPS)</option>');
     expect(html).toContain('<option value="ssh" selected="">SSH</option>');
-    expect(html).toContain('Default: Accept edits.');
-    expect(html).toContain('Default: Ask when needed · workspace write.');
+    // A mode name is one piece in a hint: no-break spaces keep it on one line.
+    expect(html).toContain('Default: Accept\u00a0edits.');
+    expect(html).toContain('Default: Ask\u00a0when\u00a0needed\u00a0·\u00a0workspace\u00a0write.');
     expect(html).toContain('>Most permissive Claude mode<');
+  });
+
+  test('the default of a field with a unit names its unit in words', () => {
+    const at = (key: string, label: string, help: string) =>
+      helpOf(meta(key, label, 'int', { help }));
+    expect(at('limits.push_seconds', 'Push time (seconds)', 'One push. Default: 60.')).toBe(
+      'One push. Default: 60\u00a0seconds.',
+    );
+    expect(at('capture.quota_gib', 'Capture storage (GiB)', 'The disk. Default: 4.')).toBe(
+      'The disk. Default: 4\u00a0GiB.',
+    );
+    expect(at('x', 'Terminal history (lines)', 'The lines. Default 5000.')).toBe(
+      'The lines. Default: 5,000\u00a0lines.',
+    );
+    // No unit, a default in words, or a default that names its unit already: the help stays.
+    expect(at('max_sessions', 'Most sessions', 'The most. Default: 12.')).toBe(
+      'The most. Default: 12.',
+    );
+    expect(at('x', 'Idle (minutes)', 'Default: the first root.')).toBe('Default: the first root.');
+    expect(at('x', 'Idle (minutes)', 'Default: 30 minutes.')).toBe('Default: 30 minutes.');
+  });
+
+  test('a time unit has the short form of §5; tokens follow the model help numbers', () => {
+    expect(unitOf(meta('x', 'Lifetime (hours)', 'int'))).toEqual({ short: 'h', words: 'hours' });
+    expect(unitOf(meta('x', 'Login idle time (days)', 'int'))).toEqual({
+      short: 'd',
+      words: 'days',
+    });
+    expect(unitOf(meta('x', 'Grace (seconds)', 'int'))).toEqual({ short: 's', words: 'seconds' });
+    for (const key of ['model_help.per_call_max_output_tokens', 'model_help.daily_token_cap']) {
+      expect(unitOf(meta(key, 'Daily token cap', 'int'))).toEqual({
+        short: 'tokens',
+        words: 'tokens',
+      });
+      expect(helpOf(meta(key, 'Daily token cap', 'int'))).not.toContain('in tokens');
+    }
+    expect(fieldLabel(meta('model_help.daily_token_cap', 'Daily token cap', 'int'))).toBe(
+      'Daily token cap',
+    );
   });
 
   test('the label of a danger change in the confirmation is the label that the page shows', () => {

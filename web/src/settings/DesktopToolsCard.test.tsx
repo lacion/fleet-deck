@@ -165,7 +165,9 @@ describe('the install panel', () => {
   test('reading', () => {
     const html = installView({ kind: 'reading' });
     expect(html).toContain('<h3>Install desktop tools</h3>');
-    expect(html).toContain('Reading the install plan…');
+    expect(html).toContain(
+      '<p class="fd-note fd-loading" role="status">Reading the install plan…</p>',
+    );
   });
 
   test('an error shows its text and Close', () => {
@@ -238,8 +240,10 @@ describe('the install panel', () => {
       notice: 'Another installation is running on this station.',
       busy: true,
     });
-    expect(html).toContain('role="alert"');
-    expect(html).toContain('Another installation is running on this station.');
+    // The settings notice row in the error tone, never a bare alert paragraph.
+    expect(html).toContain('<div class="fd-set-notice" data-tone="error" role="alert"><svg');
+    expect(html).toContain('<span>Another installation is running on this station.</span>');
+    expect(html).not.toContain('<p role="alert">');
     expect(html).toMatch(/disabled=""[^>]*>Open installation terminal/);
   });
 });
@@ -248,16 +252,22 @@ describe('the Installations list', () => {
   const list = (state: RunsState) =>
     renderToStaticMarkup(<InstallationsView state={state} onOpen={noop} />);
 
-  test('a 501 hides it; loading; empty; a failed read', () => {
+  test('a 501 hides it; loading; no row before the first run; a failed read', () => {
     expect(list({ kind: 'hidden' })).toBe('');
-    expect(list({ kind: 'loading' })).toContain('Loading the installations…');
-    // The empty state of §4.7: a 20px icon and one sentence.
-    expect(list({ kind: 'ready', runs: [] })).toMatch(
-      /<p class="fd-set-empty"><svg[^>]*width="20"[^>]*>.*<\/svg>Installations of desktop tools show here\.<\/p>/,
+    expect(list({ kind: 'loading' })).toContain(
+      '<p class="fd-note fd-loading" role="status">Loading the installations…</p>',
     );
+    // §1.7: no installation yet is an absent row, not a row that says so.
+    expect(list({ kind: 'ready', runs: [] })).toBe('');
+    // A failed read is the ErrorNotice of a list, with Try again when the card can read again.
     const error = list({ kind: 'error' });
-    expect(error).toContain('role="alert"');
-    expect(error).toContain('The installations could not be read.');
+    expect(error).toContain('class="fd-notice fd-notice-row" data-tone="error"');
+    expect(error).toContain('role="alert">The installations could not be read.</span>');
+    expect(error).not.toContain('Try again');
+    const retry = renderToStaticMarkup(
+      <InstallationsView state={{ kind: 'error' }} onOpen={noop} onRetry={noop} />,
+    );
+    expect(retry).toContain('>Try again</button>');
   });
 
   test('one row for each run, with its tools, state and button', () => {
@@ -337,6 +347,7 @@ describe('SettingsTab with the card', () => {
         initial={{ view: settingsView() }}
         omarchy={props.omarchy}
         desktopTools={props.desktopTools}
+        os="linux"
       />,
     );
 
@@ -362,6 +373,7 @@ describe('SettingsTab with the card', () => {
         initial={{ view: settingsView({ fields }) }}
         omarchy={omarchy}
         desktopTools={desktopTools}
+        os="linux"
       />,
     );
     const desktop = html.indexOf('aria-label="Desktop"');
