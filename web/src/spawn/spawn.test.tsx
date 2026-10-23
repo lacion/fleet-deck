@@ -210,8 +210,10 @@ describe('spawn form (P4-4)', () => {
 
   test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
     const html = form([reported()]);
-    expect(html).toContain('Coordinator: this session may read the fleet');
-    expect(html).not.toMatch(/<input type="checkbox" checked=""\/>Coordinator/);
+    // A short label, and what it gives as the description of the checkbox.
+    expect(html).toContain(
+      '<div class="fd-spawn-coord"><label class="fd-spawn-opt"><input type="checkbox" aria-describedby="fd-spawn-coord-note"/>Coordinator</label><p class="fd-note" id="fd-spawn-coord-note">This session can read the fleet, send mail and drive the sessions that it starts.</p></div>',
+    );
     // The target stations show only for the owner with Coordinator checked.
     expect(html).not.toContain('Grant stations');
   });
@@ -373,7 +375,9 @@ describe('spawn form (P4-4)', () => {
     for (const bad of ['', '--resume', 'a b', 'a/b', 'x'.repeat(129)]) {
       expect(importIdProblem(bad)).not.toBeNull();
     }
-    expect(form([reported()])).toContain('Import CLI session id (optional)');
+    expect(form([reported()])).toContain(
+      '<div class="fd-spawn-import"><label>Session to import (optional)<input placeholder="Session id"',
+    );
   });
 
   test('a refused or failed start shows the reason and no session', async () => {
@@ -508,15 +512,15 @@ describe('spawn form (P4-4)', () => {
         />,
       );
     const html = render('acme/app');
-    expect(html).toContain('Clone a repository into a new directory here');
+    expect(html).toContain('Clone a repository into a new folder here');
     expect(html).not.toContain('Clone URL');
     expect(html).toContain('Repository');
     expect(html).toContain('placeholder="owner/name, host/owner/name or a URL"');
     expect(html).toContain(
       '<p class="fd-note" id="fd-spawn-repo">Clones https://github.com/acme/app.git</p>',
     );
-    // The directory name follows the repository.
-    expect(html).toContain('New directory name<input value="app"/>');
+    // The folder name follows the repository.
+    expect(html).toContain('New folder name<input value="app"/>');
     // A bare name without a default organization shows the error (no alert before the field was left).
     const bare = render('app');
     expect(bare).toContain(
@@ -689,8 +693,8 @@ describe('spawn form (P4-4)', () => {
         <BranchFields branch={branch} base={base} onBranch={() => {}} onBase={() => {}} />,
       );
     const empty = render('');
-    expect(empty).toContain('placeholder="fd/&lt;callsign&gt;, new"');
-    expect(empty).toContain('Empty: a new branch fd/&lt;callsign&gt;.');
+    expect(empty).toContain('placeholder="Leave empty for a new branch"');
+    expect(empty).toContain('Leave it empty to make a new branch named fd/ and the callsign.');
     expect(empty).not.toContain('Base');
     expect(empty).not.toContain('role="alert"');
     expect(render('   ')).not.toContain('Base');

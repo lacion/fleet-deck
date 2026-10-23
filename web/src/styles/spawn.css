@@ -271,6 +271,11 @@
   margin-top: calc(-1 * var(--sp-1));
   color: var(--faint);
 }
+/* Browse… scrolls the folder field and its open panel into view (FolderPicker): the panel stops
+   24px short of the window edge. */
+.fd-spawn .fd-folder {
+  scroll-margin-block: var(--sp-5);
+}
 /* A segmented control may wrap on a narrow sheet. */
 .fd-spawn-seg {
   flex-wrap: wrap;
@@ -348,19 +353,23 @@
 .fd-spawn .fd-spawn-pillwrap > input {
   width: 200px;
 }
-/* The directory: the value is mono (a path). */
+/* The folder, the branch, the repository and the session id: the value is mono (a path, a
+   branch, an id). */
 .fd-spawn .fd-folder-row > input,
 .fd-spawn input[aria-label="Directory path"],
 .fd-spawn .fd-spawn-branch input,
-.fd-spawn .fd-spawn-url input {
+.fd-spawn .fd-spawn-url input,
+.fd-spawn .fd-spawn-import input {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
 
 /* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
-   --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
-   The chosen one has the look of a pressed .fd-seg segment (the provider and Where choices of the
-   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600.
+   --surface fill of a segment track and the --btn-edge-raised edge of a plain control on the
+   --raised sheet (the --surface fill alone is 1.05:1 on the light sheet, and the pills read as
+   loose text; --border is never the edge of a control, §2.1). The chosen one has the look of a
+   pressed .fd-seg segment (the provider and Where choices of the same sheet): a --pressed-bg fill,
+   a 1px inset --ctl-edge ring, --shadow-lift and weight 600.
    A pill has 8px sides (a segment 10px): it carries a name, a dot and a count, and Auto plus four
    stations then share one line of the 588px field column. */
 .fd-spawn-stations {
@@ -389,6 +398,9 @@
     background-color var(--t-fast),
     color var(--t-fast),
     box-shadow var(--t-fast);
+}
+.fd-spawn-station:not(:has(> input:checked)) {
+  box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
 }
 .fd-spawn-station:hover {
   background: var(--raised-hi);
@@ -473,7 +485,8 @@
 }
 .fd-spawn-branch-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  /* A branch name is short: the fields stop at 18rem, not at the edge of the sheet. */
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 18rem));
   gap: var(--sp-3);
   min-width: 0;
 }
@@ -533,9 +546,11 @@
   gap: var(--sp-3);
   min-width: 0;
 }
+/* "More options" (13px) and its hint (12px) share one baseline. Each text box is as tall as the
+   summary (the line height), so that the baseline group fills it; the chevron is centered. */
 .fd-spawn-options > summary.fd-label {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   justify-self: start;
   max-width: 100%;
   min-width: 0;
@@ -543,6 +558,10 @@
   color: var(--dim);
   font-size: var(--fs-ui);
   font-weight: 500;
+  line-height: var(--ctl-h);
+}
+.fd-spawn-options > summary.fd-label::before {
+  align-self: center;
 }
 .fd-spawn-options > summary.fd-label:hover {
   color: var(--text);
@@ -561,14 +580,17 @@
 .fd-spawn-options[open] > summary > .fd-spawn-options-hint {
   display: none;
 }
-/* A phone: the Batch switch is the first row of the fold. */
-.fd-spawn-options > .fd-spawn-batch {
-  justify-self: start;
-}
-.fd-spawn-options > :not(summary) {
+/* The groups of the fold (setup, coordinator, import) in the field column of the property rows,
+   16px apart. Chrome puts every child after the summary in the ::details-content box, so the
+   groups need a grid of their own. */
+.fd-spawn-options-body {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
   margin-left: calc(72px + var(--sp-3));
 }
-.fd-spawn-browse {
+/* A phone: the Batch switch is the first row of the fold. */
+.fd-spawn-options-body > .fd-spawn-batch {
   justify-self: start;
 }
 .fd-spawn-setup-field {
@@ -576,9 +598,34 @@
   gap: var(--sp-2);
   min-width: 0;
 }
+/* Two lines at rest; the field grows with the command, without the native resize grabber. */
 .fd-spawn textarea.fd-spawn-setup {
+  min-height: calc(2lh + 2 * var(--sp-2) + 2px);
+  max-height: 40vh;
+  field-sizing: content;
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  resize: none;
+}
+/* Coordinator: the checkbox, its note under the label text, and the grant fields while it is on. */
+.fd-spawn-coord {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.fd-spawn-coord > .fd-note {
+  margin-top: calc(-1 * var(--sp-3));
+  padding-left: calc(16px + var(--sp-2));
+}
+/* The import: the id field at the full width, Browse sessions and the note under it. */
+.fd-spawn-import {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+  min-width: 0;
+}
+.fd-spawn-import > label {
+  justify-self: stretch;
 }
 /* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
 @media (pointer: coarse) {
@@ -586,8 +633,13 @@
   .fd-spawn input[aria-label="Directory path"],
   .fd-spawn .fd-spawn-branch input,
   .fd-spawn .fd-spawn-url input,
+  .fd-spawn .fd-spawn-import input,
   .fd-spawn textarea.fd-spawn-setup {
     font-size: max(var(--fs-data), var(--fs-field));
+  }
+  /* The checkbox is 24px on a touch screen. */
+  .fd-spawn-coord > .fd-note {
+    padding-left: calc(24px + var(--sp-2));
   }
 }
 /* ADR-008: the fleet-control switches under the Coordinator checkbox. */
@@ -599,9 +651,6 @@
 }
 .fd-spawn .fd-spawn-fleet legend {
   margin-bottom: var(--sp-2);
-}
-.fd-spawn .fd-spawn-fleet + .fd-spawn-fleet {
-  margin-top: var(--sp-2);
 }
 .fd-spawn .fd-spawn-scope {
   display: grid;
@@ -741,6 +790,9 @@
     background: var(--raised);
     box-shadow: var(--shadow-lift);
   }
+  .fd-spawn-station:not(:has(> input:checked)) {
+    box-shadow: var(--shadow-lift);
+  }
   /* A plain button on --bg: the --btn-edge of a panel button (settings.css .fd-set-grid). */
   .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
   .fd-spawn .fd-folder-foot > button:not(.fd-ghost),
@@ -753,8 +805,14 @@
   .fd-spawn .fd-outcome > button:hover:not(:disabled) {
     border-color: var(--btn-edge);
   }
-  .fd-spawn-options > :not(summary) {
+  .fd-spawn-options-body {
     margin-left: 0;
+  }
+  /* The open folder panel stops above the sticky footer (60px) and the bottom bar (60px and the
+     safe area), not under them. */
+  .fd-spawn .fd-folder {
+    scroll-margin-top: calc(env(safe-area-inset-top) + var(--sp-3));
+    scroll-margin-bottom: calc(60px + 60px + env(safe-area-inset-bottom) + var(--sp-3));
   }
   /* The sticky footer joins the --surface bottom bar as one docked layer, with a visible top rule.
      While the page scrolls on under it (`data-more`), the form fades out over the last 24px above

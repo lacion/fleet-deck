@@ -7,16 +7,34 @@ import { ChevronRight, Icon, Server, Sparkles } from '../ui/icons';
 import { submitKeyHint } from './keyHint';
 import { AUTO, type SpawnOutcome } from './spawn';
 
-/** The head of the sheet: a breadcrumb "<station> › New session" (the station when one is chosen). */
-export function SheetHead({ station }: { readonly station: StationView | undefined }) {
+/**
+ * The head of the sheet: a breadcrumb "<station> › New session". Auto has a badge of its own, so
+ * that "New session" keeps its place when the owner moves between Auto and a station.
+ */
+export function SheetHead({
+  station,
+  auto,
+}: {
+  readonly station: StationView | undefined;
+  /** The deck picks the station (FG-6). */
+  readonly auto: boolean;
+}) {
+  const badge = auto ? (
+    <span className="fd-badge">
+      <Icon of={Sparkles} />
+      Auto
+    </span>
+  ) : station === undefined ? null : (
+    <span className="fd-badge">
+      <Icon of={Server} />
+      {station.name}
+    </span>
+  );
   return (
     <div className="fd-spawn-head">
-      {station === undefined ? null : (
+      {badge === null ? null : (
         <>
-          <span className="fd-badge">
-            <Icon of={Server} />
-            {station.name}
-          </span>
+          {badge}
           <span className="fd-spawn-crumb" aria-hidden="true">
             <Icon of={ChevronRight} size={14} />
           </span>
@@ -199,7 +217,7 @@ export function PropRow({
   );
 }
 
-/** The repository, its access check, and the new directory name of a clone start (DL-144). */
+/** The repository, its access check, and the new folder name of a clone start (DL-144). */
 export function CloneFields({
   repoText,
   onRepo,
@@ -247,7 +265,7 @@ export function CloneFields({
         {repoError ?? `Clones ${cloneUrl}`}
       </p>
       <label>
-        New directory name
+        New folder name
         <input value={cloneName} onChange={(event) => onName(event.target.value)} />
       </label>
     </div>

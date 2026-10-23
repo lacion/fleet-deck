@@ -24,7 +24,7 @@ export function BranchFields({ branch, base, onBranch, onBase }: Props) {
             Branch
             <input
               value={branch}
-              placeholder="fd/<callsign>, new"
+              placeholder="Leave empty for a new branch"
               spellCheck={false}
               autoCapitalize="off"
               aria-invalid={branchError === null ? undefined : true}
@@ -61,8 +61,8 @@ export function BranchFields({ branch, base, onBranch, onBase }: Props) {
         )}
       </div>
       <p className="fd-note">
-        Empty: a new branch fd/&lt;callsign&gt;. An existing branch is checked out. A ticket key
-        such as PROJ-123 becomes part of the callsign.
+        Leave it empty to make a new branch named fd/ and the callsign. Type an existing branch to
+        check it out. A ticket key such as PROJ-123 becomes part of the callsign.
       </p>
     </div>
   );
