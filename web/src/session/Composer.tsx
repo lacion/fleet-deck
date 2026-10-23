@@ -176,9 +176,11 @@ export function ComposerMenu(props: {
   const ref = useRef<HTMLDivElement>(null);
   useScrollEdges(ref);
   // The keys never select a row that the box hides.
+  // New rows (a longer filter) can keep the index: the active row must still be in view.
   useLayoutEffect(() => {
+    if (props.rows.length === 0) return;
     document.getElementById(`${props.id}-${props.current}`)?.scrollIntoView?.({ block: 'nearest' });
-  }, [props.id, props.current]);
+  }, [props.id, props.current, props.rows]);
   return (
     <div
       ref={ref}
@@ -364,6 +366,12 @@ export function Composer(props: Props) {
   }, [text]);
 
   const edit = (value: string, caret = value.length) => {
+    // The same text runs no layout effect: a pick that only moves the caret applies it here.
+    const to = caretTo.current;
+    if (value === text && to !== null) {
+      caretTo.current = null;
+      box.current?.setSelectionRange(to, to);
+    }
     setText(value);
     setCursor(caret);
     setActive(0);
