@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { EventEnvelope } from '../gen';
+import { MAX_AT_OPTIONS, recentPaths } from './at';
 import { Composer } from './Composer';
 import {
   type CommandList,
@@ -12,6 +13,7 @@ import {
   pickCommand,
   rankNames,
 } from './slash';
+import { replaceDiffPaths } from './workspace';
 
 const list = (
   names: readonly string[] | null,
@@ -269,5 +271,80 @@ describe('the composer renders the command menu (DL-413)', () => {
 
   test('plain text renders no menu', () => {
     expect(render('hello', list(['init']))).not.toContain('role="listbox"');
+  });
+});
+
+describe('recentPaths (DL-414)', () => {
+  const paths = ['src/a.ts', 'docs/b.md'];
+
+  test('an empty query lists every changed path', () => {
+    expect(recentPaths(paths, '')).toEqual(['src/a.ts', 'docs/b.md']);
+  });
+
+  test('the query is a case-insensitive part of the path, in the path order', () => {
+    expect(recentPaths(paths, 'a')).toEqual(['src/a.ts']);
+    expect(recentPaths(paths, 'A')).toEqual(['src/a.ts']);
+    expect(recentPaths(paths, 'zz')).toEqual([]);
+  });
+
+  test('30 paths give at most 20', () => {
+    const many = Array.from({ length: 30 }, (_, n) => `src/f${n}.ts`);
+    expect(recentPaths(many, '')).toHaveLength(MAX_AT_OPTIONS);
+    expect(MAX_AT_OPTIONS).toBe(20);
+  });
+});
+
+describe('the composer renders the changed files on the bare @ (DL-414)', () => {
+  const render = (text: string, changesRef: string) => {
+    const store = {
+      getItem: () => text,
+      setItem: () => {},
+      removeItem: () => {},
+    };
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      value: store,
+      configurable: true,
+    });
+    try {
+      return renderToStaticMarkup(
+        createElement(Composer, {
+          enabled: true,
+          working: false,
+          steer: false,
+          nativeQueue: true,
+          onSend: () => {},
+          draftKey: 'k',
+          changesRef,
+          searchFiles: async () => [],
+        }),
+      );
+    } finally {
+      Reflect.deleteProperty(globalThis, 'sessionStorage');
+    }
+  };
+
+  test('the bare @ with two changed paths shows two options, then the status row', () => {
+    replaceDiffPaths('st/at-two', ['src/main.rs', 'docs/b.md']);
+    const html = render('@', 'st/at-two');
+    expect(html).toContain('role="listbox" aria-label="Files"');
+    expect(html.match(/role="option"/g)).toHaveLength(3);
+    expect(html.indexOf('src/main.rs')).toBeLessThan(html.indexOf('docs/b.md'));
+    expect(html.indexOf('docs/b.md')).toBeLessThan(
+      html.indexOf('Type 2 or more letters to search files'),
+    );
+  });
+
+  test('one letter filters the changed paths', () => {
+    replaceDiffPaths('st/at-one', ['src/main.rs', 'docs/b.md']);
+    const html = render('@d', 'st/at-one');
+    expect(html.match(/role="option"/g)).toHaveLength(2);
+    expect(html).toContain('docs/b.md');
+    expect(html).not.toContain('src/main.rs');
+  });
+
+  test('no changed path: only the status row', () => {
+    const html = render('@', 'st/at-none');
+    expect(html.match(/role="option"/g)).toHaveLength(1);
+    expect(html).toContain('Type 2 or more letters to search files');
   });
 });

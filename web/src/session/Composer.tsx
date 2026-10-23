@@ -12,13 +12,14 @@ import { useDismiss } from '../ui/dismiss';
 import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
-import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
+import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY, recentPaths } from './at';
 import { type CommandList, commandMenu, matchCommand, pickCommand } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
 import { ReturnKey, SubmitKeys } from '../spawn/keyHint';
 import { ModelMenu } from './SessionSettings';
 import { useScrollEdges } from '../ui/Menu';
+import { useDiffPaths } from './workspace';
 
 type Props = {
   readonly enabled: boolean;
@@ -34,6 +35,8 @@ type Props = {
   readonly resumeBusy?: boolean;
   /** B11: the command and skill names of the session; `null` or absent: the session has no menu. */
   readonly commands?: CommandList | null;
+  /** B11 (DL-414): the key of the session changes (`sessionRef`); the bare `@` lists its changed files. */
+  readonly changesRef?: string;
   /** The file name search of the session root (DL-174); `null` or absent: `@` has no menu. */
   readonly searchFiles?: ((query: string, maxHits: number) => Promise<readonly string[]>) | null;
   /** The comments of the session for the `#` menu (DL-179), newest first; absent or empty: no menu. */
@@ -273,6 +276,8 @@ export function Composer(props: Props) {
   const hash = bangOn ? null : hashMenu(text, cursor, props.comments ?? [], menu !== null);
   const at = canSearch && !bangOn && menu === null && hash === null ? matchAt(text, cursor) : null;
   const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
+  // B11 (DL-414): under 2 letters the `@` menu lists the changed files of the session.
+  const changed = useDiffPaths(props.changesRef ?? '');
   const choices: MenuRow[] =
     menu !== null
       ? menu.rows
@@ -280,7 +285,9 @@ export function Composer(props: Props) {
         ? hash.rows
         : atQuery !== null
           ? found.paths.map((path) => ({ key: path, text: path }))
-          : [];
+          : at !== null
+            ? recentPaths(changed ?? [], at.query).map((path) => ({ key: path, text: path }))
+            : [];
   // `@` status: how many letters are missing, the search runs, it found nothing, or it failed.
   const status: string | null =
     menu !== null

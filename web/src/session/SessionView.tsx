@@ -636,6 +636,7 @@ export function SessionView(props: SessionViewProps) {
                       }
                       phone={layout === 'phone'}
                       commands={commandList(s, events)}
+                      changesRef={changesRef}
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}

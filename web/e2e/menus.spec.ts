@@ -16,7 +16,7 @@ const MODES = [
   { name: 'desktop', viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false },
 ] as const;
 
-function session(commands: string[] = ['compact', 'init']): DeckSession {
+function session(commands: string[] = ['compact', 'init'], withBase = false): DeckSession {
   return {
     station_id: ST,
     status: 'working',
@@ -28,13 +28,14 @@ function session(commands: string[] = ['compact', 'init']): DeckSession {
       mode: 'default',
       current_run: 'run-1',
       slash_commands: commands,
+      ...(withBase ? { base: { oid: 'a1b2c3d4e5f6', inferred: false } } : {}),
     }),
   };
 }
 
-async function setUp(page: Page, deck = new FakeDeck(), commands?: string[]) {
+async function setUp(page: Page, deck = new FakeDeck(), commands?: string[], withBase = false) {
   deck.stations = [stationView(ST, 'Alpha')];
-  deck.sessions = [session(commands)];
+  deck.sessions = [session(commands, withBase)];
   await page.routeWebSocket('**/shells/*/attach', () => {});
   await deck.install(page);
   await logIn(page);
@@ -173,6 +174,39 @@ for (const mode of MODES) {
       await expect(help).toBeVisible();
       await pressAt(page, 4, 4, mode.hasTouch);
       await expect(help).toHaveCount(0);
+    });
+
+    test('the bare `@` lists the files that the session changed (B11)', async ({ page }) => {
+      const deck = new FakeDeck();
+      deck.on(`/api/stations/${ST}/sessions/${ID}/diff`, () => ({
+        status: 200,
+        body: {
+          session_id: ID,
+          from_commit: 'base',
+          to_commit: 'head',
+          base_oid: 'a1b2c3d4e5f6',
+          scope: 'worktree',
+          summary: { files_changed: 1, insertions: 1, deletions: 0 },
+          patch:
+            'diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1,2 @@\n x\n+y\n',
+          truncated: false,
+        },
+      }));
+      deck.on(`/api/stations/${ST}/files/search`, () => ({
+        status: 200,
+        body: { hits: [], truncated: false, backend: 'walk' },
+      }));
+      await setUp(page, deck, undefined, true);
+      const composer = page.getByRole('form', { name: 'Composer' });
+      const box = composer.getByLabel('Message');
+      const list = composer.getByRole('listbox', { name: 'Files' });
+      await box.fill('@');
+      await expect(list.getByRole('option', { name: 'src/main.rs' })).toBeVisible();
+      await expect(
+        list.getByRole('option', { name: 'Type 2 or more letters to search files' }),
+      ).toHaveAttribute('aria-disabled', 'true');
+      await box.press('Enter');
+      await expect(box).toHaveValue('@src/main.rs ');
     });
 
     test('the `@` menu says what it does: letters missing, searching, hits, nothing, a failure', async ({
