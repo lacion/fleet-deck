@@ -58,7 +58,7 @@ impl CodexAdapter {
                 },
                 thread: super::super::SessionSpec {
                     model: spec.model.clone(),
-                    effort: self.config.effort.clone(),
+                    effort: spec.effort.clone().or_else(|| self.config.effort.clone()),
                     mode: spec.mode.clone(),
                     cwd: Some(cwd_text),
                     resume: resume.map(|id| id.0.clone()),

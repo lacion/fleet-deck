@@ -158,17 +158,20 @@ impl CodexCore {
                 HostRequest::ThreadStart | HostRequest::ThreadResume | HostRequest::ThreadFork,
                 Ok(r),
             ) => self.on_thread(&r),
-            (HostRequest::TurnStart { input_id }, Ok(r)) => self.on_turn_accepted(&input_id, &r),
+            (HostRequest::TurnStart { input_id, effort }, Ok(r)) => {
+                self.on_turn_accepted(&input_id, effort, &r)
+            }
             (HostRequest::TurnSteer { input_id }, Ok(_)) => {
                 let turn = self.turn.clone();
                 self.set_input_state(&input_id, InputState::Received, turn)
             }
-            (HostRequest::TurnStart { input_id }, Err((code, message))) => {
+            (HostRequest::TurnStart { input_id, effort }, Err((code, message))) => {
                 self.turn_requested = false;
                 self.turn_input = None;
                 let mut out = self.set_input_state(&input_id, InputState::Refused, None);
                 out.push(rpc_error(code, message));
                 out.extend(self.refuse_held_interrupt("the turn did not start"));
+                out.extend(self.on_turn_refused_effort(effort));
                 out.extend(self.dispatch_follow_up());
                 out
             }
@@ -282,8 +285,8 @@ impl CodexCore {
                     let value = str_at(m, "model").or_else(|| str_at(m, "id"))?;
                     Some(ModelChoice {
                         resolved: None,
-                        efforts: None,
-                        default_effort: None,
+                        efforts: super::effort_set::model_efforts(m),
+                        default_effort: super::effort_set::model_default_effort(m),
                         value: value.to_owned(),
                         label: str_at(m, "displayName").unwrap_or(value).to_owned(),
                         description: str_at(m, "description").map(str::to_owned),
@@ -295,13 +298,19 @@ impl CodexCore {
         {
             return vec![self.model_list(pages + 1, models, Some(cursor))];
         }
+        self.model_choices.clone_from(&models);
         if models.is_empty() {
             return Vec::new();
         }
         vec![Output::Emit(Event::SessionModels { models })]
     }
 
-    fn on_turn_accepted(&mut self, input_id: &fleetdeck_proto::InputId, r: &Value) -> Vec<Output> {
+    fn on_turn_accepted(
+        &mut self,
+        input_id: &fleetdeck_proto::InputId,
+        effort: Option<super::core::EffortPick>,
+        r: &Value,
+    ) -> Vec<Output> {
         self.turn_requested = false;
         let mut out = Vec::new();
         if let Some(m) = self.pending_mode.take() {
@@ -313,6 +322,7 @@ impl CodexCore {
             self.thread_model = Some(model.clone());
             out.push(Output::Emit(Event::ModelChanged { model }));
         }
+        out.extend(self.on_turn_effort(effort));
         if let Some(native) = r.pointer("/turn/id").and_then(Value::as_str) {
             out.extend(self.ensure_turn(native));
         }

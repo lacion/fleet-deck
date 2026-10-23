@@ -39,7 +39,8 @@ use fleetdeck_providers::codex::{
 use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_providers::rawlog::RawLogLimits;
 use fleetdeck_providers::{
-    Answer, Emitted, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
+    Answer, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId, NativeSessionId,
+    PermissionMode,
 };
 use fleetdeck_testkit::FakeAgent;
 use fleetdeck_testkit::fake::SCENARIO_ENV;
@@ -174,6 +175,9 @@ async fn apply(session: &mut CodexSession, cmd: HostCmd) {
         HostCmd::SetMode { mode } => session.set_mode(PermissionMode(mode)).await,
         HostCmd::SetModel { model } => session.set_model(ModelId(model)).await,
         HostCmd::SetCollaboration { mode } => session.set_collaboration(&mode).await,
+        HostCmd::SetEffort { effort, control_id } => {
+            session.set_effort(effort, control_id.map(ControlId)).await
+        }
         HostCmd::ListBackground => session.poll_background().await,
     };
     result.expect("a recorded host command");

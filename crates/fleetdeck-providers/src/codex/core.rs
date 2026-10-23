@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
+    BackgroundTask, ExpiredReason, InputState, ModelChoice, ProviderKind, RunOrigin, TurnStatus,
 };
 use fleetdeck_proto::{Capabilities, Event, InputId, NodeId, RunId, TurnId, input_text_of};
 use serde_json::{Value, json};
 
-pub(super) use super::core_types::{HostRequest, InputEntry, Ordinals, ToolNode};
+pub(super) use super::core_types::{EffortPick, HostRequest, InputEntry, Ordinals, ToolNode};
 use super::rpc::{self, Incoming};
 use super::shell::PendingShell;
 use super::{
@@ -57,6 +57,12 @@ pub struct CodexCore {
     /// checkpoint has none.
     #[serde(default)]
     pub(super) thread_effort: Option<String>,
+    /// The last complete `model/list` (B18 Phase 2).
+    #[serde(default)]
+    pub(super) model_choices: Vec<ModelChoice>,
+    /// The effort that the next `turn/start` sends (B18 Phase 2).
+    #[serde(default)]
+    pub(super) pending_effort: Option<EffortPick>,
     /// Collaboration mode for the next turns (`plan` or `default`); `None`
     /// sends no `collaborationMode` (experimental API, DL-013).
     pub(super) collaboration: Option<String>,
@@ -126,6 +132,8 @@ impl CodexCore {
             thread_id: None,
             thread_model: None,
             thread_effort: None,
+            model_choices: Vec::new(),
+            pending_effort: None,
             collaboration: None,
             run: None,
             turn: None,
@@ -282,7 +290,7 @@ impl CodexCore {
         id
     }
 
-    fn live(&self) -> Result<()> {
+    pub(super) fn live(&self) -> Result<()> {
         if self.ended {
             return Err(ProviderError::SessionEnded);
         }
@@ -332,6 +340,7 @@ impl CodexCore {
         if let Some(c) = &spec.cwd {
             params.insert("cwd".into(), c.clone().into());
         }
+        super::effort_set::add_thread_config(&mut params, spec.effort.as_deref());
         self.mode = Some(mode);
         let (method, kind) = match &spec.resume {
             Some(thread) => {
@@ -402,7 +411,8 @@ impl CodexCore {
         params.insert("threadId".into(), thread.into());
         params.insert("clientUserMessageId".into(), input_id.as_str().into());
         params.insert("input".into(), rpc::input_items(input));
-        if let Some(e) = &self.spec.effort {
+        let (pick, effort) = self.take_effort();
+        if let Some(e) = &effort {
             params.insert("effort".into(), e.clone().into());
         }
         if let Some(m) = &self.pending_model {
@@ -418,7 +428,7 @@ impl CodexCore {
                 "collaborationMode".into(),
                 json!({"mode": c, "settings": {
                     "model": model,
-                    "reasoning_effort": self.spec.effort,
+                    "reasoning_effort": effort,
                     "developer_instructions": null,
                 }}),
             );
@@ -431,6 +441,7 @@ impl CodexCore {
         self.turn_input = Some(input_id.clone());
         let id = self.host_id(HostRequest::TurnStart {
             input_id: input_id.clone(),
+            effort: pick,
         });
         vec![Output::Write(rpc::request(
             &id,
