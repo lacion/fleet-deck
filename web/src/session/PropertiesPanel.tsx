@@ -1,27 +1,54 @@
 // "Flight Deck" §4.5: the properties panel at the right of a session. It shows only what the
 // session summary (and the timeline that the pane already read) knows; a missing fact is absent.
-import { type ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
+import {
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
-import { costText, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
-import { PathTail } from '../chat/PathTail';
+import { SlotMeter } from '../board/StationTraits';
+import {
+  apiPricesTitle,
+  costText,
+  inputLabel,
+  rateMeters,
+  SCOPE_TEXT,
+  WARN_PERCENT,
+} from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { isRiskyMode, modeLabel, shortModel } from '../ui/format';
+import {
+  addedText,
+  compactCount,
+  contextLabel,
+  countText,
+  homeShort,
+  isRiskyMode,
+  modeLabel,
+  removedText,
+  shortModel,
+} from '../ui/format';
+import { digestLines } from '../ui/generated';
 import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
-import { homeShort } from './CopyButton';
 import { loadSessionChanges, turnForPath } from './changedFiles';
-import { StatusFact } from './HeaderBadges';
-import { runningSubagents } from './timeline';
+import { CopyButton } from './CopyButton';
+import { DigestList, GeneratedText, StatusFact } from './HeaderBadges';
+import { FilePath } from './PathFit';
+import { ModeLadder } from './SessionSettings';
 import {
   type FileActions,
   type FinalizedTurn,
-  replaceDiffPaths,
+  setDiffTotal,
   useDiffPaths,
-  useDiffTotal,
   useTurnPaths,
 } from './workspace';
 
@@ -48,14 +75,6 @@ export function usePropsOpen(): readonly [boolean, () => void] {
   ];
 }
 
-/** `182000` → `182 k`, `9400` → `9.4 k`, `1250000` → `1.3 M`. */
-export function compactCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 10_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')} k`;
-  if (n < 1_000_000) return `${Math.round(n / 1000)} k`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')} M`;
-}
-
 /** `five_hour` → `Claude 5-hour window`, `weekly` → `Claude weekly window`; no provider: `Weekly window`. */
 export function scopeLabel(scope: string, provider: string | null): string {
   const words = SCOPE_TEXT[scope] ?? `${scope.replace(/_/g, ' ')} window`;
@@ -63,37 +82,37 @@ export function scopeLabel(scope: string, provider: string | null): string {
   return `${provider} ${words}`;
 }
 
-/** A slot meter draws one tick per slot up to this many; a bigger station shows the count only. */
-const MAX_TICKS = 16;
-
-/** The used slots of a station as ticks and "3 of 12"; absent when the station does not say. */
+/** The used slots of a station as ticks and "3 of 12", or "12 free" (`SlotMeter`, the notation of
+ * its fleet lane and its station card); absent when the station does not say. */
 function StationSlots({ station }: { readonly station: StationView }) {
   const max = station.info?.max_sessions ?? null;
   if (max === null || max <= 0) return null;
-  const live = station.info?.live_sessions ?? 0;
-  const used = Math.min(live, max);
   return (
     <span className="fd-props-slots">
-      {max <= MAX_TICKS ? (
-        <span className="fd-slots" aria-hidden="true">
-          {Array.from({ length: max }, (_, i) => (
-            <span key={i} data-slot={i < used ? 'used' : undefined} />
-          ))}
-        </span>
-      ) : null}
-      <span className="fd-props-aside">
-        {live} of {max}
-      </span>
+      {/* 16 ticks fill the 168px value column of the panel; more slots draw the neutral bar. */}
+      <SlotMeter
+        max={max}
+        used={station.info?.live_sessions ?? 0}
+        maxTicks={16}
+        countClass="fd-props-aside"
+      />
     </span>
   );
 }
 
-/** The size of the session's changes: the loaded session diff, else the sum of its kept turns. */
-function changeTotal(
+/**
+ * The size of the session's changes: the loaded session diff. While that diff loads (`pending`: the
+ * session has a spawn base and the board can read its files) the size is not known, so it is
+ * absent: the sum of the turn diffs misses the files of a shared folder and would contradict the
+ * diff a moment later. Without a session diff, the sum of the kept turns.
+ */
+export function changeTotal(
   loaded: DiffSummary | undefined,
   turns: readonly FinalizedTurn[],
+  pending: boolean,
 ): DiffSummary | null {
   if (loaded !== undefined) return loaded;
+  if (pending) return null;
   const kept = turns.filter((t) => !t.reverted && t.diff !== null);
   if (kept.length === 0) return null;
   return kept.reduce<DiffSummary>(
@@ -106,12 +125,47 @@ function changeTotal(
   );
 }
 
-function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+/**
+ * One fact; `extra` is a second `<dd>` that takes the whole width of the panel under it. A row
+ * with no value (the generated summary: its list is the `extra`) has no empty `<dd>`.
+ */
+function Row({
+  label,
+  children,
+  extra,
+}: {
+  readonly label: ReactNode;
+  readonly children?: ReactNode;
+  readonly extra?: ReactNode;
+}) {
   return (
     <div className="fd-props-row">
       <dt>{label}</dt>
-      <dd>{children}</dd>
+      {children === undefined ? null : <dd>{children}</dd>}
+      {extra}
     </div>
+  );
+}
+
+/**
+ * A path that breaks only after a `/`: each folder name (with its slash) is one unbreakable piece,
+ * so a line never ends inside a name (not even after a hyphen of `fleet-deck-worktrees`).
+ */
+function Breakable({ path }: { readonly path: string }) {
+  const parts = path.split('/');
+  return (
+    <>
+      {parts.map((part, i) => {
+        const last = i === parts.length - 1;
+        return (
+          // The parts of one path never move: the position is stable.
+          <Fragment key={i}>
+            <span className="fd-props-seg">{last ? part : `${part}/`}</span>
+            {last ? null : <wbr />}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
@@ -119,114 +173,290 @@ type Props = {
   readonly session: DeckSession;
   readonly stations: readonly StationView[];
   readonly turns: readonly FinalizedTurn[];
-  /** The subagents that the timeline shows. */
-  readonly subagents: number;
+  /** The size of the session's changes (`changeTotal`, the same total as the Changes tab label). */
+  readonly total: DiffSummary | null;
+  /** The subagents and the background commands of the session, and the running count of the
+      Agents bar (both kinds): the row and the summary of the bar show the same numbers. */
+  readonly agents: number;
+  readonly commands?: number;
+  readonly runningAgents: number;
   /** A changed file opens the Changes tab on that file. */
   readonly onOpenChange: (path: string) => void;
-  /** The file service of the session; the panel reads the changed files with it, on every tab. */
-  readonly files?: FileActions | null | undefined;
+  /** "+N more files" opens the Changes tab. */
+  readonly onOpenAll?: (() => void) | undefined;
   /** The board connection: a stale board does not say that the station is online. */
   readonly freshness?: Freshness | undefined;
+  /** The fleet-control fact of a coordinator session (a link that opens its answers). */
+  readonly fleet?: ReactNode;
+  /** The mode can be set: the Mode row is a menu with the mode ladder; absent: a plain fact. */
+  readonly mode?: ModeControl | undefined;
 };
 
-/** The changed files that the Changes row lists; more show as "+N more". */
+/** The modes of the session and the call that sets one (the ladder of the Mode row). */
+export type ModeControl = {
+  readonly modes: readonly string[];
+  readonly enabled: boolean;
+  readonly onSet: (mode: string) => void;
+};
+
+/** The title of the token count: the input that the station counts leaves the prompt cache out. */
+export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached context is not counted';
+
+/** A part of a fact that keeps one line: its spaces do not break (the 280px row breaks at "·"). */
+const keep = (text: string): string => text.replaceAll(' ', '\u00a0');
+
+/** One part of the token fact: the count and its words (`316K`, `output`). */
+export type TokenPart = { readonly count: string; readonly word: string };
+
+/**
+ * The token fact in the words of the ops usage glance (`inputLabel`): a Claude session counts the
+ * input outside the prompt cache only, "new input" (a bare "682 in" next to a large cost read as a
+ * bug); then the "output". The words keep one line (no-break spaces), so a narrow panel breaks the
+ * fact at the "·", never inside a part.
+ */
+export function tokensText(
+  input: number | null,
+  output: number | null,
+  inputWord = 'new input',
+): TokenPart[] {
+  return [
+    input === null ? null : { count: compactCount(input), word: keep(inputWord) },
+    output === null ? null : { count: compactCount(output), word: 'output' },
+  ].filter((part): part is TokenPart => part !== null);
+}
+
+/**
+ * The token fact as the ops glance shows it: the numbers in --fuel, the words in --dim. Each part
+ * is one unbreakable piece (`316K\u00a0output`).
+ */
+function TokensValue({ parts, title }: { readonly parts: TokenPart[]; readonly title?: string }) {
+  return (
+    <span className="fd-props-tokens" title={title}>
+      {parts.map((part, i) => (
+        <Fragment key={part.word}>
+          {i === 0 ? null : ' · '}
+          <span className="fd-props-tokpart">
+            <span className="fd-props-fuel">{part.count}</span>
+            {`\u00a0${part.word}`}
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+/** The mode of the session: a ghost menu summary that opens the mode ladder, or a plain fact. */
+function ModeValue({ mode, control }: { readonly mode: string; readonly control?: ModeControl }) {
+  const risky = isRiskyMode(mode);
+  const value = (
+    <>
+      {risky ? <Icon of={ShieldAlert} size={13} /> : null}
+      {modeLabel(mode)}
+    </>
+  );
+  if (control === undefined) {
+    return (
+      <span
+        className="fd-props-mode"
+        data-tone={risky ? 'hazard' : undefined}
+        title={`Permission mode: ${mode}`}
+      >
+        {value}
+      </span>
+    );
+  }
+  return (
+    <span className="fd-props-mode fd-props-modemenu" data-tone={risky ? 'hazard' : undefined}>
+      <Menu
+        summary={value}
+        summaryClass="fd-ghost fd-sm"
+        variant="toggle"
+        label={`Mode: ${modeLabel(mode)}`}
+        title="Change the permission mode"
+      >
+        {() => (
+          <ModeLadder
+            modes={control.modes}
+            current={mode}
+            enabled={control.enabled}
+            onSet={control.onSet}
+          />
+        )}
+      </Menu>
+    </span>
+  );
+}
+
+/**
+ * The scroll body fade of the panel (§3, session.css): `data-scrolled` away from its top,
+ * `data-more-below` while rows hide under its bottom edge.
+ */
+function markEdges(el: HTMLElement) {
+  el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+  el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
+
+/** Marks the edges of `ref` after each render, on a scroll, and when it or a list resizes. */
+function useScrollEdges(ref: { readonly current: HTMLElement | null }) {
+  useLayoutEffect(() => {
+    if (ref.current) markEdges(ref.current);
+  });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => markEdges(el));
+    observer.observe(el);
+    for (const child of el.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, []);
+  return (event: { readonly currentTarget: HTMLElement }) => markEdges(event.currentTarget);
+}
+
+/** The changed files that the Changes row lists; the others are "+N more files". */
 export const PROPS_FILES_MAX = 5;
 
-/** The first changed files of the loaded session diff: a press opens the Changes tab on one. */
+/**
+ * The first changed files of the loaded session diff: a press opens the Changes tab on one. `files`
+ * is the count of the whole diff (a cut patch lists fewer paths): "+N more files" counts from it
+ * and opens the Changes tab.
+ */
 export function ChangedList({
   paths,
+  files = 0,
   onOpen,
+  onOpenAll,
   opens,
 }: {
   readonly paths: readonly string[] | undefined;
+  readonly files?: number;
   readonly onOpen: (path: string) => void;
+  readonly onOpenAll?: (() => void) | undefined;
   /** A file that no diff can open shows as plain text; absent: every file opens. */
   readonly opens?: ((path: string) => boolean) | undefined;
 }) {
   if (paths === undefined || paths.length === 0) return null;
-  const more = paths.length - PROPS_FILES_MAX;
+  const listed = paths.slice(0, PROPS_FILES_MAX);
+  const more = Math.max(files, paths.length) - listed.length;
+  const moreText = `+${more} more ${more === 1 ? 'file' : 'files'}`;
   return (
     <ul className="fd-props-files" aria-label="Changed files">
-      {paths.slice(0, PROPS_FILES_MAX).map((path) => (
+      {listed.map((path) => (
         <li key={path}>
           {opens === undefined || opens(path) ? (
             <button type="button" className="fd-ghost" title={path} onClick={() => onOpen(path)}>
-              <code className="fd-props-file">
-                <PathTail path={path} />
+              <code className="fd-props-file fd-dl-path">
+                <FilePath path={path} />
               </code>
               <Icon of={ChevronRight} size={14} />
             </button>
           ) : (
-            <code className="fd-props-file" title={path}>
-              <PathTail path={path} />
+            <code className="fd-props-file fd-dl-path" title={path}>
+              <FilePath path={path} />
             </code>
           )}
         </li>
       ))}
-      {more > 0 ? <li className="fd-props-more">+{more} more</li> : null}
+      {more <= 0 ? null : (
+        <li className="fd-props-more">
+          {onOpenAll === undefined ? (
+            moreText
+          ) : (
+            <button type="button" className="fd-link fd-props-link" onClick={() => onOpenAll()}>
+              {moreText}
+            </button>
+          )}
+        </li>
+      )}
     </ul>
   );
 }
 
-/** `2 min` → `since 2 min`; a change under a minute ago: `just now`. */
+/** `2 min` → `since 2 min`; a change under a minute ago: `just now` (one word on every surface). */
 export function sinceText(age: string): string {
   return age === 'now' ? 'just now' : `since ${age}`;
 }
 
+/** The read of the session diff: it runs, it gave the diff, or it failed (no diff will come). */
+export type ChangesRead = 'loading' | 'done' | 'failed';
+
 /**
- * Reads the changed files of the session diff for the Changes row when the panel shows, and again
- * after each finalized turn, so the list is there on every tab (the Files and Changes tabs add
- * theirs). No file service, or no change: nothing.
+ * Reads the session diff when the session opens, and again after each finalized turn: its size
+ * (the Changes row and the Changes tab label) and its changed files (the list of the Changes row)
+ * are there on every tab and every layout (the Files and Changes tabs read it too). No file
+ * service, or no spawn base (the station has no session diff then): nothing. Returns the state of
+ * the read for this session: after a failed read the size falls back to the turn diffs.
  */
-function useChangedPaths(ref: string, files: FileActions | null | undefined, turns: number): void {
+export function useSessionChanges(
+  ref: string,
+  files: FileActions | null | undefined,
+  hasBase: boolean,
+  turns: number,
+): ChangesRead {
   // The actions object changes on every render of the parent; the effect keys on "has files".
   const latest = useRef(files);
   latest.current = files;
-  const has = files != null;
+  const has = files != null && hasBase;
+  const [read, setRead] = useState<{ readonly ref: string; readonly state: ChangesRead }>({
+    ref,
+    state: 'loading',
+  });
   useEffect(() => {
     const current = latest.current;
     if (!has || !current) return undefined;
     let live = true;
     // A read of the full session diff replaces the paths, an empty result too.
     void loadSessionChanges(current).then((found) => {
-      if (live && found !== null) replaceDiffPaths(ref, found.all);
+      if (!live) return;
+      if (found === null) {
+        setRead({ ref, state: 'failed' });
+        return;
+      }
+      setDiffTotal(ref, found.summary, found.all);
+      setRead({ ref, state: 'done' });
     });
     return () => {
       live = false;
     };
   }, [has, ref, turns]);
+  // Another session starts with its own read.
+  return read.ref === ref ? read.state : 'loading';
 }
 
-/** The properties of one session: status, place, agent, changes, usage and subagents. */
+/** The properties of one session: status, place, agent, changes, usage and agents. */
 export function PropertiesPanel({
   session,
   stations,
   turns,
-  subagents,
+  total,
+  agents,
+  commands = 0,
+  runningAgents,
   onOpenChange,
-  files,
+  onOpenAll,
   freshness = 'live',
+  fleet,
+  mode,
 }: Props) {
   const s = session.summary;
   const now = useNow(undefined, 30000);
   const station = stations.find((st) => st.station_id === session.station_id);
   const up = freshness !== 'stale' && station?.reachable === true;
   const ref = sessionRef(session.station_id, s.session_id);
-  useChangedPaths(ref, files, turns.length);
-  const total = changeTotal(useDiffTotal(ref), turns);
   const paths = useDiffPaths(ref);
   // Without a spawn base only a file that a loaded turn diff lists opens (that turn's diff).
   const turnPaths = useTurnPaths(ref);
   const hasBase = Boolean(s.base);
   const opens = (path: string) => hasBase || turnForPath(turns, turnPaths, path) !== undefined;
   const { input_tokens: input, output_tokens: output } = s.usage;
+  const inputWord = inputLabel([session]);
   const cost = costText(s.usage);
   const meters = rateMeters([session], stations);
-  const running = runningSubagents(s);
-  const agents = Math.max(subagents, running);
   const provider = s.provider === null ? null : providerLabel(s.provider);
+  const context = contextLabel(s.model);
+  const box = useRef<HTMLElement>(null);
+  const onScroll = useScrollEdges(box);
   return (
-    <aside className="fd-props" aria-label="Properties">
+    <aside className="fd-props" aria-label="Properties" ref={box} onScroll={onScroll}>
       <h3 className="fd-props-title">Properties</h3>
       <dl className="fd-props-list">
         <Row label="Status">
@@ -255,61 +485,77 @@ export function PropertiesPanel({
         {s.cwd ? (
           <Row label="Folder">
             <code className="fd-props-mono" data-path="" title={s.cwd}>
-              <bdi>{homeShort(s.cwd)}</bdi>
+              <Breakable path={homeShort(s.cwd)} />
+            </code>
+          </Row>
+        ) : null}
+        {s.worktree && s.worktree !== s.cwd ? (
+          <Row label="Worktree">
+            <code className="fd-props-mono" data-path="" title={s.worktree}>
+              <Breakable path={homeShort(s.worktree)} />
             </code>
           </Row>
         ) : null}
       </dl>
       <dl className="fd-props-list">
+        {/* The context window is a fact of the model: a --faint aside, not a row of its own. */}
         <Row label="Model">
           <span title={s.model ?? 'default model'}>{shortModel(s.model)}</span>
+          {context === null ? null : <span className="fd-props-aside">{context}</span>}
         </Row>
         {s.provider === null ? null : <Row label="Provider">{providerLabel(s.provider)}</Row>}
         {s.mode ? (
           <Row label="Mode">
-            <span
-              className="fd-props-mode"
-              data-tone={isRiskyMode(s.mode) ? 'hazard' : undefined}
-              title={`Permission mode: ${s.mode}`}
-            >
-              {isRiskyMode(s.mode) ? <Icon of={ShieldAlert} size={13} /> : null}
-              {modeLabel(s.mode)}
-            </span>
+            <ModeValue mode={s.mode} {...(mode === undefined ? {} : { control: mode })} />
           </Row>
         ) : null}
       </dl>
       <dl className="fd-props-list">
-        {total === null ? null : (
+        {total === null ? null : total.files_changed === 0 ? (
           <Row label="Changes">
-            {total.insertions === 0 && total.deletions === 0 ? (
-              <span className="fd-props-aside">No file changes</span>
-            ) : (
-              <>
-                <span className="fd-add">+{total.insertions}</span>
-                <span className="fd-del">−{total.deletions}</span>
-                <span className="fd-props-aside">
-                  {total.files_changed} {total.files_changed === 1 ? 'file' : 'files'}
-                </span>
-                <ChangedList paths={paths} onOpen={onOpenChange} opens={opens} />
-              </>
-            )}
+            <span className="fd-props-aside">No file changes</span>
+          </Row>
+        ) : (
+          <Row
+            label="Changes"
+            extra={
+              paths === undefined || paths.length === 0 ? null : (
+                <dd className="fd-props-filelist">
+                  <ChangedList
+                    paths={paths}
+                    files={total.files_changed}
+                    onOpen={onOpenChange}
+                    onOpenAll={onOpenAll}
+                    opens={opens}
+                  />
+                </dd>
+              )
+            }
+          >
+            {total.insertions > 0 ? (
+              <span className="fd-add">{addedText(total.insertions)}</span>
+            ) : null}
+            {total.deletions > 0 ? (
+              <span className="fd-del">{removedText(total.deletions)}</span>
+            ) : null}
+            <span className="fd-props-aside">
+              {total.files_changed} {total.files_changed === 1 ? 'file' : 'files'}
+            </span>
           </Row>
         )}
         {input === null && output === null ? null : (
           <Row label="Tokens">
-            <span className="fd-props-fuel">
-              {[
-                input === null ? null : `${compactCount(input)} in`,
-                output === null ? null : `${compactCount(output)} out`,
-              ]
-                .filter((part) => part !== null)
-                .join(' · ')}
-            </span>
+            <TokensValue
+              parts={tokensText(input, output, inputWord)}
+              {...(input === null || inputWord !== 'new input' ? {} : { title: NEW_INPUT_TITLE })}
+            />
           </Row>
         )}
         {cost === null ? null : (
-          <Row label="Cost">
-            <span className="fd-props-fuel">{cost}</span>
+          <Row label="At API prices">
+            <span className="fd-props-fuel" title={apiPricesTitle(1)}>
+              {cost}
+            </span>
           </Row>
         )}
         {meters.map((m) =>
@@ -329,12 +575,50 @@ export function PropertiesPanel({
             </div>
           ),
         )}
-        {agents === 0 ? null : (
-          <Row label="Subagents">
-            {agents}
-            {running > 0 ? <span className="fd-props-aside">{running} running</span> : null}
+        {/* One rule with the Agents bar: an Agents row and a Commands row, each with its count;
+            what runs now (both kinds) is the aside of the first row. */}
+        {agents > 0 || (commands === 0 && runningAgents > 0) ? (
+          <Row label="Agents">
+            {agents > 0 ? <span>{countText(agents)}</span> : null}
+            {runningAgents > 0 ? (
+              <span className="fd-props-aside">{`${countText(runningAgents)} running`}</span>
+            ) : null}
           </Row>
+        ) : null}
+        {commands > 0 ? (
+          <Row label="Commands">
+            <span>{countText(commands)}</span>
+            {agents === 0 && runningAgents > 0 ? (
+              <span className="fd-props-aside">{`${countText(runningAgents)} running`}</span>
+            ) : null}
+          </Row>
+        ) : null}
+        {fleet == null ? null : <Row label="Fleet control">{fleet}</Row>}
+      </dl>
+      {/* The facts that the session menu shows while this panel is closed. */}
+      <dl className="fd-props-list">
+        {/* The sparkles mark goes with the label: the list starts right under it. */}
+        {digestLines(s.digest).length === 0 ? null : (
+          <Row
+            label={
+              <>
+                Summary <GeneratedText />
+              </>
+            }
+            extra={
+              <dd className="fd-props-filelist fd-props-digest">
+                <DigestList digest={s.digest} />
+              </dd>
+            }
+          />
         )}
+        <Row label="Session">
+          <code className="fd-props-mono fd-props-sid" title={s.session_id}>
+            {s.session_id}
+          </code>
+          <CopyButton text={s.session_id} label="Copy the session id" />
+        </Row>
+        <Row label="Events">{countText(s.session_seq)}</Row>
       </dl>
     </aside>
   );

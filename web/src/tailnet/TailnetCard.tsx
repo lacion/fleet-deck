@@ -1,5 +1,8 @@
-// DL-178: Settings → Deck → "Tailnet": shows what "Use tailnet" would save and saves it with an
-// elevation (DL-172). The listeners start after a restart of the deck.
+// DL-178: Settings → Deck → Network → "Tailnet": the tailnet name of the deck, what "Use tailnet"
+// would save (only when it differs from the addresses in use) and the two Tailscale switches. It
+// saves with an elevation (DL-172); the listeners start after a restart of the deck. The card is a
+// part of the Network section (SettingsPage): no heading of its own; its rows are field rows of
+// the section (the region keeps the name "Tailnet").
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsEnv } from '../settings/context';
 import { useElevation } from '../settings/elevation';
@@ -8,7 +11,20 @@ import type { CertificateView, TailnetView } from './api';
 import { autoNotes, useButton, usesWindows } from './model';
 import { saveDeckKey } from './save';
 
-const list = (items: readonly string[]) => items.join(', ');
+/** The addresses of one cell: one per line, so that a line breaks only between two addresses. */
+function Addrs({ items }: { readonly items: readonly string[] }) {
+  return (
+    <ul className="fd-tailnet-addrs">
+      {items.map((a) => (
+        <li key={a}>{a}</li>
+      ))}
+    </ul>
+  );
+}
+
+/** A date with the month as a word: `3 Jan 2027` (`1/3/2027` reads two ways). */
+const dateText = (ms: number): string =>
+  new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
 const sameSet = (a: readonly string[], b: readonly string[]) => {
   const left = new Set(a);
@@ -49,12 +65,15 @@ function AutoSection({
           onChange={(e) => onAuto(e.target.checked)}
         />
         Use Tailscale automatically
+        {/* The badge ends the control line, as on every settings field; hidden from the name of
+            the switch, the help carries its words. */}
+        <span className="fd-set-badges" aria-hidden="true">
+          <span className="fd-badge">Applies after a restart</span>
+        </span>
       </label>
       <p className="fd-note fd-tailnet-help">
         Keeps the tailnet addresses current at each start.
-        <span className="fd-set-badges">
-          <span className="fd-badge">Applies after a restart</span>
-        </span>
+        <span className="fd-vh"> Applies after a restart.</span>
       </p>
       {notes.map((text) => (
         <p className="fd-note" key={text}>
@@ -83,10 +102,7 @@ export function certificateLine(cert: CertificateView | undefined): string | nul
     case 'renewing':
       return 'Getting the certificate…';
     case 'valid': {
-      const until =
-        cert.not_after === undefined
-          ? ''
-          : `, valid until ${new Date(cert.not_after).toLocaleDateString()}`;
+      const until = cert.not_after === undefined ? '' : `, valid until ${dateText(cert.not_after)}`;
       return `Trusted certificate for ${cert.name ?? 'this machine'}${until}`;
     }
     case 'expired':
@@ -133,7 +149,25 @@ function CertificateSection({
         Browsers trust the board on its tailnet name. The name becomes public in Certificate
         Transparency logs.
       </p>
-      {line === null ? null : <p role="status">{line}</p>}
+      {cert?.state === 'valid' ? (
+        // A valid certificate: the ok glyph, the name in mono (it is a host), the date in words.
+        <p role="status" className="fd-tailnet-certline">
+          <span className="fd-dot" data-status="online" aria-hidden="true" />
+          <span>
+            Trusted certificate for{' '}
+            {cert.name === undefined ? (
+              'this machine'
+            ) : (
+              <code className="fd-tailnet-addr">{cert.name}</code>
+            )}
+            {cert.not_after === undefined ? null : `, valid until ${dateText(cert.not_after)}`}
+          </span>
+        </p>
+      ) : line === null ? null : (
+        <p role="status" className="fd-tailnet-certline">
+          {line}
+        </p>
+      )}
     </div>
   );
 }
@@ -149,56 +183,83 @@ function CardBody({
 }) {
   const button = useButton(view);
   const changes = tailnetChanges(view);
+  // Without a tailnet the card is one field row: "Tailscale" and why it cannot be used.
   if (!view.available) {
     return (
-      <p className="fd-note">
-        Tailscale is not available on the deck machine: {view.reason ?? 'no reason given'}. Pair
-        stations with an invitation instead.
-      </p>
+      <div className="fd-tailnet-row">
+        <span className="fd-tailnet-label">Tailscale</span>
+        <p className="fd-note fd-tailnet-rownote">
+          Tailscale is not available on the deck machine: {view.reason ?? 'no reason given'}. Pair
+          stations with an invitation instead.
+        </p>
+      </div>
     );
   }
   if (view.userspace) {
     return (
-      <p className="fd-note">
-        {view.reason ?? 'Tailscale runs in userspace networking: set the listen addresses by hand.'}
-      </p>
+      <div className="fd-tailnet-row">
+        <span className="fd-tailnet-label">Tailscale</span>
+        <p className="fd-note fd-tailnet-rownote">
+          {view.reason ??
+            'Tailscale runs in userspace networking: set the listen addresses by hand.'}
+        </p>
+      </div>
     );
   }
   return (
     <>
       {view.self === undefined ? null : (
-        <p>
-          This deck on the tailnet: <code className="fd-tailnet-addr">{view.self.dns_name}</code> (
-          <code className="fd-tailnet-addr">{list(view.self.ips)}</code>)
-        </p>
+        <div className="fd-tailnet-row">
+          <span className="fd-tailnet-label">Tailnet name</span>
+          <div className="fd-tailnet-value">
+            <code className="fd-tailnet-addr">{view.self.dns_name}</code>
+            {view.self.ips.length === 0 ? null : (
+              <ul className="fd-tailnet-addrs fd-tailnet-ips">
+                {view.self.ips.map((ip) => (
+                  <li key={ip}>{ip}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       )}
-      <table className="fd-tailnet-table">
-        <thead>
-          <tr>
-            <th scope="col" />
-            <th scope="col">Board address</th>
-            <th scope="col">Link address</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th scope="row">{changes ? 'Now' : 'Listens on'}</th>
-            <td data-label="Board">{list(view.current.listen)}</td>
-            <td data-label="Link">{list(view.current.link_listen)}</td>
-          </tr>
-          {changes ? (
+      {/* The addresses in use show in the Board and Station link address fields of the
+          section; the card compares them only when "Use tailnet" would change them. */}
+      {changes ? (
+        <table className="fd-tailnet-table">
+          <thead>
+            <tr>
+              <th scope="col" />
+              <th scope="col">Board address</th>
+              <th scope="col">Link address</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Now</th>
+              <td data-label="Board">
+                <Addrs items={view.current.listen} />
+              </td>
+              <td data-label="Link">
+                <Addrs items={view.current.link_listen} />
+              </td>
+            </tr>
             <tr>
               <th scope="row">With tailnet</th>
-              <td data-label="Board">{list(view.managed.listen)}</td>
-              <td data-label="Link">{list(view.managed.link_listen)}</td>
+              <td data-label="Board">
+                <Addrs items={view.managed.listen} />
+              </td>
+              <td data-label="Link">
+                <Addrs items={view.managed.link_listen} />
+              </td>
             </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      ) : null}
       {button === 'none' ? (
-        <p className="fd-note">The deck listens on its tailnet addresses.</p>
+        <p className="fd-note fd-tailnet-indent">The deck listens on its tailnet addresses.</p>
       ) : (
-        <button type="button" disabled={busy} onClick={onUse}>
+        <button type="button" className="fd-tailnet-indent" disabled={busy} onClick={onUse}>
           {button === 'use' ? 'Use tailnet' : 'Update'}
         </button>
       )}
@@ -224,11 +285,15 @@ export function TailnetCardView({
 }) {
   return (
     <>
-      {usesWindows(view) ? <p className="fd-note">{WINDOWS_TEXT}</p> : null}
       <CardBody view={view} busy={busy} onUse={onUse} />
+      {usesWindows(view) ? <p className="fd-note fd-tailnet-indent">{WINDOWS_TEXT}</p> : null}
       <AutoSection view={view} busy={busy} onAuto={onAuto} />
       <CertificateSection cert={view.certificate} busy={busy} onCert={onCert} />
-      {note === null ? null : <p role="status">{note}</p>}
+      {note === null ? null : (
+        <p role="status" className="fd-tailnet-indent">
+          {note}
+        </p>
+      )}
     </>
   );
 }
@@ -316,8 +381,11 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
 
   return (
     <section className="fd-tailnet" aria-label="Tailnet">
-      <h2>Tailnet</h2>
-      {view === null && error === null ? <p className="fd-note">Checking Tailscale…</p> : null}
+      {view === null && error === null ? (
+        <p className="fd-note fd-set-loading fd-tailnet-indent" role="status">
+          Checking Tailscale…
+        </p>
+      ) : null}
       {view === null ? null : (
         <TailnetCardView
           view={view}
@@ -338,7 +406,11 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
           }
         />
       )}
-      {error === null ? null : <p role="alert">{error}</p>}
+      {error === null ? null : (
+        <p role="alert" className="fd-tailnet-indent">
+          {error}
+        </p>
+      )}
       {node}
     </section>
   );

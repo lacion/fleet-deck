@@ -5,13 +5,28 @@ import type { DeckSession, SessionSummary } from '../gen';
 /** The events after the read cursor of this browser's login; absent means none. */
 export const unreadOf = (card: DeckSession): number => card.unread ?? 0;
 
-/** "3" in a small pill, "9+" above nine. Nothing at zero. */
-export function UnreadMark({ count }: { readonly count: number }) {
+/** "3" in a small info pill, "9+" above nine; `dot`: a 6px --focus dot (strips and sidebar rows,
+ * where a bare number reads as a count of something else). The count stays in the name and the
+ * title ("3 unread"). Nothing at zero. */
+export function UnreadMark({
+  count,
+  dot = false,
+}: {
+  readonly count: number;
+  readonly dot?: boolean;
+}) {
   if (count <= 0) return null;
   const text = `${count} unread`;
   return (
-    <span className="fd-unread" role="img" aria-label={text} title={text}>
-      {count > 9 ? '9+' : count}
+    <span
+      className="fd-count fd-unread"
+      data-tone="info"
+      data-shape={dot ? 'dot' : undefined}
+      role="img"
+      aria-label={text}
+      title={text}
+    >
+      {dot ? null : count > 9 ? '9+' : count}
     </span>
   );
 }

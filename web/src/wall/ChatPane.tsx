@@ -2,9 +2,11 @@
 // composer, no filters and no control. The agent text goes through the chat Markdown in its
 // read-only form (no copy button); the tool calls run on a flight path (DESIGN-SYSTEM §4.5).
 import { Markdown } from '../chat/Markdown';
+import { agentLine } from '../chat/notices';
 import { pairWaiting } from '../chat/waiting';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
+import { toolText } from '../watch/tooltext';
 import { displayChatLines } from './displayLines';
 
 /** The words that a screen reader says for the node of a call that is not done (the node shape
@@ -39,7 +41,8 @@ function lineOf(item: Item, waiting: ReadonlyMap<string, string>): Line | null {
     case 'message':
       return item.text.trim() === '' ? null : { key: item.key, kind: 'message', text: item.text };
     case 'tool': {
-      const target = item.input.split('\n')[0] ?? '';
+      // The words of the call (watch/tooltext): no raw MCP id, no JSON payload.
+      const call = toolText(item.title, item.input, { kind: item.tool_kind, files: item.files });
       const mark = item.status === 'failed' || item.status === 'denied' ? item.status : undefined;
       const state =
         item.status === 'running'
@@ -52,8 +55,8 @@ function lineOf(item: Item, waiting: ReadonlyMap<string, string>): Line | null {
       return {
         key: item.key,
         kind: 'tool',
-        text: item.title,
-        target: target === '' ? undefined : target,
+        text: call.name,
+        target: call.target === '' ? undefined : call.target,
         mark,
         state,
       };
@@ -93,9 +96,15 @@ export function chatLines(events: readonly EventEnvelope[], max: number = CHAT_I
 
 function ChatLine({ line }: { readonly line: Line }) {
   if (line.kind === 'message') {
+    // A provider error reads as its cause; the provider's own words stay in the title.
+    const said = agentLine(line.text);
     return (
-      <div className="fd-wall-chatline" data-kind="message">
-        <Markdown text={line.text} readOnly />
+      <div
+        className="fd-wall-chatline"
+        data-kind="message"
+        title={said === line.text ? undefined : line.text.trim()}
+      >
+        <Markdown text={said} readOnly />
       </div>
     );
   }

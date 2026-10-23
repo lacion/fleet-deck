@@ -214,6 +214,75 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
 export const toolName = (id: string): string =>
   Object.hasOwn(TOOL_NAMES, id) ? (TOOL_NAMES[id] ?? id) : id;
 
+/** The tools that are applications with a product name (sans): every other tool is a command. */
+const APPS: readonly string[] = ['hyprland', 'chromium'];
+
+/** A tool is a command that the owner types (mono, §1.5), not a product name. */
+export const isCommand = (id: string): boolean => !APPS.includes(id);
+
+/**
+ * The language of the common XKB layouts (xkb `base.lst`). A layout code is mostly a country code,
+ * and many of them are also the code of another language (`se` Northern Sami, `ca` Catalan, `br`
+ * Breton): only a layout of this list gets a name; any other shows its code alone.
+ */
+const LAYOUT_LANGUAGES: Readonly<Record<string, string>> = {
+  us: 'en-US',
+  gb: 'en-GB',
+  de: 'de',
+  at: 'de-AT',
+  ch: 'de-CH',
+  es: 'es',
+  latam: 'es-419',
+  fr: 'fr',
+  ca: 'fr-CA',
+  it: 'it',
+  pt: 'pt',
+  br: 'pt-BR',
+  nl: 'nl',
+  se: 'sv',
+  no: 'nb',
+  dk: 'da',
+  fi: 'fi',
+  is: 'is',
+  ie: 'ga',
+  pl: 'pl',
+  cz: 'cs',
+  sk: 'sk',
+  hu: 'hu',
+  ro: 'ro',
+  si: 'sl',
+  hr: 'hr',
+  rs: 'sr',
+  bg: 'bg',
+  gr: 'el',
+  tr: 'tr',
+  ru: 'ru',
+  ua: 'uk',
+  by: 'be',
+  ee: 'et',
+  lv: 'lv',
+  lt: 'lt',
+  il: 'he',
+  ara: 'ar',
+  ir: 'fa',
+  in: 'hi',
+  th: 'th',
+  vn: 'vi',
+  id: 'id',
+  jp: 'ja',
+  kr: 'ko',
+  cn: 'zh',
+};
+
+const LANGUAGES = new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' });
+
+/** A keyboard layout in words with its code: `es` → `Spanish (es)`; another code stays as it is. */
+export function layoutText(code: string): string {
+  const tag = Object.hasOwn(LAYOUT_LANGUAGES, code) ? LAYOUT_LANGUAGES[code] : undefined;
+  const name = tag === undefined ? undefined : LANGUAGES.of(tag);
+  return name === undefined || name === '' ? code : `${name} (${code})`;
+}
+
 export const UNSUPPORTED_TEXT = "This station's build cannot install desktop tools from the board.";
 export const LOADING_TEXT = 'Loading the desktop tools…';
 export const READ_ERROR_TEXT = 'The desktop tools could not be read.';
@@ -225,54 +294,105 @@ export const CONFIRM_TEXT =
   'This opens a board terminal to install the listed packages as root. Review the transaction and enter your station password there if sudo asks.';
 export const ELEVATION_LABEL = 'Install desktop tools';
 
-/** The status text of one probe. */
+/** The state of one tool: installed, not installed, or the check that did not end. */
 export function probeText(fact: ToolFact): string {
   switch (fact.probe) {
     case 'ok':
-      return fact.present ? 'Present' : 'Missing';
+      return fact.present ? 'Installed' : 'Not installed';
     case 'missing':
-      return 'Missing';
+      return 'Not installed';
     case 'unknown':
-      return 'Present (version unknown)';
+      // The tool is there; its version is not known, so the line shows none.
+      return 'Installed';
     case 'timeout':
-      return 'The check timed out.';
+      return 'Check timed out';
     case 'failed':
-      return 'The check failed.';
+      return 'Check failed';
   }
 }
 
-/** The line of a tool: `<name>: <status>`, with the version when there is one. */
-export function toolLine(fact: ToolFact): string {
-  let line = `${toolName(fact.id)}: ${probeText(fact)}`;
-  if (fact.version !== null) {
-    line += ` · version ${fact.version}${fact.version_source === 'package' ? ' (package)' : ''}`;
-  }
-  return line;
+/**
+ * The state of a tool with its version when there is one: `Installed · 0.4`. A version read from
+ * the package database, not from the program, says so: `Installed · 0.4 (package)`.
+ */
+export function toolState(fact: ToolFact): string {
+  const state = probeText(fact);
+  if (fact.version === null || state !== 'Installed') return state;
+  return `${state} · ${fact.version}${fact.version_source === 'package' ? ' (package)' : ''}`;
 }
 
 export const PACKAGE_MISMATCH_TEXT = 'A different program with this name is used on the desktop.';
 
-/** The line about the keyboard layouts. */
-export function keyboardLine(keyboard: KeyboardFacts): string {
+/** The state of the keyboard layouts: the layouts, or why there are none. */
+export function keyboardState(keyboard: KeyboardFacts): string {
   switch (keyboard.status) {
     case 'ok':
-      return `Keyboard layouts: ${keyboard.layouts.join(', ')}`;
+      return keyboard.layouts.length === 0 ? 'None' : keyboard.layouts.map(layoutText).join(', ');
     case 'unavailable':
-      return 'Keyboard layouts are not available.';
+      return 'Not available';
     case 'failed':
-      return 'Keyboard layouts could not be read.';
+      return 'Check failed';
   }
 }
 
-const PLUGIN_TEXTS: Readonly<Record<PluginStatus, string>> = {
-  valid: 'valid',
-  invalid: 'invalid',
-  unavailable: 'not installed',
-  unknown: 'unknown',
+const PLUGIN_STATES: Readonly<Record<PluginStatus, string>> = {
+  valid: 'Installed',
+  invalid: 'Not valid',
+  unavailable: 'Not installed',
+  unknown: 'Check failed',
 };
 
-/** The line about the Fleet plugin. */
-export const pluginLine = (status: PluginStatus): string => `Fleet plugin: ${PLUGIN_TEXTS[status]}`;
+/** The state of the Fleet plugin of Hyprland. */
+export const pluginState = (status: PluginStatus): string => PLUGIN_STATES[status];
+
+/** The status glyph of a row (`.fd-dot`): there, absent (or not checked), or broken. */
+export type RowStatus = 'online' | 'idle' | 'lost';
+
+/** One row of the desktop tools list. `code`: the name is a program name (mono). */
+export type ToolRow = {
+  readonly key: string;
+  readonly name: string;
+  readonly code: boolean;
+  readonly state: string;
+  readonly status: RowStatus;
+};
+
+/** The rows of the facts: the tools in the answer order, then the keyboard and the plugin. */
+export function toolRows(tools: StationTools): ToolRow[] {
+  const rows: ToolRow[] = tools.tools.map((fact) => {
+    const state = toolState(fact);
+    return {
+      key: fact.id,
+      name: toolName(fact.id),
+      code: isCommand(fact.id),
+      state,
+      status: state.startsWith('Installed') ? 'online' : 'idle',
+    };
+  });
+  rows.push({
+    key: 'keyboard',
+    name: 'Keyboard layouts',
+    code: false,
+    state: keyboardState(tools.keyboard),
+    status: tools.keyboard.status === 'ok' ? 'online' : 'idle',
+  });
+  const plugin = tools.plugin.status;
+  rows.push({
+    key: 'plugin',
+    name: 'Fleet plugin',
+    code: false,
+    state: pluginState(plugin),
+    status: plugin === 'valid' ? 'online' : plugin === 'invalid' ? 'lost' : 'idle',
+  });
+  return rows;
+}
+
+/** The line above the list: `2 of 9 tools installed.` */
+export function toolsSummary(tools: StationTools): string {
+  const there = tools.tools.filter((f) => probeText(f) === 'Installed').length;
+  const all = tools.tools.length;
+  return all === 1 ? `${there} of 1 tool installed.` : `${there} of ${all} tools installed.`;
+}
 
 export const SUDO_TEXT = 'Passwordless sudo is enabled on this station.';
 

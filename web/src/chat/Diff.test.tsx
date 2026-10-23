@@ -128,6 +128,44 @@ describe('Diff', () => {
     expect(html).toContain(gutters('', '<span class="fd-dl-n">5</span>'));
   });
 
+  test('a whole new file has no hunk row and only the new gutter; a deleted file the old one', () => {
+    const files = [
+      'diff --git a/n b/n',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/n',
+      '@@ -0,0 +1,2 @@',
+      '+a',
+      '+b',
+      'diff --git a/d b/d',
+      'deleted file mode 100644',
+      '--- a/d',
+      '+++ /dev/null',
+      '@@ -1 +0,0 @@',
+      '-c',
+    ].join('\n');
+    const html = renderToStaticMarkup(
+      <Diff patch={files} truncated={false} id="t1" review={review({ canWrite: false })} />,
+    );
+    expect(html).not.toContain('@@');
+    expect(html).toContain(
+      '<span class="fd-dl" data-kind="add" data-sides="new"><span class="fd-dl-g" data-side="new"><span class="fd-dl-n">2</span></span>+b</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-dl" data-kind="del" data-sides="old"><span class="fd-dl-g" data-side="old"><span class="fd-dl-n">1</span></span>-c</span>',
+    );
+    // Without review (no gutters) the hunk row goes too.
+    const plain = renderToStaticMarkup(<Diff patch={files} truncated={false} id="t1" />);
+    expect(plain).not.toContain('@@');
+    expect(plain).toContain('<span class="fd-dl" data-kind="add" data-sides="new">+a</span>');
+  });
+
+  test('a changed file keeps its hunk rows', () => {
+    const plain = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
+    expect(plain).toContain('data-kind="hunk"');
+    expect(plain).not.toContain('data-sides');
+  });
+
   test('without review the line numbers are not shown', () => {
     const plain = renderToStaticMarkup(<Diff patch={patch} truncated={false} id="t1" />);
     expect(plain).not.toContain('fd-dl-n');

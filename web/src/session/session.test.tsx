@@ -121,13 +121,14 @@ const request = (id: string, at = 1) => ({
 });
 
 describe('session pane (DL-140)', () => {
-  test('the header model selector takes the models of the summary (DL-151)', () => {
+  test('the composer model chip lists the models of the summary (DL-151)', () => {
     const models = [{ value: 'opus', label: 'Opus', description: null }];
     const html = view(session({ models }), timeline());
-    expect(html).toContain('aria-label="Model"');
-    expect(html).toContain('<option value="opus">Opus</option>');
+    expect(html).toContain('aria-label="Model: default"');
+    expect(html).toContain('<legend>Model</legend>');
+    expect(html).toContain('<span class="fd-model-name">Opus</span>');
     expect(html).toContain('Other…');
-    expect(view(session(), timeline())).not.toContain('<option value="opus">Opus</option>');
+    expect(view(session(), timeline())).not.toContain('<span class="fd-model-name">Opus</span>');
   });
 
   test('the header shows the title and the pane has the three views', () => {
@@ -148,8 +149,9 @@ describe('session pane (DL-140)', () => {
   test('on a desktop the Files side panel is closed by default and has a toggle', () => {
     // no stored choice: the panel is closed, the Files tab is offered, the toggle is not pressed
     const closed = view(session(), timeline(), { files: true });
-    expect(closed).not.toContain('aria-label="Files panel"');
-    expect(closed).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="false"/);
+    expect(closed).not.toContain('<aside class="fd-pane-side" aria-label="Files panel">');
+    // The toggle is "Files panel": the tab row has the one "Files".
+    expect(closed).toMatch(/<button[^>]*aria-label="Files panel"[^>]*aria-pressed="false"/);
     // a stored `1` opens it
     const store = { getItem: () => '1', setItem: () => {}, removeItem: () => {} };
     Object.defineProperty(globalThis, 'localStorage', { value: store, configurable: true });
@@ -160,12 +162,13 @@ describe('session pane (DL-140)', () => {
       Reflect.deleteProperty(globalThis, 'localStorage');
     }
     expect(html).toContain('<aside class="fd-pane-side" aria-label="Files panel">');
-    expect(html).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="true"/);
+    expect(html).toMatch(/<button[^>]*aria-label="Files panel"[^>]*aria-pressed="true"/);
     expect(html).not.toMatch(/role="tab"[^>]*>Files</);
     // without the file service there is neither a panel nor a toggle
     const none = view(session(), timeline());
     expect(none).not.toContain('aria-label="Files panel"');
     expect(none).not.toContain('aria-label="Files"');
+    expect(none).not.toMatch(/<button[^>]*aria-label="Files panel"/);
     // the phone and the tablet have no side panel
     expect(view(session(), timeline(), { files: true, layout: 'phone' })).not.toContain(
       'aria-label="Files panel"',
@@ -209,7 +212,7 @@ describe('session pane (DL-140)', () => {
     expect(changes).not.toContain('aria-label="Composer"');
   });
 
-  test('the Changes tab badge counts only the turns with changes and is absent for 0', () => {
+  test('the Changes tab badge counts the changed files and is absent for 0', () => {
     const finalized = (turn: string, files: number): Event => ({
       kind: 'turn.finalized',
       turn_id: turn,
@@ -223,7 +226,8 @@ describe('session pane (DL-140)', () => {
     });
     const some = envelopes('nested', [finalized('t1', 1), finalized('t2', 0), finalized('t3', 2)]);
     const html = view(session({ capabilities: codexCaps() }), timeline(some));
-    expect(html).toMatch(/>Changes <span class="fd-count">2<\/span><\/button>/);
+    // No spawn base: the files of the kept turns (1 + 0 + 2), not the count of turns.
+    expect(html).toMatch(/>Changes <span class="fd-count">3<\/span><\/button>/);
     const none = envelopes('nested', [finalized('t1', 0)]);
     const empty = view(session({ capabilities: codexCaps() }), timeline(none));
     expect(empty).toMatch(
@@ -304,9 +308,11 @@ describe('session pane (DL-140)', () => {
       });
     const off = open(false);
     expect(off).not.toContain('Open in terminal…');
+    // A station setting is changed on the board: the note links the station tab of Settings.
     expect(off).toContain(
-      'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
+      'Shells are off on this station. <a href="#/settings/station/station-a">Turn them on in Settings</a>.',
     );
+    expect(off).not.toContain('station.toml');
     for (const allowed of [true, null]) {
       const html = open(allowed);
       expect(html).toContain('Open in terminal…');
@@ -377,7 +383,7 @@ describe('session pane (DL-140)', () => {
     const idle = view(session({ current_run: null }), timeline());
     expect(idle).not.toContain('Steer now');
     expect(idle).toMatch(
-      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
 
     const none = view(session({ capabilities: null }), timeline());
@@ -391,15 +397,18 @@ describe('session pane (DL-140)', () => {
   test('a Codex session shows the controls of its capabilities (P5-3)', () => {
     const codex = view(session({ capabilities: codexCaps(), mode: 'untrusted/workspace-write' }));
     expect(codex).toContain('Steer now');
-    expect(codex).toContain('>untrusted/read-only</button>');
-    expect(codex).toContain('aria-pressed="true" disabled="">untrusted/workspace-write</button>');
-    expect(codex).not.toContain('>acceptEdits</button>');
+    // The modes are menu rows with their names (ui/format modeLabel); the current one is checked.
+    expect(codex).toContain('</span>Ask for untrusted commands · read only</button>');
+    expect(codex).toMatch(
+      /aria-pressed="true" disabled=""><span class="fd-mode-lead"><\/span>Ask for untrusted commands · workspace write<svg[^>]*lucide-check/,
+    );
+    expect(codex).not.toContain('Accept edits</button>');
     // No native follow-up queue: the station holds the follow-up.
     expect(codex).toContain('Queue follow-up');
     expect(codex).toContain('The station holds a follow-up until the turn ends.');
     const claude = view(session({ capabilities: claudeCaps() }));
     expect(claude).not.toContain('The station holds a follow-up');
-    expect(claude).toContain('>acceptEdits</button>');
+    expect(claude).toContain('</span>Accept edits</button>');
   });
 
   test('a provider without optional capabilities gets prompt and follow-up only', () => {
@@ -505,14 +514,17 @@ describe('session pane (DL-140)', () => {
 
 describe('auto-continue (ADR-007, DL-127)', () => {
   test('the toggle is off by default and needs drive and a live board', () => {
+    // A named switch row of the menu (the account menu has the same rows).
+    const row = (attrs: string, label = '') =>
+      new RegExp(
+        `<label class="fd-menu-switch"${label}><span class="fd-menu-switch-label"><svg[^>]*>.*?</svg>Continue after a station restart</span><input type="checkbox" role="switch" class="fd-switch" ${attrs}/>`,
+      );
     const html = view(session(), timeline());
-    expect(html).toMatch(/<input type="checkbox"\/> Continue after a station restart/);
+    expect(html).toMatch(row('aria-checked="false"'));
     const on = view(session({ auto_continue: true }), timeline());
-    expect(on).toMatch(/<input type="checkbox" checked=""\/> Continue after a station restart/);
+    expect(on).toMatch(row('aria-checked="true" checked=""'));
     const readOnly = view(session(), timeline(), { scopes: ['read'] });
-    expect(readOnly).toMatch(
-      /<input type="checkbox" disabled=""\/> Continue after a station restart/,
-    );
+    expect(readOnly).toMatch(row('aria-checked="false" disabled=""', ' data-disabled="true"'));
   });
 
   test('a continuation run and a skipped continuation are shown', () => {

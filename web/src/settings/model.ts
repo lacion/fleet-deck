@@ -1,6 +1,7 @@
 // DL-172: the settings model of the board: the sections, the badges of a field, and the diff of
 // an edit against the values that the deck showed. Pure functions; the components call them.
 import type { FieldMeta, SettingsView } from '../gen';
+import { fieldLabel } from './copy';
 
 /** The values that the deck showed, or the edits of the owner, by key. */
 export type Values = Readonly<Record<string, unknown>>;
@@ -20,6 +21,20 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   },
   { title: 'Folders', keys: ['allowed_roots', 'repo_groups'] },
   { title: 'Shells and setup', keys: ['allow_shell', 'max_shells', 'allow_setup_cmd'] },
+  {
+    title: 'Desktop',
+    keys: [
+      'desktop_control',
+      'allow_desktop',
+      'allow_desktop_capture',
+      // The two agent switches that need agent input follow it (copy.ts DEPENDS_ON).
+      'allow_desktop_input',
+      'allow_desktop_click',
+      'allow_desktop_input_any',
+      'capture_monitors',
+      'fleet_summary',
+    ],
+  },
   { title: 'Providers', keys: ['provider_instance'] },
   {
     title: 'Model help',
@@ -48,7 +63,14 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   },
   {
     title: 'Network',
-    keys: ['listen', 'link_listen', 'tailnet_hostname', 'tailscale_bin', 'tailnet_auto'],
+    keys: [
+      'listen',
+      'link_listen',
+      'tailnet_hostname',
+      'tailscale_bin',
+      'tailnet_auto',
+      'tailscale_cert',
+    ],
   },
   { title: 'Notifications', keys: ['conflict_mail'] },
   { title: 'New sessions', keys: ['clone_host', 'clone_org', 'clone_transport'] },
@@ -109,11 +131,23 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
 export type Group = { readonly title: string; readonly fields: readonly FieldMeta[] };
 
 /**
- * The fields in the sections of the page, in order. A key that no section names goes to "Other".
- * A hidden field (a key that only the deck writes) is left out.
+ * The deck keys that the Tailnet card of the Network section shows and saves with its own switches
+ * (TailnetCard): while the card has its view, the field list leaves them out (`omit`), so that a
+ * setting shows once and saves one way. When the card cannot read Tailscale, the fields stay.
  */
-export function groupFields(all: readonly FieldMeta[]): Group[] {
-  const fields = all.filter((f) => f.hidden !== true);
+export const CARD_KEYS: readonly string[] = ['tailnet_auto', 'tailscale_cert'];
+
+/**
+ * The fields in the sections of the page, in order. A key that no section names goes to "Other".
+ * A hidden field (a key that only the deck writes) and a key in `omit` (a card shows it) are left
+ * out. A section named in `keep` is in the list also without a field (a card of the tab fills it).
+ */
+export function groupFields(
+  all: readonly FieldMeta[],
+  keep: readonly string[] = [],
+  omit: readonly string[] = [],
+): Group[] {
+  const fields = all.filter((f) => f.hidden !== true && !omit.includes(f.key));
   const used = new Set<string>();
   const groups: Group[] = [];
   for (const section of SECTIONS) {
@@ -134,21 +168,32 @@ export function groupFields(all: readonly FieldMeta[]): Group[] {
         }
       }
     }
-    if (inSection.length > 0) groups.push({ title: section.title, fields: inSection });
+    if (inSection.length > 0 || keep.includes(section.title)) {
+      groups.push({ title: section.title, fields: inSection });
+    }
   }
   const other = fields.filter((f) => !used.has(f.key));
   if (other.length > 0) groups.push({ title: 'Other', fields: other });
   return groups;
 }
 
-export type Badge = {
-  readonly text: string;
-  /** `muted`: an outlined badge (DESIGN-SYSTEM §2.2: yellow is only a request that needs you). */
-  readonly tone?: 'muted';
-  readonly title?: string;
-};
+/** Every field of the group asks for the password on a save: the section says it once. */
+export const allDanger = (group: Group): boolean =>
+  group.fields.length > 0 && group.fields.every((f) => f.danger);
 
-/** The badges of a field: restart, set by the command line, needs re-auth. */
+/** The id of a section of the page (the section index links to it). */
+export const sectionId = (title: string): string =>
+  `fd-set-sec-${title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')}`;
+
+export type Badge = { readonly text: string };
+
+/**
+ * The badges of a field: applies after a restart, set by the command line. A danger field (a save
+ * asks for the password) has a lock mark, not a badge (SettingsFields).
+ */
 export function badgesOf(meta: FieldMeta, overrides: readonly string[]): Badge[] {
   const out: Badge[] = [];
   if (meta.apply === 'restart') out.push({ text: 'Applies after a restart' });
@@ -158,24 +203,8 @@ export function badgesOf(meta: FieldMeta, overrides: readonly string[]): Badge[]
       text: flag === null ? 'Set by the command line' : `Set by the command line (${flag})`,
     });
   }
-  if (meta.danger) {
-    out.push({
-      text: 'Needs re-auth',
-      tone: 'muted',
-      title: 'Saving this asks for your password or an elevation code',
-    });
-  }
   return out;
 }
-
-/** The words of an enum option, by field key and value. The value on the wire stays the same. */
-const OPTION_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  host: { direct: 'Directly', shim: 'In a shim (survives restarts)' },
-};
-
-/** The text of one option of an enum field: its words, or the value when it has none. */
-export const optionLabel = (key: string, value: string): string =>
-  OPTION_LABELS[key]?.[value] ?? value;
 
 // --- the shapes of the values ---
 
@@ -302,7 +331,8 @@ export function changedKeys(view: SettingsView, edits: Values): string[] {
   return view.fields.map((f) => f.key).filter((k) => k in changes);
 }
 
-/** The label of a key, for a list of danger changes. */
+/** The label of a key, for a list of danger changes: the label that the page shows. */
 export function labelOf(fields: readonly FieldMeta[], key: string): string {
-  return fields.find((f) => f.key === key)?.label ?? key;
+  const meta = fields.find((f) => f.key === key);
+  return meta === undefined ? key : fieldLabel(meta);
 }

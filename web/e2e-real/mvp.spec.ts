@@ -119,8 +119,10 @@ async function stations(count: number) {
   await (await bar()).getByRole('link', { name: 'More' }).click();
   await page
     .getByRole('navigation', { name: 'More pages' })
-    .getByRole('link', { name: `Stations ${count}` })
+    .getByRole('link', { name: /^Stations\b/ })
     .click();
+  // The link names no count any more: the page shows one card for each station.
+  await expect(page.locator('.fd-station')).toHaveCount(count);
 }
 
 /** Starts a session from the spawn form and returns its id. */
@@ -131,10 +133,9 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
     .getByRole('radiogroup', { name: 'Station', exact: true })
     .locator('label', { hasText: station.name })
     .click();
-  await expect(form.getByLabel('Provider')).toContainText(`Claude 2.1.999 (${PROVIDER})`);
+  await expect(form.getByLabel('Provider')).toContainText(`Claude (${PROVIDER})`);
   await form.getByRole('button', { name: 'Browse…' }).click();
-  // The root list shows the station's absolute allowed roots.
-  await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
+  // The station has one allowed root: Browse… opens it at once.
   await expect(form.getByRole('button', { name: 'Open demo' })).toContainText('git');
   await form.getByRole('button', { name: 'Open demo' }).click();
   await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('demo');
@@ -197,8 +198,7 @@ test('the board logs in and pairs a dialing and a listening station', async () =
 
   // Alpha listens: it makes an invitation and the deck dials it.
   await page.getByRole('button', { name: 'Add station' }).click();
-  await dialog.getByText('Other ways').click();
-  await dialog.getByRole('button', { name: 'Connect to a station that listens' }).click();
+  await dialog.getByRole('button', { name: /^A station that listens for this deck/ }).click();
   await dialog
     .getByLabel('Station invitation')
     .fill(alpha.cli(['station', 'invite', '--listen', '127.0.0.1:0']));
@@ -212,13 +212,14 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   for (const name of ['alpha', 'bravo']) {
     const st = stationCard(name);
     await expect(st).toContainText('online');
-    await expect(st).toContainText('0 of 4 sessions');
+    // A station without a session shows its free slots (the notation of the fleet lane).
+    await expect(st).toContainText('4 free');
     await expect(st.locator(`.fd-station-providers [data-instance="${PROVIDER}"]`)).toContainText(
       'Claude 2.1.999',
     );
   }
-  await expect(stationCard('alpha')).toContainText('Deck dials station');
-  await expect(stationCard('bravo')).toContainText('Station dials deck');
+  await expect(stationCard('alpha')).toContainText('This deck connects to the station');
+  await expect(stationCard('bravo')).toContainText('The station connects to this deck');
   expect(await fitsWidth()).toBe(true);
 });
 
@@ -242,7 +243,7 @@ test('a session spawned on alpha asks for an approval that the needs-you rail an
   await expect(log).toContainText('echo hi');
   await expect(log.getByRole('img', { name: 'ok' })).toBeVisible();
   await expect(log).toContainText('done');
-  await expect(log).toContainText('Bash · Allow once (by board)');
+  await expect(log).toContainText('Bash · Allow once');
   await fleet();
   await expect(rail).toHaveCount(0);
   expect(stationSessions(alpha).map((s) => s.session_id)).toEqual([id]);
@@ -260,10 +261,12 @@ test('a running turn on bravo takes a steer and an interrupt, then runs the stee
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(status('Done.')).toBeVisible();
   await expect(view).toContainText('echo: after the stop');
-  await expect(view).toContainText('Turn interrupted');
+  await expect(view).toContainText('The turn was interrupted.');
   // The steered input ran once, after the interrupted turn.
   const text = (await view.getByRole('log').innerText()).replace(/\s+/g, ' ');
-  expect(text.indexOf('Turn interrupted')).toBeLessThan(text.indexOf('echo: after the stop'));
+  expect(text.indexOf('The turn was interrupted.')).toBeLessThan(
+    text.indexOf('echo: after the stop'),
+  );
   expect(text.split('echo: after the stop')).toHaveLength(2);
   await expect(composer.getByRole('button', { name: 'Send' })).toBeVisible();
   expect(await fitsWidth()).toBe(true);
@@ -279,7 +282,8 @@ test('the board survives a deck restart without a new login and shows work done 
   let view = await open('Alpha approval');
   await expect(view).toContainText('Controls are off until the board and the station are live.');
   await view.locator('summary[aria-label="Session menu"]').click();
-  const plan = view.getByRole('button', { name: 'plan', exact: true });
+  // The mode rows show the mode in words; the title keeps the native id.
+  const plan = view.locator('button.fd-mode-row[title="plan"]');
   await expect(plan).toBeDisabled();
   // The station works on while the deck is away.
   const away = alpha.run('while the deck is away');

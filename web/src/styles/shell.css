@@ -55,6 +55,12 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-app[data-layout="phone"] > .fd-main {
   flex: 1 1 auto;
+  /* No part of a page may widen the phone page: a mobile browser then widens the layout viewport
+     and moves the sticky bottom bar below the screen. `clip`, not `hidden`: hidden makes a scroll
+     container, and the sticky parts of a page (the New session footer) would stick to it. A long
+     word (a path, a version) breaks at the screen edge, so the clip never hides its end. */
+  overflow-x: clip;
+  overflow-wrap: break-word;
 }
 
 .fd-app[data-layout="desktop"] .fd-main,
@@ -74,6 +80,22 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-app[data-layout="phone"][data-route="session"] .fd-route,
 .fd-app[data-layout="phone"][data-route="terminals"] .fd-route {
   overflow: auto;
+}
+/* §4.8: a phone session never pans sideways: a row that is too wide clips, the pane scrolls down
+   only. */
+.fd-app[data-layout="phone"][data-route="session"] .fd-route {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* A page (`Page` of ui/page.tsx: Stations, Activity, Settings, the More pages) keeps the room of
+   the 8px scrollbar with or without one: its header rule, its tab row and its right-hand
+   controls end at one x on every page and every tab, whether the page scrolls or not. The fleet
+   home and the session scroll inside their own parts and fill the column to the window edge. The
+   right gutter stays 24px from the scrollport, as the left one. */
+.fd-app[data-layout="desktop"] .fd-route:has(> .fd-page),
+.fd-app[data-layout="tablet"] .fd-route:has(> .fd-page) {
+  scrollbar-gutter: stable;
 }
 
 /* The session pane fills the route and scrolls inside. */
@@ -201,12 +223,19 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* On the New session route the button is the current nav row, not a second general primary
    (§2.2): the --selected-bg fill and the 2px --focus bar of .fd-selbar. */
-.fd-newbtn[aria-current="page"],
-.fd-newbtn[aria-current="page"]:hover:not(:disabled) {
+.fd-newbtn[aria-current="page"] {
   background: var(--selected-bg);
   border-color: transparent;
   box-shadow: var(--selected-lift);
   color: var(--text);
+}
+@media (hover: hover) {
+  .fd-newbtn[aria-current="page"]:hover:not(:disabled) {
+    background: var(--selected-bg);
+    border-color: transparent;
+    box-shadow: var(--selected-lift);
+    color: var(--text);
+  }
 }
 
 .fd-newbtn-text {
@@ -236,8 +265,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: transparent;
 }
 
-.fd-newbtn + .fd-sidebar-search:hover > input:not(:focus):placeholder-shown {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-newbtn + .fd-sidebar-search:hover > input:not(:focus):placeholder-shown {
+    background: var(--raised);
+  }
 }
 
 .fd-sidebar-actions:is([data-query="true"], :has(> .fd-sidebar-search:focus-within))
@@ -306,7 +337,7 @@ body:has(.fd-app[data-layout="tablet"]) {
     color var(--t-fast);
 }
 
-.fd-sidebar-links .fd-count {
+.fd-sidebar-links :is(.fd-count, .fd-badge) {
   margin-left: auto;
 }
 
@@ -317,13 +348,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: transparent;
 }
 
-.fd-sidebar-links a:hover,
-.fd-sidebar-more > summary:hover,
-.fd-linkbtn:hover:not(:disabled) {
-  background: var(--raised);
-  border-color: transparent;
-  color: var(--text);
-  text-decoration: none;
+/* --hover-bg: a step apart from the --selected-bg of the current row (light: grey under the white,
+   lifted selected row). */
+@media (hover: hover) {
+  .fd-sidebar-links a:hover,
+  .fd-sidebar-more > summary:hover,
+  .fd-linkbtn:hover:not(:disabled) {
+    background: var(--hover-bg);
+    border-color: transparent;
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 /* The open page: the --selected-bg fill (lifted in light) and the 2px --focus bar of .fd-selbar
@@ -370,10 +405,44 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-3) var(--sp-3);
 }
 
-/* The desktop list scrolls under the footer rule: its last 16px fade out, so that a row cut at
-   the edge reads as "more below", not as a glitch. (The mask needs an opaque color: --text.) */
+/* The desktop list scrolls under the footer rule. The list keeps the room of its 8px scrollbar
+   (base.css) with or without one, so that the ages and the grouping segments stay at one x on
+   every page; the right padding gives the 8px back, so that the rows end on the 12px inset of the
+   nav rows. */
 .fd-sidebar[data-variant="full"] .fd-sidebar-list {
-  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 16px), transparent);
+  scrollbar-gutter: stable;
+  padding-right: var(--sp-1);
+}
+
+/* While rows hide below the footer rule (`data-more-below`, Sidebar), the last 40px fade out: more
+   than a row, so the last visible row is always dimmed, also when the edge falls between two rows
+   (a list cut there looked complete, and Ended and Archived were out of sight). At the end of the
+   list there is no fade, and its bottom padding stays. (The mask needs an opaque color: --text.) */
+.fd-sidebar[data-variant="full"] .fd-sidebar-list[data-more-below] {
+  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 40px), transparent);
+}
+
+/* With a pointer, the thumb shows while the pointer is on the list or a row has the focus (as in
+   Linear and Raycast), and while rows hide below: then it says how much more there is. A list
+   that shows all its rows has no loud --ctl-edge bar at rest. A touch screen keeps the thumb (it
+   has no hover). Chromium draws the ::-webkit-scrollbar thumb; Firefox reads scrollbar-color
+   (base.css). */
+@media (hover: hover) and (pointer: fine) {
+  .fd-sidebar[data-variant="full"]
+    .fd-sidebar-list:not(:hover, :focus-within):not([data-more-below])::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  @supports (-moz-appearance: none) {
+    .fd-sidebar[data-variant="full"] .fd-sidebar-list {
+      scrollbar-width: thin;
+    }
+
+    .fd-sidebar[data-variant="full"]
+      .fd-sidebar-list:not(:hover, :focus-within):not([data-more-below]) {
+      scrollbar-color: transparent transparent;
+    }
+  }
 }
 
 /* The head of the list: the "Sessions" label, and the grouping (Station | Project) at the right. */
@@ -406,12 +475,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-size: var(--fs-meta);
 }
 
+/* Every group, the first one under the list head too, has one step of space above it: the head
+   names the whole list, it is not a part of the first group. */
 .fd-sgroup {
   margin-top: var(--sp-2);
-}
-
-.fd-sidebar-listhead + .fd-sgroup {
-  margin-top: 0;
 }
 
 .fd-sgroup-title {
@@ -492,13 +559,17 @@ body:has(.fd-app[data-layout="tablet"]) {
   transition: background-color var(--t-fast);
 }
 
-.fd-srow:hover {
-  background: var(--raised);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-srow:hover {
+    background: var(--hover-bg);
+    text-decoration: none;
+  }
 }
 
-.fd-srow[aria-current="page"]:hover {
-  background: var(--selected-bg);
+@media (hover: hover) {
+  .fd-srow[aria-current="page"]:hover {
+    background: var(--selected-bg);
+  }
 }
 
 .fd-srow > .fd-holder {
@@ -589,9 +660,11 @@ body:has(.fd-app[data-layout="tablet"]) {
   cursor: pointer;
 }
 
-.fd-sended > summary:hover {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-sended > summary:hover {
+    background: var(--hover-bg);
+    color: var(--text);
+  }
 }
 
 .fd-sended > summary::before {
@@ -613,20 +686,53 @@ body:has(.fd-app[data-layout="tablet"]) {
   fill: currentColor;
 }
 
-.fd-sidebar-archived,
 .fd-sended-clear {
   margin: var(--sp-1) 0 0 6px;
 }
 
-/* "Archived" is a quiet link at the end of the list. */
+/* "Archived" at the end of the list is the same disclosure row as "Ended" (§7: one form for one
+   thing): the group inset, a chevron that turns when it opens, the archive icon, the name and
+   its .fd-count. A button, so that it keeps aria-expanded. */
 .fd-sidebar-archived {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2);
   border: 0;
+  border-radius: var(--r-ctl);
   background: transparent;
   color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 
-/* The footer (44px, §4.2 item 5): Settings, the theme segments and the compact toggle at the
-   left; the account avatar at the right. */
+@media (hover: hover) {
+  .fd-sidebar-archived:hover:not(:disabled) {
+    background: var(--hover-bg);
+    color: var(--text);
+  }
+}
+
+.fd-sidebar-chev {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.7;
+  transition: transform var(--t-move);
+}
+
+.fd-sidebar-archived[aria-expanded="true"] > .fd-sidebar-chev {
+  transform: rotate(90deg);
+}
+
+.fd-sgroup[data-group="archived"] > .fd-srows {
+  margin-top: 2px;
+}
+
+/* The footer (44px, §4.2 item 5): Settings and the theme segments at the left; the account
+   avatar at the right. Compact cards and Reduce motion are named switches in the account menu. */
 .fd-sidebar-foot {
   flex: none;
   display: flex;
@@ -669,6 +775,52 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-sidebar-account .fd-menu-body {
   top: auto;
   bottom: calc(100% + 6px);
+}
+
+/* Its first line says who is signed in: --dim text, the name in --text. It is no action. */
+.fd-account-who {
+  margin: 0;
+}
+
+.fd-account-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* A switch row of a menu (Compact cards, Reduce motion): the 14px icon and the name at the left,
+   the switch at the right, in the 28px row and the --badge-bg hover of a menu row (§3
+   .fd-menu-body); the whole row is the label of its switch. */
+.fd-menu-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  height: var(--ctl-h);
+  padding: 0 8px;
+  /* The 1px transparent edge of a menu button: the icons and names line up with Log out. */
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--t-fast);
+}
+
+@media (hover: hover) {
+  .fd-menu-switch:hover {
+    background: var(--badge-bg);
+  }
+}
+
+.fd-menu-switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fd-menu-switch > .fd-menu-switch-label > .fd-icon {
+  color: var(--dim);
 }
 
 .fd-sidebar-version {
@@ -722,17 +874,31 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0 var(--sp-4) var(--sp-5);
 }
 
+/* The groups stand 24px apart, whatever their last row is (a session row or the Ended fold). */
 .fd-sidebar[data-variant="list"] .fd-sgroup {
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-5);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup:first-child {
+  margin-top: var(--sp-2);
+}
+
+/* The same space between the text of a group's last row and the next heading: a 44px touch row
+   (the Ended fold, the Archived row) centers its text, so 7px more of it sits under the text than
+   under a session row; the next group takes 8px less margin there. */
+.fd-sidebar[data-variant="list"] .fd-sgroup:has(> .fd-sended:last-child) + .fd-sgroup,
+.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="archived"] {
+  margin-top: var(--sp-4);
+}
+
+.fd-sidebar[data-variant="list"]
+  .fd-sgroup:has(> .fd-sended:last-child)
+  + .fd-sgroup[data-group="archived"] {
+  margin-top: var(--sp-2);
 }
 
 .fd-sidebar[data-variant="list"] .fd-sgroup-title {
   height: 32px;
-  padding: 0 var(--sp-1);
-}
-
-/* The Ended disclosure starts where the group names start. */
-.fd-sidebar[data-variant="list"] .fd-sended > summary {
   padding: 0 var(--sp-1);
 }
 
@@ -747,31 +913,41 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
+/* The Sessions tab is the dense list of concept B (the Fleet tab keeps the strips): rows on the
+   deck with no card fill and no holder, divided by the faintest rule. Each row is the status
+   glyph, the title and the age, then the now line. */
 .fd-sidebar[data-variant="list"] .fd-srows {
-  gap: 6px;
+  gap: 0;
 }
 
-/* Each session is a two-line strip: the holder, glyph + title + age, then the meta line. */
+.fd-sidebar[data-variant="list"] .fd-srows > * + * {
+  border-top: 1px solid var(--border-soft);
+}
+
 .fd-sidebar[data-variant="list"] .fd-srow {
   overflow: hidden;
   row-gap: 2px;
   min-height: 56px;
-  padding: var(--sp-2) var(--sp-3) var(--sp-2) 15px;
-  border-radius: var(--r-card);
+  padding: var(--sp-2) var(--sp-1);
+  border-radius: 0;
+}
+
+/* A tap leaves no hover fill behind on a touch screen: the fill shows while pressed, and on
+   hover only where a pointer hovers. */
+@media (hover: hover) {
+  .fd-sidebar[data-variant="list"] .fd-srow:hover {
+    background: transparent;
+  }
+}
+
+.fd-sidebar[data-variant="list"] .fd-srow:active {
   background: var(--raised);
-  box-shadow: var(--shadow-lift);
 }
 
-.fd-sidebar[data-variant="list"] .fd-srow > .fd-holder {
-  display: block;
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-}
-
-.fd-sidebar[data-variant="list"] .fd-srow[data-status="needs_you"] {
-  background: var(--act-bg);
+@media (hover: hover) {
+  .fd-sidebar[data-variant="list"] .fd-srow:hover {
+    background: var(--raised);
+  }
 }
 
 .fd-sidebar[data-variant="list"] .fd-srow-title {
@@ -779,8 +955,34 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-/* Line 2 of a phone row is the "now" line of a strip (§1.3, §4.1): the callsign, then the agent's
-   focus when it has one, else the model and the branch. */
+/* The Ended fold and the Archived row are the last rows of their group: a rule above them, the
+   inset of the group names, square corners like the rows. */
+.fd-sidebar[data-variant="list"] .fd-sended {
+  margin-top: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-sidebar[data-variant="list"] .fd-sgroup-title + .fd-sended {
+  border-top: 0;
+}
+
+.fd-sidebar[data-variant="list"] .fd-sended > summary,
+.fd-sidebar[data-variant="list"] .fd-sidebar-archived {
+  padding: 0 var(--sp-1);
+  border-radius: 0;
+}
+
+.fd-sidebar[data-variant="list"] .fd-sended[open] > summary {
+  margin-bottom: 0;
+}
+
+.fd-sidebar[data-variant="list"] :is(.fd-sended, .fd-sgroup[data-group="archived"]) > .fd-srows {
+  margin-top: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Line 2 of a phone row is the now line (§1.3): the agent's focus when it has one, else the
+   model and the branch. */
 .fd-sidebar[data-variant="list"] .fd-srow-line {
   grid-column: 2 / -1;
   display: flex;
@@ -789,12 +991,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-}
-
-.fd-srow-call {
-  flex: none;
-  color: var(--dim);
-  font-size: var(--fs-meta);
 }
 
 .fd-sidebar[data-variant="list"] .fd-srow-line > .fd-focus {
@@ -845,8 +1041,16 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* ---------- Phone top bar (§4.8) ---------- */
 
-/* 52px on the deck: the mark (or Back), the page name, the connection, the avatar. */
+/* 52px on the deck: the mark (or Back), the page name, the connection, the avatar. The bar stays
+   at the top while the page scrolls (concept A): the page name, the connection and the account
+   stay in reach. (It sticks because the phone main column clips with `overflow-x: clip`, which
+   makes no scroll container.) Its stacking layer is above the bottom bar, so the account sheet
+   inside it covers the bottom bar. Once the page is scrolled (`data-scrolled`, Layout), a
+   --border-soft line under it parts it from the page that passes under it. */
 .fd-phonebar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   flex: none;
   display: flex;
   align-items: center;
@@ -855,6 +1059,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   height: 52px;
   padding: env(safe-area-inset-top) var(--sp-4) 0;
   background: var(--bg);
+}
+
+.fd-phonebar[data-scrolled] {
+  box-shadow: 0 1px 0 var(--border-soft);
+}
+
+/* A scroll into view (Browse…, a notice) stops under the bar, not behind it: the bar is the top
+   of the visible page. A part adds its own scroll-margin to this. */
+:root:has(.fd-app[data-phonebar="true"]) {
+  scroll-padding-top: calc(env(safe-area-inset-top) + 52px);
 }
 
 .fd-phonebar-title {
@@ -874,6 +1088,44 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-phonebar > .fd-wspill {
   margin-left: 0;
+}
+
+/* The account (§4.8): the avatar is the account menu, in a round target of --ctl-h (44px on a
+   touch screen) whose 24px avatar stays on the gutter. */
+.fd-phonebar-account {
+  display: flex;
+  flex: none;
+  margin-inline-end: calc((24px - var(--ctl-h)) / 2);
+}
+
+.fd-phonebar-account > .fd-menu > summary.fd-iconbtn {
+  border-radius: var(--r-pill);
+}
+
+/* The menu is a bottom sheet (§4.8: every dialog of the phone is one): the full width at the
+   bottom edge, in thumb reach, over the one --scrim; a tap on the scrim closes it. */
+.fd-phonebar-account .fd-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  background: var(--scrim);
+}
+
+.fd-phonebar-account .fd-menu-body {
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-width: 0;
+  max-height: 85dvh;
+  padding: var(--sp-2) var(--sp-2) calc(var(--sp-2) + env(safe-area-inset-bottom));
+  border-width: 1px 0 0;
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+}
+
+.fd-phonebar-account .fd-account-who {
+  padding: var(--sp-2);
 }
 
 /* The chevron sits on the gutter: its tap target reaches into the edge. A link on a page of the
@@ -976,6 +1228,14 @@ button.fd-phonebar-back {
   color: var(--act);
 }
 
+/* A notice in a page body (ui/page.tsx ErrorNotice, §4.7): the same row as a card in the page,
+   not a banner under the header (no rule under it, the corners of a card). */
+.fd-notice[data-place="page"] {
+  padding: 6px var(--sp-2) 6px 15px;
+  border-bottom: 0;
+  border-radius: var(--r-card);
+}
+
 /* Forced colors drop the box-shadow holder: a CanvasText edge marks the notice row. The tone stays
    in the icon (error or info). */
 @media (forced-colors: active) {
@@ -991,6 +1251,13 @@ button.fd-phonebar-back {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The Dismiss X at the end of a notice row: its 14px glyph ends on the padding edge of the row,
+   as the X of a dialog head does. */
+.fd-notice-row > .fd-iconbtn:last-child,
+.fd-hintnotice > .fd-iconbtn:last-child {
+  margin-inline-end: calc((14px - var(--ctl-h-sm)) / 2);
 }
 
 /* ---------- Bottom bar (phone, §4.8) ---------- */
@@ -1045,9 +1312,19 @@ button.fd-phonebar-back {
   transition: background-color var(--t-fast);
 }
 
-.fd-bottombar a.fd-bottombar-new:hover .fd-bottombar-circle,
+@media (hover: hover) {
+  .fd-bottombar a.fd-bottombar-new:hover .fd-bottombar-circle {
+    background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
+  }
+}
+
+/* On #/new the circle keeps its full ink (a mix read as disabled) and a 2px --focus ring, the
+   selection color, marks it as the current page. */
 .fd-bottombar a.fd-bottombar-new[aria-current="page"] .fd-bottombar-circle {
-  background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
+  background: var(--ink-fill);
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--focus);
 }
 
 /* Forced colors drop the ink fill of the circle: an edge keeps the New target; Highlight when
@@ -1172,11 +1449,6 @@ button.fd-phonebar-back {
   justify-self: start;
 }
 
-.fd-overlay .fd-devlink > .fd-devlink-close {
-  justify-self: end;
-  margin-top: var(--sp-1);
-}
-
 .fd-devlink-qr {
   display: block;
   width: 216px;
@@ -1237,11 +1509,9 @@ button.fd-phonebar-back {
 
 .fd-help-head {
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-3) var(--sp-3) 20px;
+  /* The 20px side padding of every dialog (and of the body under it): the Close X stays 14px in
+     from the edge, and its focus ring clears the rounded corner and the scrollbar. */
+  padding: var(--sp-4) 20px var(--sp-3);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -1264,21 +1534,16 @@ button.fd-phonebar-back {
   gap: var(--sp-2);
 }
 
+/* The sections are divided by a rule, not by size: every section after the first starts with a
+   --border-soft rule and a step of space above its heading. */
+.fd-help-body > section + section {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+
 /* The key groups: stacked with a step of space, or side by side in a wide window. */
 .fd-help-keys {
   gap: var(--sp-4) var(--sp-5);
-}
-
-/* A wide window shows the two key tables side by side: more of the help in the first view. */
-@media (min-width: 900px) {
-  .fd-overlay .fd-help {
-    width: min(880px, 100%);
-  }
-
-  .fd-help-keys {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
 }
 
 .fd-help h3,
@@ -1286,11 +1551,13 @@ button.fd-phonebar-back {
   margin: 0;
 }
 
-/* Two heading levels (§4.7): a section (Keys, Concepts, Pages) is a 15px heading in --text; a
-   sub-heading inside it (On every page) stays a 12px .fd-label. */
+/* Two heading levels (§4.7) under the 15px dialog title, which leads: a section (Keys, Concepts,
+   Pages) is a 13px 600 heading in --text after its rule; a sub-heading inside it (On every page)
+   stays a 12px .fd-label. A term of a list is 500, so that a section heading reads as more than
+   one more term. */
 .fd-help-section {
   font-family: var(--font-ui);
-  font-size: var(--fs-heading);
+  font-size: var(--fs-ui);
   font-weight: 600;
   line-height: 1.15;
   color: var(--text);
@@ -1317,21 +1584,28 @@ button.fd-phonebar-back {
   line-height: 1.4;
   border-bottom: 1px solid var(--border-soft);
   font-size: var(--fs-ui);
+  text-wrap: pretty;
 }
 
-/* The key column: wide enough for the widest keys ("Ctrl+↵ or ⌘↵"), so that the general and
-   the fleet-home tables start their actions at the same place. The fixed layout takes the column
-   width from the <col> (the first row is the visually hidden header), whatever the content. */
+/* The action at the left on the edge of the column, its keys at the right edge (the pattern of
+   Linear and Raycast): a one-letter key no longer sits across a gap from its action. The key
+   column is wide enough for the widest keys of one platform ("Ctrl+Enter") and has one width in
+   every key table (the fixed layout takes it from the <col>; the first row is the visually
+   hidden header). */
 .fd-keys-key {
-  width: 120px;
+  width: 96px;
 }
 .fd-keys td:first-child {
   padding-left: 0;
+}
+.fd-keys td:last-child {
+  padding-right: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
+  text-align: right;
   white-space: nowrap;
 }
-.fd-keys td:first-child .fd-kbd {
+.fd-keys td:last-child .fd-kbd {
   min-width: 20px;
   height: 20px;
   font-size: var(--fs-meta);
@@ -1356,7 +1630,7 @@ button.fd-phonebar-back {
 
 .fd-help-terms dt {
   font-size: var(--fs-ui);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .fd-help-terms dd {
@@ -1364,6 +1638,62 @@ button.fd-phonebar-back {
   color: var(--dim);
   font-size: var(--fs-meta);
   line-height: 1.45;
+}
+
+/* A wide window: two columns, so that more of the help shows in the first view and no column
+   ends in an empty block. The general keys (10 rows) and the concepts under them at the left; the
+   fleet-home keys (4 rows) and the pages under them at the right. The Keys section and its key
+   groups give their parts to the grid of the body (`display: contents`; the DOM order, and so the
+   reading order, stays Keys, Concepts, Pages). The general keys span two rows and the pages span
+   two rows, so each column runs on without a gap: the pages start under the fleet-home keys and
+   the concepts start under the general keys. Each column lists its terms in one column. */
+@media (min-width: 900px) {
+  .fd-overlay .fd-help {
+    width: min(880px, 100%);
+  }
+
+  .fd-help-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "keys keys"
+      "every fleet"
+      "every pages"
+      "concepts pages";
+    column-gap: var(--sp-5);
+    align-items: start;
+  }
+
+  .fd-help-body > section[data-part="keys"],
+  .fd-help-keys {
+    display: contents;
+  }
+
+  /* The heading keeps the 8px of its section to the sub-headings under it (the body rows are
+     16px apart). */
+  .fd-help-body > section[data-part="keys"] > .fd-help-section {
+    grid-area: keys;
+    margin-bottom: calc(var(--sp-2) - var(--sp-4));
+  }
+
+  .fd-help-keygroup:first-child {
+    grid-area: every;
+  }
+
+  .fd-help-keygroup:last-child {
+    grid-area: fleet;
+  }
+
+  .fd-help-body > section[data-part="concepts"] {
+    grid-area: concepts;
+  }
+
+  .fd-help-body > section[data-part="pages"] {
+    grid-area: pages;
+  }
+
+  .fd-help .fd-help-terms {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* The session palette (⌘K): a search line, the rows, the key hints. */
@@ -1403,6 +1733,25 @@ button.fd-phonebar-back {
   display: none;
 }
 
+/* Two groups (Live, Ended), each under a 12px .fd-label; the first option of a group keeps its
+   label in view when the arrow keys scroll up to it. */
+.fd-palette [role="group"] {
+  display: grid;
+  gap: 1px;
+}
+
+.fd-palette [role="group"] + [role="group"] {
+  margin-top: var(--sp-2);
+}
+
+.fd-palette [role="group"] > .fd-label {
+  padding: var(--sp-1) 10px;
+}
+
+.fd-palette [role="group"] > [role="option"]:nth-child(2) {
+  scroll-margin-top: 28px;
+}
+
 .fd-palette [role="option"] {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;
@@ -1414,8 +1763,10 @@ button.fd-phonebar-back {
   cursor: pointer;
 }
 
-.fd-palette [role="option"]:hover {
-  background: var(--badge-bg);
+@media (hover: hover) {
+  .fd-palette [role="option"]:hover {
+    background: var(--badge-bg);
+  }
 }
 
 /* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and the
@@ -1489,6 +1840,26 @@ button.fd-phonebar-back {
   }
 }
 
+/* A phone (§4.8): a dialog is a bottom sheet, with the close X and the actions in thumb reach.
+   The palette stays at the top, above the keyboard. */
+@media (max-width: 639px) {
+  .fd-overlay:not(:has(> .fd-palette)) {
+    align-items: flex-end;
+    padding: var(--sp-6) 0 0;
+  }
+  .fd-overlay .fd-dialog:not(.fd-palette) {
+    max-height: 85dvh;
+    overscroll-behavior: contain;
+    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  }
+  .fd-overlay .fd-dialog:not(.fd-help, .fd-palette) {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+  .fd-overlay .fd-help-body {
+    padding-bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
+  }
+}
+
 /* ---------- Screens: New session, Plans, Stations ---------- */
 
 .fd-screen {
@@ -1529,15 +1900,18 @@ button.fd-phonebar-back {
   gap: var(--sp-4);
 }
 
-/* One grouped list on the bay: 44px rows divided by the faintest rule. */
+/* One grouped list, a card on the deck: 44px rows divided by the faintest rule. The --raised fill
+   and --shadow-lift of a strip (the light --surface was about 1.04:1 on --bg, so the groups read
+   as one sheet); the row hover is --badge-bg, as on every --raised layer. */
 .fd-more-links {
   display: grid;
   margin: 0;
   padding: 0;
   overflow: hidden;
   list-style: none;
-  background: var(--surface);
+  background: var(--raised);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-more-links > li + li {
@@ -1567,22 +1941,34 @@ button.fd-phonebar-back {
 @media (hover: hover) {
   .fd-more-links > li > a:hover,
   .fd-more-links > li > button:hover:not(:disabled) {
-    background: var(--raised);
+    background: var(--badge-bg);
     text-decoration: none;
   }
 }
 
 .fd-more-links > li > a:active,
 .fd-more-links > li > button:active:not(:disabled) {
-  background: var(--raised);
+  background: var(--badge-bg);
 }
 
 .fd-more-links > li > :is(a, button, .fd-more-rowlabel) > .fd-icon {
   color: var(--dim);
 }
 
-.fd-more-links .fd-count {
+.fd-more-links :is(.fd-count, .fd-badge) {
   margin-left: auto;
+}
+
+/* A row that opens another page ends in a 16px chevron (not a row with a control or a dialog). */
+.fd-more-chev {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.fd-more-links :is(.fd-count, .fd-badge) + .fd-more-chev {
+  margin-left: 0;
 }
 
 /* A setting row: its name at the left, the control at the right. */
@@ -1651,7 +2037,9 @@ button.fd-phonebar-back {
   .fd-sidebar-more > summary,
   .fd-linkbtn,
   .fd-srow,
-  .fd-sended > summary {
+  .fd-sended > summary,
+  .fd-sidebar-archived,
+  .fd-menu-switch {
     min-height: var(--tap-min);
   }
 }

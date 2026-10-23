@@ -7,16 +7,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ImageInput } from '../gen';
+import type { ImageInput, ModelChoice } from '../gen';
 import { useDismiss } from '../ui/dismiss';
-import { ArrowUp, ChevronDown, Icon, Paperclip, Play } from '../ui/icons';
+import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
-import { submitKeyHint } from '../spawn/keyHint';
+import { ReturnKey, SubmitKeys } from '../spawn/keyHint';
+import { ModelMenu } from './SessionSettings';
 
 type Props = {
   readonly enabled: boolean;
@@ -51,10 +52,19 @@ type Props = {
   readonly onRemoveChip?: (id: string) => void;
   /** The short model name of the session (`Sonnet 5.5`): the model chip of the toolbar. */
   readonly model?: string;
-  /** Opens the model picker of the session menu; absent: the chip only shows the model. */
-  readonly onModel?: () => void;
+  /**
+   * The model can be changed: the chip is the summary of its own popover of models (§4.5); absent:
+   * the chip only shows the model.
+   */
+  readonly modelChoice?: {
+    readonly current: string | null;
+    readonly models: readonly ModelChoice[] | null;
+    readonly onSet: (model: string) => void;
+  };
   /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
   readonly callsign?: string | null;
+  /** The phone layout: Send is a round icon button at the right (concept A). */
+  readonly phone?: boolean;
 };
 
 /** The most rows the text box grows to. */
@@ -114,7 +124,7 @@ export type SendKey = {
 /**
  * What a key press in the text box sends, or `null` (not a send key: Shift+↵, or ↵ on a touch
  * screen, is a newline). ↵ sends the prompt, or queues a follow-up while a turn runs. §4.5:
- * ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
+ * ⌘↵ (Ctrl+Enter) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
  * a `!` shell command); else it is the same as ↵.
  */
 export function enterSend(
@@ -444,6 +454,7 @@ export function Composer(props: Props) {
       : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
+    // The header shows no Resume next to the bar: the bar has the one primary of the screen (§2.2).
     return (
       <div className="fd-composer-resume">
         <span className="fd-composer-note">{props.disabledReason || 'The session ended.'}</span>
@@ -558,19 +569,10 @@ export function Composer(props: Props) {
             }}
           />
         </label>
-        {props.model === undefined ? null : props.onModel === undefined ? (
+        {props.model === undefined ? null : props.modelChoice === undefined ? (
           <span className="fd-composer-model">{props.model}</span>
         ) : (
-          <button
-            type="button"
-            className="fd-sm fd-composer-model"
-            aria-label={`Model: ${props.model}`}
-            title="Change the model"
-            onClick={props.onModel}
-          >
-            {props.model}
-            <Icon of={ChevronDown} size={12} />
-          </button>
+          <ModelMenu name={props.model} {...props.modelChoice} />
         )}
         {reason ? (
           <span className="fd-composer-note">{reason}</span>
@@ -595,24 +597,28 @@ export function Composer(props: Props) {
                   onClick={() => send('steer')}
                 >
                   Steer now
-                  <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                    {submitKeyHint()}
-                  </span>
+                  <SubmitKeys className="fd-kbd fd-composer-kbd" />
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>
                 Queue follow-up
-                <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                  ↵
-                </span>
+                <ReturnKey className="fd-kbd fd-composer-kbd" />
               </button>
             </>
+          ) : props.phone === true ? (
+            <button
+              type="submit"
+              className="fd-iconbtn fd-primary fd-composer-go"
+              aria-label="Send"
+              title="Send"
+              disabled={blocked}
+            >
+              <Icon of={ArrowUp} />
+            </button>
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
               <Icon of={ArrowUp} size={14} /> Send
-              <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                ↵
-              </span>
+              <ReturnKey className="fd-kbd fd-composer-kbd" />
             </button>
           )}
         </div>

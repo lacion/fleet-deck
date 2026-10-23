@@ -46,10 +46,10 @@ test('the project Git settings save with their revision and show the deck refusa
   await page.evaluate(() => {
     window.location.hash = '#/projects';
   });
-  await page
-    .getByRole('row', { name: 'Project Atlas' })
-    .getByRole('button', { name: 'Edit' })
-    .click();
+  // Edit is in the row menu of the project (Edit, Check access, Delete…).
+  const row = page.getByRole('row', { name: 'Project Atlas' });
+  await row.getByLabel('Actions for Atlas').click();
+  await row.getByRole('button', { name: 'Edit' }).click();
   const form = page.getByRole('form', { name: 'Git sync' });
   await expect(form).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
@@ -108,10 +108,10 @@ test('a stale revision shows its message and a Reload button', async ({ page }) 
   await page.evaluate(() => {
     window.location.hash = '#/projects';
   });
-  await page
-    .getByRole('row', { name: 'Project Atlas' })
-    .getByRole('button', { name: 'Edit' })
-    .click();
+  // Edit is in the row menu of the project (Edit, Check access, Delete…).
+  const row = page.getByRole('row', { name: 'Project Atlas' });
+  await row.getByLabel('Actions for Atlas').click();
+  await row.getByRole('button', { name: 'Edit' }).click();
   const form = page.getByRole('form', { name: 'Git sync' });
   git.refuse = {
     status: 409,
@@ -242,8 +242,10 @@ test('the Homes section adds a home that clones then is ready, retries a failed 
   const homes = await installFleetGitHomes(page, deck, [atlas]);
   await logIn(page);
   await goto(page, '#/project/p1');
+  // Homes, Secret files and Lands are the Setup tab of the project page.
+  await page.getByRole('tab', { name: 'Setup' }).click();
   const section = page.getByRole('region', { name: 'Homes' });
-  await expect(section.getByText('Alpha · /work/atlas · Ready')).toBeVisible();
+  await expect(section.getByTitle('Alpha · /work/atlas · Ready')).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
   // The last home cannot be removed.
   await expect(section.getByRole('button', { name: /^Remove/ })).toHaveCount(0);
@@ -259,11 +261,11 @@ test('the Homes section adds a home that clones then is ready, retries a failed 
   expect(homes.calls[0]?.call).toBe('POST /api/projects/p1/homes');
   expect(homes.calls[0]?.body).toMatchObject({ station: 'st-bravo' });
   await expect(
-    section.getByText('Bravo · Cloning into /srv/st-bravo/projects/Atlas…'),
+    section.getByTitle('Bravo · Cloning into /srv/st-bravo/projects/Atlas…'),
   ).toBeVisible();
   // The board reads the list again while a home clones.
   homes.settle('p1', 'st-bravo');
-  await expect(section.getByText('Bravo · /srv/st-bravo/projects/Atlas · Ready')).toBeVisible({
+  await expect(section.getByTitle('Bravo · /srv/st-bravo/projects/Atlas · Ready')).toBeVisible({
     timeout: 12_000,
   });
 
@@ -273,9 +275,13 @@ test('the Homes section adds a home that clones then is ready, retries a failed 
   bravo.state = 'failed';
   bravo.message = 'The clone failed: no space left.';
   await page.reload();
-  await expect(section.getByText('Bravo · Failed: The clone failed: no space left.')).toBeVisible();
+  // A reload opens the first tab (Sessions) again.
+  await page.getByRole('tab', { name: 'Setup' }).click();
+  await expect(
+    section.getByTitle('Bravo · Failed: The clone failed: no space left.'),
+  ).toBeVisible();
   await section.getByRole('button', { name: 'Retry the home on Bravo' }).click();
-  await expect(section.getByText(/^Bravo · Cloning into/)).toBeVisible();
+  await expect(section.getByTitle(/^Bravo · Cloning into/)).toBeVisible();
   expect(homes.calls.at(-1)?.call).toBe('POST /api/projects/p1/homes/st-bravo/retry');
 
   // A refusal of the deck shows under the list.
@@ -286,7 +292,7 @@ test('the Homes section adds a home that clones then is ready, retries a failed 
   await section.getByRole('button', { name: 'Remove the home on Bravo' }).click();
   await expect(section.getByRole('alert')).toHaveText('A clone runs for this home.');
   await section.getByRole('button', { name: 'Remove the home on Bravo' }).click();
-  await expect(section.getByText(/^Bravo/)).toHaveCount(0);
+  await expect(section.getByTitle(/^Bravo/)).toHaveCount(0);
 });
 
 test('a changed remote URL asks for the rebind before it saves', async ({ page }) => {
@@ -305,10 +311,10 @@ test('a changed remote URL asks for the rebind before it saves', async ({ page }
   });
   await logIn(page);
   await goto(page, '#/projects');
-  await page
-    .getByRole('row', { name: 'Project Atlas' })
-    .getByRole('button', { name: 'Edit' })
-    .click();
+  // Edit is in the row menu of the project (Edit, Check access, Delete…).
+  const row = page.getByRole('row', { name: 'Project Atlas' });
+  await row.getByLabel('Actions for Atlas').click();
+  await row.getByRole('button', { name: 'Edit' }).click();
   const form = page.getByRole('form', { name: 'Git sync' });
   // Fleet Sync: the remote URL is in the closed "Advanced" part.
   await form.getByText('Advanced', { exact: true }).click();
@@ -397,9 +403,10 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   const alpha = page.locator('[data-station="st-alpha"]');
   const bravo = page.locator('[data-station="st-bravo"]');
   const old = page.locator('[data-station="st-old"]');
-  await expect(page.getByText('Config reference: Alpha')).toBeVisible();
-  await expect(alpha.getByText('Linux · x86_64 · gpu, always_on')).toBeVisible();
-  await expect(bravo.getByText('macOS · aarch64 · on battery')).toBeVisible();
+  await expect(page.getByText('Configs vs Alpha')).toBeVisible();
+  await expect(alpha.getByText('Linux · x86_64 · GPU · Always on')).toBeVisible();
+  // The arch as a Mac owner names it; the raw arch is the tooltip.
+  await expect(bravo.getByText('macOS · arm64 · on battery')).toBeVisible();
   await expect(alpha.getByText('Config: Reference')).toBeVisible();
   await expect(bravo.getByText('Config: Differs: agents, skills')).toBeVisible();
   await expect(old.getByText(/^Config:/)).toHaveCount(0);
@@ -418,7 +425,7 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   // "Use as config reference" in the menu of another station.
   await bravo.getByLabel('Station actions').click();
   await bravo.getByRole('button', { name: 'Use as config reference' }).click();
-  await expect(page.getByText('Config reference: Bravo')).toBeVisible();
+  await expect(page.getByText('Configs vs Bravo')).toBeVisible();
   expect(prefs.references).toEqual([{ station: 'st-bravo' }]);
   await expect(bravo.getByText('Config: Reference')).toBeVisible();
   await expect(alpha.getByText('Config: Differs: agents, skills')).toBeVisible();
@@ -431,7 +438,7 @@ test('the Stations page asks for a config reference when the deck has none', asy
   await installFleetGitPlacement(page, deck);
   await logIn(page);
   await openMore(page, 'Stations');
-  await expect(page.getByText('Config reference…')).toBeVisible();
+  await expect(page.getByText('Compare configs')).toBeVisible();
 });
 
 test('the Stations page shows the error when the deck refuses a config reference', async ({
@@ -457,7 +464,7 @@ test('the Stations page shows the error when the deck refuses a config reference
   await bravo.getByLabel('Station actions').click();
   await bravo.getByRole('button', { name: 'Use as config reference' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'Unknown station.' })).toBeVisible();
-  await expect(page.getByText('Config reference: Alpha')).toBeVisible();
+  await expect(page.getByText('Configs vs Alpha')).toBeVisible();
 });
 
 test('the session Artifacts link opens the folder, or shows the address', async ({ page }) => {
@@ -508,7 +515,7 @@ test('the session Artifacts link opens the folder, or shows the address', async 
   await expect(dialog.getByText('report.md')).toBeVisible();
   expect(listed.some((q) => q.includes('artifacts=a1'))).toBe(true);
   expect(await fitsWidth(page)).toBe(true);
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
 
   await goto(page, '#/');
   await openSession(page, 'Remote artifacts');
@@ -762,6 +769,7 @@ test('an uncertain land has Stop checking; a conflict has Send to session; the p
 
   // The project page lists the queue and the recent ends; the conflict has Send to session there.
   await goto(page, '#/project/p1');
+  await page.getByRole('tab', { name: 'Setup' }).click();
   const list = page.getByRole('region', { name: 'Lands' });
   await expect(list.getByText('Stopping… waiting for Alpha to confirm.')).toBeVisible();
   await expect(list.getByText('Conflict in 2 files with origin/main (abc1234).')).toBeVisible();

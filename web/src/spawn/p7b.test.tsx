@@ -259,23 +259,17 @@ describe('the station tab shows the two core fields of P7b', () => {
     />,
   );
 
-  test('each shows with its label and the re-auth badge', () => {
+  test('each shows with its label in the Desktop section, which asks for the password', () => {
+    // The board names the second field shorter than the registry (settings/copy.ts).
     expect(out).toContain('Allow agent clicks');
-    expect(out).toContain('Allow agent input in other application windows');
-    // The fixture view has two danger fields with a badge already (listen, allow_terminals...).
-    const base = renderToStaticMarkup(
-      <SettingsFields
-        view={view()}
-        edits={{}}
-        errors={{}}
-        onEdit={() => {}}
-        stationId="st-alpha"
-        savedIds={['claude']}
-        secretBlocked={null}
-        onSecret={() => {}}
-      />,
-    );
-    const badges = (s: string) => s.split('Needs re-auth').length - 1;
-    expect(badges(out)).toBe(badges(base) + 2);
+    expect(out).toContain('Agent input in other windows');
+    // Both are danger fields, the only fields of the Desktop section: the section says once,
+    // next to its heading, that a save asks for the password (no mark on each field).
+    const desktop = /<section[^>]*aria-label="Desktop"[\s\S]*?<\/section>/.exec(out)?.[0] ?? '';
+    expect(desktop).toContain('Allow agent clicks');
+    expect(desktop).toContain('Agent input in other windows');
+    expect(desktop).toContain('<span class="fd-set-secnote">');
+    expect(desktop.split('Saving asks for your password').length - 1).toBe(1);
+    expect(desktop).not.toContain('fd-set-lock');
   });
 });

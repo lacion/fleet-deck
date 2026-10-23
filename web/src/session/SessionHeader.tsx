@@ -1,6 +1,6 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
@@ -17,6 +17,7 @@ import {
   FolderOpen,
   GitCompare,
   Icon,
+  OctagonAlert,
   PanelRight,
   Pencil,
   Play,
@@ -24,12 +25,13 @@ import {
   Search,
   Server,
   Send,
+  Share2,
+  ShieldCheck,
   CircleStop,
   SquareTerminal,
   Star,
   TriangleAlert,
   Undo2,
-  Users,
   X,
 } from '../ui/icons';
 import { canShare, usePeople } from '../sharing/context';
@@ -53,7 +55,9 @@ import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { SendToWall } from '../wall/SendToWall';
-import { ModeLadder, ModelPicker, openPicker } from './SessionSettings';
+import { KillConfirm, menuGroups, OpenConfirm, ShellsOffNote } from './MenuParts';
+import { AutoContinueSwitch, ModeLadder, ModelPicker } from './SessionSettings';
+import { errorNotice } from '../chat/notices';
 
 export { CopyButton } from './CopyButton';
 
@@ -77,7 +81,7 @@ type Props = {
   readonly filesPanel?: { readonly open: boolean; readonly toggle: () => void };
   /** The properties panel: the header shows its toggle when given. */
   readonly propsPanel?: { readonly open: boolean; readonly toggle: () => void } | undefined;
-  /** The models that the provider harness reports (`session.models`). */
+  /** The models that the provider harness reports (`session.models`): the phone menu lists them. */
   readonly models?: readonly ModelChoice[] | null;
   /** Opens the check of the previous run (DL-182); the menu offers it when given (owner only). */
   readonly onCheckExecution?: (() => void) | undefined;
@@ -85,8 +89,12 @@ type Props = {
   readonly onMoveStarted?: (() => void) | undefined;
   /** The fleet calls: the menu offers "Fleet access…" when given (admin only). */
   readonly fleet?: FleetActions | undefined;
-  /** The header puts here the call that opens the menu on its model picker (the composer chip). */
-  readonly openModel?: RefObject<(() => void) | null> | undefined;
+  /** The fleet-control fact for the details of the menu (its argument closes the menu); `null`: none. */
+  readonly fleetControl?: ((close: () => void) => ReactNode) | null | undefined;
+  /** The composer shows its Resume bar: the header then has no Resume (one primary). */
+  readonly composerResume?: boolean | undefined;
+  /** The composer shows its model chip (desktop and tablet): the menu then has no model picker. */
+  readonly composerModel?: boolean | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -117,7 +125,9 @@ export function SessionHeader({
   onCheckExecution,
   onMoveStarted,
   fleet,
-  openModel,
+  fleetControl = null,
+  composerResume = false,
+  composerModel = false,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -161,14 +171,8 @@ export function SessionHeader({
   const hasModes = !guest && caps?.set_mode === true && caps.modes.length > 0;
   const hasModel = !guest && caps?.set_model === true;
   const hasAuto = !guest && caps?.resume === true;
-  const modelControl = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (openModel === undefined) return undefined;
-    openModel.current = () => openPicker(modelControl.current);
-    return () => {
-      openModel.current = null;
-    };
-  }, [openModel]);
+  // The Properties panel shows the facts and the mode while it is open; else the menu shows them.
+  const panelOpen = propsPanel?.open === true;
   const place = (
     <Place
       station={stationName(session.station_id, stations)}
@@ -186,6 +190,7 @@ export function SessionHeader({
   const retry = retryText(s.last_error?.retry_at ?? null, now);
   const showError =
     s.last_error != null && (s.state === 'exited' || s.state === 'lost' || s.current_run === null);
+  const errorWords = s.last_error ? errorNotice(s.last_error.code, s.last_error.message) : null;
 
   /** The confirm of "Open in terminal", inside a menu. */
   const openConfirm = (
@@ -193,41 +198,30 @@ export function SessionHeader({
     open: () => void,
     reset: () => void = () => setConfirm(null),
   ) => (
-    <div className="fd-sh-confirm" role="group" aria-label="Open in terminal">
-      <p className="fd-menu-text">
-        In the terminal, the board does not see approvals or prompts. The station holds this session
-        until you return it.
-        {flags.ended ? '' : ' The session stops first.'}
-      </p>
-      <button
-        type="button"
-        className="fd-primary"
-        disabled={busy !== null}
-        onClick={() => {
-          reset();
-          close();
-          open();
-        }}
-      >
-        Open in terminal
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          reset();
-          close();
-        }}
-      >
-        Cancel
-      </button>
-    </div>
+    <OpenConfirm
+      ended={flags.ended}
+      busy={busy !== null}
+      onOpen={() => {
+        reset();
+        close();
+        open();
+      }}
+      onCancel={() => {
+        reset();
+        close();
+      }}
+    />
   );
 
-  /** The items of the session menu that every layout has. */
-  const menuItems = (close: () => void) => (
-    <>
-      {guest ? null : (
+  /**
+   * The item groups of the session menu (a rule between two groups that have items): the session
+   * itself, the work, the settings that the screen shows nowhere else, then the end of the session.
+   */
+  const menuItems = (close: () => void) => {
+    const session_: ReactNode[] = [
+      guest ? null : (
         <button
+          key="rename"
           type="button"
           disabled={!canRename}
           onClick={() => {
@@ -237,91 +231,37 @@ export function SessionHeader({
         >
           <Icon of={Pencil} /> Rename
         </button>
-      )}
-      {flags.canStop && !guest ? (
-        <>
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => {
-              close();
-              run('stop', (a) => a.stop('graceful'));
-            }}
-          >
-            <Icon of={Power} /> Stop
-          </button>
-          <button
-            type="button"
-            className="fd-danger"
-            disabled={busy !== null}
-            onClick={() => setConfirm('kill')}
-          >
-            Force stop…
-          </button>
-        </>
-      ) : null}
-      {!guest && onCheckExecution !== undefined ? (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            onCheckExecution();
-          }}
-        >
-          <Icon of={Search} /> Check the previous run
-        </button>
-      ) : null}
-      {flags.drive && mayPrompt ? (
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => {
-            close();
-            run('nudge', (a) => a.send(s.current_run === null ? 'prompt' : 'follow_up', NUDGE));
-          }}
-        >
-          <Icon of={Send} /> Ask for a status update
-        </button>
-      ) : null}
-      {s.batch !== undefined && s.batch.size >= 2 && !guest ? (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            window.location.hash = formatHash({ name: 'compare', batch: s.batch?.batch_id ?? '' });
-          }}
-        >
-          <Icon of={GitCompare} /> Compare batch
-        </button>
-      ) : null}
-      {flags.live && actions?.canDrive === true ? (
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => {
-            close();
-            run('summarize', (a) => a.summarize());
-          }}
-        >
-          <Icon of={FileText} /> Summarize
-        </button>
-      ) : null}
-      {prProject !== undefined && !guest && actions?.canDrive === true && s.branch ? (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            setPrOpen(true);
-          }}
-        >
-          <Icon of={GitPullRequest} /> Open a pull request…
-        </button>
-      ) : null}
-      <button type="button" onClick={() => priority.toggle(ref)}>
+      ),
+      <button key="star" type="button" onClick={() => priority.toggle(ref)}>
         <Icon of={Star} /> {starred ? 'Unstar' : 'Star'}
-      </button>
-      {canShare(people) ? (
+      </button>,
+      canMove ? (
         <button
+          key="move"
+          type="button"
+          onClick={() => {
+            close();
+            setMoving(true);
+          }}
+        >
+          <Icon of={FolderGit2} /> Move to project…
+        </button>
+      ) : null,
+      canMoveStation ? (
+        <button
+          key="move-station"
+          type="button"
+          onClick={() => {
+            close();
+            setMovingStation(true);
+          }}
+        >
+          <Icon of={Server} /> Move to station…
+        </button>
+      ) : null,
+      canShare(people) ? (
+        <button
+          key="share"
           type="button"
           onClick={() => {
             close();
@@ -332,139 +272,210 @@ export function SessionHeader({
             });
           }}
         >
-          <Icon of={Users} /> Share session…
+          <Icon of={Share2} /> Share session…
         </button>
-      ) : null}
-      {canMove ? (
+      ) : null,
+      guest ? null : (
+        <SendToWall
+          key="wall"
+          target={{ kind: 'session', station_id: session.station_id, session_id: s.session_id }}
+          onOpen={close}
+        />
+      ),
+      canAccess ? (
         <button
-          type="button"
-          onClick={() => {
-            close();
-            setMoving(true);
-          }}
-        >
-          <Icon of={FolderGit2} /> Move to project…
-        </button>
-      ) : null}
-      {canMoveStation ? (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            setMovingStation(true);
-          }}
-        >
-          <Icon of={Server} /> Move to station…
-        </button>
-      ) : null}
-      {canAccess ? (
-        <button
+          key="access"
           type="button"
           onClick={() => {
             close();
             setAccessOpen(true);
           }}
         >
-          <Icon of={Users} /> Fleet access…
+          <Icon of={ShieldCheck} /> Fleet access…
         </button>
-      ) : null}
-      {guest ? null : (
-        <SendToWall
-          target={{ kind: 'session', station_id: session.station_id, session_id: s.session_id }}
-          onOpen={close}
+      ) : null,
+    ];
+    const work: ReactNode[] = [
+      flags.drive && mayPrompt ? (
+        <button
+          key="nudge"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            close();
+            run('nudge', (a) => a.send(s.current_run === null ? 'prompt' : 'follow_up', NUDGE));
+          }}
+        >
+          <Icon of={Send} /> Ask for a status update
+        </button>
+      ) : null,
+      flags.live && actions?.canDrive === true ? (
+        <button
+          key="summarize"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            close();
+            run('summarize', (a) => a.summarize());
+          }}
+        >
+          <Icon of={FileText} /> Summarize
+        </button>
+      ) : null,
+      !guest && onCheckExecution !== undefined ? (
+        <button
+          key="check"
+          type="button"
+          onClick={() => {
+            close();
+            onCheckExecution();
+          }}
+        >
+          <Icon of={Search} /> Check the previous run
+        </button>
+      ) : null,
+      s.batch !== undefined && s.batch.size >= 2 && !guest ? (
+        <button
+          key="compare"
+          type="button"
+          onClick={() => {
+            close();
+            window.location.hash = formatHash({ name: 'compare', batch: s.batch?.batch_id ?? '' });
+          }}
+        >
+          <Icon of={GitCompare} /> Compare batch
+        </button>
+      ) : null,
+      prProject !== undefined && !guest && actions?.canDrive === true && s.branch ? (
+        <button
+          key="pr"
+          type="button"
+          onClick={() => {
+            close();
+            setPrOpen(true);
+          }}
+        >
+          <Icon of={GitPullRequest} /> Open a pull request…
+        </button>
+      ) : null,
+      onNewShell && !guest ? (
+        <button
+          key="shell"
+          type="button"
+          onClick={() => {
+            close();
+            onNewShell();
+          }}
+        >
+          <Icon of={SquareTerminal} /> Open shell in workspace
+        </button>
+      ) : null,
+      // The phone has no Terminal menu: the handover and its way back are items of this menu.
+      !phone || guest || !terminal ? null : flags.held ? (
+        <button
+          key="return"
+          type="button"
+          disabled={!flags.live || actions?.canDrive !== true || busy !== null}
+          onClick={() => {
+            close();
+            terminal.onReturn();
+          }}
+        >
+          <Icon of={Undo2} /> Return to board control
+        </button>
+      ) : canTerminalOpen ? (
+        <button
+          key="open-terminal"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => setConfirm('open')}
+        >
+          <Icon of={SquareTerminal} /> Open in terminal…
+        </button>
+      ) : null,
+      terminal !== null && !terminal.available && !guest ? (
+        <ShellsOffNote key="shells-off" station={session.station_id} onOpen={close} />
+      ) : null,
+    ];
+    const settings: ReactNode[] = [
+      // The Properties panel holds the mode while it shows a mode; else this menu does.
+      hasModes && caps && (!panelOpen || !s.mode) ? (
+        <ModeLadder
+          key="mode"
+          modes={caps.modes}
+          current={s.mode}
+          enabled={settingsEnabled}
+          onSet={(m) => run('mode', (a) => a.setMode(m))}
         />
-      )}
-      {canArchive ? (
-        <button type="button" onClick={() => archived.toggle(ref)}>
+      ) : null,
+      // The composer model chip holds the model; where no chip shows (the phone, another tab, a
+      // subagent, a hidden composer) this menu does.
+      hasModel && (phone || !composerModel) ? (
+        <ModelPicker
+          key="model"
+          current={s.model}
+          models={models}
+          enabled={settingsEnabled}
+          onSet={(m) => run('model', (a) => a.setModel(m))}
+          onDone={close}
+        />
+      ) : null,
+      hasAuto ? (
+        <AutoContinueSwitch
+          key="auto"
+          checked={s.auto_continue}
+          enabled={flags.live && actions?.canDrive === true && busy === null}
+          onSet={(on) => run('auto-continue', (a) => a.setAutoContinue(on))}
+        />
+      ) : null,
+    ];
+    const end: ReactNode[] = [
+      flags.canStop && !guest ? (
+        <button
+          key="stop"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => {
+            close();
+            run('stop', (a) => a.stop('graceful'));
+          }}
+        >
+          <Icon of={Power} /> Stop
+        </button>
+      ) : null,
+      flags.canStop && !guest ? (
+        <button
+          key="kill"
+          type="button"
+          className="fd-danger"
+          disabled={busy !== null}
+          onClick={() => setConfirm('kill')}
+        >
+          <Icon of={OctagonAlert} /> Force stop…
+        </button>
+      ) : null,
+      canArchive ? (
+        <button key="archive" type="button" onClick={() => archived.toggle(ref)}>
           <Icon of={isArchived ? ArchiveRestore : Archive} /> {isArchived ? 'Unarchive' : 'Archive'}
         </button>
-      ) : null}
-      {hasModes || hasModel || hasAuto ? (
-        <>
-          <div className="fd-menu-sep" />
-          {hasModes && caps ? (
-            <ModeLadder
-              modes={caps.modes}
-              current={s.mode}
-              enabled={settingsEnabled}
-              onSet={(m) => run('mode', (a) => a.setMode(m))}
-            />
-          ) : null}
-          {hasModel ? (
-            <ModelPicker
-              current={s.model}
-              models={models}
-              enabled={settingsEnabled}
-              onSet={(m) => run('model', (a) => a.setModel(m))}
-              controlRef={(control) => {
-                modelControl.current = control;
-              }}
-            />
-          ) : null}
-          {hasAuto ? (
-            <label className="fd-auto-continue">
-              <input
-                type="checkbox"
-                checked={s.auto_continue}
-                disabled={!flags.live || actions?.canDrive !== true || busy !== null}
-                onChange={(event) => {
-                  const on = event.currentTarget.checked;
-                  run('auto-continue', (a) => a.setAutoContinue(on));
-                }}
-              />{' '}
-              Continue after a station restart
-            </label>
-          ) : null}
-        </>
-      ) : null}
-      {onNewShell && !guest ? (
-        <>
-          <div className="fd-menu-sep" />
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              onNewShell();
-            }}
-          >
-            <Icon of={SquareTerminal} /> Open shell in workspace
-          </button>
-        </>
-      ) : null}
-      {terminal !== null && !terminal.available && !guest ? (
-        <>
-          <div className="fd-menu-sep" />
-          <p className="fd-menu-text">
-            Shells are off on this station. Set allow_shell = true in station.toml to open a
-            terminal.
-          </p>
-        </>
-      ) : null}
-    </>
-  );
+      ) : null,
+    ];
+    return menuGroups([session_, work, settings, end]);
+  };
 
-  /** The session menu: the confirms replace the items; the phone adds the facts and the terminal item. */
+  /** The session menu: the confirms replace the items; the phone adds the facts. */
   const menuBody = (close: () => void) => {
     if (confirm === 'kill') {
       return (
-        <div className="fd-sh-confirm" role="group" aria-label="Force stop">
-          <p className="fd-menu-text">Force stop kills the provider process. Continue?</p>
-          <button
-            type="button"
-            className="fd-danger"
-            disabled={busy !== null}
-            onClick={() => {
-              setConfirm(null);
-              close();
-              run('stop', (a) => a.stop('kill'));
-            }}
-          >
-            Force stop
-          </button>
-          <button type="button" onClick={() => setConfirm(null)}>
-            Cancel
-          </button>
-        </div>
+        <KillConfirm
+          busy={busy !== null}
+          onKill={() => {
+            setConfirm(null);
+            close();
+            run('stop', (a) => a.stop('kill'));
+          }}
+          onCancel={() => setConfirm(null)}
+        />
       );
     }
     if (confirm === 'open' && terminal) return openConfirm(close, terminal.onOpen);
@@ -484,28 +495,12 @@ export function SessionHeader({
               {place}
             </div>
             <div className="fd-menu-sep" />
-            <Details session={session} now={now} />
-            <div className="fd-menu-sep" />
-            {guest ? null : flags.held && terminal ? (
-              <button
-                type="button"
-                disabled={!flags.live || actions?.canDrive !== true || busy !== null}
-                onClick={() => {
-                  close();
-                  terminal.onReturn();
-                }}
-              >
-                <Icon of={Undo2} /> Return to board control
-              </button>
-            ) : !flags.held && canTerminalOpen && terminal ? (
-              <button type="button" disabled={busy !== null} onClick={() => setConfirm('open')}>
-                <Icon of={SquareTerminal} /> Open in terminal…
-              </button>
-            ) : null}
           </>
-        ) : (
+        ) : null}
+        {/* The Properties panel shows the facts while it is open. */}
+        {panelOpen ? null : (
           <>
-            <Details session={session} now={now} />
+            <Details session={session} now={now} fleet={fleetControl?.(close)} />
             <div className="fd-menu-sep" />
           </>
         )}
@@ -660,7 +655,7 @@ export function SessionHeader({
               </button>
             )
           ) : null}
-          {flags.canResume && !guest ? (
+          {flags.canResume && !guest && !composerResume ? (
             phone ? (
               <button
                 type="button"
@@ -701,12 +696,13 @@ export function SessionHeader({
           ) : (
             terminalMenu
           )}
+          {/* §4.5: folder-open; "Files panel", so that it is not a second "Files" next to the tab. */}
           {filesPanel ? (
             <button
               type="button"
               className="fd-iconbtn"
-              aria-label="Files"
-              title="Files"
+              aria-label="Files panel"
+              title="Files panel"
               aria-pressed={filesPanel.open}
               onClick={filesPanel.toggle}
             >
@@ -743,10 +739,12 @@ export function SessionHeader({
           Ending the terminal, then resuming the session…
         </p>
       ) : null}
-      {showError && s.last_error ? (
-        <p className="fd-sh-strip" data-tone="hazard" role="status">
-          <Icon of={TriangleAlert} size={14} /> {s.last_error.code}: {s.last_error.message}
-          {retry ? ` · ${retry}` : ''}
+      {/* The words of the error (`errorNotice`, the words of the chat); its code stays in the
+          title (never raw text on the strip). The retry is a sentence of its own. */}
+      {showError && errorWords ? (
+        <p className="fd-sh-strip" data-tone="hazard" role="status" title={errorWords.title}>
+          <Icon of={TriangleAlert} size={14} /> {errorWords.text}
+          {retry ? ` ${retry.charAt(0).toUpperCase()}${retry.slice(1)}.` : ''}
         </p>
       ) : null}
       {outcome ? (

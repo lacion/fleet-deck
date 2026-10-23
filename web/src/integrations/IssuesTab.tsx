@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { IssueSummary, Project, StationView } from '../gen';
 import { Icon } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import { RefreshCw } from './icons';
 import type { IntegrationActions } from './actions';
 import { IssuePreview } from './IssuePreview';
@@ -53,25 +55,8 @@ export function IssueRows({
   readonly onOpen: (key: string) => void;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading the issues…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-int-state">
-        <p role="alert" className="fd-note fd-int-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text="Loading the issues…" />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   if (state.value.length === 0) {
     return <p className="fd-empty">{filtered ? 'No issue matches.' : 'No issues.'}</p>;
   }
@@ -154,8 +139,8 @@ export function IssuesTab({
           <span className="fd-vh">Search the issues</span>
           <input
             type="search"
-            aria-label="Search the issues"
-            placeholder="Search the issues"
+            aria-label="Search issues"
+            placeholder="Search issues"
             autoComplete="off"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

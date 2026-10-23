@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SettingsProvider, type SettingsEnv } from '../settings/context';
 import { card, station } from '../testing/fleet';
+import { archived as archivedSet } from '../ui/archive';
 import type { Route } from './routes';
 import { Sidebar } from './Sidebar';
 
@@ -101,7 +102,7 @@ describe('the sidebar navigation (S1)', () => {
     expect(render({ name: 'fleet' })).toContain('<details class="fd-sidebar-more">');
   });
 
-  test('the footer has the preferences, and the Account menu has the two actions', () => {
+  test('the footer has the preferences, and the Account menu has the switches and actions', () => {
     const html = render(
       { name: 'fleet' },
       { chrome: { ...chrome, addDevice: (() => {}) as never } },
@@ -110,6 +111,9 @@ describe('the sidebar navigation (S1)', () => {
     expect(foot.indexOf('fd-sidebar-prefs')).toBeLessThan(foot.indexOf('fd-sidebar-account'));
     const menu = foot.slice(foot.indexOf('<details class="fd-menu"'));
     expect(menu).toContain('<summary class="fd-iconbtn" aria-label="Account">');
+    expect(menu).toContain('Signed in as');
+    expect(menu).toContain('Compact cards');
+    expect(menu).toContain('Reduce motion');
     expect(menu).toContain('Add a device');
     expect(menu).toContain('Log out');
     // Outside the menu, the footer has neither action.
@@ -134,7 +138,7 @@ describe('the sidebar navigation (S1)', () => {
     expect(metas[0]).toContain('feat/x');
     expect(metas[1]).toContain('app');
   });
-  test('a phone row starts line 2 with the callsign, then the focus or the model and branch', () => {
+  test('a phone row: line 2 is the focus or the model and branch, with no callsign', () => {
     const list = (sessions: ReturnType<typeof card>[]) =>
       renderToStaticMarkup(
         <Sidebar
@@ -158,12 +162,12 @@ describe('the sidebar navigation (S1)', () => {
     ]);
     const lines = [...html.matchAll(/<span class="fd-srow-line">(.*?)<\/a>/g)].map((m) => m[1]);
     expect(lines.length).toBe(3);
-    expect(lines[0]).toStartWith('<span class="fd-srow-call fd-callsign">otter-n1rr</span>');
-    expect(lines[0]).toContain('feat/x');
-    expect(lines[1]).toStartWith('<span class="fd-srow-call fd-callsign">heron-k2</span>');
-    expect(lines[1]).toContain('<span class="fd-focus" title="Fixing the shim">');
-    // A session without a callsign shows no empty callsign.
-    expect(lines[2]).not.toContain('fd-srow-call');
+    // The Sessions tab is the dense list of concept B: the callsign stays on the Fleet strips.
+    expect(html).not.toContain('fd-callsign');
+    expect(lines.some((l) => l?.includes('feat/x'))).toBe(true);
+    expect(
+      lines.some((l) => l?.startsWith('<span class="fd-focus" title="Fixing the shim">')),
+    ).toBe(true);
     // The desktop sidebar keeps its one-line rows: no callsign line.
     expect(
       render({ name: 'fleet' }, {}, [
@@ -212,5 +216,121 @@ describe('the sidebar navigation (S1)', () => {
     expect(settings).toBeGreaterThan(-1);
     expect(settings).toBeLessThan(foot.indexOf('fd-sidebar-prefs'));
     expect(foot.indexOf('fd-sidebar-prefs')).toBeLessThan(foot.indexOf('fd-sidebar-account'));
+  });
+
+  test('the Stations link has no total; it names the offline stations only', () => {
+    const html = render();
+    const link = html.slice(
+      html.indexOf('href="#/stations"'),
+      html.indexOf('</a>', html.indexOf('href="#/stations"')),
+    );
+    expect(link).not.toContain('fd-count');
+    expect(link).not.toContain('offline');
+    const down = renderToStaticMarkup(
+      <Sidebar
+        sessions={[card('s1')]}
+        stations={[station(), station('station-b', { reachable: false })]}
+        route={{ name: 'fleet' }}
+        terminalCount={0}
+        chrome={chrome}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(down).toContain('Stations<span class="fd-badge" data-tone="hazard">1 offline</span>');
+  });
+
+  test('a station without a session has no group; an ended-only group shows no 0 count', () => {
+    const html = renderToStaticMarkup(
+      <Sidebar
+        sessions={[card('e1', 'ended', 'station-a')]}
+        stations={[station(), station('station-b')]}
+        route={{ name: 'fleet' }}
+        terminalCount={0}
+        chrome={chrome}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(html).not.toContain('data-station="station-b"');
+    const alpha = html.slice(html.indexOf('data-station="station-a"'));
+    const title = alpha.slice(0, alpha.indexOf('</h3>'));
+    expect(title).not.toContain('fd-count');
+    expect(title).toContain('<span class="fd-vh">, 1 session on Alpha</span>');
+    expect(alpha).toContain('Ended <span class="fd-count">1</span>');
+  });
+
+  test('the Ended fold opens while it holds the open session', () => {
+    const sessions = [card('w1', 'working'), card('e1', 'ended')];
+    const closed = render({ name: 'fleet' }, {}, sessions);
+    expect(closed).toContain('<details class="fd-sended">');
+    const open = render(
+      { name: 'session', station: 'station-a', session: 'e1', tab: 'chat' },
+      {},
+      sessions,
+    );
+    expect(open).toContain('<details class="fd-sended" open="">');
+    expect(open).toMatch(
+      /<a href="#\/s\/station-a\/e1[^"]*" class="fd-srow fd-selbar" data-status="ended" aria-current="page">/,
+    );
+  });
+
+  test('Archived is a disclosure row like Ended: chevron, name and count pill', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: { getItem: () => null, setItem: () => {} },
+    });
+    archivedSet.add(['station-a/e1', 'station-a/e2']);
+    try {
+      const html = render({ name: 'fleet' }, {}, [
+        card('w1', 'working'),
+        card('e1', 'ended'),
+        card('e2', 'lost'),
+      ]);
+      const row = html.slice(html.indexOf('data-group="archived"'));
+      expect(row).toContain(
+        '<button type="button" class="fd-sidebar-archived" aria-expanded="false">',
+      );
+      expect(row).toContain('<span class="fd-sidebar-chev">');
+      expect(row).toContain('Archived <span class="fd-count">2</span>');
+      // No icon between the chevron and the name: the label starts where "Ended" starts.
+      const button = row.slice(0, row.indexOf('</button>'));
+      expect(button.match(/<svg/g)?.length).toBe(1);
+      expect(html).not.toContain('Archived (');
+      // The fold opens while it holds the open session.
+      const open = render(
+        { name: 'session', station: 'station-a', session: 'e1', tab: 'chat' },
+        {},
+        [card('w1', 'working'), card('e1', 'ended'), card('e2', 'lost')],
+      );
+      expect(open).toContain('class="fd-sidebar-archived" aria-expanded="true"');
+      expect(open).toContain('data-status="ended" aria-current="page"');
+    } finally {
+      archivedSet.remove(['station-a/e1', 'station-a/e2']);
+    }
+  });
+
+  test('the phone list orders a station by last activity; the desktop keeps the status order', () => {
+    const sessions = [
+      card('idle-new', 'idle', 'station-a', { updated_at: 9 }),
+      card('work-old', 'working', 'station-a', { updated_at: 1 }),
+    ];
+    const order = (variant: 'full' | 'list') =>
+      [
+        ...renderToStaticMarkup(
+          <Sidebar
+            sessions={sessions}
+            stations={[station()]}
+            route={{ name: 'fleet' }}
+            variant={variant}
+            terminalCount={0}
+            chrome={chrome}
+            onNavigate={() => {}}
+            onOpenTerminals={() => {}}
+          />,
+        ).matchAll(/href="#\/s\/station-a\/([a-z-]+)/g),
+      ].map((m) => m[1]);
+    expect(order('list')).toEqual(['idle-new', 'work-old']);
+    expect(order('full')).toEqual(['work-old', 'idle-new']);
   });
 });

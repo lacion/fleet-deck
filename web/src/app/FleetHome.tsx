@@ -12,6 +12,7 @@ import {
   type FleetFilter,
   filterFleet,
   fleetVersion,
+  isLiveSession,
   repoNames,
   stationName,
 } from '../board/fleet';
@@ -24,12 +25,16 @@ import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
+import { FleetSentence } from '../views/FleetSentence';
+import { type StatusFilter, StatusSeg, statusMatches } from '../views/StatusSeg';
+import { stationOrder } from './sessions';
 import type { SessionActions } from '../session/commands';
 import { useProjects } from '../integrations/context';
 import { canShare, usePeople } from '../sharing/context';
 import { openShare } from '../sharing/shareStore';
 import { useDismiss } from '../ui/dismiss';
-import { CircleHelp, Icon, ListFilter, Plus, Search, Users, X } from '../ui/icons';
+import { CircleHelp, Ellipsis, Icon, ListFilter, Plus, Search, Share2, X } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { archived } from '../ui/archive';
 import { sessionRef } from '../ui/localSet';
 
@@ -108,30 +113,36 @@ function writeGroup(group: Group) {
   }
 }
 
+/** The provider words of the filters; a session without a known provider is "Other" (§1 rule 7:
+ * no "unknown"). */
 const PROVIDER_NAME: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
-  unknown: 'Unknown',
+  unknown: 'Other',
 };
 
-/** The status filter of the page header (DESIGN-SYSTEM §4.3); not stored. */
-export type StatusFilter = 'all' | 'working' | 'idle' | 'needs_you';
+/** The order of the provider chips: Claude, Codex, then Other. */
+const PROVIDER_ORDER: readonly string[] = ['claude', 'codex', 'unknown'];
 
-const STATUS_FILTERS: readonly { readonly id: StatusFilter; readonly label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'working', label: 'Working' },
-  { id: 'idle', label: 'Idle' },
-  { id: 'needs_you', label: 'Needs you' },
-];
-
-/** True when `s` passes the status filter: Working holds a running, checking or queued
- * session; Needs you holds a session with an open request. */
-export function statusMatches(s: DeckSession, status: StatusFilter): boolean {
-  if (status === 'all') return true;
-  if (status === 'needs_you') return s.status === 'needs_you' || s.summary.open_requests.length > 0;
-  if (status === 'idle') return s.status === 'idle';
-  return s.status === 'working' || s.status === 'verifying' || s.status === 'queued';
+/**
+ * The providers of the sessions, as the provider filter keys them (`unknown` for none), in the
+ * chip order: the Provider row offers only a provider that is on the board (as the Repository
+ * row), never a chip that filters to an empty board.
+ */
+export function providerKeys(sessions: readonly DeckSession[]): string[] {
+  const keys = [...new Set(sessions.map((s) => s.summary.provider ?? 'unknown'))];
+  const rank = (key: string) => {
+    const i = PROVIDER_ORDER.indexOf(key);
+    return i < 0 ? PROVIDER_ORDER.length : i;
+  };
+  return keys.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
+
+// The status filter and the summary sentence are the Watch header's too (views/): one control and
+// one sentence for one meaning.
+export { clearText } from '../views/FleetSentence';
+export type { StatusFilter } from '../views/StatusSeg';
+export { statusMatches } from '../views/StatusSeg';
 
 /**
  * The sessions of the home under the filters: `scoped` without the status filter (the usage
@@ -146,11 +157,6 @@ export function scopeFleet(
 ): { readonly scoped: readonly DeckSession[]; readonly visible: readonly DeckSession[] } {
   const scoped = filterFleet(shown, stations, filter);
   return { scoped, visible: scoped.filter((s) => statusMatches(s, status)) };
-}
-
-/** The header words when nothing needs you: "All clear" only without a conflict (§4.4). */
-export function clearText(conflicts: number): string {
-  return conflicts > 0 ? 'Nothing needs you' : 'All clear';
 }
 
 /** One active filter, as the removable chip under the toolbar shows it. */
@@ -173,7 +179,7 @@ export function activeFilters(
       key: 'provider',
       text: `Provider: ${PROVIDER_NAME[filter.provider] ?? filter.provider}`,
     });
-  if (filter.repo !== ALL) list.push({ key: 'repo', text: `Repo: ${filter.repo}` });
+  if (filter.repo !== ALL) list.push({ key: 'repo', text: `Repository: ${filter.repo}` });
   if (archivedOn) list.push({ key: 'archived', text: 'Archived shown' });
   return list;
 }
@@ -186,10 +192,38 @@ export function clearFilter(filter: FleetFilter, key: ActiveFilter['key']): Flee
   return filter;
 }
 
-/** The Filters menu: a `<details>` popover that Escape or a press outside closes. */
+/** The widest Filters menu (home.css `.fd-filters-menu .fd-menu-body`). */
+const FILTERS_W = 480;
+
+/**
+ * Where the Filters menu hangs from its button: from its left edge when the menu fits in the main
+ * column there, else from its right edge (the button is near the end of the header).
+ */
+export function filtersAlign(
+  button: { readonly left: number },
+  column: { readonly right: number },
+  viewport: number,
+): 'start' | 'end' {
+  const width = Math.min(FILTERS_W, viewport - 32);
+  return button.left + width <= column.right ? 'start' : 'end';
+}
+
+/** The Filters menu: a `<details>` popover that Escape or a press outside closes. It hangs from
+ * its button (never from the edge of the header); its trigger has the trailing chevron of every
+ * menu trigger of the board (`summary[data-variant=toggle]`). */
 function FiltersMenu({ active, children }: { active: number; children: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
+  const [align, setAlign] = useState<'start' | 'end'>('end');
+  // The click on the summary comes before the toggle: the menu opens on its side at once.
+  const place = () => {
+    const details = ref.current;
+    if (details === null || details.open) return;
+    const button = details.querySelector('summary')?.getBoundingClientRect();
+    const column = details.closest('.fd-home-main')?.getBoundingClientRect();
+    if (button === undefined || column === undefined) return;
+    setAlign(filtersAlign(button, column, window.innerWidth));
+  };
   const close = () => {
     if (ref.current) ref.current.open = false;
   };
@@ -203,13 +237,20 @@ function FiltersMenu({ active, children }: { active: number; children: ReactNode
   return (
     <details
       className="fd-menu fd-filters-menu"
+      data-align={align}
       ref={ref}
       onKeyDown={onKeyDown}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="fd-ghost fd-sm">
+      <summary className="fd-ghost fd-sm" data-variant="toggle" onClick={place}>
         <Icon of={ListFilter} size={14} />
-        {active > 0 ? `Filters (${active})` : 'Filters'}
+        Filters
+        {active > 0 ? (
+          <>
+            {' '}
+            <span className="fd-count">{active}</span>
+          </>
+        ) : null}
       </summary>
       <div className="fd-menu-body fd-filters" role="group" aria-label="Fleet filters">
         {children}
@@ -264,19 +305,23 @@ export function FleetHome({
   const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
   const { scoped, visible } = scopeFleet(shown, stations, filter, phone ? 'all' : status);
   const repos = repoNames(shown);
+  const providers = providerKeys(shown);
   const contested = contestedBy(list ?? []);
   const conflictCount = list?.length ?? 0;
-  const stationIds = [
-    ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
-  ].sort();
+  // The station chips follow the order of the lanes (the deck's station order), not the ids.
+  const stationIds = stationOrder(
+    [...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)],
+    stations,
+  );
   // An open request counts also when its station became unreachable (the rail still shows it).
   const needsYou = sessions.filter(
     (s) => s.status === 'needs_you' || s.summary.open_requests.length > 0,
   ).length;
-  const stationCount = stations.length;
-  const unknownProvider = sessions.some(
-    (s) => s.summary.provider === null || s.summary.provider === 'unknown',
-  );
+  // The header sentence (§4.3): the live sessions, and the stations that run one (an online
+  // station without a live session has a lane, but runs none of them). Ended and archived
+  // sessions have their own rows (the Ended folds, Filters).
+  const live = sessions.filter(isLiveSession);
+  const liveStations = new Set(live.map((s) => s.station_id)).size;
   const filtered =
     (!phone && status !== 'all') ||
     filter.station !== ALL ||
@@ -284,7 +329,7 @@ export function FleetHome({
     filter.repo !== ALL ||
     filter.search.trim() !== '';
 
-  const chip = (label: string, selected: boolean, pick: () => void, key: string) => (
+  const chip = (label: ReactNode, selected: boolean, pick: () => void, key: string) => (
     <button key={key} type="button" className="fd-chip" aria-pressed={selected} onClick={pick}>
       {label}
     </button>
@@ -319,40 +364,32 @@ export function FleetHome({
             : null}
         </>,
       )}
-      {row(
-        'Provider',
-        <>
-          {chip(
-            'All',
-            filter.provider === ALL,
-            () => setFilter({ ...filter, provider: ALL }),
-            'p-all',
-          )}
-          {chip(
-            'Claude',
-            filter.provider === 'claude',
-            () => setFilter({ ...filter, provider: 'claude' }),
-            'claude',
-          )}
-          {chip(
-            'Codex',
-            filter.provider === 'codex',
-            () => setFilter({ ...filter, provider: 'codex' }),
-            'codex',
-          )}
-          {unknownProvider
-            ? chip(
-                'Unknown',
-                filter.provider === 'unknown',
-                () => setFilter({ ...filter, provider: 'unknown' }),
-                'unknown',
-              )
-            : null}
-        </>,
-      )}
+      {providers.length >= 2 || filter.provider !== ALL
+        ? row(
+            'Provider',
+            <>
+              {chip(
+                'All',
+                filter.provider === ALL,
+                () => setFilter({ ...filter, provider: ALL }),
+                'p-all',
+              )}
+              {[
+                ...new Set([...providers, ...(filter.provider === ALL ? [] : [filter.provider])]),
+              ].map((key) =>
+                chip(
+                  PROVIDER_NAME[key] ?? key,
+                  filter.provider === key,
+                  () => setFilter({ ...filter, provider: key }),
+                  key,
+                ),
+              )}
+            </>,
+          )
+        : null}
       {repos.length >= 2 || filter.repo !== ALL
         ? row(
-            'Repo',
+            'Repository',
             <>
               {chip('All', filter.repo === ALL, () => setFilter({ ...filter, repo: ALL }), 'r-all')}
               {[...new Set([...repos, ...(filter.repo === ALL ? [] : [filter.repo])])].map((name) =>
@@ -366,11 +403,16 @@ export function FleetHome({
             </>,
           )
         : null}
+      {/* The row says Archived, so its one chip shows "Show" and the count; a hidden word keeps
+          its name whole ("Show archived 30", §5). */}
       {archivedCount > 0
         ? row(
             'Archived',
             chip(
-              `Archived (${archivedCount})`,
+              <>
+                Show <span className="fd-vh">archived </span>
+                <span className="fd-count">{archivedCount}</span>
+              </>,
               showArchived,
               () => setArchivedOn(!archivedOn),
               'archived',
@@ -385,43 +427,45 @@ export function FleetHome({
     setGroup(next);
     writeGroup(next);
   };
+  const shareable = canShare(people);
+  const shareBoard = () =>
+    openShare({ kind: 'board', target: '', label: 'A link to every session on this deck.' });
+  const waiting = sessions.some((s) => s.summary.open_requests.length > 0);
+  // The phone has no tooltips: Share board and the notification switch are the rows of one menu
+  // (§4.8). With a request, the switch is in the head of the Needs you strip instead.
+  const phoneMenu =
+    !shareable && waiting ? null : (
+      <Menu summary={<Icon of={Ellipsis} />} summaryClass="fd-iconbtn" label="Board options">
+        {(close) => (
+          <>
+            {shareable ? (
+              <button
+                type="button"
+                className="fd-home-share"
+                onClick={() => {
+                  close();
+                  shareBoard();
+                }}
+              >
+                <Icon of={Share2} /> Share board…
+              </button>
+            ) : null}
+            <span className="fd-home-bell" ref={setBellSlot} />
+          </>
+        )}
+      </Menu>
+    );
   const header = (
     <header className="fd-home-head">
       <div className="fd-home-titles">
         <h1 className="fd-page-title">Fleet</h1>
         <p className="fd-home-counts">
-          <span>{sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}</span>
-          <span className="fd-home-on">
-            {' '}
-            on <span>{stationCount === 1 ? '1 station' : `${stationCount} stations`}</span>
-          </span>
-          .{' '}
-          {/* "Nothing needs you." next to a conflict is the calm part: a narrow header drops it
-              first (home.css), so that the conflict stays readable. */}
-          <span
-            className="fd-home-state"
-            data-calm={needsYou === 0 && conflictCount > 0 ? 'true' : undefined}
-          >
-            {needsYou === 0 ? (
-              <span className="fd-home-needs" data-clear="true">
-                {clearText(conflictCount)}
-              </span>
-            ) : (
-              <span className="fd-home-needs">
-                {needsYou === 1 ? '1 needs you' : `${needsYou} need you`}
-              </span>
-            )}
-            .
-          </span>
-          {conflictCount > 0 ? (
-            <>
-              {' '}
-              <span className="fd-home-conf">
-                {conflictCount === 1 ? '1 conflict' : `${conflictCount} conflicts`}
-              </span>
-              .
-            </>
-          ) : null}
+          <FleetSentence
+            live={live.length}
+            stations={liveStations}
+            needsYou={needsYou}
+            conflicts={conflictCount}
+          />
           {limit === null ? null : (
             <>
               {' '}
@@ -432,26 +476,15 @@ export function FleetHome({
           )}
         </p>
       </div>
-      {phone ? null : (
-        <div className="fd-seg fd-home-status" role="group" aria-label="Status">
-          {STATUS_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              aria-pressed={status === f.id}
-              onClick={() => setStatus(f.id)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {phone ? null : <StatusSeg value={status} onChange={setStatus} className="fd-home-status" />}
       <div className="fd-field fd-home-search">
         <Icon of={Search} />
         <input
           type="search"
-          aria-label="Filter sessions"
-          placeholder="Filter sessions"
+          id="fd-home-search"
+          aria-label="Search sessions"
+          aria-keyshortcuts="/"
+          placeholder="Search sessions"
           value={filter.search}
           onChange={(event) => setFilter({ ...filter, search: event.target.value })}
         />
@@ -464,31 +497,38 @@ export function FleetHome({
           value={group}
           onChange={(event) => pickGroup(event.target.value as Group)}
         >
-          <option value="station">Group: Station</option>
-          <option value="repo">Group: Repo</option>
-          {hasProjects ? <option value="project">Group: Project</option> : null}
+          <option value="station">Group by station</option>
+          <option value="repo">Group by repository</option>
+          {hasProjects ? <option value="project">Group by project</option> : null}
         </select>
       )}
-      {canShare(people) ? (
-        <button
-          type="button"
-          className={phone ? 'fd-iconbtn fd-home-share' : 'fd-ghost fd-sm fd-home-share'}
-          title="Share board…"
-          onClick={() =>
-            openShare({ kind: 'board', target: '', label: 'Every session of the deck' })
-          }
-        >
-          <Icon of={Users} size={14} /> <span className="fd-home-share-text">Share board…</span>
-        </button>
-      ) : null}
-      {/* With no request the Needs you panel is absent: its notification switch moves here. */}
-      <span className="fd-home-bell" ref={setBellSlot} />
+      {phone ? (
+        phoneMenu
+      ) : (
+        <>
+          {shareable ? (
+            <button
+              type="button"
+              className="fd-ghost fd-sm fd-home-share"
+              title="Share board…"
+              aria-label="Share board…"
+              onClick={shareBoard}
+            >
+              <Icon of={Share2} size={14} />{' '}
+              <span className="fd-home-share-text" aria-hidden="true">
+                Share board…
+              </span>
+              <span className="fd-home-share-short" aria-hidden="true">
+                Share
+              </span>
+            </button>
+          ) : null}
+          {/* With no request the Needs you panel is absent: its notification switch moves here. */}
+          <span className="fd-home-bell" ref={setBellSlot} />
+        </>
+      )}
     </header>
   );
-  const radar =
-    conflicts === undefined ? null : (
-      <ConflictRadar list={list} problem={problem} stations={stations} onOpen={onOpen} />
-    );
   const activeRow =
     active.length === 0 && !filtered ? null : (
       <div className="fd-active-filters">
@@ -522,6 +562,7 @@ export function FleetHome({
       variant={variant}
       freshness={freshness}
       bellSlot={bellSlot}
+      bellRow={phone}
     />
   );
   const empty =
@@ -561,6 +602,18 @@ export function FleetHome({
           },
         ];
   });
+  const radar =
+    conflicts === undefined ? null : (
+      <ConflictRadar list={list} problem={problem} stations={stations} onOpen={onOpen} />
+    );
+  // The top of the ops panel (DESIGN-SYSTEM §4.4): usage and the conflict radar. The usage glance
+  // steps aside while the Usage tab is open; the phone shows the radar under the Needs you strip.
+  const lead = (
+    <>
+      {phone || openTab === 'usage' ? null : <UsageGlance sessions={scoped} stations={stations} />}
+      {phone ? null : radar}
+    </>
+  );
   const panel = (
     <HomePanel
       hasAssign={assign !== undefined}
@@ -581,20 +634,23 @@ export function FleetHome({
       onState={setOpenTab}
       wide={wide}
       waiting={waitingMail}
+      lead={wide ? lead : undefined}
     />
   );
-  // The ops panel (DESIGN-SYSTEM §4.4): usage, the conflict radar, then (wide) Mail & tasks and
-  // the Activity and Assign buttons, or the tabs. The usage glance steps aside while the Usage tab
-  // is open. The phone shows the radar under the Needs you strip instead, above the lanes.
+  // The ops panel: the lead, then (wide) the scrolling sections and the fixed foot of Activity,
+  // Assign and All usage (HomePanel), or the tabs.
   const ops = (
-    <div className="fd-ops" data-tab={openTab ?? undefined}>
-      {phone || openTab === 'usage' ? null : <UsageGlance sessions={scoped} stations={stations} />}
-      {phone ? null : radar}
+    <div className="fd-ops" data-tab={openTab ?? undefined} data-wide={wide ? 'true' : undefined}>
+      {wide ? null : lead}
       {panel}
     </div>
   );
+  // Without a filter, the station board shows every online station, an empty one too (§4.4).
+  const spawnAt =
+    guest || onSpawnWith === undefined
+      ? undefined
+      : (stationId: string) => onSpawnWith(stationId, '');
 
-  const waiting = sessions.some((s) => s.summary.open_requests.length > 0);
   if (phone) {
     return (
       <div className="fd-home" data-layout="phone">
@@ -612,6 +668,8 @@ export function FleetHome({
             sessionActions={sessionActions}
             extras={cardExtras}
             foldEnded
+            emptyLanes={!filtered}
+            onSpawnAt={spawnAt}
           />
         )}
         {ops}
@@ -634,6 +692,8 @@ export function FleetHome({
             sessionActions={sessionActions}
             extras={cardExtras}
             foldEnded
+            emptyLanes={!filtered && group === 'station' && visible.length > 0}
+            onSpawnAt={spawnAt}
           />
           {empty}
         </div>

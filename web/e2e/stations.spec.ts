@@ -52,15 +52,17 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   await openMore(page, 'Stations');
   const card = page.locator('[data-station="st-alpha"]');
   await expect(card).toContainText('online');
-  await expect(card).toContainText('0 of 4 sessions');
-  await expect(card.locator('.fd-slots')).toBeVisible();
+  // No session runs: the free slots read as words, as in the fleet lane (no empty ticks).
+  await expect(card).toContainText('4 free session slots');
+  await expect(card.locator('.fd-slots')).toHaveCount(0);
   // The version, the ids and the key sit in the Details fold.
   await expect(card.getByText('Station ID')).toBeHidden();
   await card.getByText('Details', { exact: true }).click();
   await expect(card.locator('.fd-facts')).toContainText('0.2.0');
   await expect(card.locator('.fd-facts')).toContainText('st-alpha');
   await expect(card.locator('[data-instance="personal"]')).toHaveText('Claude 2.1.5signed in');
-  await expect(card.locator('[data-instance="work"]')).toHaveText('Codexsign-in unknown');
+  // An unknown sign-in state is absent (DESIGN-SYSTEM principle 7): only the name shows.
+  await expect(card.locator('[data-instance="work"]')).toHaveText('Codex');
   expect(await fitsWidth(page)).toBe(true);
 
   await page.getByRole('button', { name: 'Add station' }).click();
@@ -138,8 +140,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await openMore(page, 'Stations');
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
-  await dialog.getByText('Other ways').click();
-  await dialog.getByRole('button', { name: 'Connect to a station that listens' }).click();
+  await dialog.getByRole('button', { name: /A station that listens for this deck/ }).click();
   const pair = dialog.getByRole('button', { name: 'Add station' });
   await expect(pair).toBeDisabled();
   await dialog.getByLabel('Station invitation').fill('fdinv1_from_station');
@@ -152,7 +153,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await expect(dialog.getByLabel('Station invitation')).toHaveValue('');
   await dialog.getByRole('button', { name: 'Close' }).click();
   const box = page.locator('[data-station="st-box"]');
-  await expect(box).toContainText('Deck dials station');
+  await expect(box).toContainText('This deck connects to the station');
   await expect(box).toContainText('192.168.1.20:7443');
   await expect(box).toContainText('Reported when the station links to this deck.');
 
@@ -169,9 +170,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await expect(alpha).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
   await expect(
-    page
-      .getByRole('navigation', { name: 'More pages' })
-      .getByRole('link', { name: /^Stations\s*1$/ }),
+    page.getByRole('navigation', { name: 'More pages' }).getByRole('link', { name: 'Stations' }),
   ).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
 });
@@ -188,7 +187,7 @@ test('a login without the admin scope sees the report but no pairing controls', 
   await expect(page.getByText('Pairing needs the admin scope.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add station' })).toHaveCount(0);
   await expect(page.getByLabel('Station actions')).toHaveCount(0);
-  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 of 4 sessions');
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('4 free session slots');
 });
 
 const worktree = (extra: Partial<WorktreeInfo>): WorktreeInfo => ({
@@ -314,7 +313,7 @@ test('a login without the admin scope has no worktree section', async ({ page })
   await deck.install(page);
   await logIn(page);
   await openMore(page, 'Stations');
-  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 of 4 sessions');
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('4 free session slots');
   await expect(page.locator('details.fd-wt')).toHaveCount(0);
 });
 
@@ -363,7 +362,9 @@ test('Add station: a tailnet with no free computer moves after the invitation, a
     'No computer on your tailnet is free to add. Choose it to see why.',
   );
   await expect(choices.first()).toContainText('Any computer, with a one-time invitation');
-  await expect(choices.last()).toContainText('A computer on my tailnet');
+  // The quiet choices: the tailnet, then a station that listens.
+  await expect(choices.nth(1)).toContainText('A computer on my tailnet');
+  await expect(choices.last()).toContainText('A station that listens for this deck');
   // The move remounted the focused choice: the focus went to a button in the dialog.
   const inDialog = () =>
     dialog.evaluate(

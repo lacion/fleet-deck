@@ -45,7 +45,7 @@ describe('the history block (DL-189)', () => {
     );
     // the same shapes as the live chat: a bubble for you with no label, Markdown for the agent
     expect(html).toContain(
-      '<div class="fd-chat-run" data-history="true"><div class="fd-chat-bubble">',
+      '<div class="fd-chat-run" data-history="true"><div class="fd-chat-bubble"><span class="fd-avatar" data-size="sm" aria-hidden="true"><svg',
     );
     expect(html).toContain('Fix the bug\nplease');
     expect(html).not.toContain('>You<');

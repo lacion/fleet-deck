@@ -4,8 +4,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { FleetActions } from '../fleet/fleet';
 import type { ActivityItem } from '../gen';
 import type { ViewsActions } from '../runtime/views';
+import { NO_REPO } from '../board/fleet';
 import { card, station } from '../testing/fleet';
-import { MessageSquare, Shield, Wrench } from '../ui/icons';
+import {
+  CircleStop,
+  FileText,
+  MessageSquare,
+  Moon,
+  Pencil,
+  Play,
+  Plug,
+  Shield,
+  SquareTerminal,
+  Wrench,
+} from '../ui/icons';
 import { ActivityPage, rowIcon } from './ActivityPage';
 import { ALL_CHANNEL, channelList, channelQuery, inChannel, mailTargets } from './channels';
 
@@ -39,7 +51,35 @@ describe('channels', () => {
       ['acme/docs', 1],
       ['acme/web', 3],
     ]);
-    expect(list.sessions.map((s) => s.label)).toEqual(['Login', 'Cache', 'Docs', 'Old']);
+    expect(list.live.map((s) => s.label)).toEqual(['Login', 'Cache', 'Docs']);
+    expect(list.ended.map((s) => s.label)).toEqual(['Old']);
+    expect(list.live.map((s) => s.status)).toEqual(['working', 'idle', 'idle']);
+  });
+
+  test('the sessions outside a repository come after every repository', () => {
+    const list = channelList([
+      card('n', 'idle', 'station-a', { title: 'Loose' }),
+      ...sessions,
+      card('z', 'idle', 'station-a', { repo: { root: '/w/zeta', origin: null } }),
+    ]);
+    expect(list.repos.map((r) => r.label)).toEqual(['acme/docs', 'acme/web', 'zeta', NO_REPO]);
+  });
+
+  test('an untitled session is its callsign; a namesake is told apart by station or age', () => {
+    const list = channelList([
+      card('u', 'idle', 'station-a', { callsign: 'falcon-2d9s', updated_at: 9 }),
+      card('g1', 'idle', 'station-a', { title: 'Greeting', updated_at: 8 }),
+      card('g2', 'idle', 'station-a', { title: 'Greeting', updated_at: 7 }),
+      card('f1', 'idle', 'station-a', { title: 'Fleet check', updated_at: 6 }),
+      card('f2', 'idle', 'station-b', { title: 'Fleet check', updated_at: 5 }),
+    ]);
+    expect(list.live.map((e) => [e.label, e.callsign, e.namesake])).toEqual([
+      ['falcon-2d9s', true, null],
+      ['Greeting', false, 'age'],
+      ['Greeting', false, 'age'],
+      ['Fleet check', false, 'station'],
+      ['Fleet check', false, 'station'],
+    ]);
   });
 
   test('the deck filter: a session by id, a repository by origin, All by nothing', () => {
@@ -148,7 +188,7 @@ describe('the activity page', () => {
     expect(none).toContain('Nothing happened here yet');
   });
 
-  test('a tool or approval row of a known tool shows its target in mono; other texts stay plain', () => {
+  test('a tool or approval row of a known tool shows the tool in 600 and its target; other texts stay plain', () => {
     const html = page({
       initialItems: [
         item({ kind: 'approval', text: 'Permission: Bash cargo nextest run -p x', station_seq: 1 }),
@@ -158,11 +198,145 @@ describe('the activity page', () => {
       ],
     });
     expect(html).toContain(
-      'Permission: Bash <code class="fd-arow-target">cargo nextest run -p x</code>',
+      '<span class="fd-arow-lead">Permission:</span><b class="fd-arow-tool">Bash</b><code class="fd-arow-target">cargo nextest run -p x</code>',
     );
-    expect(html).toContain('Edit <code class="fd-arow-target">src/checkout/cart.ts</code>');
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Edit</b><code class="fd-arow-target" data-path=""><bdi>src/checkout/cart.ts</bdi></code>',
+    );
     expect(html).toContain('<span class="fd-arow-text">Question: Which port should it use?</span>');
     expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
+  });
+
+  test('a provider error in a message row reads as its cause, with the raw words in the title', () => {
+    const html = page({
+      initialItems: [
+        item({
+          kind: 'message',
+          text: 'API Error: Request rejected (429) · All credentials are cooling down',
+          station_seq: 1,
+        }),
+      ],
+    });
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).toContain(
+      'title="API Error: Request rejected (429) · All credentials are cooling down"',
+    );
+    expect(html).not.toContain('>API Error');
+  });
+
+  test('a finished call loses its "(ok)" and its JSON; a failed call ends in its result', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'Read: /home/ana/briefs/a.png (ok)', station_seq: 1 }),
+        item({ kind: 'tool', text: 'TaskStop: {"task_id":"bv93ogg6d"} (ok)', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Bash: head -40 (failed)', station_seq: 3 }),
+        item({ kind: 'tool', text: 'mcp__fleetdeck__publish_artifact (ok)', station_seq: 4 }),
+        item({ kind: 'tool', text: 'Monitor: sleep 1700; echo tick (ok)', station_seq: 5 }),
+      ],
+    });
+    expect(html).not.toContain('(ok)');
+    expect(html).not.toContain('task_id');
+    expect(html).toContain('<bdi>~/briefs/a.png</bdi>');
+    expect(html).toContain(
+      '<b class="fd-arow-tool">TaskStop</b><code class="fd-arow-target">bv93ogg6d</code>',
+    );
+    // The result column of the chat (§4.5): a hazard word at the right, not a badge in the text.
+    expect(html).toContain('<span class="fd-arow-result">failed</span>');
+    expect(html).not.toContain('data-tone="hazard"');
+    expect(html).toContain('data-outcome="failed"');
+    // The deck's own tools need no server name.
+    expect(html).toContain('<b class="fd-arow-tool">Publish artifact</b>');
+    // A Monitor command is mono, the same as a Bash command (principle 5).
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Monitor</b><code class="fd-arow-target">sleep 1700; echo tick</code>',
+    );
+  });
+
+  test('a message is one plain line: no code ticks, emphasis or link marks', () => {
+    const html = page({
+      initialItems: [
+        item({
+          text: 'The fix workflow (`wnzrhrv6c`) is **running**, see [the log](https://x.test/l).',
+        }),
+      ],
+    });
+    expect(html).toContain(
+      '<span class="fd-arow-text">The fix workflow (wnzrhrv6c) is running, see the log.</span>',
+    );
+    expect(html).not.toContain('`');
+    expect(html).not.toContain('**');
+    expect(html).not.toContain('](');
+  });
+
+  test('the same event several times in a row is one row with its count', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 4, at: NOW - 60_000 }),
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 3 }),
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Bash: cargo build (ok)', station_seq: 1 }),
+      ],
+    });
+    expect(html.match(/<li class="fd-arow"/g)).toHaveLength(2);
+    expect(html).toContain(
+      '<span class="fd-count fd-arow-repeat">3<span class="fd-vh"> times</span></span>',
+    );
+    // The row keeps the newest of its copies.
+    expect(html).toContain('>1 min</time>');
+  });
+
+  test('every row names its session, repository and station in its title', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 2 }),
+        item({ session_id: 'n', session_title: 'Loose', repo: null, text: 'Two', station_seq: 1 }),
+      ],
+    });
+    expect(html).toContain('title="Login · acme/web on Alpha\nOne"');
+    expect(html).toContain('title="Loose on Alpha\nTwo"');
+  });
+
+  test('a run of one session names it on its first row only; every row opens the session', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 3 }),
+        item({ text: 'Two', station_seq: 2 }),
+        item({ session_id: 'b', session_title: 'Cache', text: 'Three', station_seq: 1 }),
+      ],
+    });
+    expect(html.match(/data-run="start"/g)).toHaveLength(2);
+    expect(html).toMatch(
+      /<a class="fd-arow-session" href="#\/s\/station-a\/a" title="[^"]*">Login<\/a><span class="fd-arow-repo"> · acme\/web<\/span>/,
+    );
+    expect(html).toMatch(
+      /<a class="fd-arow-session" href="#\/s\/station-a\/a" title="[^"]*"><span class="fd-vh">Login<\/span><\/a>/,
+    );
+    // The repository follows the name in the session cell, on the first row of a run only.
+    expect(html.match(/class="fd-arow-repo"/g)).toHaveLength(2);
+  });
+
+  test('a session channel has its glyph; ended sessions fold under Ended with a count', () => {
+    const html = page({ initialItems: [] });
+    expect(html).toContain('Live <span class="fd-count">3</span>');
+    expect(html).toContain('<span class="fd-dot" data-status="working" aria-hidden="true"></span>');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('Ended <span class="fd-count">1</span>');
+    expect(html).not.toContain('>Old<');
+    const chosen = page({
+      initialItems: [],
+      initialChannel: { kind: 'session', station: 'station-a', session: 'c' },
+    });
+    expect(chosen).toContain('aria-expanded="true"');
+    expect(chosen).toContain('>Old<');
+  });
+
+  test('a tool row has the icon of its tool', () => {
+    const icon = (text: string) => rowIcon({ kind: 'tool', text });
+    expect(icon('Read: /a (ok)')).toBe(FileText);
+    expect(icon('Bash: ls (ok)')).toBe(SquareTerminal);
+    expect(icon('Write: /a (ok)')).toBe(Pencil);
+    expect(icon('mcp__fleetdeck__fleet_view (ok)')).toBe(Plug);
+    expect(icon('TaskStop (ok)')).toBe(Wrench);
   });
 
   test('a question row has the message-square of the fleet strips; a permission keeps the shield', () => {
@@ -195,6 +369,105 @@ describe('the activity page', () => {
 
   test('before the first answer the page says it loads, and offline it says so', () => {
     expect(page()).toContain('Loading…');
-    expect(page({ live: false })).toContain('The stream needs a live connection.');
+    const offline = page({ live: false });
+    // An empty state of the page (§4.7), not a bare line.
+    expect(offline).toContain('<p class="fd-emptystate-title">Offline</p>');
+    expect(offline).toContain('The stream needs a live connection.');
+  });
+
+  test('only the open request of a session that needs you now is yellow; the rest is history', () => {
+    const waiting = [
+      card('a', 'needs_you', 'station-a', { title: 'Login', repo: web, updated_at: 30 }),
+      ...sessions.slice(1),
+    ];
+    const html = page({
+      sessions: waiting,
+      initialItems: [
+        item({
+          kind: 'approval',
+          text: 'Needs you: Bash cargo test',
+          request_kind: 'command',
+          station_seq: 5,
+        }),
+        item({
+          kind: 'approval',
+          text: 'Needs you: Bash ls',
+          request_kind: 'command',
+          station_seq: 4,
+        }),
+        item({ kind: 'approval', text: 'Approval expired', station_seq: 3 }),
+        item({
+          session_id: 'b',
+          session_title: 'Cache',
+          kind: 'approval',
+          text: 'Needs you: Pick a database',
+          request_kind: 'question',
+          station_seq: 2,
+        }),
+      ],
+    });
+    // One open request: the newest request of the session that needs you now.
+    expect(html.match(/data-open="true"/g)).toHaveLength(1);
+    expect(html).toMatch(
+      /<li class="fd-arow" data-kind="approval" data-run="start" data-open="true">(?:(?!<\/li>)[\s\S])*<span class="fd-arow-lead">Needs you:<\/span><b class="fd-arow-tool">Bash<\/b><code class="fd-arow-target">cargo test<\/code>/,
+    );
+    // An older request of the same session, an expired one and one of a session that waits for
+    // nothing are history: faint, and a closed request says "Asked:".
+    expect(html).toContain(
+      '<span class="fd-arow-lead">Asked:</span><b class="fd-arow-tool">Bash</b><code class="fd-arow-target">ls</code>',
+    );
+    expect(html).toContain('<span class="fd-arow-text">Asked: Pick a database</span>');
+    expect(html).toContain('<span class="fd-arow-text">Approval expired</span>');
+    expect(
+      page({ initialItems: [item({ kind: 'approval', text: 'Needs you: Bash ls' })] }),
+    ).not.toContain('data-open');
+  });
+
+  test('a start, an end and a request always name their session', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 4 }),
+        item({ kind: 'lifecycle', text: 'Session ended', station_seq: 3 }),
+        item({ kind: 'approval', text: 'Approval expired', station_seq: 2 }),
+        item({ text: 'Two', station_seq: 1 }),
+      ],
+    });
+    // One, the end and the expiry start runs; Two goes on the run of the expiry.
+    expect(html.match(/data-run="start"/g)).toHaveLength(3);
+    expect(html.match(/title="[^"]*">Login<\/a>/g)).toHaveLength(3);
+  });
+
+  test('a lifecycle row has the icon of its event', () => {
+    const icon = (text: string) => rowIcon({ kind: 'lifecycle', text });
+    expect(icon('Session started')).toBe(Play);
+    expect(icon('Session ended')).toBe(CircleStop);
+    expect(icon('Session ended: process_exit')).toBe(CircleStop);
+    expect(icon('Hibernated after 30 min idle')).toBe(Moon);
+  });
+
+  test('a built-in tool reads in words; a finished call without a target says done', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'AskUserQuestion: {"questions":[]} (ok)', station_seq: 3 }),
+        item({ kind: 'approval', text: 'Needs you: AskUserQuestion', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Workflow (ok)', station_seq: 1 }),
+      ],
+    });
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Question</b><span class="fd-arow-words">done</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-arow-lead">Asked:</span><b class="fd-arow-tool">Question</b>',
+    );
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Workflow</b><span class="fd-arow-words">done</span>',
+    );
+    expect(html).not.toContain('>AskUserQuestion');
+    expect(rowIcon({ kind: 'tool', text: 'AskUserQuestion: {} (ok)' })).toBe(MessageSquare);
+    expect(rowIcon({ kind: 'tool', text: 'constructor (ok)' })).toBe(Wrench);
+  });
+
+  test('the channel headings have one notation: the label and its count pill', () => {
+    expect(page({ initialItems: [] })).toContain('Repositories <span class="fd-count">2</span>');
   });
 });

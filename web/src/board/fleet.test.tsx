@@ -20,7 +20,7 @@ import {
   usageText,
 } from './fleet';
 import { COLUMNS, columnCards, FleetBoard } from './FleetBoard';
-import { removeCommand, stationActions, worktreeLoader } from './pairing';
+import { stationActions } from './pairing';
 import { loadWidth, StationsPanel, WorktreeRow } from './StationsPanel';
 
 describe('fleet projections', () => {
@@ -45,8 +45,10 @@ describe('fleet projections', () => {
       <FleetBoard sessions={cards} stations={[]} freshness="live" />,
     );
     // the card shows the deck status, not the activity "working" of the summary
+    expect(html).toMatch(/data-session="v"[^>]*data-status="verifying"/);
+    // A verifying strip has no "Verifying" note: its holder and glyph say it (§1 rule 7).
+    expect(html).not.toContain('data-note="verifying"');
     for (const [id, status, note] of [
-      ['v', 'verifying', 'Verifying'],
       ['u', 'unreachable', 'Station unreachable'],
       ['l', 'lost', 'Lost'],
     ])
@@ -162,18 +164,24 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      'Deck dials station',
-      'Station dials deck',
-      '127.0.0.1:443',
+      '<dt>Connection</dt><dd class="fd-facts-text">This deck connects to the station</dd>',
+      '<dt>Connection</dt><dd class="fd-facts-text">The station connects to this deck</dd>',
+      '<dt>Link address</dt><dd>127.0.0.1:443</dd>',
       'fingerprint',
       '1970-01-01T00:00:00.000Z',
       'offline',
-      'Not stored, the station dials this deck',
       '0 sessions',
     ])
       expect(html).toContain(text);
-    // A station that was never seen shows no "Last seen" (principle 7).
-    expect(html.match(/Last seen/g)?.length).toBe(1);
+    // A station that connects to the deck has no stored address: no Link address row
+    // (principle 7), only the one of the station that the deck dials.
+    expect(html.match(/<dt>Link address<\/dt>/g)?.length).toBe(1);
+    expect(html).not.toContain('Not stored');
+    // An online station shows no "Last seen": `last_seen` is the time its link came up, so it is
+    // the Linked fact in Details (the ISO time above is its tooltip). A station that was never
+    // seen shows neither (principle 7).
+    expect(html).not.toContain('Last seen');
+    expect(html.match(/<dt>Linked<\/dt>/g)?.length).toBe(1);
     expect(html).not.toContain('Dial-only');
     expect(html).not.toContain('Not reported');
   });
@@ -194,16 +202,29 @@ describe('station projections', () => {
     expect(html).toContain('<h3 class="fd-station-name">Alpha</h3>');
     expect(html).not.toContain('fd-badge');
   });
-  test('the Details fold holds the id, the key, the direction and the link address', () => {
+  test('the Details fold holds the id, the key, the connection and the link address', () => {
     const html = renderToStaticMarkup(
-      <StationsPanel stations={[station()]} sessions={[]} freshness="live" />,
+      <StationsPanel
+        stations={[station('station-a', { direction: 'deck_dials', dial_url: '10.0.0.2:7443' })]}
+        sessions={[]}
+        freshness="live"
+      />,
     );
     const details = /<details class="fd-station-details">([\s\S]*?)<\/details>/.exec(html)?.[1];
     expect(details).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
-    for (const text of ['Station ID', 'Key fingerprint', 'Direction', 'Link address'])
+    for (const text of ['Station ID', 'Key fingerprint', 'Connection', 'Link address'])
       expect(details).toContain(`<dt>${text}</dt>`);
     // The ids are not in the head or in the live facts.
     expect(html.replace(details ?? '', '')).not.toContain('Station ID');
+    // A direction that the board does not know has no Connection fact (principle 7).
+    const odd = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a', { direction: 'sideways' })]}
+        sessions={[]}
+        freshness="live"
+      />,
+    );
+    expect(odd).not.toContain('<dt>Connection</dt>');
   });
   test('the load shows a bar, 90 percent and more in the act color, and caps at 100 percent', () => {
     expect(loadWidth(0, 4)).toBe('0%');
@@ -236,7 +257,8 @@ describe('station projections', () => {
     const low = render(10, 5);
     expect(low).toContain('<span class="fd-slots" aria-hidden="true">');
     expect(low.match(/data-slot="used"/g)?.length).toBe(5);
-    expect(low).toContain('5 of 10 sessions');
+    // Counts read "5 of 10" (§5); "sessions" is for a screen reader only.
+    expect(low).toContain('5 of 10<span class="fd-vh"> sessions</span>');
     expect(low).not.toContain('fd-meter');
     const big = render(30, 27);
     expect(big).toContain(
@@ -324,10 +346,11 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      '0 of 4 sessions',
+      // No session runs: the free slots as words, the notation of the fleet lane (§4.4).
+      '4 free<span class="fd-vh"> session slots</span>',
       '<dt>Version</dt><dd>0.2.0</dd>',
-      '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
-      '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
+      '<li data-instance="personal" title="personal"><span>Claude <span class="fd-station-ver">2.1.5</span></span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
+      '<li data-instance="work" title="work"><span>Codex</span></li>',
     ])
       expect(html).toContain(text);
     expect(html).not.toContain(' · ');
@@ -342,7 +365,9 @@ describe('station projections', () => {
         freshness="live"
       />,
     );
-    expect(html).toContain('<span title="abcdef0123456789abcdef">abcdef012345…</span>');
+    // The first 8 and the last 4 characters: the station id is a prefix of the key, and the end
+    // tells the two apart.
+    expect(html).toContain('<span title="abcdef0123456789abcdef">abcdef01…cdef</span>');
     expect(html).toContain('aria-label="Copy the key fingerprint"');
   });
   test('a station without shells says so and offers no directory field', () => {
@@ -365,9 +390,11 @@ describe('station projections', () => {
         />,
       );
     const off = render(false);
+    // The way to turn them on is the station tab of Settings, not a file on the station.
     expect(off).toContain(
-      'Shells are off on this station. Set allow_shell = true in station.toml.',
+      'Shells are off on this station. <a class="fd-tap" href="#/settings/station/station-a">Turn them on in Settings</a>.',
     );
+    expect(off).not.toContain('station.toml');
     expect(off).not.toContain('Open shell');
     expect(off).toContain('No provider configured.');
     expect(render(null)).toContain('Open shell');
@@ -440,7 +467,7 @@ describe('repo names, archive and contested sessions', () => {
     expect(repoName(card('a'))).toBe(NO_REPO);
   });
 
-  test('repo names are sorted with "No repository" last', () => {
+  test('repo names are sorted with "Outside a repository" last', () => {
     const cards = [
       card('n'),
       inRepo('b', null, '/w/zeta'),
@@ -515,8 +542,9 @@ describe('fleet cards, DL-141', () => {
       card('c', 'working', 'station-a', { mode: 'default' }),
     ]);
     expect(out.match(/data-ico="risky" data-tone="hazard"/g)).toHaveLength(2);
-    expect(out).toContain('title="Permission mode: bypassPermissions"');
-    expect(out).toContain('title="Permission mode: dontAsk"');
+    // The flag shows no words: its name is the one name of the mode (modeLabel, §5).
+    expect(out).toContain('title="Permission mode: Bypass permissions"');
+    expect(out).toContain('title="Permission mode: Don&#x27;t ask"');
     expect(out).not.toContain('Permission mode: default');
   });
 
@@ -544,7 +572,10 @@ describe('fleet cards, DL-141', () => {
     ]);
     expect(out.match(/fd-card-error">Try later\.</g)).toHaveLength(1);
     expect(out).toMatch(/data-session="i"[\s\S]*?fd-card-error/);
-    expect(out).toContain('Working</span>');
+    // A working strip without a tool, a focus line or a digest has an empty now field: the
+    // holder and the glyph already say "Working".
+    expect(out).toMatch(/data-session="w"[\s\S]*?<span class="fd-strip-now"><\/span>/);
+    expect(out).not.toContain('Working</span>');
   });
 
   test('a starred card sorts first in its column and shows a star', () => {
@@ -564,22 +595,26 @@ describe('fleet cards, DL-141', () => {
     expect(out.match(/class="fd-card-star"/g)).toHaveLength(1);
   });
 
-  test('the offline tools row shows Resume all and Clear; a cleared strip shows its Archived icon', () => {
+  test('the ended tools row shows Resume all and Archive; a cleared strip shows its Archived icon', () => {
     const ended = card('e', 'ended');
     const none = html([card('a')]);
     expect(none).not.toContain('Resume all');
-    expect(none).not.toContain('Offline sessions');
+    expect(none).not.toContain('All ended');
     const out = html([ended]);
-    expect(out).toContain('<span class="fd-label">Offline sessions</span>');
-    expect(out).toContain('Resume all (0)');
-    expect(out).toContain('Clear (1)');
+    // "All ended" (the Ended rows of the lanes); Archive is the word of the archived state; the
+    // counts are pills.
+    expect(out).toContain('<span class="fd-label">All ended</span>');
+    expect(out).toContain('</svg> Resume all <span class="fd-count">0</span></button>');
+    expect(out).toContain('</svg> Archive <span class="fd-count">1</span></button>');
+    expect(out).not.toContain('Clear');
+    expect(out).not.toContain('Offline sessions');
     expect(out).not.toContain('Restore all');
     archived.add(['station-a/e']);
     const shown = html([ended]);
     archived.remove(['station-a/e']);
     expect(shown).toContain('data-archived="true"');
     expect(shown).toContain('data-ico="archived" title="Archived"');
-    expect(shown).toContain('Clear (0)');
+    expect(shown).toContain('Archive <span class="fd-count">0</span>');
     expect(shown).toContain('Restore all');
   });
 
@@ -592,9 +627,11 @@ describe('fleet cards, DL-141', () => {
     const contested = new Map([['station-a/a', { with: ['b'], files: ['f'] }]]);
     const out = html(cards, { group: 'repo', contested });
     expect(out).toContain('aria-label="Repository alpha"');
-    expect(out).toContain('aria-label="Repository No repository"');
+    expect(out).toContain('aria-label="Repository Outside a repository"');
     expect(out).not.toContain('aria-label="Station Alpha"');
-    expect(out).toContain('▲ 1 contested');
+    expect(out).toMatch(
+      /<span class="fd-lane-conf"><svg[^>]*lucide-triangle-alert[\s\S]*?<\/svg> 1 contested<\/span>/,
+    );
     expect(out).toContain('Alpha');
   });
 });
@@ -737,53 +774,5 @@ describe('worktree rows with the trash buttons (DL-150)', () => {
     expect(html).not.toContain('<button');
     expect(row({ trash: trash({ state: 'trashing' }) })).toContain('Moving…');
     expect(row({ trash: trash({ state: 'restoring' }) })).toContain('Restoring…');
-  });
-});
-
-describe('worktree inventory calls (DL-142)', () => {
-  const worktree = (extra: Partial<WorktreeInfo> = {}): WorktreeInfo => ({
-    session_id: 's1',
-    title: null,
-    path: '/w/deck-wt/s1',
-    branch: 'main-fix',
-    main: '/w/deck',
-    exists: true,
-    registered: true,
-    dirty: 0,
-    ignored: 0,
-    unpushed: 0,
-    compared_with: 'remotes',
-    last_commit: null,
-    live: false,
-    verdict: 'clean',
-    note: null,
-    ...extra,
-  });
-
-  test('the remove command quotes the values and deletes only an fd/ branch', () => {
-    expect(removeCommand(worktree())).toBe("git -C '/w/deck' worktree remove '/w/deck-wt/s1'");
-    expect(removeCommand(worktree({ branch: 'fd/s1' }))).toBe(
-      "git -C '/w/deck' worktree remove '/w/deck-wt/s1' && git -C '/w/deck' branch -d 'fd/s1'",
-    );
-    expect(removeCommand(worktree({ path: "/w/it's here", main: "/w/o'k" }))).toBe(
-      "git -C '/w/o'\\''k' worktree remove '/w/it'\\''s here'",
-    );
-  });
-
-  test('there is no command for a missing, live or main-less worktree', () => {
-    expect(removeCommand(worktree({ exists: false }))).toBeNull();
-    expect(removeCommand(worktree({ live: true }))).toBeNull();
-    expect(removeCommand(worktree({ main: null }))).toBeNull();
-  });
-
-  test('the loader reads the station route and checks the list', async () => {
-    const paths: string[] = [];
-    const load = worktreeLoader(async (path) => {
-      paths.push(path);
-      return path.includes('bad') ? { worktrees: 1 } : { worktrees: [worktree()] };
-    });
-    expect((await load('a b')).worktrees).toHaveLength(1);
-    expect(paths).toEqual(['/api/stations/a%20b/worktrees']);
-    await expect(load('bad')).rejects.toThrow('The deck sent an invalid worktree list.');
   });
 });

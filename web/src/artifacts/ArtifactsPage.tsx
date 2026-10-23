@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import { sessionTitle } from '../app/sessions';
 import type { ArtifactKind, DeckArtifact, DeckSession, StationView } from '../gen';
-import { Icon, Paperclip, Search } from '../ui/icons';
-import { EmptyState, Page } from '../ui/page';
+import { useLayout } from '../app/viewport';
+import { Icon, ListFilter, Paperclip, Search, X } from '../ui/icons';
+import { Menu } from '../ui/Menu';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
-import { ArtifactList, visible } from './ArtifactList';
+import { ArtifactList, groupCopies, visible } from './ArtifactList';
 import { KIND_LABEL, KINDS } from './kinds';
 import { type ListState, useArtifactList } from './useArtifactList';
 
@@ -35,25 +38,8 @@ export function ArtifactsListBody({
   readonly where: (a: DeckArtifact) => string;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading the artifacts…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-art-state">
-        <p role="alert" className="fd-note fd-art-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text="Loading the artifacts…" />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   if (state.items.length === 0) {
     return (
       <EmptyState
@@ -139,6 +125,7 @@ function Loaded({
   readonly retry: number;
   readonly onRetry: () => void;
 }) {
+  const layout = useLayout();
   const fetched = useArtifactList(
     actions,
     { station: filters.station, session: filters.session, q },
@@ -169,71 +156,157 @@ function Loaded({
     const station = a.station_name || stationName(a.station_id, stations);
     return card === undefined ? station : `${station} · ${sessionTitle(card)}`;
   };
+  // A phone shows the search and one Filters menu with the three selects; the chosen filters show
+  // as removable pressed chips under the search (the fleet's FiltersMenu pattern).
+  const phone = layout === 'phone';
+  const session = stationSessions.find((s) => s.summary.session_id === filters.session);
+  const chosen: readonly { key: 'kind' | 'station' | 'session'; text: string }[] = [
+    ...(filters.kind === 'all' ? [] : [{ key: 'kind' as const, text: KIND_LABEL[filters.kind] }]),
+    ...(filters.station === ''
+      ? []
+      : [{ key: 'station' as const, text: stationName(filters.station, stations) }]),
+    ...(filters.session === ''
+      ? []
+      : [
+          {
+            key: 'session' as const,
+            text: session === undefined ? filters.session : sessionTitle(session),
+          },
+        ]),
+  ];
+  // A select of the header (§4.3): a quiet ghost select, marked while it filters. An option has a
+  // key of its own when its value is not unique (a session id listed on two stations).
+  const select = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    options: readonly { key?: string; value: string; label: string }[],
+  ) => (
+    <label key={label} className="fd-art-filter">
+      <span className={phone ? 'fd-label' : 'fd-vh'}>{label}</span>
+      <select
+        className={phone ? undefined : 'fd-ghost fd-sm'}
+        data-active={!phone && value !== options[0]?.value ? 'true' : undefined}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.key ?? o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  const selects = [
+    select(
+      'Kind',
+      filters.kind,
+      (kind) => setFilters({ ...filters, kind: kind as Filters['kind'] }),
+      [
+        { value: 'all', label: 'All kinds' },
+        ...KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] })),
+      ],
+    ),
+    select(
+      'Station',
+      filters.station,
+      (station) => setFilters({ ...filters, station, session: '' }),
+      [
+        { value: '', label: 'All stations' },
+        ...stations.map((s) => ({ value: s.station_id, label: s.name })),
+      ],
+    ),
+    select('Session', filters.session, (s) => setFilters({ ...filters, session: s }), [
+      { value: '', label: 'All sessions' },
+      ...stationSessions.map((s) => ({
+        key: `${s.station_id}/${s.summary.session_id}`,
+        value: s.summary.session_id,
+        label: sessionTitle(s),
+      })),
+    ]),
+  ];
   const filterForm = (
     <form
       className="fd-art-filters"
       aria-label="Filter the artifacts"
+      data-layout={phone ? 'phone' : undefined}
       onSubmit={(e) => e.preventDefault()}
     >
       <label className="fd-field fd-art-search">
-        <span className="fd-vh">Search by title</span>
+        <span className="fd-vh">Search artifacts</span>
         <Icon of={Search} size={14} />
         <input
           type="search"
-          aria-label="Search by title"
-          placeholder="Search by title"
+          className={phone ? undefined : 'fd-sm'}
+          aria-label="Search artifacts"
+          placeholder="Search artifacts"
           autoComplete="off"
           value={filters.q}
           onChange={(e) => setFilters({ ...filters, q: e.target.value })}
         />
       </label>
-      <label>
-        <span className="fd-vh">Kind</span>
-        <select
-          value={filters.kind}
-          onChange={(e) => setFilters({ ...filters, kind: e.target.value as Filters['kind'] })}
-        >
-          <option value="all">All kinds</option>
-          {KINDS.map((k) => (
-            <option key={k} value={k}>
-              {KIND_LABEL[k]}
-            </option>
+      {phone ? (
+        <span className="fd-art-filtermenu">
+          <Menu
+            summary={
+              <>
+                <Icon of={ListFilter} size={14} />
+                Filters
+                {/* A count after a label is a pill (§5), never "Filters (2)". */}
+                {chosen.length > 0 ? (
+                  <>
+                    {' '}
+                    <span className="fd-count">{chosen.length}</span>
+                  </>
+                ) : null}
+              </>
+            }
+            summaryClass="fd-ghost"
+          >
+            {() => (
+              <div className="fd-art-filtergrid" role="group" aria-label="Artifact filters">
+                {selects}
+              </div>
+            )}
+          </Menu>
+        </span>
+      ) : (
+        selects
+      )}
+      {phone && chosen.length > 0 ? (
+        <div className="fd-art-chosen">
+          {chosen.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className="fd-chip"
+              aria-pressed="true"
+              aria-label={`Remove the filter ${c.text}`}
+              onClick={() =>
+                setFilters(
+                  c.key === 'kind'
+                    ? { ...filters, kind: 'all' }
+                    : c.key === 'station'
+                      ? { ...filters, station: '', session: '' }
+                      : { ...filters, session: '' },
+                )
+              }
+            >
+              {c.text} <Icon of={X} size={12} />
+            </button>
           ))}
-        </select>
-      </label>
-      <label>
-        <span className="fd-vh">Station</span>
-        <select
-          value={filters.station}
-          onChange={(e) => setFilters({ ...filters, station: e.target.value, session: '' })}
-        >
-          <option value="">All stations</option>
-          {stations.map((s) => (
-            <option key={s.station_id} value={s.station_id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <span className="fd-vh">Session</span>
-        <select
-          value={filters.session}
-          onChange={(e) => setFilters({ ...filters, session: e.target.value })}
-        >
-          <option value="">All sessions</option>
-          {stationSessions.map((s) => (
-            <option key={`${s.station_id}/${s.summary.session_id}`} value={s.summary.session_id}>
-              {sessionTitle(s)}
-            </option>
-          ))}
-        </select>
-      </label>
+        </div>
+      ) : null}
     </form>
   );
+  // The title row says how many rows the list has (§4.3: title + count), only while it has some.
+  const count =
+    state.kind === 'ok' && state.items.length > 0 ? groupCopies(state.items).length : undefined;
   return (
     <Page
       title="Artifacts"
+      count={count}
       description={ARTIFACTS_DESC}
       className="fd-art-page"
       filters={filterForm}

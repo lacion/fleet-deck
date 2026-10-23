@@ -77,6 +77,9 @@ export const asksOf = (needs: readonly Need[]): readonly Ask[] =>
     at: n.request.requested_at,
   }));
 
+/** The wall with no request: the calm words of the fleet and Watch headers (§4.4). */
+export const ALL_CLEAR = 'All clear.';
+
 /** The first line of a text, cut to `max` characters. */
 export function oneLine(text: string, max = 120): string {
   const line =

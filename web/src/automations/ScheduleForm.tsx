@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react';
 import type { DeckSession, StationView } from '../gen';
 import { spawnModes } from '../spawn/spawn';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
+import { modeLabel } from '../ui/format';
 import { Field, FormActions, FormGrid, fieldError } from '../ui/page';
 import {
   CUSTOM,
@@ -253,20 +254,20 @@ export function ScheduleForm({
           <FormGrid>
             <Field label="Permission mode">
               <select value={draft.mode} onChange={(e) => set('mode', e.target.value)}>
-                <option value="">Station default</option>
+                <option value="">Default mode</option>
                 {modes.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {modeLabel(m)}
                   </option>
                 ))}
               </select>
             </Field>
             <Field
-              label="Run first (optional shell check on the station; a non-zero exit skips the run)"
+              label="Check first (optional)"
               span={2}
               hint={
                 canPrecheck || station === undefined
-                  ? 'Runs with /bin/sh on the station in the folder, with 60 seconds. A non-zero exit records a skipped run and starts nothing.'
+                  ? 'A shell command that runs on the station in the folder, for up to 60 seconds. The run is skipped when this check fails.'
                   : 'This station does not run shell commands (allow_setup_cmd = false in station.toml).'
               }
               error={shown('precheck')}

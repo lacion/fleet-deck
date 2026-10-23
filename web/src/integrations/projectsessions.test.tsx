@@ -57,14 +57,17 @@ describe('the Sessions tab of a project', () => {
   test('it is the first tab and the page opens on it', () => {
     const html = page([]);
     const tabs = html.match(/role="tab"[^>]*>[^<]*</g)?.map((t) => t.replace(/.*>(.*)</, '$1'));
-    expect(tabs).toEqual(['Sessions', 'Issues', 'Pull requests']);
+    expect(tabs).toEqual(['Sessions', 'Issues', 'Pull requests', 'Setup']);
     expect(html).toContain('id="fd-int-tab-sessions" aria-selected="true"');
   });
 
-  test('an empty project says so and offers a new session', () => {
+  test('an empty project is an empty state that holds the one new-session button', () => {
     const html = page([inProject('x', 'p2'), inProject('y', undefined)]);
-    expect(html).toContain('No sessions in this project yet.');
-    expect(html).toContain('New session in this project');
+    expect(html).toContain('<p class="fd-emptystate-title">No sessions yet</p>');
+    expect(html).toMatch(/Start a session in [^<]+ on Alpha\./);
+    // The button is in the empty state, not in a row above it (§4.7).
+    expect(html).toMatch(/fd-emptystate-body">[^<]*<\/p><button type="button" class="fd-primary">/);
+    expect(html.match(/New session in this project/g)).toHaveLength(1);
   });
 
   test('it lists the live and the ended sessions of the project only', () => {
@@ -78,9 +81,32 @@ describe('the Sessions tab of a project', () => {
     expect(html).toContain('data-session="gone-1"');
     expect(html).not.toContain('data-session="other"');
     expect(html).not.toContain('data-session="none"');
-    expect(html).toContain('Live · 1');
-    expect(html).toContain('Ended · 1');
-    expect(html).not.toContain('No sessions in this project yet.');
+    expect(html).toContain('Live <span class="fd-count">1</span>');
+    expect(html).toContain(
+      '<details class="fd-lane-ended fd-int-ended"><summary>Ended <span class="fd-count">1</span></summary>',
+    );
+    expect(html).not.toContain('fd-emptystate');
+    // One head row: the Live label at the left, the small primary at the right.
+    expect(html).toMatch(
+      /<div class="fd-pane-row fd-int-livehead"><h3 class="fd-label">Live <span class="fd-count">1<\/span><\/h3><button type="button" class="fd-primary fd-sm">/,
+    );
+  });
+
+  test('a project whose sessions all ended is the empty state, above the Ended fold', () => {
+    const html = page([inProject('gone-1', 'p1', 'ended')]);
+    expect(html).toContain('<p class="fd-emptystate-title">No live sessions</p>');
+    expect(html.indexOf('No live sessions')).toBeLessThan(html.indexOf('fd-int-ended'));
+    expect(html.indexOf('New session in this project')).toBeLessThan(html.indexOf('fd-int-ended'));
+    expect(html).not.toContain('aria-label="Live sessions"');
+  });
+
+  test('the sessions are strips that name their station, without the chip of this project', () => {
+    const html = page([inProject('live-1', 'p1')]);
+    expect(html).toContain('class="fd-strip"');
+    expect(html).toContain('data-showstation="true"');
+    expect(html).not.toContain('class="fd-card"');
+    expect(html).not.toContain('fd-int-projectchip');
+    expect(html).not.toContain('fd-strip-proj');
   });
 
   test('without the drive scope there is no button', () => {
@@ -104,7 +130,7 @@ describe('the project chip', () => {
   test('it links to the project page by name', () => {
     const html = provide(<ProjectChip card={inProject('a', 'p1')} />);
     expect(html).toContain('href="#/project/p1"');
-    expect(html).toContain('>Atlas<');
+    expect(html).toContain('</svg> Atlas</a>');
   });
 
   test('no project, or an unknown one, gives no chip', () => {
@@ -178,7 +204,7 @@ describe('grouping by project', () => {
     expect(lanes).toEqual(['Atlas', 'Borealis', NO_PROJECT]);
   });
 
-  test('the fleet home offers Group: Project when projects exist', () => {
+  test('the fleet home offers Group by project when projects exist', () => {
     const home = (projects: (typeof atlas)[]) =>
       provide(
         <FleetHome
@@ -195,8 +221,8 @@ describe('grouping by project', () => {
         />,
         projects,
       );
-    expect(home([atlas])).toContain('>Group: Project<');
-    expect(home([])).not.toContain('>Group: Project<');
+    expect(home([atlas])).toContain('>Group by project<');
+    expect(home([])).not.toContain('>Group by project<');
   });
 });
 

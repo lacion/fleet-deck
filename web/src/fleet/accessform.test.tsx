@@ -27,31 +27,34 @@ const html = (extra: Partial<Fields> = {}) =>
   );
 
 describe('the stations', () => {
-  test('the own station is checked and disabled with "this session"; the others are not checked', () => {
+  test('the own station is on and disabled with its note; the others are off', () => {
     const out = html();
-    expect(out).toContain('<h4 class="fd-access-h">Stations</h4>');
+    expect(out).toContain('<h4 class="fd-label fd-access-h">Stations</h4>');
+    // One row a line: the title (and its description under it) at the left, the switch at the right.
     expect(out).toContain(
-      '<label class="fd-access-row"><input type="checkbox" disabled="" readOnly="" checked=""/><span class="fd-access-title">Alpha <span class="fd-access-desc">this session</span></span></label>',
+      '<label class="fd-access-row"><span class="fd-access-text"><span class="fd-access-title">Alpha</span><span class="fd-access-desc">The station of this session: always in the access.</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="true" disabled="" readOnly="" checked=""/></label>',
     );
     expect(out).toContain(
-      '<label class="fd-access-row"><input type="checkbox"/><span class="fd-access-title">Beta</span></label>',
+      '<label class="fd-access-row"><span class="fd-access-text"><span class="fd-access-title">Beta</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/></label>',
     );
     expect(out).not.toContain('The stations cannot');
   });
 
-  test('a picked station is checked', () => {
+  test('a picked station is on', () => {
     expect(html({ picked: ['station-b'] })).toContain(
-      '<input type="checkbox" checked=""/><span class="fd-access-title">Beta</span>',
+      '<span class="fd-access-title">Beta</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="true" checked=""/>',
     );
   });
 
-  test('locked: every box is disabled and the note shows', () => {
+  test('locked: every switch is disabled and the note shows', () => {
     const out = html({ stationsLocked: true, picked: ['station-b'] });
     expect(out).toContain(
-      '<input type="checkbox" disabled="" checked=""/><span class="fd-access-title">Beta</span>',
+      '<span class="fd-access-title">Beta</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="true" disabled="" checked=""/>',
     );
     const list = out.slice(0, out.indexOf('Permissions'));
-    expect(list).not.toContain('<input type="checkbox"/>');
+    expect(list).not.toContain(
+      '<input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/>',
+    );
     expect(out).toContain('To change the stations, revoke the access and give it again.');
   });
 
@@ -59,7 +62,9 @@ describe('the stations', () => {
     const out = renderToStaticMarkup(
       <AccessStations stations={stations} ownId="station-b" picked={[]} onPicked={() => {}} />,
     );
-    expect(out).toContain('Beta <span class="fd-access-desc">this session</span>');
+    expect(out).toContain(
+      '<span class="fd-access-title">Beta</span><span class="fd-access-desc">The station of this session: always in the access.</span>',
+    );
     expect(out).toContain('<span class="fd-access-title">Alpha</span>');
   });
 });
@@ -67,7 +72,7 @@ describe('the stations', () => {
 describe('the permissions', () => {
   test('five rows with a title and a description, in order', () => {
     const out = html();
-    expect(out).toContain('<h4 class="fd-access-h">Permissions</h4>');
+    expect(out).toContain('<h4 class="fd-label fd-access-h">Permissions</h4>');
     expect(out).toContain(
       'Always: read the fleet, send mail and tasks, and drive the sessions it starts.',
     );
@@ -93,8 +98,10 @@ describe('the permissions', () => {
 
   test('a switch that is on shows checked', () => {
     expect(html({ fleet: { ...NO_FLEET, inspect: true } })).toContain(
-      '<input type="checkbox" checked=""/><span class="fd-access-title">Inspect</span>',
+      'integrations.</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="true" checked=""/>',
     );
+    // No box in a box: the rows have no fill of their own (home.css), and no checkbox look.
+    expect(html()).not.toContain('<input type="checkbox"/>');
   });
 
   test('the edit mode has no Whole fleet row', () => {
@@ -104,24 +111,28 @@ describe('the permissions', () => {
   });
 });
 
-describe('the new sessions section', () => {
+describe('the limits section', () => {
   test('it is hidden with nothing that needs a limit', () => {
-    expect(html()).not.toContain('New sessions');
-    expect(html({ fleet: { ...NO_FLEET, inspect: true, scope: true } })).not.toContain(
-      'New sessions',
-    );
+    expect(html()).not.toContain('Limits');
+    expect(html({ fleet: { ...NO_FLEET, inspect: true, scope: true } })).not.toContain('Limits');
   });
 
   test('spawn shows the three fields and the note', () => {
     const out = html({ fleet: START_LIVE });
-    expect(out).toContain('<h4 class="fd-access-h">New sessions</h4>');
+    expect(out).toContain('<h4 class="fd-label fd-access-h">Limits</h4>');
     expect(out).toContain('<div class="fd-access-grid">');
     expect(out).toContain('Session limit');
     expect(out).toContain('min="1" max="50"');
     expect(out).toContain('Highest Claude mode');
     expect(out).toContain('Highest Codex mode');
-    expect(out).toContain('<option value="plan">plan</option>');
-    expect(out).toContain('<option value="never/read-only">never/read-only</option>');
+    // The options say the modes in words; the values stay the ids.
+    expect(out).toContain('<option value="plan">Plan</option>');
+    expect(out).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
+    expect(out).toContain('<option value="never/read-only">Never ask · read only</option>');
+    expect(out).toContain(
+      '<option value="on-request/workspace-write" selected="">Ask when needed · workspace write</option>',
+    );
+    expect(out).not.toContain('>acceptEdits<');
     expect(out).toContain('Sessions that it starts, resumes or changes never get a higher mode.');
     expect(out).not.toContain('Answer limit');
   });
@@ -134,7 +145,7 @@ describe('the new sessions section', () => {
 
   test('answer alone shows only the answer limit', () => {
     const out = html({ fleet: { ...NO_FLEET, answer: true } });
-    expect(out).toContain('New sessions');
+    expect(out).toContain('Limits');
     expect(out).toContain('Answer limit');
     expect(out).not.toContain('Session limit');
     expect(out).not.toContain('Highest Claude mode');
@@ -156,7 +167,7 @@ describe('the new sessions section', () => {
     expect(same).not.toContain('Session limit');
     expect(same).not.toContain('Highest Claude mode');
     const kept = html({ fleet: START_LIVE, lockedClasses: locked });
-    expect(kept).not.toContain('New sessions');
+    expect(kept).not.toContain('Limits');
     const manage = html({ fleet: { ...START_LIVE, manage: true }, lockedClasses: locked });
     expect(manage).toContain('Highest Claude mode');
     expect(manage).not.toContain('Session limit');

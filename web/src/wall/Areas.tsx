@@ -1,10 +1,9 @@
 // R13 P1 (design §4.2): the four areas of the mission mode: needs, tiles, side and stream.
 // Everything here only reads. A part with no data is left out.
-import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, Fragment, type RefObject, useEffect, useMemo, useState } from 'react';
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { usedShare } from '../board/resources';
 import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
@@ -12,14 +11,19 @@ import { usePrs, useProjects } from '../integrations/context';
 import { prOfSession } from '../integrations/model';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
+import { agentLine } from '../chat/notices';
+import { shortPath } from '../chat/PathTail';
+import { homeShortIn, plainLine } from '../ui/format';
+import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
-import { refOf } from '../watch/tiles';
+import { foldLines, refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
-import { NEED_LABEL, type Need, oneLine, toolParts, usageParts, wallSessions } from './model';
+import { ALL_CLEAR, NEED_LABEL, type Need, oneLine, usageParts, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
+import { stationStats } from './stationStats';
 
 export function NeedsArea({
   needs,
@@ -43,7 +47,9 @@ export function NeedsArea({
         )}
       </h2>
       {needs.length === 0 ? (
-        <p className="fd-wall-note">Nothing needs you.</p>
+        // The calm state of the fleet and Watch headers (§4.4): green, the same words. The wall
+        // shows no conflict, so it never needs the "Nothing needs you." of a fleet with one.
+        <p className="fd-wall-note fd-wall-clear">{ALL_CLEAR}</p>
       ) : (
         <ol className="fd-wall-needs">
           {needs.map(({ card, request }) => {
@@ -108,7 +114,7 @@ export function TilesArea({
   readonly failed: ReadonlySet<string>;
   readonly areaRef: RefObject<HTMLElement | null>;
   /** The columns of the tiles (`tileGrid`); `null` before a measure. The growth of the type,
-   * `--fd-wall-tile-k`, is set on the grid: the needs area grows with the tiles. */
+   * `--fd-wall-tile-k`, is set on the grid: the needs and the side areas grow with the tiles. */
   readonly grid?: { readonly columns: number; readonly k: number } | null;
 }) {
   const style: CSSProperties | undefined =
@@ -143,34 +149,10 @@ export function TilesArea({
   );
 }
 
-/** One decimal place of gigabytes, without the unit: "20.4". */
-const gbNumber = (bytes: number): string => (bytes / 1e9).toFixed(1);
-
-type DiskLike = { readonly total_bytes: number; readonly free_bytes: number };
-
 function StationRow({ station }: { readonly station: StationView }) {
   // A wall display gets `display_resources` (no disk label, no path) in place of `info`. The wall
-  // shows the load, the memory and the fullest disk: one short line that a person reads across a
-  // room.
-  const r = station.info?.resources ?? station.display_resources;
-  const disks: readonly DiskLike[] = r?.disks ?? [];
-  const fullest = disks.reduce<DiskLike | null>(
-    (best, d) =>
-      best === null ||
-      usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
-        usedShare(best.total_bytes - best.free_bytes, best.total_bytes)
-        ? d
-        : best,
-    null,
-  );
-  const stats = [
-    r?.cpu == null ? null : `CPU ${(r.cpu.load5_x100 / 100).toFixed(1)}/${r.cpu.cores}`,
-    r?.memory == null
-      ? null
-      : `Mem ${gbNumber(r.memory.total_bytes - r.memory.available_bytes)}/${gbNumber(r.memory.total_bytes)} GB`,
-    // The free space only: "312.5 GB free" keeps its meaning when the line ends in an ellipsis.
-    fullest === null ? null : `Disk ${gbNumber(fullest.free_bytes)} GB free`,
-  ].filter((t): t is string => t !== null);
+  // shows the CPU, the memory and the fullest disk: a short line that a person reads across a room.
+  const stats = stationStats(station.info?.resources ?? station.display_resources);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
       {/* The reach glyph and the words of the board (fleet lanes, Stations page). */}
@@ -180,9 +162,23 @@ function StationRow({ station }: { readonly station: StationView }) {
         aria-hidden="true"
       />
       <span className="fd-wall-station-name">{station.name}</span>
-      <span className="fd-wall-note">{station.reachable ? 'Online' : 'Offline'}</span>
+      {/* The glyph says "online" (§4.7, the station identity): the word is for a screen reader
+          only. "Offline" shows, in --hazard. */}
+      {station.reachable ? (
+        <span className="fd-vh"> online</span>
+      ) : (
+        <span className="fd-wall-note">Offline</span>
+      )}
+      {/* A part keeps its words and its middle dot together: a second line starts with a part. */}
       {stats.length === 0 ? null : (
-        <span className="fd-wall-station-stats">{stats.join(' · ')}</span>
+        <span className="fd-wall-station-stats">
+          {stats.map((part, n) => (
+            <Fragment key={part}>
+              {n === 0 ? null : ' '}
+              <span className="fd-wall-part">{n < stats.length - 1 ? `${part} ·` : part}</span>
+            </Fragment>
+          ))}
+        </span>
       )}
     </li>
   );
@@ -262,6 +258,10 @@ export function SideArea({
   );
 }
 
+/** A prose row: the first line of the text without its Markdown marks, cut to 160 characters. */
+export const proseLine = (text: string): string =>
+  oneLine(plainLine(oneLine(text, Number.POSITIVE_INFINITY)), 160);
+
 /** The rows that the stream keeps. */
 export const STREAM_ITEMS = 50;
 /** The wait between two reads of the stream. */
@@ -315,10 +315,20 @@ export function StreamArea({
     [sessions, filterStations, filter.repo],
   );
   // The deck sends the newest first, and the list keeps that order: the newest row sits under the
-  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first.
-  const rows = (items ?? [])
-    .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
-    .slice(0, STREAM_ITEMS);
+  // heading, the oldest are cut at the bottom, and a screen reader reads the newest first. The same
+  // event of one session several times in a row is one row with its count, as on the Activity
+  // page (`foldLines` keeps the last of a run, so it folds the reversed list).
+  const rows = foldLines<ActivityItem & { readonly repeat?: number }>(
+    (items ?? [])
+      .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
+      .slice(0, STREAM_ITEMS)
+      .reverse(),
+    (a, b) =>
+      a.station_id === b.station_id &&
+      a.session_id === b.session_id &&
+      a.kind === b.kind &&
+      a.text === b.text,
+  ).reverse();
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
       <h2 className="fd-wall-h">Activity</h2>
@@ -333,22 +343,64 @@ export function StreamArea({
         <ol className="fd-wall-stream">
           {rows.map((item, n) => {
             const text = oneLine(item.text, 160);
-            // A command or a path is code (§4.5): the tool name in sans, the target in mono.
-            const tool = toolParts(item.kind, text);
+            // A tool call reads as the Activity page reads it (watch/tooltext): the tool name in
+            // words (no raw MCP id, no "(ok)"), a command or a path in mono, words in sans, and a
+            // failed or denied call ends in a hazard word (one form for one outcome).
+            const tool = activityTool(item.kind, text);
+            const name = item.session_title ?? item.session_id;
+            // A provider error in a message reads as its cause; the raw words stay in the title.
+            const said = item.kind === 'message' ? agentLine(item.text) : item.text;
             return (
               <li
                 key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
                 data-kind={item.kind}
+                data-outcome={tool?.outcome ?? undefined}
               >
                 <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>{' '}
-                <strong>{item.session_title ?? item.session_id}</strong>{' '}
-                {tool === null ? (
-                  text
-                ) : (
-                  <>
-                    {tool.lead} <code>{tool.target}</code>
-                  </>
-                )}
+                {/* The session is a column of its own (16ch, wall.css): every event starts at one x. */}
+                <strong title={name}>{name}</strong>{' '}
+                {/* The event: an ultra row wraps it under itself (wall.css). */}
+                <span
+                  className="fd-wall-event"
+                  title={said === item.text ? undefined : item.text.trim()}
+                >
+                  {tool === null ? (
+                    // Prose is one plain line, as on the tile above it: no Markdown marks.
+                    proseLine(said)
+                  ) : (
+                    <>
+                      {tool.lead === '' ? null : `${tool.lead} `}
+                      <b className="fd-wall-tool">{tool.name}</b>
+                      {tool.target === '' ? null : tool.form === 'words' ? (
+                        <> {tool.target}</>
+                      ) : (
+                        <>
+                          {' '}
+                          <code>
+                            {tool.form === 'path'
+                              ? shortPath(homePath(tool.target), 60)
+                              : homeShortIn(tool.target)}
+                          </code>
+                        </>
+                      )}
+                      {tool.outcome === null ? null : (
+                        <>
+                          {' '}
+                          <span className="fd-wall-result">{tool.outcome}</span>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {(item.repeat ?? 1) > 1 ? (
+                    <>
+                      {' '}
+                      <span className="fd-count">
+                        {item.repeat}
+                        <span className="fd-vh"> times</span>
+                      </span>
+                    </>
+                  ) : null}
+                </span>
               </li>
             );
           })}

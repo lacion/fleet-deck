@@ -4,6 +4,8 @@ import { useState } from 'react';
 import type { IssueDetail, Project, StationView } from '../gen';
 import { relativeAge } from '../app/sessions';
 import { Icon, X } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import type { IntegrationActions } from './actions';
 import { Images, OutsideText } from './Outside';
 import { IssueCommentDialog, IssueMoveDialog } from './Writes';
@@ -112,25 +114,8 @@ export function IssueBody({
   readonly keyOf: string;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading {keyOf}…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-int-state">
-        <p role="alert" className="fd-note fd-int-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text={`Loading ${keyOf}…`} />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   const d = state.value;
   const ref = d.summary.ref;
   const link = webUrl(ref.url);

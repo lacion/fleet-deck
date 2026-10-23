@@ -73,15 +73,6 @@ describe('projects page', () => {
     expect(html).toContain('fd-emptystate');
   });
 
-  test('the token rule stays under the table once a project exists', () => {
-    const rule = 'The deck stores the bindings only; the station holds the tokens.';
-    const html = provide(<ProjectsPage stations={[station()]} />);
-    expect(html).toContain(`<p class="fd-note">${rule}</p>`);
-    expect(html.indexOf('</table>')).toBeLessThan(html.indexOf(rule));
-    // The empty state says it in its own body; the note does not repeat it.
-    expect(provide(<ProjectsPage stations={[station()]} />, [])).not.toContain('fd-note">The deck');
-  });
-
   test('the form: station select, forge select, tracker rows, prompts', () => {
     const draft = {
       ...emptyDraft('station-a'),
@@ -217,7 +208,7 @@ describe('issues', () => {
         initialChecked={['PROJ-1']}
       />,
     );
-    expect(html).toContain('placeholder="Search the issues"');
+    expect(html).toContain('placeholder="Search issues"');
     expect(html).toContain('Mine');
     expect(html).toContain('Refresh');
     expect(html).toContain('Start sessions (1)');

@@ -4,12 +4,6 @@ import { stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView } from '../gen';
 import type { ElevationAsk } from '../settings/elevation';
 import {
-  CLAUDE_CEILINGS,
-  CODEX_CEILINGS,
-  FleetControlFields,
-  LimitInput,
-} from '../spawn/FleetControlFields';
-import {
   answerCapProblem,
   type FleetControl,
   fleetElevation,
@@ -18,7 +12,7 @@ import {
   NO_FLEET,
   spawnCapProblem,
 } from '../spawn/fleetControl';
-import { AccessStations, CODEX_NOTE } from './AccessForm';
+import { AccessFields, CODEX_NOTE } from './AccessForm';
 import { type FleetActions, type FleetResult, type GrantBody, NOT_LIVE } from './fleet';
 import { NOT_ALLOWED } from './GrantSpawn';
 
@@ -112,12 +106,26 @@ type GiveProps = {
   readonly grants: readonly GrantView[];
   readonly actions: FleetActions;
   readonly ask: ElevationAsk;
-  /** Called after a give, to load the grants again. */
-  readonly onChanged: () => void;
+  /** Called after a give that the deck took, with its outcome (the grants load again). */
+  readonly onChanged: (result: FleetResult) => void;
+  /** Closes the dialog that holds the form. */
+  readonly onClose: () => void;
 };
 
-/** Gives fleet access to a running session that has no live grant. */
-export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged }: GiveProps) {
+/**
+ * The body of the "Give fleet access" dialog of the ops panel: the running session that gets the
+ * access, then the fields of the session menu's "Fleet access" dialog (`AccessFields`), so that one
+ * task has one form.
+ */
+export function GiveAccess({
+  sessions,
+  stations,
+  grants,
+  actions,
+  ask,
+  onChanged,
+  onClose,
+}: GiveProps) {
   const [pick, setPick] = useState('');
   const [fleet, setFleet] = useState<FleetControl>(START_LIVE);
   const [picked, setPicked] = useState<readonly string[]>([]);
@@ -126,39 +134,57 @@ export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged
   const candidates = giveCandidates(sessions, stations, grants);
   const chosen = candidates.find((s) => keyOf(s) === pick) ?? candidates[0];
   const problem = fleetProblem(fleet);
+  if (chosen === undefined) {
+    return (
+      <>
+        <p className="fd-note">{NONE_NOTE}</p>
+        <div className="fd-access-foot">
+          <button type="button" className="fd-ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </>
+    );
+  }
   const give = () => {
-    if (chosen === undefined || problem !== null || busy) return;
+    if (problem !== null || busy) return;
     setBusy(true);
+    setResult(null);
     const targets = picked.filter((id) => id !== chosen.station_id);
     void giveAccess(chosen, fleet, actions, ask, targets)
       .then((r) => {
         if (r === null) return;
-        setResult(r);
-        if (r.ok) {
-          setFleet(START_LIVE);
-          setPicked([]);
-          setPick('');
-          onChanged();
+        if (!r.ok) {
+          setResult(r);
+          return;
         }
+        setFleet(START_LIVE);
+        setPicked([]);
+        setPick('');
+        onChanged(r);
       })
       .finally(() => setBusy(false));
   };
   return (
-    <section className="fd-fleet-form" aria-label="Give fleet access">
-      <h3 className="fd-label">Give fleet access</h3>
-      {chosen === undefined ? (
-        <p className="fd-note">{NONE_NOTE}</p>
-      ) : (
-        <form
-          className="fd-fleet-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            give();
-          }}
-        >
+    <form
+      className="fd-fleet-form fd-access-form"
+      aria-label="Give fleet access"
+      onSubmit={(event) => {
+        event.preventDefault();
+        give();
+      }}
+    >
+      <section className="fd-access-sec">
+        <div className="fd-access-field">
           <label>
             Session
-            <select value={keyOf(chosen)} onChange={(event) => setPick(event.target.value)}>
+            <select
+              value={keyOf(chosen)}
+              onChange={(event) => {
+                setPick(event.target.value);
+                setPicked([]);
+              }}
+            >
               {candidates.map((s) => (
                 <option key={keyOf(s)} value={keyOf(s)}>
                   {`${titleOf(s)} on ${stationName(s.station_id, stations)}`}
@@ -166,27 +192,31 @@ export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged
               ))}
             </select>
           </label>
-          <FleetControlFields fleet={fleet} onChange={setFleet} live />
-          <AccessStations
-            stations={stations}
-            ownId={chosen.station_id}
-            picked={picked}
-            onPicked={setPicked}
-          />
-          {chosen.summary.provider === 'codex' ? <p className="fd-note">{CODEX_NOTE}</p> : null}
-          <div className="fd-fleet-actions">
-            <button type="submit" disabled={busy || problem !== null}>
-              Give access
-            </button>
-          </div>
-        </form>
-      )}
+        </div>
+      </section>
+      <AccessFields
+        stations={stations}
+        ownId={chosen.station_id}
+        picked={picked}
+        onPicked={setPicked}
+        fleet={fleet}
+        onFleet={setFleet}
+        codex={chosen.summary.provider === 'codex'}
+      />
       {result === null ? null : (
-        <p className="fd-note" role="status">
+        <p className="fd-note fd-fleet-failed" role="alert">
           {result.text}
         </p>
       )}
-    </section>
+      <div className="fd-access-foot">
+        <button type="button" className="fd-ghost" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button type="submit" className="fd-primary" disabled={busy || problem !== null}>
+          Give access
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -273,179 +303,4 @@ export async function saveAccess(
   if (!widens(g, v)) return actions.changeAccess(g.grant_id, body);
   const code = await ask(['Fleet access']);
   return code === null ? null : actions.changeAccess(g.grant_id, body, code);
-}
-
-type FormProps = {
-  readonly grant: GrantView;
-  readonly values: AccessValues;
-  readonly busy: boolean;
-  readonly codex: boolean;
-  readonly onChange: (next: AccessValues) => void;
-  readonly onSave: () => void;
-  readonly onCancel: () => void;
-};
-
-/** The inline form of the change, prefilled from the grant. */
-export function AccessForm({ grant, values, busy, codex, onChange, onSave, onCancel }: FormProps) {
-  const problem = accessProblem(grant, values);
-  const toggle = (c: string, on: boolean) =>
-    onChange({
-      ...values,
-      classes: on ? [...values.classes, c] : values.classes.filter((x) => x !== c),
-    });
-  return (
-    <form
-      className="fd-fleet-form"
-      aria-label="Change access"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (problem === null && !busy) onSave();
-      }}
-    >
-      {EDITABLE.map((c) => (
-        <label key={c} className="fd-check">
-          <input
-            type="checkbox"
-            checked={values.classes.includes(c)}
-            onChange={(event) => toggle(c, event.target.checked)}
-          />
-          {c}
-        </label>
-      ))}
-      {grant.classes
-        .filter((c) => FIXED.includes(c))
-        .map((c) => (
-          <label key={c} className="fd-check">
-            <input type="checkbox" checked disabled readOnly />
-            {`${c} (given only at start)`}
-          </label>
-        ))}
-      {added(grant, values, 'spawn') ? (
-        <LimitInput
-          label="Session limit"
-          value={values.spawnCap}
-          max={50}
-          problem={spawnCapProblem({ ...NO_FLEET, spawn: true, spawnCap: values.spawnCap })}
-          onChange={(spawnCap) => onChange({ ...values, spawnCap })}
-        />
-      ) : null}
-      {added(grant, values, 'spawn') || added(grant, values, 'manage') ? (
-        <>
-          <label>
-            Highest Claude mode
-            <select
-              value={values.claude}
-              onChange={(event) => onChange({ ...values, claude: event.target.value })}
-            >
-              <option value={NOT_ALLOWED}>not allowed</option>
-              {CLAUDE_CEILINGS.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Highest Codex mode
-            <select
-              value={values.codex}
-              onChange={(event) => onChange({ ...values, codex: event.target.value })}
-            >
-              <option value={NOT_ALLOWED}>not allowed</option>
-              {CODEX_CEILINGS.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="fd-note">
-            Sessions that it starts, resumes or changes never get a higher mode. A higher value
-            needs your elevation.
-          </p>
-        </>
-      ) : null}
-      {added(grant, values, 'answer') ? (
-        <LimitInput
-          label="Answer limit"
-          value={values.answerCap}
-          max={5000}
-          problem={answerCapProblem({ ...NO_FLEET, answer: true, answerCap: values.answerCap })}
-          onChange={(answerCap) => onChange({ ...values, answerCap })}
-        />
-      ) : null}
-      {codex ? <p className="fd-note">{CODEX_NOTE}</p> : null}
-      <div className="fd-fleet-actions">
-        <button type="submit" disabled={busy || problem !== null}>
-          Save
-        </button>
-        <button type="button" disabled={busy} onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
-
-type ChangeProps = {
-  readonly grant: GrantView;
-  readonly actions: FleetActions;
-  /** The elevation of the owner; `undefined` for a login that cannot change access. */
-  readonly ask: ElevationAsk | undefined;
-  /** True when the grant's session is a Codex session. */
-  readonly codex: boolean;
-  /** Called after a change, to load the grants again. */
-  readonly onChanged: () => void;
-};
-
-/** The classes of one live grant. */
-export function ChangeAccess({ grant, actions, ask, codex, onChanged }: ChangeProps) {
-  const [editing, setEditing] = useState(false);
-  const [values, setValues] = useState<AccessValues>(() => accessValues(grant));
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<FleetResult | null>(null);
-  const save = () => {
-    if (ask === undefined) return;
-    setBusy(true);
-    void saveAccess(grant, values, actions, ask)
-      .then((r) => {
-        if (r === null) return;
-        setResult(r);
-        if (r.ok) setEditing(false);
-        onChanged();
-      })
-      .finally(() => setBusy(false));
-  };
-  return (
-    <div className="fd-grant-desktop">
-      {grant.live !== true || grant.state === 'revoked' || ask === undefined || editing ? null : (
-        <button
-          type="button"
-          onClick={() => {
-            setValues(accessValues(grant));
-            setResult(null);
-            setEditing(true);
-          }}
-        >
-          Change access
-        </button>
-      )}
-      {editing ? (
-        <AccessForm
-          grant={grant}
-          values={values}
-          busy={busy}
-          codex={codex}
-          onChange={setValues}
-          onSave={save}
-          onCancel={() => setEditing(false)}
-        />
-      ) : null}
-      {result === null ? null : (
-        <p className="fd-note" role="status">
-          {result.text}
-        </p>
-      )}
-    </div>
-  );
 }

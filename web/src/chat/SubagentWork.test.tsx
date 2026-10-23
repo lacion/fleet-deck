@@ -48,6 +48,9 @@ describe('"Show its work" (DL-191)', () => {
     expect(html).toContain('role="log" aria-label="Subagent work"');
     expect(html).toContain('Look at &lt;b&gt;docs&lt;/b&gt;');
     expect(html).not.toContain('<b>docs</b>');
+    // The task of the main agent is no person's prompt: its bubble has no sender glyph.
+    expect(html).toContain('<div class="fd-chat-bubble"><div class="fd-chat-bubble-text">Look at');
+    expect(html).not.toContain('fd-avatar');
     expect(html).toContain('<strong>two</strong>');
     expect(html).toContain('<code>Bash</code>');
     expect(html).toContain('>Refresh</button>');

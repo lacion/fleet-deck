@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { repoName, repoNames, stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
-import { useSettings } from '../settings/context';
-import { CircleDot, Icon, Mail } from '../ui/icons';
-import { useFleetElevation } from '../spawn/useFleetElevation';
+import { CircleDot, Icon, Mail, Plus } from '../ui/icons';
 import {
   type FleetActions,
   type FleetResult,
-  grantStations,
-  grantStatus,
   NOT_LIVE,
   nextSends,
   type SendEntry,
@@ -18,9 +14,7 @@ import {
   sameIntent,
   taskStatus,
 } from './fleet';
-import { ChangeAccess, GiveAccess } from './GrantAccess';
-import { GrantDesktop } from './GrantDesktop';
-import { GrantSpawn, grantTitle, hasCeilings } from './GrantSpawn';
+import { FleetAccess } from './FleetAccess';
 
 /** Mail that waits for delivery to one session (the card extras). */
 export type MailWaiting = { readonly key: string; readonly name: string; readonly count: number };
@@ -32,7 +26,8 @@ type Props = {
   /**
    * `tab` (default): the body of the Mail & tasks tab. `section`: an always-visible section of
    * the wide ops column (DESIGN-SYSTEM §4.4): a heading with a count, the waiting mail and the
-   * tasks as rows, and the form folded under "New mail or task".
+   * tasks as rows, and the form folded under "New mail or task"; the Fleet access section of the
+   * grants follows it as a sibling section.
    */
   readonly layout?: 'tab' | 'section' | undefined;
   /** The waiting mail rows of the section layout. */
@@ -157,8 +152,6 @@ export function FleetPanel({
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
   const [grants, setGrants] = useState<readonly GrantView[]>([]);
   const sends = useRef<SendRecord | null>(null);
-  const settingsEnv = useSettings();
-  const { ask: askElevation, node: elevationNode } = useFleetElevation(settingsEnv);
   const [, redraw] = useState(0);
   const [composeOpen, setComposeOpen] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -304,8 +297,8 @@ export function FleetPanel({
       })
       .finally(() => setBusy(false));
   };
-  // The outcome of a send, a revoke or a renew. The section layout shows it outside the fold, so
-  // that a grant's outcome shows while the form is closed.
+  // The outcome of a send. The section layout shows it outside the fold, so that it shows while
+  // the form is closed.
   const resultNote =
     result === null ? null : (
       <p className="fd-note" role="status">
@@ -460,159 +453,73 @@ export function FleetPanel({
         ))}
       </ul>
     );
-  const access =
-    settingsEnv === undefined || !stations.some((s) => s.coordinator_live === true) ? null : (
-      <GiveAccess
-        sessions={sessions}
-        stations={stations}
-        grants={grants}
-        actions={actions}
-        ask={askElevation}
-        onChanged={() => {
-          void actions.grants().then(setGrants);
-        }}
-      />
-    );
-  const grantList =
-    grants.length === 0 ? null : (
-      <ul className="fd-fleet-list" aria-label="Coordinator grants">
-        {grants.map((g) => (
-          <li key={g.grant_id}>
-            <span className="fd-task-title">{grantTitle(g)}</span>{' '}
-            <span className={`fd-task-state fd-grant-${g.state}`}>{grantStatus(g)}</span>
-            {grantStations(g, stations) === '' ? null : (
-              <>
-                {' '}
-                <span className="fd-note">{grantStations(g, stations)}</span>
-              </>
-            )}
-            {g.state === 'revoked' ? null : (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  void actions
-                    .revoke(g.grant_id)
-                    .then(async (r) => {
-                      setResult(r);
-                      setGrants(await actions.grants());
-                    })
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Revoke
-              </button>
-            )}
-            {g.state === 'expired' && g.revoked_reason === 'idle' ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  void actions
-                    .renew(g.grant_id)
-                    .then(async (r) => {
-                      setResult(r);
-                      setGrants(await actions.grants());
-                    })
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Renew
-              </button>
-            ) : null}
-            {g.live === true && g.state !== 'revoked' ? (
-              <ChangeAccess
-                grant={g}
-                actions={actions}
-                ask={settingsEnv === undefined ? undefined : askElevation}
-                codex={
-                  sessions.find(
-                    (s) => s.station_id === g.station_id && s.summary.session_id === g.session_id,
-                  )?.summary.provider === 'codex'
-                }
-                onChanged={() => {
-                  void actions.grants().then(setGrants);
-                }}
-              />
-            ) : null}
-            {hasCeilings(g) ? (
-              <GrantSpawn
-                grant={g}
-                actions={actions}
-                ask={settingsEnv === undefined ? undefined : askElevation}
-                onChanged={() => {
-                  void actions.grants().then(setGrants);
-                }}
-              />
-            ) : null}
-            {g.desktop_cap === undefined ? null : (
-              <GrantDesktop
-                grant={g}
-                stations={stations}
-                actions={actions}
-                ask={settingsEnv === undefined ? undefined : askElevation}
-                onChanged={() => {
-                  void actions.grants().then(setGrants);
-                }}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
-    );
+  // The grants: rows that open the session's "Fleet access" dialog, and "Give fleet access…".
+  const access = (
+    <FleetAccess
+      sessions={sessions}
+      stations={stations}
+      grants={grants}
+      actions={actions}
+      layout={layout}
+      onChanged={() => {
+        void actions.grants().then(setGrants);
+      }}
+    />
+  );
   if (layout === 'section') {
     const rows = waiting.length + tasks.length;
     return (
-      <section className="fd-fleet fd-ops-sec" data-layout="section" aria-label="Mail and tasks">
-        <h2 className="fd-ops-h">
-          <Icon of={Mail} size={14} /> Mail &amp; tasks
-          {rows === 0 ? null : <span className="fd-count">{rows}</span>}
-        </h2>
-        {waiting.length === 0 ? null : (
-          <ul className="fd-ops-rows" aria-label="Mail waiting">
-            {waiting.map((w) => (
-              <li key={w.key}>
-                <Icon of={Mail} size={14} />
-                <span className="fd-ops-row-text">
-                  <span className="fd-ops-row-title">
-                    {w.count === 1 ? '1 mail waiting' : `${w.count} mails waiting`}
+      <>
+        <section className="fd-fleet fd-ops-sec" data-layout="section" aria-label="Mail and tasks">
+          <h2 className="fd-ops-h">
+            <Icon of={Mail} size={14} /> Mail &amp; tasks
+            {rows === 0 ? null : <span className="fd-count">{rows}</span>}
+          </h2>
+          {waiting.length === 0 ? null : (
+            <ul className="fd-ops-rows" aria-label="Mail waiting">
+              {waiting.map((w) => (
+                <li key={w.key}>
+                  <Icon of={Mail} size={14} />
+                  <span className="fd-ops-row-text">
+                    <span className="fd-ops-row-title">
+                      {w.count === 1 ? '1 mail waiting' : `${w.count} mails waiting`}
+                    </span>
+                    <span className="fd-ops-row-sub">For delivery to {w.name}</span>
                   </span>
-                  <span className="fd-ops-row-sub">For delivery to {w.name}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {tasks.length === 0 ? null : (
-          <ul className="fd-fleet-list fd-ops-rows" aria-label="Tasks">
-            {tasks.map((t) => (
-              <li key={t.task_id}>
-                <Icon of={CircleDot} size={14} />
-                <span className="fd-ops-row-text">
-                  <span className="fd-task-title fd-ops-row-title">{t.title}</span>
-                  <span className={`fd-task-state fd-task-${t.state} fd-ops-row-sub`}>
-                    {taskStatus(t)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {tasks.length === 0 ? null : (
+            <ul className="fd-fleet-list fd-ops-rows" aria-label="Tasks">
+              {tasks.map((t) => (
+                <li key={t.task_id}>
+                  <Icon of={CircleDot} size={14} />
+                  <span className="fd-ops-row-text">
+                    <span className="fd-task-title fd-ops-row-title">{t.title}</span>
+                    <span className={`fd-task-state fd-task-${t.state} fd-ops-row-sub`}>
+                      {taskStatus(t)}
+                    </span>
                   </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <details
-          className="fd-fleet-compose"
-          open={composeOpen}
-          onToggle={(e) => setComposeOpen(e.currentTarget.open)}
-        >
-          <summary>New mail or task</summary>
-          {form}
-        </details>
+                </li>
+              ))}
+            </ul>
+          )}
+          <details
+            className="fd-fleet-compose"
+            open={composeOpen}
+            onToggle={(e) => setComposeOpen(e.currentTarget.open)}
+          >
+            {/* The look of "Give fleet access…" (a leading plus); the chevron trails and turns. */}
+            <summary data-variant="toggle">
+              <Icon of={Plus} size={14} /> New mail or task
+            </summary>
+            {form}
+          </details>
+          {resultNote}
+        </section>
         {access}
-        {grantList}
-        {resultNote}
-        {elevationNode}
-      </section>
+      </>
     );
   }
   return (
@@ -620,8 +527,6 @@ export function FleetPanel({
       {form}
       {taskList}
       {access}
-      {grantList}
-      {elevationNode}
     </section>
   );
 }

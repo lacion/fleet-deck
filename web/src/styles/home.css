@@ -35,15 +35,18 @@
 }
 
 /* ── page header (§4.3) ─────────────────────────────────────────── */
+/* The fleet home has the geometry of every Page header: a title row (--header-h) with the
+   controls level with it, the summary sentence under it on the whole width (one line), and a
+   soft rule. The title sits at the same place on Fleet, Watch and every other page. */
 .fd-home-head {
   position: relative;
   flex: none;
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 2px var(--sp-2);
   min-height: var(--header-h);
-  padding: var(--sp-2) var(--sp-5);
+  padding: var(--sp-2) var(--sp-5) var(--sp-3);
   background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -67,6 +70,23 @@
   font-size: var(--fs-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A desktop or tablet: the title and the sentence are items of the header row, so the title row
+   holds the controls and the sentence (last, a line of its own) has the whole width. */
+.fd-home:not([data-layout="phone"]) .fd-home-titles {
+  display: contents;
+}
+.fd-home:not([data-layout="phone"]) .fd-home-titles > .fd-page-title {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  min-height: var(--header-h);
+}
+.fd-home:not([data-layout="phone"]) .fd-home-counts {
+  order: 1;
+  flex: 1 0 100%;
+  margin-top: calc(-1 * var(--sp-2));
+  line-height: 1.45;
 }
 .fd-home-head > :not(.fd-home-titles) {
   flex: none;
@@ -94,10 +114,32 @@
     width: 180px;
   }
 }
+/* At rest the search is a ghost, as every other control of the title row (Filters, Group by,
+   Share board, the bell): the magnifier and the --faint placeholder name it, and an empty field
+   box pulled the eye from the page title. A hover shows the field; the focus or a text keep the
+   field look. (A narrow board folds it to its icon, below.) */
+.fd-home:not([data-layout="phone"]) .fd-home-search > input:not(:focus):placeholder-shown {
+  background: transparent;
+  border-color: transparent;
+}
+@media (hover: hover) {
+  @container fleet (min-width: 1101px) {
+    .fd-home:not([data-layout="phone"])
+      .fd-home-search:hover
+      > input:not(:focus):placeholder-shown {
+      background: var(--raised);
+      border-color: var(--ctl-edge);
+    }
+  }
+}
+/* Share board: its full label, and "Share" on a narrow board (its accessible name stays
+   "Share board…"). */
+.fd-home-share-short {
+  display: none;
+}
 /* A narrow board (the main column under 1100px: every desktop with the ops column under about
-   1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
-   text, Share board shows its icon only, and from 841 to 960px the sentence drops "on N
-   stations" and a calm "Nothing needs you." next to a conflict. */
+   1650px) keeps the title row light: the search folds to its icon until it has the focus or a
+   text, and Share board says "Share". */
 @container fleet (max-width: 1100px) {
   .fd-home:not([data-layout="phone"]) .fd-home-search {
     width: calc(var(--ctl-h) + 6px);
@@ -132,32 +174,22 @@
     .fd-home-search:is(:focus-within, :has(> input:not(:placeholder-shown))) {
     width: 180px;
   }
-  .fd-home:not([data-layout="phone"]) .fd-home-share {
-    padding: 0 6px;
-  }
   .fd-home:not([data-layout="phone"]) .fd-home-share-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-@container fleet (min-width: 841px) and (max-width: 960px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-on,
-  .fd-home:not([data-layout="phone"]) .fd-home-state[data-calm="true"] {
     display: none;
   }
-}
-/* Under 840px (a 1280px window, a tablet) the controls take a second row of the header. */
-@container fleet (max-width: 840px) {
-  .fd-home:not([data-layout="phone"]) .fd-home-head {
-    flex-wrap: wrap;
-    row-gap: var(--sp-2);
+  .fd-home:not([data-layout="phone"]) .fd-home-share-short {
+    display: inline;
   }
-  .fd-home:not([data-layout="phone"]) .fd-home-titles {
+}
+/* Under 840px (a 1280px window, a tablet) the title row has no room for the controls: the title,
+   the sentence, then the controls on a row of their own (the order of a narrow Page). */
+@container fleet (max-width: 840px) {
+  .fd-home:not([data-layout="phone"]) .fd-home-titles > .fd-page-title {
     flex-basis: 100%;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-counts {
+    order: 0;
+    margin-bottom: var(--sp-2);
   }
 }
 /* No waiting request: the notification switch is the last item of the header. */
@@ -167,18 +199,21 @@
 }
 
 /* ── filters ────────────────────────────────────────────────────── */
-.fd-filters-menu {
-  position: static;
-}
 .fd-filters-menu .fd-menu-body {
   width: min(480px, calc(100vw - 32px));
   gap: var(--sp-3);
   padding: var(--sp-3);
 }
+/* The menu hangs from its button (the .fd-menu is the containing block): from its left edge
+   when it fits in the main column, else from its right edge (FleetHome filtersAlign). */
 .fd-home:not([data-layout="phone"]) .fd-filters-menu .fd-menu-body {
-  top: calc(100% - 4px);
-  right: var(--sp-5);
+  top: calc(100% + 4px);
+  right: 0;
   left: auto;
+}
+.fd-home:not([data-layout="phone"]) .fd-filters-menu[data-align="start"] .fd-menu-body {
+  right: auto;
+  left: 0;
 }
 .fd-filters-row {
   display: grid;
@@ -423,11 +458,6 @@
   background: var(--raised-hi);
   box-shadow: inset 0 0 0 1px var(--ctl-edge);
 }
-/* The key chip of a plain answer: the dark --badge-bg is the --raised-hi of the button, so the
-   chip gets the edge of a control on a raised surface. */
-.fd-q-body button:not(.fd-decide, .fd-danger) .fd-kbd {
-  box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
-}
 .fd-q-error {
   flex-basis: 100%;
   margin: 0;
@@ -492,10 +522,26 @@
     forced-color-adjust: none;
   }
 }
+/* A lane warning: the triangle-alert icon of every hazard of the board, then the words. */
 .fd-lane-warn,
 .fd-lane-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   color: var(--hazard);
   white-space: nowrap;
+}
+.fd-lane-warn > .fd-icon,
+.fd-lane-conf > .fd-icon {
+  flex: none;
+}
+/* A phone-width lane head keeps the name, the count and the slots on one line: a warning (a
+   shared bypass mode, low resources, contested) takes the line under it. */
+@container fleet (max-width: 480px) {
+  .fd-lane-head > :is(.fd-lane-warn, .fd-lane-conf) {
+    order: 1;
+    flex-basis: 100%;
+  }
 }
 .fd-lane-slots {
   display: inline-flex;
@@ -504,17 +550,42 @@
   margin-left: auto;
   white-space: nowrap;
 }
+/* The neutral bar of a lane over 24 slots (`SlotMeter`): `.fd-meter` is a block with no width of
+   its own in the inline-flex lane slots. */
+.fd-lane-slots > .fd-meter {
+  flex: none;
+  width: 72px;
+}
+/* "All ended": the tools of the ended sessions of every lane, under the last lane at the lane gap,
+   level with the Ended rows. The counts are pills, as "Ended 2". */
 .fd-offline-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-1) var(--sp-2);
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-5);
   padding: 0 2px;
+}
+.fd-offline-tools > .fd-label {
+  margin-right: var(--sp-1);
+}
+.fd-offline-tools .fd-count {
+  margin-left: 2px;
 }
 .fd-offline-report {
   color: var(--dim);
   font-size: var(--fs-meta);
+}
+/* An online station without a session: its head, one --dim line and New session. */
+.fd-lane-none {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  padding: 0 2px;
+}
+.fd-lane-none > .fd-note {
+  margin: 0;
 }
 .fd-lanes-empty {
   display: flex;
@@ -534,158 +605,13 @@
   gap: var(--sp-2);
 }
 
-/* ── the card (project pages) ───────────────────────────────────── */
-.fd-cardwrap {
-  display: block;
-  min-width: 0;
-}
-.fd-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px var(--sp-3) 10px calc(3px + var(--sp-3));
-  background: var(--raised);
-  border-radius: var(--r-card);
-  box-shadow:
-    inset 3px 0 0 var(--faint-decor),
-    var(--shadow-lift);
-  color: var(--text);
-  font-size: var(--fs-ui);
-  text-decoration: none;
-  transition: background-color var(--t-fast);
-}
-.fd-card:hover {
-  background: var(--raised-hi);
-  color: var(--text);
-}
-.fd-card:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.fd-card[data-status="needs_you"] {
-  box-shadow:
-    inset 3px 0 0 var(--act),
-    var(--shadow-lift);
-}
-.fd-card[data-status="working"] {
-  box-shadow:
-    inset 3px 0 0 var(--ok),
-    var(--shadow-lift);
-}
-.fd-card:is([data-status="verifying"], [data-status="queued"]) {
-  box-shadow:
-    inset 3px 0 0 var(--focus),
-    var(--shadow-lift);
-}
-.fd-card:is([data-status="unreachable"], [data-status="lost"], [data-contested="true"]) {
-  box-shadow:
-    inset 3px 0 0 var(--hazard),
-    var(--shadow-lift);
-}
-.fd-card[data-status="ended"],
-.fd-card[data-archived="true"] {
-  color: var(--faint);
-}
-.fd-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-.fd-card-title {
-  display: -webkit-box;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--fs-title);
-  font-weight: 600;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-}
+/* ── card parts that the strips share (star, note, ask, tool, error) ── */
 .fd-card-star {
   flex: none;
   color: var(--act);
 }
 .fd-card-star .fd-icon {
   fill: currentColor;
-}
-.fd-card-head .fd-dot {
-  align-self: flex-start;
-  margin-top: 3px;
-}
-.fd-card-where {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  white-space: nowrap;
-}
-.fd-card-place {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.fd-card-where .fd-badge {
-  flex: none;
-  margin-left: auto;
-}
-.fd-card-diff {
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  white-space: nowrap;
-}
-.fd-card-contested {
-  color: var(--hazard);
-  font-size: var(--fs-meta);
-}
-.fd-card-contested .fd-icon {
-  display: inline;
-  vertical-align: -1px;
-}
-.fd-card-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-1);
-}
-.fd-card-mail {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 3px;
-  color: var(--dim);
-  font-size: var(--fs-meta);
-  white-space: nowrap;
-}
-.fd-card-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  min-width: 0;
-}
-.fd-filechip {
-  min-width: 0;
-  max-width: 140px;
-  padding: 1px 6px;
-  overflow: hidden;
-  background: var(--raised-hi);
-  border-radius: var(--r-chip);
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fd-filechip[data-hot="true"] {
-  background: var(--hazard-bg);
-  color: var(--hazard);
 }
 .fd-spark {
   flex: none;
@@ -698,17 +624,8 @@
 .fd-spark rect[data-last="true"] {
   fill: var(--ok);
 }
-.fd-card-age {
-  margin-left: auto;
-  color: var(--faint);
-  font-size: var(--fs-meta);
-  white-space: nowrap;
-}
-.fd-spark + .fd-card-age {
-  margin-left: 0;
-}
 
-/* The note line (the strip, the card and the watch tiles). */
+/* The note line (the strip and the watch tiles). */
 .fd-card-note {
   display: -webkit-box;
   min-width: 0;
@@ -777,9 +694,25 @@
 .fd-stripwrap:hover {
   background: var(--raised-hi);
 }
+/* The where column of every strip of the board (--fd-where-w): 168px, wider on a wide board
+   (16% of the fleet column, at most 260px), so a long branch shows. Every strip of the board has
+   the same container width, so the columns stay aligned. The changes column (--fd-changes-w) holds
+   a diff of 12 characters ("+12,345 −678") and "1,286 files" inside its 12px sides; a longer
+   diff takes its short form ("+18K −6.4K", FleetStrip diffTexts). */
+.fd-board {
+  --fd-where-w: 168px;
+  --fd-changes-w: 112px;
+}
+@container fleet (min-width: 721px) {
+  .fd-board {
+    --fd-where-w: clamp(168px, 16cqi, 260px);
+  }
+}
 .fd-strip {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto 168px 88px 64px;
+  grid-template-columns:
+    104px minmax(0, 1fr) auto var(--fd-where-w, 168px) var(--fd-changes-w, 112px)
+    64px;
   align-items: stretch;
   min-height: var(--strip-h);
   padding-left: 3px;
@@ -891,8 +824,13 @@
   gap: var(--sp-2);
   color: var(--dim);
 }
-.fd-strip-meta:empty {
+/* No fact to show: no padding (the project label shows only on a narrow strip; a mode that the
+   lane head names keeps only its words for screen readers). */
+.fd-strip-meta:not(:has(> :not(.fd-strip-proj, .fd-vh))) {
   padding: 0;
+}
+.fd-strip-proj {
+  display: none;
 }
 .fd-strip-ico {
   display: inline-flex;
@@ -945,34 +883,44 @@
   flex: none;
   visibility: hidden;
 }
-/* No known changes: the where cell takes the changes column too, so the age stays aligned. */
+/* No known changes: the where cell takes the changes column too, so the age stays aligned and
+   every where cell of the board starts at one x. */
 .fd-strip[data-nochanges="true"] > .fd-strip-where {
   grid-column: span 2;
 }
-/* A lane where no strip has changes drops the changes column: the main cell gets its 88px, and
-   the ages of the lane (its ended fold too) stay in one column. The chip line of the where cell
-   then starts 232px from the right edge (where 168 + age 64). */
+/* A board that has shown no changes yet drops the changes column: the main cells get its
+   --fd-changes-w, and the ages stay in one column. It is a choice of the board, not of each lane,
+   so the columns of every lane line up; once a strip showed changes, the column stays until the
+   page reloads (FleetBoard `data-changes`), so a live event never moves every where cell. The chip
+   line of the where cell then starts at where + age from the right edge. The Sessions tab of a
+   project (`.fd-int-tab`, its live list and its Ended fold) makes the same choice for all of its
+   strips (ProjectSessions `data-changes`). */
 @container fleet (min-width: 721px) {
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
-    grid-template-columns: 104px minmax(0, 1fr) auto 168px 64px;
+  :is(.fd-board, .fd-int-tab):not([data-changes]) .fd-strip {
+    grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w, 168px) 64px;
   }
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
+  :is(.fd-board, .fd-int-tab):not([data-changes]) .fd-strip > .fd-strip-where {
     grid-column: auto;
   }
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
-    left: calc(100% - 232px + var(--sp-3));
-    max-width: calc(168px - 2 * var(--sp-3));
+  :is(.fd-board, .fd-int-tab):not([data-changes]) .fd-stripwrap > .fd-strip-links {
+    left: calc(100% - var(--fd-where-w, 168px) - 64px + var(--sp-3));
+    max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   }
 }
+/* The last guard of the column: a diff never runs through the rule into the age cell. */
 .fd-strip > .fd-strip-changes {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
+  overflow: hidden;
   font-size: var(--fs-meta);
 }
 .fd-strip-diff {
+  max-width: 100%;
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fd-add {
@@ -991,8 +939,8 @@
   white-space: nowrap;
 }
 /* The chips that are links of their own (PR, issue, project, compare) lie in the strip row: the
-   second line of the where cell (as the PR chip of concept A). The where column starts 320px
-   from the right edge (where 168 + changes 88 + age 64). */
+   second line of the where cell (as the PR chip of concept A). The where column starts at where
+   + changes (--fd-changes-w) + age 64 from the right edge. */
 .fd-strip-links {
   display: flex;
   flex-wrap: nowrap;
@@ -1013,12 +961,12 @@
   z-index: 1;
   pointer-events: none;
   bottom: 3px;
-  left: calc(100% - 320px + var(--sp-3));
-  max-width: calc(168px - 2 * var(--sp-3));
+  left: calc(100% - var(--fd-where-w, 168px) - var(--fd-changes-w, 112px) - 64px + var(--sp-3));
+  max-width: calc(var(--fd-where-w, 168px) - 2 * var(--sp-3));
   overflow: hidden;
 }
 .fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
-  max-width: calc(168px + 88px - 2 * var(--sp-3));
+  max-width: calc(var(--fd-where-w, 168px) + var(--fd-changes-w, 112px) - 2 * var(--sp-3));
 }
 .fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer)) > .fd-strip > .fd-strip-where {
   align-items: flex-start;
@@ -1034,7 +982,8 @@
 .fd-strips + .fd-lane-ended {
   margin-top: var(--sp-1);
 }
-.fd-lane-ended > summary {
+.fd-lane-ended > summary,
+.fd-access-expired > summary {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1047,13 +996,16 @@
   font-weight: 600;
   transition: color var(--t-fast);
 }
-.fd-lane-ended > summary::before {
+.fd-lane-ended > summary::before,
+.fd-access-expired > summary::before {
   margin-right: 0;
 }
-.fd-lane-ended > summary:hover {
+.fd-lane-ended > summary:hover,
+.fd-access-expired > summary:hover {
   color: var(--dim);
 }
-.fd-lane-ended > summary:focus-visible {
+.fd-lane-ended > summary:focus-visible,
+.fd-access-expired > summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -1126,6 +1078,13 @@
     font-size: var(--fs-ui);
     color: var(--dim);
   }
+  /* The status glyph hangs in a column of its own: the title and the first cell of the second line
+     (the callsign; in a repo or project lane the station) start at one x (the 12px .fd-dot, its 2px
+     margin and the gap of the title). */
+  .fd-strip:not([data-showstation="true"]) .fd-strip-call,
+  .fd-strip[data-showstation="true"] > .fd-strip-where > .fd-strip-station {
+    margin-inline-start: calc(12px + 2px + var(--sp-1));
+  }
   .fd-strip-title {
     grid-area: title;
     max-width: none;
@@ -1158,6 +1117,33 @@
     max-width: none;
     flex-wrap: wrap;
     padding: 0 var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
+  }
+  /* The project is a quiet label of the meta line (a folder icon and the name), not a chip on a
+     third line: the links row keeps only the PR, issue and compare chips. */
+  .fd-strip-meta > .fd-strip-proj {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    max-width: 132px;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-strip-proj > .fd-icon {
+    flex: none;
+    color: var(--faint);
+  }
+  .fd-strip-proj-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fd-stripwrap > .fd-strip-links > .fd-int-projectchip {
+    display: none;
+  }
+  .fd-stripwrap > .fd-strip-links:not(:has(> :not(.fd-strip-spacer, .fd-int-projectchip))) {
+    display: none;
   }
   /* A lane by repo or project: no where cell, so the station name starts the meta line. */
   .fd-strip[data-showstation="true"] {
@@ -1200,16 +1186,66 @@
   }
 }
 
+/* A phone-width board (under 480px): the facts (project label, flags, counters) go up to the title
+   line, before the age, so the second line gives the callsign and what the session does now all
+   the room (concept A phone). The title cuts first. */
+@container fleet (max-width: 480px) {
+  .fd-strip {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title meta age"
+      "call now now changes";
+  }
+  .fd-strip[data-nochanges="true"] {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title meta age"
+      "call now now now";
+  }
+  .fd-strip[data-showstation="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title title meta age"
+      "station call now now changes";
+  }
+  .fd-strip[data-showstation="true"][data-nochanges="true"] {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title title title meta age"
+      "station call now now now";
+  }
+  .fd-strip-meta > .fd-strip-proj {
+    max-width: 96px;
+  }
+}
+
 /* ── ops panel (§4.4) ───────────────────────────────────────────── */
+/* The column never scrolls sideways: its parts and their fields shrink to the column. */
 .fd-ops {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   background: var(--surface);
 }
-.fd-ops > * + * {
+.fd-ops > *,
+.fd-ops-body > *,
+.fd-ops-mail > * {
+  min-width: 0;
+}
+.fd-ops > * + *,
+.fd-ops-body > * + *,
+.fd-ops-mail > * + * {
   border-top: 1px solid var(--border-soft);
+}
+/* Wide: the sections scroll in the body; the foot (HomePanel) is the second row. */
+.fd-ops-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .fd-ops-sec {
   padding: var(--sp-4);
@@ -1228,6 +1264,23 @@
 }
 .fd-glance .fd-ops-h > .fd-icon {
   color: var(--fuel);
+}
+/* The first section of the wide ops column starts with the title row of the page header (§4.3,
+   concept B): its heading is a --header-h row under the 8px top padding of the header, so it
+   centers on the page title; a scope line right under it ("7 live and 2 ended sessions") moves up
+   by the same 8px as the header sentence and sits on its line (after the glance rules). */
+.fd-ops[data-wide="true"] > .fd-ops-body > :first-child:not(.fd-ops-mail),
+.fd-ops[data-wide="true"] > .fd-ops-body > .fd-ops-mail:first-child > :first-child {
+  padding-top: var(--sp-2);
+}
+.fd-ops[data-wide="true"] > .fd-ops-body > :first-child:not(.fd-ops-mail) > .fd-ops-h:first-child,
+.fd-ops[data-wide="true"]
+  > .fd-ops-body
+  > .fd-ops-mail:first-child
+  > :first-child
+  > .fd-ops-h:first-child {
+  min-height: var(--header-h);
+  margin-bottom: 0;
 }
 
 /* Usage glance */
@@ -1272,31 +1325,50 @@
   color: var(--faint);
   font-size: var(--fs-meta);
 }
-.fd-glance-totals {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-2);
-  margin: var(--sp-5) 0 0;
+/* The scope of the totals ("7 live and 2 ended sessions"), then the totals. */
+.fd-glance-span {
+  margin: var(--sp-5) 0 var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-meta);
 }
-.fd-glance-meters:empty + .fd-glance-totals,
-.fd-ops-h + .fd-glance-totals {
+.fd-ops-h + .fd-glance-span {
   margin-top: 0;
 }
+/* The first section of the wide ops column: the scope line sits on the header sentence (above). */
+.fd-ops[data-wide="true"] > .fd-ops-body > .fd-glance:first-child > .fd-ops-h + .fd-glance-span {
+  margin-top: calc(-1 * var(--sp-2));
+}
+/* The cost keeps its whole value ("$1,730.38", cents everywhere, §5): its column is as wide as its
+   value, and the token columns share the rest. */
+.fd-glance-totals {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+  gap: var(--sp-2);
+  margin: 0;
+}
+/* The value over its one-line label ("new input", "output", "at API prices"): the labels start at
+   one height under the values. */
 .fd-glance-totals > div {
   display: flex;
   flex-direction: column-reverse;
+  justify-content: flex-end;
   gap: 2px;
   min-width: 0;
 }
 .fd-glance-totals dt {
+  overflow: hidden;
   color: var(--dim);
   font-size: var(--fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fd-glance-totals dd {
   margin: 0;
+  overflow: hidden;
   color: var(--fuel);
   font-size: var(--fs-heading);
   font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1481,17 +1553,26 @@
   padding: 0 var(--sp-3);
   border-top: 1px solid var(--border-soft);
 }
-/* From 1280 px the ops panel is the right column: Usage, Conflict radar, Mail & tasks, then a
-   44px foot row with the Activity and Assign buttons; an open one shows its panel above the
-   foot. */
+/* From 1280 px the ops panel is the right column: a scrolling body (Usage, Conflict radar, Mail &
+   tasks, Fleet access), then a 44px foot row with the Activity, Assign and All usage buttons that
+   never leaves the screen (a grid row, outside the scroller; a sticky foot could not leave its
+   44px parent). An open one shows its panel above the foot, in the lower half of the column. */
 @media (min-width: 1280px) {
   .fd-home[data-layout="desktop"],
   .fd-home[data-layout="tablet"] {
     grid-template-columns: minmax(0, 1fr) var(--rail-w);
     grid-template-rows: minmax(0, 1fr);
   }
-  .fd-home:not([data-layout="phone"]) .fd-ops {
-    overflow-y: auto;
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"] {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"][data-tab] {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"] > .fd-homepanel {
+    margin-top: 0;
   }
   .fd-home:not([data-layout="phone"]) .fd-homepanel {
     margin-top: auto;
@@ -1506,16 +1587,6 @@
     flex: 1 1 0;
     height: auto;
     min-height: 0;
-  }
-  .fd-home:not([data-layout="phone"]) .fd-homepanel[data-wide="true"][data-open="true"] {
-    flex: 1 0 240px;
-  }
-  /* The foot stays in view while the column scrolls. */
-  .fd-home:not([data-layout="phone"]) .fd-ops-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    background: var(--surface);
   }
 }
 .fd-homepanel[data-wide="true"] > .fd-homepanel-body {
@@ -1731,8 +1802,13 @@
   align-items: center;
   gap: 6px;
 }
-.fd-fleet select,
-.fd-fleet textarea {
+.fd-fleet-form,
+.fd-fleet-form > * {
+  min-width: 0;
+}
+.fd-fleet :is(select, textarea, input:not([type="checkbox"], [type="radio"])) {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
 }
 .fd-fleet-actions {
@@ -1800,9 +1876,6 @@
 .fd-fleet[data-layout="section"] > .fd-ops-h {
   margin: 0;
 }
-.fd-ops-h > .fd-count {
-  margin-left: auto;
-}
 .fd-ops-rows {
   display: flex;
   flex-direction: column;
@@ -1840,10 +1913,16 @@
   font-size: var(--fs-meta);
   overflow-wrap: anywhere;
 }
+/* "New mail or task" and "Give fleet access…" are one quiet add row: a leading 14px plus, then
+   12px --dim words; the fold's chevron trails and turns when it opens (summary[data-variant]). */
 .fd-fleet-compose > summary {
   display: flex;
-  align-items: center;
+  gap: 6px;
   width: max-content;
+}
+.fd-fleet-compose > summary,
+.fd-fleet-give {
+  align-items: center;
   height: var(--ctl-h);
   padding: 0 var(--sp-2) 0 0;
   border-radius: var(--r-ctl);
@@ -1851,6 +1930,11 @@
   font-size: var(--fs-meta);
   font-weight: 500;
   transition: color var(--t-fast);
+}
+.fd-fleet-compose > summary > .fd-icon,
+.fd-fleet-give > .fd-icon {
+  flex: none;
+  opacity: 0.7;
 }
 .fd-fleet-compose > summary:hover {
   color: var(--text);
@@ -1865,6 +1949,85 @@
 .fd-fleet[data-layout="section"] .fd-fleet-form {
   flex: none;
   max-width: none;
+}
+
+/* Fleet access (a section of the wide column, or a block of the Mail & tasks tab): one row for
+   each grant that gives access, with "Change…"; the expired grants in a collapsed "Expired" fold
+   (the lane Ended fold); and "Give fleet access…" in the look of the "New mail or task" fold. The
+   forms are in dialogs. */
+.fd-ops-access {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.fd-ops-access > .fd-ops-h {
+  margin: 0;
+}
+.fd-fleet-access {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-access-tab-h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+}
+/* A grant row: Change… at the end of the title line, and the state line under both, so the state
+   has the whole width ("Coordinator · expired after idle time" on one line). */
+.fd-access-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title change"
+    "sub sub";
+  align-items: center;
+  gap: 2px var(--sp-3);
+}
+.fd-access-list .fd-ops-row-text {
+  display: contents;
+}
+.fd-access-list .fd-ops-row-title {
+  grid-area: title;
+}
+.fd-access-list .fd-ops-row-sub {
+  grid-area: sub;
+}
+.fd-access-list > li > button {
+  grid-area: change;
+  margin-block: -4px;
+}
+/* Change… shows on the row under the pointer or the keyboard (it stays in the tab order), so the
+   column is not a stack of equal links next to the names; a touch screen shows it always. */
+@media (hover: hover) {
+  .fd-access-list > li > button {
+    opacity: 0;
+    transition: opacity var(--t-fast);
+  }
+  .fd-access-list > li:hover > button,
+  .fd-access-list > li:focus-within > button {
+    opacity: 1;
+  }
+}
+.fd-access-expired .fd-ops-row-title {
+  color: var(--dim);
+}
+.fd-access-expired > .fd-access-list {
+  margin-top: var(--sp-2);
+}
+.fd-fleet-give {
+  align-self: flex-start;
+  background: transparent;
+}
+.fd-fleet-give:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+.fd-fleet-give:focus-visible {
+  outline-offset: 1px;
 }
 /* ── phone (§4.8) ───────────────────────────────────────────────── */
 .fd-home[data-layout="phone"] {
@@ -1894,20 +2057,41 @@
   width: auto;
   min-width: 0;
 }
-/* The phone header has no room for the label: Share board is a 44px icon button, and the text
-   stays as its accessible name (§4.3). */
-.fd-home[data-layout="phone"] .fd-home-share {
-  flex: none;
-  width: var(--tap-min);
-  padding: 0;
+/* The phone has no tooltips: Share board and the needs-you notification switch are rows of one
+   board menu (an ellipsis button after Filters), not two unlabelled icons (§4.8). */
+.fd-home[data-layout="phone"] .fd-filters-menu {
+  position: static;
 }
-.fd-home[data-layout="phone"] .fd-home-share-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.fd-menu-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ctl-h);
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  cursor: pointer;
+}
+.fd-menu-switch > .fd-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--dim);
+}
+.fd-menu-switch-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fd-menu-switch:hover {
+  background: var(--badge-bg);
+}
+.fd-menu-switch[data-disabled="true"] {
+  color: var(--dim);
+  cursor: default;
+}
+.fd-menu-switch[data-disabled="true"]:hover {
+  background: transparent;
 }
 .fd-home[data-layout="phone"] .fd-filters-menu .fd-menu-body {
   top: calc(100% - 4px);
@@ -1981,6 +2165,14 @@
 .fd-home[data-layout="phone"] .fd-board {
   padding: 0 var(--sp-4);
 }
+/* One lane gap on the phone: the lane head is not a tap target (no 44px row), and an Ended row
+   (a 44px tap target with its 12px text in the middle) gives back the space under its text. */
+.fd-home[data-layout="phone"] .fd-lane-head {
+  min-height: var(--sp-6);
+}
+.fd-home[data-layout="phone"] .fd-lane > .fd-lane-ended:last-child {
+  margin-bottom: calc(-1 * var(--sp-3));
+}
 .fd-home[data-layout="phone"] .fd-strip {
   min-height: 56px;
 }
@@ -2025,7 +2217,7 @@
     top: 50%;
     bottom: auto;
     left: auto;
-    right: calc(88px + 64px + var(--sp-3));
+    right: calc(var(--fd-changes-w, 112px) + 64px + var(--sp-3));
     transform: translateY(-50%);
   }
   :root[data-density="compact"]
@@ -2041,7 +2233,7 @@
     padding-top: 0;
   }
   :root[data-density="compact"]
-    .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"])))
+    :is(.fd-board, .fd-int-tab):not([data-changes])
     .fd-stripwrap
     > .fd-strip-links {
     left: auto;
@@ -2062,19 +2254,8 @@
     min-height: var(--row-h-touch);
   }
 }
-:root[data-density="compact"] .fd-card {
-  gap: 3px;
-  padding-block: 6px;
-}
-:root[data-density="compact"] .fd-card-where,
-:root[data-density="compact"] .fd-card-files {
-  display: none;
-}
 :root[data-density="compact"] .fd-card-note {
   -webkit-line-clamp: 1;
-}
-:root[data-density="compact"] .fd-card-foot:not(:has(.fd-badge)) {
-  display: none;
 }
 
 /* ── grant access panels (§4.7) ─────────────────────────────────── */
@@ -2086,76 +2267,94 @@
 .fd-access-sec:not(:first-child) {
   padding-top: var(--sp-5);
 }
+/* A sub-heading of a section (Stations, Permissions, Limits) is a 12px .fd-label: under the
+   15px dialog title and the 13px section headings. */
 .fd-access-h {
   margin: 0;
-  color: var(--text);
-  font-size: var(--fs-heading);
-  font-weight: 600;
+}
+/* One row per station or permission: the title (and its description under it) at the left, the
+   switch at the right, on one line. No fill and no box (no box in a box): a rule between the
+   rows (--border: --border-soft is 1.06:1 on the --raised dialog). */
+.fd-access-rows {
+  display: flex;
+  flex-direction: column;
 }
 label.fd-access-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
-  gap: 2px var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--raised);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-lift);
+  min-height: var(--row-h);
+  padding: var(--sp-2) 0;
   color: var(--text);
   font-size: var(--fs-ui);
   cursor: pointer;
-  transition: background-color var(--t-fast);
 }
-label.fd-access-row > input {
-  grid-row: 1 / span 2;
-  margin: 2px 0 0;
-}
-label.fd-access-row:hover {
-  background: var(--raised-hi);
-}
-label.fd-access-row:has(input:checked) {
-  background: var(--focus-bg);
-  box-shadow: inset 0 0 0 1px var(--focus);
+label.fd-access-row + label.fd-access-row {
+  border-top: 1px solid var(--border);
 }
 label.fd-access-row:has(input:disabled) {
-  opacity: 0.45;
-  cursor: not-allowed;
+  cursor: default;
 }
-label.fd-access-row:has(input:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.fd-access-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .fd-access-title {
-  grid-column: 2;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 .fd-access-desc {
-  grid-column: 2;
   color: var(--dim);
   font-size: var(--fs-meta);
   font-weight: 400;
 }
-.fd-access-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-2) var(--sp-3);
-}
-.fd-access-grid > div {
+/* A field of an access form (the session, a limit, a mode): the label over the control. */
+.fd-access-field {
   min-width: 0;
 }
-.fd-access-grid label {
+.fd-access-field > label,
+.fd-access-more label {
   display: grid;
   gap: var(--sp-1);
   min-width: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
 }
-.fd-access-grid input,
-.fd-access-grid select {
+.fd-access-field :is(input, select),
+.fd-access-more :is(input:not([type="checkbox"], [type="radio"]), select) {
   width: 100%;
   min-width: 0;
+}
+.fd-access-field > .fd-note {
+  margin: var(--sp-1) 0 0;
+}
+/* The limits of the permissions that are on: two columns. */
+.fd-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+/* The session rules and the desktop limits of a grant (the Fleet access dialog). */
+.fd-access-more {
+  display: grid;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.fd-access-more > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-access-more .fd-fleet-form {
+  flex-basis: 100%;
+}
+.fd-access-more .fd-fleet-list {
+  flex-basis: 100%;
 }
 @media (max-width: 520px) {
   .fd-access-grid {

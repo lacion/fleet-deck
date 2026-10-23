@@ -88,8 +88,11 @@ describe('the session rules form', () => {
     expect(html).toContain('value="3"');
     expect(html).toContain('Highest Claude mode');
     expect(html).toContain('Highest Codex mode');
-    expect(html).toContain('<option value="acceptEdits" selected="">acceptEdits</option>');
-    expect(html).toContain(`<option value="${CODEX}" selected="">${CODEX}</option>`);
+    // The options say the modes in words; the values stay the ids.
+    expect(html).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
+    expect(html).toContain(
+      `<option value="${CODEX}" selected="">Ask when needed · workspace write</option>`,
+    );
     expect(html).toContain('Sessions that it starts, resumes or changes never get a higher mode.');
     expect(html).toContain('Save');
     expect(html).toContain('Cancel');
@@ -103,12 +106,12 @@ describe('the session rules form', () => {
     expect(html).toContain('Highest Codex mode');
   });
 
-  test('a family without a ceiling shows "not allowed" selected', () => {
+  test('a family without a ceiling shows "Not allowed" selected', () => {
     const g: GrantView = { ...grant, max_modes: { claude: 'plan' } };
     expect(spawnValues(g).codex).toBe(NOT_ALLOWED);
     const html = show(g);
-    expect(html).toContain('<option value="" selected="">not allowed</option>');
-    expect(html).toContain('<option value="plan" selected="">plan</option>');
+    expect(html).toContain('<option value="" selected="">Not allowed</option>');
+    expect(html).toContain('<option value="plan" selected="">Plan</option>');
   });
 
   test('a grant with neither class has no ceilings and no button', () => {

@@ -16,9 +16,11 @@
 }
 
 /* ── header: a strip (§4.5) ─────────────────────────────────────── */
+/* The pane starts on the 24px gutter of every page (§4.3): the header, the notices, the tabs and
+   the Changes view share one left edge. */
 .fd-sh-block {
   flex: none;
-  padding: var(--sp-3) var(--sp-4) 0;
+  padding: var(--sp-3) var(--sp-5) 0;
 }
 .fd-sh {
   display: flex;
@@ -44,15 +46,16 @@
   align-self: center;
   margin-left: var(--sp-1);
 }
-/* The callsign cell: the callsign over the model and the provider. */
+/* The callsign cell: the callsign over the model and the provider. One fixed width for every
+   session, so that the title does not move when the owner goes from one session to the next; a
+   long model name gets an ellipsis inside the cell. */
 .fd-sh-call {
   display: flex;
-  flex: none;
+  flex: 0 0 176px;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  min-width: 112px;
-  max-width: 200px;
+  min-width: 0;
   padding: 0 var(--sp-4);
   border-right: 1px solid var(--border);
 }
@@ -62,6 +65,7 @@
   font-size: var(--fs-heading);
   line-height: 1.15;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fd-sh-who {
   display: flex;
@@ -72,7 +76,13 @@
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
-.fd-sh-model,
+.fd-sh-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fd-sh-provider {
   flex: none;
   white-space: nowrap;
@@ -108,9 +118,13 @@
   opacity: 0;
   transition: opacity var(--t-fast);
 }
-.fd-sh:hover .fd-sh-line > .fd-iconbtn,
 .fd-sh-line > .fd-iconbtn:focus-visible {
   opacity: 1;
+}
+@media (hover: hover) {
+  .fd-sh:hover .fd-sh-line > .fd-iconbtn {
+    opacity: 1;
+  }
 }
 @media (hover: none) {
   .fd-sh-line > .fd-iconbtn {
@@ -159,9 +173,21 @@
 .fd-sh-chip[data-mono] {
   flex: 0 1 auto;
 }
+/* The place row takes the free room of the chips row: its width never depends on the folder text,
+   so the folder chip (PathFit.tsx) measures its room on it. */
 .fd-sh-chips > .fd-sh-place {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   overflow: hidden;
+}
+/* The folder chip is as wide as its path: the path drops whole leading folders to fit the room
+   ("…/fleet-deck-worktrees/v2"), never its end; no cap of its own. */
+.fd-sh-chip[data-folder] {
+  flex: 0 1 auto;
+  max-width: none;
+}
+.fd-sh-chip[data-folder] > span {
+  overflow: hidden;
+  white-space: nowrap;
 }
 .fd-sh-chip[data-mono] > span {
   font-family: var(--font-data);
@@ -206,6 +232,7 @@
 }
 /* The actions at the right, after a field rule. */
 .fd-sh-actions {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -213,9 +240,16 @@
   padding: 0 var(--sp-2) 0 var(--sp-3);
   border-left: 1px solid var(--border);
 }
+/* The menus of the header (Terminal, the session menu) open under the strip, not over its chips:
+   the action group (the full height of the strip) holds the menu body, 8px under the strip and at
+   its right edge. */
+.fd-sh-actions > .fd-menu {
+  position: static;
+}
 .fd-sh .fd-menu-body {
+  top: calc(100% + var(--sp-2));
   width: max-content;
-  max-width: min(320px, calc(100vw - 32px));
+  max-width: min(360px, calc(100vw - 32px));
 }
 /* The facts inside the phone menu. */
 .fd-sh-badges {
@@ -244,8 +278,9 @@
   display: contents;
 }
 .fd-sh-details dt {
-  align-self: center;
+  align-self: start;
   color: var(--faint);
+  line-height: 18px;
 }
 /* The copy button keeps its tap size but does not grow the row. */
 .fd-sh-details dd .fd-iconbtn {
@@ -256,13 +291,30 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  min-height: 18px;
   margin: 0;
   color: var(--dim);
+  line-height: 18px;
   overflow-wrap: anywhere;
 }
 .fd-sh-details dd > span {
   font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+/* The generated summary is a list: its label sits above it, and the list takes the full width. */
+.fd-sh-details > [data-field="digest"] > dt,
+.fd-sh-details > [data-field="digest"] > dd {
+  grid-column: 1 / -1;
+}
+.fd-sh-details > [data-field="digest"] > dt {
+  margin-top: var(--sp-1);
+}
+/* The session id stays on one line (an ellipsis if the menu is narrow); Copy copies all of it. */
+.fd-sh-details dd > .fd-sh-sid {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* The priority star after the title. */
 .fd-sh-star {
@@ -285,28 +337,38 @@
   border-color: transparent;
   color: var(--text);
 }
-.fd-sh-confirm > button:hover:not(:disabled) {
-  background: var(--badge-bg);
-  border-color: transparent;
+@media (hover: hover) {
+  .fd-sh-confirm > button:hover:not(:disabled) {
+    background: var(--badge-bg);
+    border-color: transparent;
+  }
 }
-.fd-sh-confirm > .fd-primary:not(:disabled),
-.fd-sh-confirm > .fd-primary:hover:not(:disabled) {
+.fd-sh-confirm > .fd-primary:not(:disabled) {
   justify-content: center;
   background: var(--ink-fill);
   color: var(--ink-on);
 }
+@media (hover: hover) {
+  .fd-sh-confirm > .fd-primary:hover:not(:disabled) {
+    justify-content: center;
+    background: var(--ink-fill);
+    color: var(--ink-on);
+  }
+}
 .fd-sh-confirm > .fd-danger {
   color: var(--hazard);
 }
-.fd-sh-confirm > .fd-danger:hover:not(:disabled) {
-  background: var(--hazard-bg);
-  color: var(--hazard);
+@media (hover: hover) {
+  .fd-sh-confirm > .fd-danger:hover:not(:disabled) {
+    background: var(--hazard-bg);
+    color: var(--hazard);
+  }
 }
 @media (max-width: 1279px) {
   .fd-sh-wide {
     display: none;
   }
-  .fd-sh-chip {
+  .fd-sh-chip:not([data-folder]) {
     max-width: 200px;
   }
 }
@@ -374,10 +436,15 @@
   width: auto;
 }
 /* The icon button that also is the primary action (Resume on the phone). */
-.fd-sh .fd-iconbtn.fd-primary:not(:disabled),
-.fd-sh .fd-iconbtn.fd-primary:hover:not(:disabled) {
+.fd-sh .fd-iconbtn.fd-primary:not(:disabled) {
   background: var(--ink-fill);
   color: var(--ink-on);
+}
+@media (hover: hover) {
+  .fd-sh .fd-iconbtn.fd-primary:hover:not(:disabled) {
+    background: var(--ink-fill);
+    color: var(--ink-on);
+  }
 }
 
 /* ── notices under the header (§4.7): a --surface row with a tone holder ── */
@@ -436,12 +503,12 @@
   align-items: center;
   gap: var(--sp-2);
 }
-/* The rows between the header and the tabs: move banner, fleet chip, artifacts, land, hold. */
+/* The rows between the header and the tabs: move banner, artifacts, land, hold. */
 .fd-pane > .fd-sh-strip,
 .fd-pane > .fd-pane-notice,
 .fd-pane > .fd-pane-row,
 .fd-pane > .fd-note {
-  margin: var(--sp-2) var(--sp-4) 0;
+  margin: var(--sp-2) var(--sp-5) 0;
 }
 .fd-pane > .fd-pane-row > .fd-note {
   flex: 1 1 320px;
@@ -456,14 +523,16 @@
 /* ── tabs (§4.5): 36px, the selected one with a 2px ink underline ── */
 /* The chat Show menu sits at the right end of the tab row (chat.css). The row keeps room for it:
    --fd-tab-reserve is the measured width of the menu and the row end after it (tabReserve.ts),
-   so the tabs end (and scroll) clear of it, also when it reads "Show (2 hidden)". */
+   so the tabs end (and scroll) clear of it, also when it reads "Show (2 hidden)".
+   One tab look with the settings tabs (settings.css): no side padding, a 24px gap, so that the
+   underline is as wide as the label and the first label starts on the gutter. */
 .fd-pane-tabs {
   display: flex;
   flex: none;
-  gap: var(--sp-1);
+  gap: var(--sp-5);
   height: 36px;
   margin-top: var(--sp-1);
-  padding: 0 max(var(--sp-4), var(--fd-tab-reserve, 0px)) 0 var(--sp-4);
+  padding: 0 max(var(--sp-5), var(--fd-tab-reserve, 0px)) 0 var(--sp-5);
   scroll-padding-inline-end: var(--fd-tab-reserve, 0px);
   overflow-x: auto;
   border-bottom: 1px solid var(--border-soft);
@@ -473,7 +542,7 @@
   flex: none;
   gap: 6px;
   height: 100%;
-  padding: 0 var(--sp-2);
+  padding: 0;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -481,20 +550,32 @@
   color: var(--dim);
   font-size: var(--fs-ui);
   font-weight: 500;
+  white-space: nowrap;
 }
-.fd-pane-tabs [role="tab"]:hover:not(:disabled) {
-  background: none;
-  border-color: transparent;
-  color: var(--text);
+@media (hover: hover) {
+  .fd-pane-tabs [role="tab"]:hover:not(:disabled) {
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+  }
 }
-.fd-pane-tabs [role="tab"][aria-selected="true"],
-.fd-pane-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+/* The weight stays 500: a bolder selected label grew and moved the tabs after it. */
+.fd-pane-tabs [role="tab"][aria-selected="true"] {
   border-bottom-color: var(--text);
   color: var(--text);
-  font-weight: 600;
 }
+@media (hover: hover) {
+  .fd-pane-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+    border-bottom-color: var(--text);
+    color: var(--text);
+  }
+}
+/* The focus ring gets 4px of room around the label (the settings tabs do the same). */
 .fd-pane-tabs [role="tab"]:focus-visible {
+  margin-inline: calc(-1 * var(--sp-1));
+  padding-inline: var(--sp-1);
   outline-offset: -2px;
+  border-radius: var(--r-chip);
 }
 /* Forced colors paint the transparent underline of an unselected tab: only the selected tab keeps
    its underline (and the Highlight ring of base.css); 2px of padding keep the label in place. */
@@ -504,9 +585,11 @@
     padding-bottom: 2px;
   }
 }
+/* The phone tabs start on the 16px edge of the phone pages (§4.3). */
 .fd-pane[data-layout="phone"] .fd-pane-tabs {
+  gap: var(--sp-4);
   margin-top: 0;
-  padding: 0 max(var(--sp-2), var(--fd-tab-reserve, 0px)) 0 var(--sp-2);
+  padding: 0 max(var(--sp-4), var(--fd-tab-reserve, 0px)) 0 var(--sp-4);
 }
 @media (pointer: coarse) {
   .fd-pane-tabs {
@@ -536,15 +619,40 @@
 }
 
 /* ── properties panel (§4.5): 280px, --surface ───────────────────── */
+/* The room above the title and under the last list is their margin and padding, not the padding
+   of the scroller: the fades below then sit on the edges of the visible panel. */
 .fd-props {
   display: flex;
   flex: none;
   flex-direction: column;
   width: 280px;
   min-height: 0;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  padding: 0 var(--sp-4);
   overflow-y: auto;
   background: var(--surface);
+}
+/* The scroll body fade (§3): while rows hide above or under an edge of the panel, its 16px there
+   fade out (PropertiesPanel sets `data-scrolled` and `data-more-below`). A sticky --surface overlay
+   that takes no room and no pointer, not a mask: a mask would also fade the --surface fill of the
+   panel into the --bg of the pane under it. */
+.fd-props[data-scrolled]::before,
+.fd-props[data-more-below]::after {
+  content: "";
+  position: sticky;
+  z-index: 1;
+  flex: none;
+  height: var(--sp-4);
+  pointer-events: none;
+}
+.fd-props[data-scrolled]::before {
+  top: 0;
+  margin-bottom: calc(-1 * var(--sp-4));
+  background: linear-gradient(to bottom, var(--surface), transparent);
+}
+.fd-props[data-more-below]::after {
+  bottom: 0;
+  margin-top: calc(-1 * var(--sp-4));
+  background: linear-gradient(to top, var(--surface), transparent);
 }
 /* With the Properties panel open, the terminal dock stops at the panel, and the panel's --surface
    column goes on down to the window bottom (§4.5). CSS only: the dock stays where Layout mounts
@@ -556,7 +664,7 @@
   margin-right: 280px;
 }
 .fd-props-title {
-  margin: 0 0 var(--sp-2);
+  margin: var(--sp-4) 0 var(--sp-2);
   font-size: var(--fs-ui);
   font-weight: 600;
 }
@@ -566,8 +674,13 @@
   margin: 0;
   padding: var(--sp-2) 0;
 }
+.fd-props > .fd-props-list:last-of-type {
+  padding-bottom: calc(var(--sp-2) + var(--sp-5));
+}
+/* The rules between the groups are section rules (§4.7): --border, not the list separator (the
+   light --border-soft is about 1.1:1 on --surface, and the groups ran together). */
 .fd-props-list + .fd-props-list {
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-props-list:empty {
   display: none;
@@ -583,11 +696,13 @@
   padding: 5px 0;
   line-height: 18px;
 }
-/* The 12px label on a 16px line: on the baseline of an 18px value, it adds no height to the row. */
+/* The 12px label on a 16px line: on the baseline of an 18px value, it adds no height to the row.
+   A label stays on one line ("Fleet control" is as wide as the column). */
 .fd-props-row dt {
   color: var(--faint);
   font-size: var(--fs-meta);
   line-height: 16px;
+  white-space: nowrap;
 }
 .fd-props-row dd {
   display: flex;
@@ -611,7 +726,9 @@
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
-.fd-props-row dd > .fd-add + .fd-del + .fd-props-aside {
+/* The file count follows the +/− counts; a value that is only an aside starts at the left. */
+.fd-props-row dd > :is(.fd-add, .fd-del) + .fd-props-aside,
+.fd-props-row dd > .fd-props-aside:only-child {
   margin-left: 0;
 }
 .fd-props-station {
@@ -625,13 +742,23 @@
   font-size: var(--fs-data);
   overflow-wrap: anywhere;
 }
-/* A folder stays on one line; a long one loses its start (the end names the folder). */
+/* The Folder and Worktree rows are stacked (concept B): the label on its line, the path under it
+   at the full width of the panel. A path breaks only after a "/" (the <wbr> between its names):
+   each folder name stays whole, and a name wider than the panel alone gets an ellipsis (the
+   title keeps the full path). */
+.fd-props-row:has(> dd > [data-path]) {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 2px;
+}
 .fd-props-mono[data-path] {
   flex: 1;
+}
+.fd-props-seg {
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
-  direction: rtl;
-  text-align: left;
   text-overflow: ellipsis;
+  vertical-align: top;
   white-space: nowrap;
 }
 /* The used slots of the station under its name: ticks and "3 of 12". */
@@ -645,6 +772,18 @@
 .fd-props-slots > .fd-props-aside {
   margin-left: 0;
 }
+/* The neutral bar of a station over 16 slots (`SlotMeter`): `.fd-meter` is a block with no width
+   of its own in the slots line. */
+.fd-props-slots > .fd-meter {
+  flex: none;
+  width: 72px;
+}
+/* The since text of the status is always a line of its own under the status, at the left: one
+   layout for "Working in background" and "Idle". */
+.fd-props-row dd > .fd-sh-status + .fd-props-aside {
+  flex-basis: 100%;
+  margin-left: 0;
+}
 .fd-props-mode {
   display: inline-flex;
   align-items: center;
@@ -652,6 +791,55 @@
 }
 .fd-props-mode[data-tone="hazard"] {
   color: var(--hazard);
+}
+/* The Mode row is a ghost menu summary (a trailing chevron) that opens the mode ladder. The value
+   keeps the color of the fact (--text, a risky mode --hazard); the summary text starts on the
+   column of the other values, and the row keeps its 28px. The ladder opens under the row, as
+   wide as the panel (the summary is too narrow to anchor a menu at the panel edge). */
+.fd-props-row:has(> dd > .fd-props-modemenu) {
+  position: relative;
+}
+.fd-props-modemenu > .fd-menu {
+  position: static;
+}
+.fd-props-modemenu > .fd-menu > summary.fd-ghost {
+  gap: 4px;
+  margin-block: -3px;
+  margin-inline: calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 400;
+}
+.fd-props-modemenu[data-tone="hazard"] > .fd-menu > summary.fd-ghost {
+  color: var(--hazard);
+}
+.fd-props-modemenu > .fd-menu > .fd-menu-body {
+  right: 0;
+  left: 0;
+  min-width: 0;
+}
+/* The session id: one line with an ellipsis (Copy copies all of it); the copy button keeps its
+   size but does not grow the row. */
+.fd-props-sid {
+  flex: 1 1 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-props-row dd > .fd-iconbtn {
+  align-self: center;
+  margin-block: -4px;
+}
+/* The generated summary: the sparkles mark after its label, the list under them at the whole
+   width of the panel. */
+.fd-props-row > dd.fd-props-digest {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+.fd-props-row dt > .fd-generated {
+  vertical-align: -2px;
 }
 .fd-props .fd-add,
 .fd-props .fd-del {
@@ -663,11 +851,18 @@
 .fd-props .fd-del {
   color: var(--hazard);
 }
-/* The changed files under the Changes totals (§4.5, concept A): 28px ghost rows with --border-soft
-   rules between them and no box. The path keeps its end in view; a press opens the Changes tab. */
+/* The changed files under the Changes totals (§4.5, concept A): the whole width of the panel, 28px
+   ghost rows with --border-soft rules between them and no box. Each path is the path of a diff
+   file header (§3 .fd-dl-path): the folders give way at their start, the file name never shrinks
+   (it gets an ellipsis only when it alone is too wide). A press opens the Changes tab. */
+.fd-props-row > dd.fd-props-filelist {
+  display: block;
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+}
 .fd-props-files {
   display: grid;
-  flex-basis: 100%;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   margin: 2px 0 0;
@@ -695,21 +890,62 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  direction: rtl;
+  color: var(--text);
   font-family: var(--font-data);
   font-size: var(--fs-data);
   text-align: left;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A file that no diff opens is plain text: a block row as wide as the list (its width never
+   depends on its text, so the folders fit the row). */
+.fd-props-files > li > .fd-props-file {
+  display: flex;
+}
+.fd-props-file > .fd-dl-dir {
+  color: var(--dim);
+}
+.fd-props-file > .fd-dl-base {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fd-props-more {
   padding-top: var(--sp-1);
   color: var(--faint);
   font-size: var(--fs-meta);
 }
+/* A text link of the panel ("+116 more files", the fleet-control answers): a link (--focus, the
+   underline on hover and focus), the same as every link of the board. */
+.fd-link.fd-props-link {
+  color: var(--focus);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  text-decoration: none;
+}
+.fd-link.fd-props-link:focus-visible {
+  text-decoration: underline;
+}
+@media (hover: hover) {
+  .fd-link.fd-props-link:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+}
 .fd-props-fuel {
   color: var(--fuel);
   font-weight: 500;
+}
+/* The tokens in the words of the ops glance: the numbers in --fuel, the words in --dim. A part
+   never breaks; the line breaks at the "·". */
+.fd-props-tokens {
+  color: var(--dim);
+}
+.fd-props-tokpart {
+  white-space: nowrap;
+}
+/* The fleet-control fact before the first answer: plain text, not a link. */
+.fd-fleet-none {
+  color: var(--dim);
+  font-size: var(--fs-meta);
 }
 .fd-props-meter {
   display: grid;
@@ -853,8 +1089,10 @@
   background: var(--raised-hi);
   border-color: var(--btn-edge-raised);
 }
-.fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
-  background: var(--border);
+@media (hover: hover) {
+  .fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
+    background: var(--border);
+  }
 }
 /* On the phone the request is a bottom sheet (§4.8): full width, round top corners, a 4px top
    bar and stacked 44px buttons; the composer under it is the foot of the sheet. */
@@ -952,8 +1190,10 @@
   font-size: var(--fs-micro);
   font-weight: 600;
 }
-.fd-opt:hover {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  .fd-opt:hover {
+    background: var(--raised-hi);
+  }
 }
 .fd-opt:has(input:checked) {
   background: var(--act-bg);
@@ -1090,6 +1330,9 @@ fieldset:disabled .fd-opt {
   flex: none;
   white-space: nowrap;
 }
+.fd-composer-resume > button:not(.fd-primary) {
+  border-color: var(--btn-edge-raised);
+}
 .fd-composer-resume .fd-composer-note {
   min-width: 0;
   color: var(--dim);
@@ -1150,12 +1393,45 @@ fieldset:disabled .fd-opt {
   font-weight: 500;
   white-space: nowrap;
 }
-button.fd-composer-model:hover:not(:disabled) {
+.fd-menu > summary.fd-composer-model {
+  height: var(--ctl-h-sm);
+  padding: 0 var(--sp-2);
+  background: var(--badge-bg);
+  border-color: transparent;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-menu[open] > summary.fd-composer-model {
   background: var(--border);
   color: var(--text);
 }
-button.fd-composer-model > .fd-icon {
+@media (hover: hover) {
+  .fd-menu > summary.fd-composer-model:hover {
+    background: var(--border);
+    color: var(--text);
+  }
+}
+.fd-menu > summary.fd-composer-model > .fd-icon {
   color: var(--faint);
+  transition: transform var(--t-move);
+}
+.fd-menu[open] > summary.fd-composer-model > .fd-icon {
+  transform: rotate(180deg);
+}
+/* The model popover opens upward from the chip, anchored at its left edge. */
+.fd-composer-bar > .fd-menu > .fd-menu-body {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + var(--sp-1));
+  left: 0;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 32px));
+}
+@media (forced-colors: active) {
+  .fd-menu > summary.fd-composer-model {
+    border-color: ButtonText;
+  }
 }
 /* The phone toolbar has room for attach and the two send buttons only (concept A, §4.8). */
 .fd-pane[data-layout="phone"] .fd-composer-kbd,
@@ -1220,8 +1496,10 @@ button.fd-composer-model > .fd-icon {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
-.fd-composer-menu [role="option"]:hover {
-  background: var(--badge-bg);
+@media (hover: hover) {
+  .fd-composer-menu [role="option"]:hover {
+    background: var(--badge-bg);
+  }
 }
 /* The selected option: the --focus-bg selection tint and the 2px --focus bar (.fd-selbar), as in
    the palette. */
@@ -1246,11 +1524,33 @@ button.fd-composer-model > .fd-icon {
   white-space: normal;
   line-height: 1.3;
 }
-.fd-pane[data-layout="phone"] .fd-composer-send {
+.fd-pane[data-layout="phone"] .fd-composer-send:has(> button + button) {
   flex: 1;
 }
-.fd-pane[data-layout="phone"] .fd-composer-send > button {
+.fd-pane[data-layout="phone"] .fd-composer-send:has(> button + button) > button {
   flex: 1;
+}
+/* The phone Send (concept A): a 44px ink circle with the arrow at the right of the bar. The ink
+   fill is for the enabled state only: disabled, it has the "not ready" look of a disabled primary
+   (base.css: --badge-bg, --faint, the --border hairline), the same as a disabled Start session. */
+.fd-composer-send > .fd-composer-go {
+  width: var(--tap-min);
+  height: var(--tap-min);
+  border-radius: var(--r-pill);
+}
+.fd-composer-send > .fd-composer-go:not(:disabled) {
+  background-color: var(--ink-fill);
+  color: var(--ink-on);
+}
+.fd-composer-send > .fd-composer-go:disabled {
+  background-color: var(--badge-bg);
+  color: var(--faint);
+}
+@media (hover: hover) {
+  .fd-composer-send > .fd-composer-go:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
+    color: var(--ink-on);
+  }
 }
 @media (pointer: coarse) {
   .fd-composer-menu [role="option"] {
@@ -1259,24 +1559,34 @@ button.fd-composer-model > .fd-icon {
 }
 
 /* ── Changes and Files ──────────────────────────────────────────── */
+/* The scrollbar keeps its room on both sides, so the centered column does not move by the
+   scrollbar width between tabs and sessions. */
 .fd-pane-body {
   flex: 1;
   min-height: 0;
   padding: var(--sp-4) var(--sp-5) var(--sp-5);
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
 }
 .fd-pane-body > * {
   width: 100%;
   max-width: 1040px;
   margin-inline: auto;
 }
-/* The turns, the files and the artifact list share the chat column (the open artifact keeps
-   the wide column). */
-.fd-pane-body > :not(.fd-art-viewer) {
+/* Only a chat keeps the centered reading column: the people side chat, as the Chat tab. */
+.fd-pane-body[data-tab="people"] > * {
   max-width: var(--chat-w);
 }
-/* The Changes tab uses the whole main width (a 24px inset): a diff is wide content. Only the chat
-   keeps the reading column. */
+/* §4.5: Changes, Files and Artifacts start on the 24px gutter of the tabs, so that the left edge
+   does not move between the tabs. Not centered: the scrollbar room is kept at the right only.
+   Changes uses the whole main width (a diff is wide content); the Files and Artifacts lists and
+   the open artifact keep the 1040px measure of the list pages. */
+.fd-pane-body:is([data-tab="changes"], [data-tab="files"], [data-tab="artifacts"]) {
+  scrollbar-gutter: stable;
+}
+.fd-pane-body:is([data-tab="files"], [data-tab="artifacts"]) > * {
+  margin-inline: 0;
+}
 .fd-pane-body[data-tab="changes"] > * {
   max-width: none;
 }
@@ -1287,13 +1597,29 @@ button.fd-composer-model > .fd-icon {
   grid-template-columns: 14px auto auto auto minmax(0, 1fr) 48px;
   grid-template-areas: "icon title kind version . age";
 }
+/* The phone panes start on the 16px edge of the header, the tabs and every page (a phone draws
+   its scrollbar over the content: no room is kept for it). */
 .fd-pane[data-layout="phone"] .fd-pane-body {
-  padding: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  scrollbar-gutter: auto;
 }
-/* The phone rule of artifacts.css takes the inline padding of a row away; in the session the
-   artifact icons stay on the column of the Files tab icons (8px inset). */
-.fd-pane[data-layout="phone"] .fd-pane-body[data-tab="artifacts"] .fd-art-row {
-  padding-inline: var(--sp-2);
+/* A touch screen: an artifact row is a 44px tap target. */
+@media (pointer: coarse) {
+  .fd-pane-body[data-tab="artifacts"] .fd-art-row {
+    min-height: var(--row-h-touch);
+  }
+}
+/* The phone: the row of the Artifacts page (artifacts.css), on the 16px gutter of the tabs (no
+   inline padding: the icon starts under "Chat", the age ends on the right gutter). Two lines: the
+   icon, the title (with its version) and the age, then the kind under the title. The desktop
+   columns above would win over the phone grid of artifacts.css, so it is named here again. */
+.fd-pane[data-layout="phone"]
+  .fd-pane-body[data-tab="artifacts"]
+  .fd-art-row:not(:has(> .fd-art-where)) {
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon title age"
+    ". kind kind";
 }
 .fd-revert,
 .fd-turns,
@@ -1416,6 +1742,12 @@ button.fd-composer-model > .fd-icon {
   font-size: var(--fs-ui);
 }
 
+/* The empty state of a folder outside Git (§4.7): the sentence breaks in balanced lines (a lone
+   last word read as a cut). */
+.fd-turns > .fd-emptystate > .fd-emptystate-body {
+  text-wrap: balance;
+}
+
 /* since spawn, the view toggle and the line notes (R1.1 to R1.3) */
 .fd-viewtoggle {
   justify-self: start;
@@ -1425,15 +1757,45 @@ button.fd-composer-model > .fd-icon {
   flex-direction: column;
   gap: var(--sp-2);
 }
-.fd-since > .fd-note {
+/* The head of the whole-session diff: the totals first (the key fact, weight 600), where they
+   count from in --dim, and Refresh at the end of the row. The notes under it are --faint lines. */
+.fd-since-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
+  gap: var(--sp-1) var(--sp-2);
+  min-height: var(--ctl-h);
 }
-.fd-since > .fd-note code,
+.fd-since-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fd-since-total > .fd-add {
+  color: var(--ok);
+}
+.fd-since-total > .fd-del {
+  color: var(--hazard);
+}
+.fd-since-base {
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.fd-since-head > button {
+  margin-left: auto;
+}
+.fd-since-base code,
 .fd-turns > .fd-note code {
   font-size: var(--fs-data);
+}
+.fd-since > .fd-since-note {
+  margin-top: calc(-1 * var(--sp-1));
+  color: var(--faint);
+  font-size: var(--fs-meta);
 }
 .fd-since-alert {
   margin: 0;
@@ -1463,8 +1825,10 @@ button.fd-composer-model > .fd-icon {
   font-weight: 400;
   text-align: left;
 }
-.fd-branches .fd-branch:hover:not(:disabled) {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  .fd-branches .fd-branch:hover:not(:disabled) {
+    background: var(--raised-hi);
+  }
 }
 .fd-branch-name {
   flex: 0 1 auto;
@@ -1517,9 +1881,11 @@ button.fd-composer-model > .fd-icon {
 span.fd-dl-n {
   cursor: default;
 }
-.fd-dl-n:hover:not(:disabled) {
-  background: none;
-  color: var(--text);
+@media (hover: hover) {
+  .fd-dl-n:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+  }
 }
 /* Touch: the line-number comment targets are 24px tall and 24px apart, and at least 4ch wide
    (WCAG 2.5.8). The gutter grows with them. */
@@ -1578,9 +1944,11 @@ span.fd-dl-n {
   background: var(--raised-hi);
   border-color: var(--btn-edge-raised);
 }
-.fd-turns li > button.fd-sm:not(.fd-danger):hover:not(:disabled),
-.fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger):hover:not(:disabled) {
-  background: color-mix(in srgb, var(--raised-hi) 88%, var(--text));
+@media (hover: hover) {
+  .fd-turns li > button.fd-sm:not(.fd-danger):hover:not(:disabled),
+  .fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger):hover:not(:disabled) {
+    background: color-mix(in srgb, var(--raised-hi) 88%, var(--text));
+  }
 }
 .fd-thread-list {
   display: flex;
@@ -1766,8 +2134,10 @@ span.fd-dl-n {
 button.fd-cchip {
   cursor: pointer;
 }
-button.fd-cchip:hover:not(:disabled) {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  button.fd-cchip:hover:not(:disabled) {
+    background: var(--raised-hi);
+  }
 }
 .fd-review-card {
   display: flex;
@@ -1810,8 +2180,10 @@ button.fd-cchip:hover:not(:disabled) {
   background: transparent;
   text-align: left;
 }
-.fd-review-crow:hover:not(:disabled) {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  .fd-review-crow:hover:not(:disabled) {
+    background: var(--raised-hi);
+  }
 }
 .fd-review-first {
   color: var(--dim);
@@ -1879,6 +2251,7 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files ul > li:last-child {
   border-bottom: 0;
 }
+/* A row never grows past its column (a long name ellipsizes; a phone pane never pans sideways). */
 .fd-files-row {
   display: flex;
   align-items: center;
@@ -1889,6 +2262,7 @@ button.fd-cchip:hover:not(:disabled) {
   min-width: 0;
   min-height: var(--row-h);
   padding: 0 var(--sp-2);
+  overflow: hidden;
   background: none;
   border: 0;
   border-radius: 0;
@@ -1899,9 +2273,11 @@ button.fd-cchip:hover:not(:disabled) {
   line-height: 1.5;
   text-align: left;
 }
-.fd-files-row:hover:not(:disabled) {
-  background: var(--raised);
-  border-color: transparent;
+@media (hover: hover) {
+  .fd-files-row:hover:not(:disabled) {
+    background: var(--raised);
+    border-color: transparent;
+  }
 }
 .fd-files-row:focus-visible {
   outline-offset: -2px;
@@ -1931,21 +2307,26 @@ button.fd-cchip:hover:not(:disabled) {
   white-space: nowrap;
 }
 /* ── the Files panel: the files changed since the session started ── */
+/* A 12px block gap under the search bar, then the label and its rows as one group. */
 .fd-files-changed {
   display: grid;
-  gap: 4px;
+  margin-top: var(--sp-3);
 }
 .fd-files-changed h4 {
-  margin: 0;
+  margin: 0 0 var(--sp-1);
 }
+/* The name of a changed file shrinks only after its folder gave way (the folder has no basis):
+   then it ellipsizes, and the change at the right of the row stays in view. */
 .fd-files-changed .fd-files-name {
-  flex: 0 0 auto;
-  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
 }
 /* The folder of a changed file keeps its end in view (the end says where the file is): a long one
-   loses its start, the same as the paths of the Properties panel. */
+   loses whole leading folders ("…/e2e", PathTail); the start ellipsis is the fallback for a name
+   that alone is too long. The box takes the room between the name and the change. */
 .fd-files-changed .fd-files-dir {
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   direction: rtl;
@@ -1985,55 +2366,69 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files-stat > .fd-badge {
   align-self: center;
 }
-/* With a listing that has the publish slot (24px, 44px on touch), the changed-file rows keep the
-   same trailing slot: their change ends on the edge of the sizes of the listing. */
-.fd-files:has(.fd-files-item) .fd-files-changed li {
-  display: flex;
+/* A file that Publish offers: the icon, the name, "Publish as artifact", then the size. The row
+   button spans the four columns of the item as a subgrid and the publish button sits over its
+   third column, so that every size and every change ends on the row edge, on the edge of the
+   search bar (a trailing publish slot left a ragged right edge). The item rule of artifacts.css
+   is a flex row: this one weighs more. */
+.fd-files li.fd-files-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--sp-1);
+  column-gap: var(--sp-2);
 }
-.fd-files:has(.fd-files-item) .fd-files-changed li > .fd-files-row {
-  flex: 1;
+.fd-files li.fd-files-item > .fd-files-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-row: 1;
+  grid-column: 1 / -1;
 }
-.fd-files:has(.fd-files-item) .fd-files-changed li::after {
-  content: "";
-  flex: none;
-  width: var(--ctl-h-sm);
+.fd-files li.fd-files-item > .fd-files-row > .fd-size {
+  grid-column: 4;
 }
-@media (pointer: coarse) {
-  .fd-files:has(.fd-files-item) .fd-files-changed li::after {
-    width: var(--tap-min);
+/* A fine pointer: "Publish as artifact" shows on the row under the pointer or with the focus (a
+   column of the same icon at rest was noise); its column keeps its room. A pointer that cannot
+   hover keeps the button in view. */
+@media (hover: hover) and (pointer: fine) {
+  .fd-files li .fd-files-publish {
+    opacity: 0;
+    transition: opacity var(--t-fast);
+  }
+  .fd-files li:is(:hover, :focus-within) .fd-files-publish {
+    opacity: 1;
   }
 }
-/* The crumbs: the root icon on the column of the row icons. The row is one list row high (the
-   same rhythm as the file rows under it: --row-h, 44px on touch) and has the same divider. */
+.fd-files li.fd-files-item > .fd-files-publish {
+  grid-row: 1;
+  grid-column: 3;
+}
+/* The label of the listing, as "Changed since the session started" labels the changed files
+   (§4.7): "Files in" in the .fd-label look, then the crumbs, sans 12px as the crumbs of the
+   Browse panel (§4.6), a "/" between two of them, the current one --text weight 600. No row
+   rule and no row height: it is the place of the list, not its first entry. Its crumbs keep the
+   44px target of a touch screen (base.css). The list follows 4px under it, as under a label. */
 .fd-files-crumbs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px var(--sp-1);
   min-width: 0;
-  min-height: var(--row-h);
-  padding: 0 var(--sp-2);
-  border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+  margin: var(--sp-3) 0 calc(-1 * var(--sp-1));
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
 }
-/* The list follows the crumbs at the row rhythm: no grid gap between them (the crumbs have the
-   row height and the rule of a row). */
-.fd-files-crumbs + [data-listing] {
-  margin-top: calc(-1 * var(--sp-2));
+.fd-files-crumbs-lead {
+  font-weight: 600;
 }
 .fd-files-crumb-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   min-width: 0;
 }
-/* The root crumb has the icon-to-name gap of a file row (8px), so that its name starts on the
-   column of the names under it. */
 .fd-files-crumb {
-  gap: var(--sp-2);
   height: auto;
   padding: 0;
   background: none;
@@ -2041,27 +2436,25 @@ button.fd-cchip:hover:not(:disabled) {
   border-radius: 0;
   color: var(--dim);
   font: inherit;
+  font-weight: 500;
 }
-.fd-files-crumb:hover:not(:disabled) {
-  background: none;
-  border-color: transparent;
+.fd-files-crumb[aria-current="location"],
+.fd-files-file {
   color: var(--text);
-}
-/* The root crumb is the folder's name: a path in the mono of the other crumbs, in the --dim of
-   the path (not the --text of the entries under it) with an open folder icon and a "/", so that
-   it reads as the path of the list, not as one more entry. */
-.fd-files-crumb.fd-files-root {
-  color: var(--dim);
   font-weight: 600;
 }
-.fd-files-root > .fd-icon {
-  color: var(--dim);
+@media (hover: hover) {
+  .fd-files-crumb:hover:not(:disabled) {
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+    text-decoration: underline;
+  }
 }
 .fd-files-sep {
   color: var(--faint);
 }
 .fd-files-file {
-  color: var(--text);
   overflow-wrap: anywhere;
 }
 .fd-files .fd-path {
@@ -2088,11 +2481,6 @@ button.fd-cchip:hover:not(:disabled) {
   font-size: var(--fs-chat);
   line-height: 1.6;
 }
-.fd-files-error {
-  margin: 0;
-  color: var(--hazard);
-  font-size: var(--fs-ui);
-}
 .fd-files .fd-file-text {
   width: 100%;
   max-height: 60vh;
@@ -2108,6 +2496,10 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files-bar input {
   flex: 1;
   min-width: 0;
+}
+/* Names | Content: what the search reads, at the right of the field. */
+.fd-files-mode {
+  flex: none;
 }
 /* The search field: the search icon at the left is the submit button (Enter submits too). */
 .fd-files-query {
@@ -2128,9 +2520,11 @@ button.fd-cchip:hover:not(:disabled) {
   border: 0;
   color: var(--dim);
 }
-.fd-files-go:hover:not(:disabled) {
-  background: none;
-  color: var(--text);
+@media (hover: hover) {
+  .fd-files-go:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+  }
 }
 .fd-files-go:focus-visible {
   outline-offset: -2px;
@@ -2142,9 +2536,17 @@ button.fd-cchip:hover:not(:disabled) {
   cursor: default;
 }
 @media (pointer: coarse) {
-  .fd-files-row,
-  .fd-files-crumbs {
+  .fd-files-row {
     min-height: var(--row-h-touch);
+  }
+  /* The label row stays 32px (8px over the listing): the 44px crumb targets of base.css reach 6px
+     over its edges, so the label does not stand in a 44px band of its own. */
+  .fd-files-crumbs {
+    min-height: 32px;
+    margin-bottom: 0;
+  }
+  .fd-files-crumb {
+    margin-block: -6px;
   }
   .fd-files-go {
     width: var(--tap-min);
@@ -2172,8 +2574,10 @@ button.fd-cchip:hover:not(:disabled) {
   font-family: var(--font-data);
   text-decoration: none;
 }
-.fd-files [data-search] .fd-link:hover {
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-files [data-search] .fd-link:hover {
+    text-decoration: underline;
+  }
 }
 .fd-files [data-search] code {
   min-width: 0;
@@ -2183,63 +2587,99 @@ button.fd-cchip:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-/* ── the session menu: mode ladder, model picker, auto-continue ─── */
+/* ── the settings rows: mode ladder (session menu, Properties Mode), models (composer chip,
+   phone session menu) ── */
 .fd-modes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
   min-width: 0;
-  margin: 4px var(--sp-2);
+  margin: 4px 0 0;
   padding: 0;
   border: 0;
 }
 .fd-modes legend {
-  padding: 0;
-  margin-bottom: 4px;
+  padding: 0 8px;
+  margin-bottom: 2px;
   color: var(--faint);
   font-size: var(--fs-micro);
 }
-/* The modes are a .fd-seg (base.css owns the pressed look); in the menu width the track wraps. */
-.fd-modes > .fd-seg {
-  flex-wrap: wrap;
-  max-width: 100%;
+/* One row per mode, the look of a menu row: a 14px leading slot (the shield-alert of a mode that
+   skips the approvals), the name, and a check on the current mode. The current mode is pressed:
+   the --selected-bg fill and the .fd-selbar bar (base.css). */
+.fd-modes-list {
+  display: flex;
+  flex-direction: column;
+}
+.fd-mode-row {
+  width: 100%;
+  height: var(--ctl-h);
+  justify-content: flex-start;
+  padding: 0 8px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+@media (hover: hover) {
+  .fd-mode-row:hover:not(:disabled) {
+    background: var(--badge-bg);
+    border-color: transparent;
+  }
+}
+.fd-mode-row[aria-pressed="true"] {
+  background: var(--selected-bg);
+  box-shadow: var(--selected-lift);
 }
 /* The current mode cannot be set again (disabled), but it shows its pressed state in full. */
-.fd-modes > .fd-seg > button[aria-pressed="true"]:disabled {
+.fd-mode-row[aria-pressed="true"]:disabled {
   opacity: 1;
+  cursor: default;
 }
-.fd-model {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px;
-  margin: 4px var(--sp-2);
+.fd-mode-lead {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
 }
-.fd-model label {
-  grid-column: 1 / -1;
-  color: var(--faint);
-  font-size: var(--fs-micro);
+.fd-mode-lead > .fd-icon {
+  color: var(--hazard);
 }
-.fd-model input {
+.fd-mode-row > .fd-icon:last-child {
+  margin-left: auto;
+  color: var(--dim);
+}
+@media (pointer: coarse) {
+  .fd-mode-row {
+    min-height: var(--tap-min);
+  }
+}
+/* A model row: the name, its context window in --dim, then the check of the current model. */
+.fd-model-row {
+  gap: var(--sp-2);
+}
+.fd-model-name {
+  white-space: nowrap;
+}
+.fd-model-context {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+/* The raw id of a row whose name another row has too (an id: mono). */
+.fd-model-id {
   min-width: 0;
+  overflow: hidden;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.fd-model-select {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
+/* The id or alias of a model that no row lists. */
 .fd-model-other {
   display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px;
+  margin: 4px var(--sp-2) var(--sp-1);
 }
-.fd-auto-continue {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: 6px var(--sp-2);
-  color: var(--dim);
-  cursor: pointer;
-  font-size: var(--fs-meta);
+.fd-model-other > input {
+  min-width: 0;
 }
 
 /* Rules that other screens still render: the spawn outcome and text-link buttons. */
@@ -2287,15 +2727,6 @@ button.fd-cchip:hover:not(:disabled) {
 }
 
 /* The answers of a fleet-control coordinator (ADR-008 §5.3). */
-.fd-fleet-chip {
-  align-self: flex-start;
-  flex: none;
-  background: var(--raised);
-  cursor: pointer;
-}
-.fd-pane > .fd-fleet-chip {
-  margin: var(--sp-2) var(--sp-4) 0;
-}
 .fd-fleet-answers-wrap {
   overflow-x: auto;
 }

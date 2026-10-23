@@ -6,16 +6,9 @@ import type { DeckSession, ShareInfo, ShareKind, ShareRole, SpaceView, StationVi
 import { useSettings } from '../settings/context';
 import type { ElevationAsk } from '../settings/elevation';
 import { useFleetElevation } from '../spawn/useFleetElevation';
-import {
-  Icon,
-  Layers,
-  LayoutGrid,
-  type LucideIcon,
-  MessageSquare,
-  Plus,
-  Share2,
-} from '../ui/icons';
-import { EmptyState, Page } from '../ui/page';
+import { Boxes, Icon, LayoutGrid, type LucideIcon, MessageSquare, Plus, Share2 } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { canShare, usePeople } from './context';
 import type { ShareCalls } from './people';
@@ -27,7 +20,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : 'The request f
 
 /** DL-189: the text before the owner turns the history option on. */
 const HISTORY_WARNING =
-  'Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden.';
+  'People with the link see the full earlier conversation, including anything pasted into it. Tool commands and file names stay hidden.';
 
 /** DL-189: turns the history option on. It needs the elevation first; `null` when the owner cancels. */
 export async function shareHistoryOn(
@@ -57,7 +50,7 @@ export function shareState(share: ShareInfo, now: number): 'revoked' | 'expired'
 /** The kind of a share in sentence case, with its icon (§5: no raw enum values). */
 const KIND: Readonly<Record<ShareKind, { readonly label: string; readonly icon: LucideIcon }>> = {
   session: { label: 'Session', icon: MessageSquare },
-  space: { label: 'Space', icon: Layers },
+  space: { label: 'Space', icon: Boxes },
   board: { label: 'Board', icon: LayoutGrid },
 };
 
@@ -290,22 +283,9 @@ export function SharesView({
   );
   let body: React.ReactNode;
   if (state.kind === 'loading') {
-    body = (
-      <p role="status" className="fd-note">
-        Loading the shares…
-      </p>
-    );
+    body = <Loading text="Loading the shares…" />;
   } else if (state.kind === 'error') {
-    body = (
-      <div className="fd-art-state">
-        <p role="alert" className="fd-note fd-share-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
+    body = <ErrorNotice text={state.text} onRetry={onRetry} />;
   } else if (state.value.length === 0) {
     body = (
       <EmptyState
@@ -316,69 +296,74 @@ export function SharesView({
       />
     );
   } else {
+    // The table sits on the canvas (§4.7: no box inside the page frame).
     body = (
-      <div className="fd-panel fd-tablepanel">
-        <div className="fd-tablewrap">
-          <table className="fd-table" aria-label="Shares">
-            <thead>
-              <tr>
-                <th scope="col">Shared</th>
-                <th scope="col">Role</th>
-                <th scope="col">Members</th>
-                <th scope="col" className="fd-num">
-                  Uses left
-                </th>
-                <th scope="col">Expires</th>
-                <th scope="col">
-                  <span className="fd-vh">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.value.map((share) => (
-                <ShareRow
-                  key={share.share_id}
-                  share={share}
-                  now={now}
-                  sessions={sessions}
-                  stations={stations}
-                  confirming={confirming === share.share_id}
-                  busy={revoking === share.share_id}
-                  historyConfirming={confirming === `history:${share.share_id}`}
-                  historyBusy={historyBusy === share.share_id}
-                  onAsk={() => onAsk?.(share.share_id)}
-                  onCancel={() => onAsk?.(null)}
-                  onRevoke={() => onRevoke?.(share)}
-                  onHistoryAsk={() => onAsk?.(`history:${share.share_id}`)}
-                  onHistory={() => onHistory?.(share)}
-                  onStopHistory={() => onStopHistory?.(share)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="fd-tablewrap">
+        <table className="fd-table" aria-label="Shares">
+          <thead>
+            <tr>
+              <th scope="col">Shared</th>
+              <th scope="col">Role</th>
+              <th scope="col">Members</th>
+              <th scope="col" className="fd-num">
+                Uses left
+              </th>
+              <th scope="col">Expires</th>
+              <th scope="col">
+                <span className="fd-vh">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.value.map((share) => (
+              <ShareRow
+                key={share.share_id}
+                share={share}
+                now={now}
+                sessions={sessions}
+                stations={stations}
+                confirming={confirming === share.share_id}
+                busy={revoking === share.share_id}
+                historyConfirming={confirming === `history:${share.share_id}`}
+                historyBusy={historyBusy === share.share_id}
+                onAsk={() => onAsk?.(share.share_id)}
+                onCancel={() => onAsk?.(null)}
+                onRevoke={() => onRevoke?.(share)}
+                onHistoryAsk={() => onAsk?.(`history:${share.share_id}`)}
+                onHistory={() => onHistory?.(share)}
+                onStopHistory={() => onStopHistory?.(share)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
+  const spacesLink = (
+    <a className="fd-btn fd-ghost" href="#/spaces">
+      <Icon of={Boxes} /> Spaces
+    </a>
+  );
+  // One primary per screen (§2.2): while the list is empty, the empty state holds New share.
+  const empty = state.kind === 'ok' && state.value.length === 0;
   return (
     <Page
+      wide
       title="Shares"
-      description={
-        <>
-          People join through a link. A revoke ends the link and every login that came from it. See{' '}
-          <a className="fd-tap" href="#/spaces">
-            Spaces
-          </a>{' '}
-          for sets of sessions.
-        </>
+      count={state.kind === 'ok' && state.value.length > 0 ? state.value.length : undefined}
+      description="People join through a link. Revoke a share to end its link and every login that came from it."
+      actions={
+        empty ? (
+          spacesLink
+        ) : (
+          <>
+            {spacesLink}
+            {newShare}
+          </>
+        )
       }
-      actions={newShare}
     >
-      {error === null ? null : (
-        <p role="alert" className="fd-note fd-share-error">
-          {error}
-        </p>
-      )}
+      {error === null ? null : <ErrorNotice text={error} />}
       {body}
     </Page>
   );
@@ -415,7 +400,7 @@ export function SharesPage({ sessions, stations }: Props) {
   }, [version]);
   if (!canShare(people) || calls === undefined) {
     return (
-      <Page title="Shares">
+      <Page title="Shares" wide>
         <p>Only the owner of the deck sees the shares.</p>
         <a href="#/">Back to the fleet</a>
       </Page>

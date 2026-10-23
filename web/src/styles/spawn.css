@@ -1,16 +1,20 @@
-/* New session (DESIGN-SYSTEM.md §4.6): a centered sheet on the page canvas. A breadcrumb head,
-   a borderless title and task, property rows (Agent, Station, Where) with a 72px key column and no
-   captions (each control carries its name as aria-label), "More options", and a one-line footer
-   with the Batch switch, Cancel and Start session. Also the native session dialog and the recent
-   folders. */
+/* New session (DESIGN-SYSTEM.md §4.6): a sheet on the page canvas, centered across and anchored at
+   the top. A breadcrumb head, a borderless title and task, property rows (Agent, Station, Where)
+   with a 72px key column and no captions (each control carries its name as aria-label), "More
+   options" with a hint of what it holds, and a one-line footer with the Batch switch, Cancel and
+   Start session (a phone: Cancel and Start session only). Also the native session dialog and the
+   recent folders. */
 
-/* ── the route: the sheet in the middle of the canvas ───────────── */
+/* ── the route: the sheet on the canvas ─────────────────────────── */
 /* Nothing is behind the sheet on its own route, so the canvas is not dimmed: --scrim on an empty
-   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. */
+   route reads as a disabled screen. The sheet's --shadow-pop lifts it off --bg. The scrollbar
+   gutter is kept: a sheet that grows past the window (Browse…) does not shift sideways when the
+   route starts to scroll. */
 .fd-route:has(> .fd-screen > .fd-spawn) {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  scrollbar-gutter: stable;
 }
 .fd-screen:has(> .fd-spawn) {
   flex: 1 0 auto;
@@ -20,16 +24,20 @@
   max-width: none;
   margin: 0;
   padding: var(--sp-6) var(--sp-5);
+  padding-top: clamp(var(--sp-6), 14vh, 160px);
 }
 
 /* ── the sheet ──────────────────────────────────────────────────── */
+/* The top stays where it is and the sheet grows downward: Browse…, More options, a new worktree,
+   a clone, the batch preview and a growing task never move the head and the task under the
+   pointer. The route scrolls when the sheet is taller than the window. */
 .fd-spawn {
   display: grid;
   gap: var(--sp-3);
   width: 100%;
   max-width: 720px;
   min-width: 0;
-  margin: auto;
+  margin: 0 auto auto;
   padding: var(--sp-5);
   background: var(--raised);
   border-radius: var(--r-sheet);
@@ -87,8 +95,8 @@
   min-width: 0;
   font-weight: 400;
 }
-/* A placeholder is words, never a path: it must not look like a filled value. The directory
-   placeholder is words too ("Folder on the station"), so it is sans in the mono path field. */
+/* A placeholder must not look like a filled value: it is sans, also in the mono path field, where
+   it starts with a word ("Folder, e.g. /home/me/app"). */
 .fd-spawn input::placeholder,
 .fd-spawn .fd-folder-row > input::placeholder {
   font-family: var(--font-ui);
@@ -104,29 +112,27 @@
   color: var(--hazard);
   font-size: var(--fs-meta);
 }
-.fd-spawn fieldset {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
 /* On the --raised sheet, a plain button (Browse…, Check access, Open the new session) has the
    sheet's fill and the --btn-edge-raised edge (§3; --border is never the edge of a control, §2.1).
    On a phone the sheet has no fill: the button sits on --bg with the --btn-edge of a panel button,
    the same as Browse… in Settings (below). */
 .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
+.fd-spawn .fd-folder-foot > button:not(.fd-ghost),
 .fd-spawn .fd-outcome > button {
   background: var(--raised);
   border-color: var(--btn-edge-raised);
   color: var(--text);
 }
-.fd-spawn
-  :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
-    :disabled
-  ),
-.fd-spawn .fd-outcome > button:hover:not(:disabled) {
-  background: var(--raised-hi);
-  border-color: var(--btn-edge-raised);
+@media (hover: hover) {
+  .fd-spawn
+    :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
+      :disabled
+    ),
+  .fd-spawn .fd-folder-foot > button:not(.fd-ghost):hover:not(:disabled),
+  .fd-spawn .fd-outcome > button:hover:not(:disabled) {
+    background: var(--raised-hi);
+    border-color: var(--btn-edge-raised);
+  }
 }
 
 /* ── title and task: no border at rest ──────────────────────────── */
@@ -261,6 +267,17 @@
 .fd-spawn-fields > .fd-spawn-need {
   color: var(--faint);
 }
+/* The folder note may sit inside the folder picker, right under its input row (its `hint`), so
+   that an open Browse… panel goes below the note. */
+.fd-spawn .fd-folder > .fd-spawn-need {
+  margin-top: calc(-1 * var(--sp-1));
+  color: var(--faint);
+}
+/* Browse… scrolls the folder field and its open panel into view (FolderPicker): the panel stops
+   24px short of the window edge. */
+.fd-spawn .fd-folder {
+  scroll-margin-block: var(--sp-5);
+}
 /* A segmented control may wrap on a narrow sheet. */
 .fd-spawn-seg {
   flex-wrap: wrap;
@@ -338,90 +355,42 @@
 .fd-spawn .fd-spawn-pillwrap > input {
   width: 200px;
 }
-/* The directory: the value is mono (a path). */
+/* The folder, the branch, the repository and the session id: the value is mono (a path, a
+   branch, an id). */
 .fd-spawn .fd-folder-row > input,
 .fd-spawn input[aria-label="Directory path"],
 .fd-spawn .fd-spawn-branch input,
-.fd-spawn .fd-spawn-url input {
+.fd-spawn .fd-spawn-url input,
+.fd-spawn .fd-spawn-import input {
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
 
-/* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
-   --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
-   The chosen one has the look of a pressed .fd-seg segment (the provider and Where choices of the
-   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600. */
+/* The stations: the radio segments of one .fd-seg track (SpawnSheet adds the class), the same
+   single-choice look as the Agent and Where rows: the track, the pressed segment, its hover, focus
+   and forced-colors rules all come from base.css. A segment carries the name, the reach and the
+   free slots. The radio is visually hidden inside it (base.css), so the segment is positioned. */
 .fd-spawn-stations {
-  display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-2);
   min-width: 0;
 }
 .fd-spawn-station {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--ctl-h);
-  padding: 0 10px;
-  background: var(--surface);
-  border-radius: var(--r-ctl);
-  box-shadow: none;
-  color: var(--dim);
-  font-size: var(--fs-ui);
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--t-fast),
-    color var(--t-fast),
-    box-shadow var(--t-fast);
 }
-.fd-spawn-station:hover {
-  background: var(--raised-hi);
-  color: var(--text);
-}
-.fd-spawn-station:has(> input:checked) {
-  background: var(--pressed-bg);
-  box-shadow:
-    inset 0 0 0 1px var(--ctl-edge),
-    var(--shadow-lift);
-  color: var(--text);
-  font-weight: 600;
-}
-.fd-spawn-station > input[type="radio"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.fd-spawn-station:has(> input:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-/* Forced colors drop the box-shadow ring of the selected station pill: give it an outline. */
+/* Forced colors paint the transparent edge of the borderless title and task fields: keep their
+   text off that edge. */
 @media (forced-colors: active) {
-  .fd-spawn-station:has(> input:checked):not(:has(> input:focus-visible)) {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-  }
-  /* Forced colors drop the --surface fill: an unchosen pill gets an edge, so it reads as a
-     choice and not as plain text. */
-  .fd-spawn-station:not(:has(> input:checked)):not(:has(> input:focus-visible)) {
-    outline: 1px solid ButtonText;
-    outline-offset: -1px;
-  }
-  /* Forced colors paint the transparent edge of the borderless title and task fields: keep
-     their text off that edge. */
   .fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
     padding-inline: var(--sp-2);
   }
 }
+/* The station name is wide (a place) but not bold at rest: the chosen name steps up from 500 to
+   640, as the chosen provider and Where segments step up from 500 to 600. */
 .fd-spawn-station > .fd-wide {
-  font-size: var(--fs-ui);
+  font-weight: 500;
+}
+.fd-spawn-station:has(> input:checked) > .fd-wide {
+  font-weight: 640;
 }
 .fd-spawn-free {
   color: var(--faint);
@@ -455,7 +424,8 @@
 }
 .fd-spawn-branch-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  /* A branch name is short: the fields stop at 18rem, not at the edge of the sheet. */
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 18rem));
   gap: var(--sp-3);
   min-width: 0;
 }
@@ -515,22 +485,53 @@
   gap: var(--sp-3);
   min-width: 0;
 }
+/* "More options" (13px) and its hint (12px) share one baseline. Each text box is as tall as the
+   summary (the line height), so that the baseline group fills it; the chevron is centered. */
 .fd-spawn-options > summary.fd-label {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   justify-self: start;
+  max-width: 100%;
+  min-width: 0;
   height: var(--ctl-h);
   color: var(--dim);
   font-size: var(--fs-ui);
   font-weight: 500;
+  line-height: var(--ctl-h);
 }
-.fd-spawn-options > summary.fd-label:hover {
-  color: var(--text);
+.fd-spawn-options > summary.fd-label::before {
+  align-self: center;
 }
-.fd-spawn-options > :not(summary) {
+@media (hover: hover) {
+  .fd-spawn-options > summary.fd-label:hover {
+    color: var(--text);
+  }
+}
+/* What the fold holds, dim after the name; it goes while the fold is open. */
+.fd-spawn-options-hint {
+  min-width: 0;
+  margin-left: var(--sp-2);
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-spawn-options[open] > summary > .fd-spawn-options-hint {
+  display: none;
+}
+/* The groups of the fold (setup, coordinator, import) in the field column of the property rows,
+   16px apart. Chrome puts every child after the summary in the ::details-content box, so the
+   groups need a grid of their own. */
+.fd-spawn-options-body {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
   margin-left: calc(72px + var(--sp-3));
 }
-.fd-spawn-browse {
+/* A phone: the Batch switch is the first row of the fold. */
+.fd-spawn-options-body > .fd-spawn-batch {
   justify-self: start;
 }
 .fd-spawn-setup-field {
@@ -538,9 +539,34 @@
   gap: var(--sp-2);
   min-width: 0;
 }
+/* Two lines at rest; the field grows with the command, without the native resize grabber. */
 .fd-spawn textarea.fd-spawn-setup {
+  min-height: calc(2lh + 2 * var(--sp-2) + 2px);
+  max-height: 40vh;
+  field-sizing: content;
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  resize: none;
+}
+/* Coordinator: the checkbox, its note under the label text, and the grant fields while it is on. */
+.fd-spawn-coord {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.fd-spawn-coord > .fd-note {
+  margin-top: calc(-1 * var(--sp-3));
+  padding-left: calc(16px + var(--sp-2));
+}
+/* The import: the id field at the full width, Browse sessions and the note under it. */
+.fd-spawn-import {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+  min-width: 0;
+}
+.fd-spawn-import > label {
+  justify-self: stretch;
 }
 /* A mono field keeps 16px on a touch screen (--fs-field): iOS zooms into a smaller one. */
 @media (pointer: coarse) {
@@ -548,8 +574,13 @@
   .fd-spawn input[aria-label="Directory path"],
   .fd-spawn .fd-spawn-branch input,
   .fd-spawn .fd-spawn-url input,
+  .fd-spawn .fd-spawn-import input,
   .fd-spawn textarea.fd-spawn-setup {
     font-size: max(var(--fs-data), var(--fs-field));
+  }
+  /* The checkbox is 24px on a touch screen. */
+  .fd-spawn-coord > .fd-note {
+    padding-left: calc(24px + var(--sp-2));
   }
 }
 /* ADR-008: the fleet-control switches under the Coordinator checkbox. */
@@ -561,14 +592,6 @@
 }
 .fd-spawn .fd-spawn-fleet legend {
   margin-bottom: var(--sp-2);
-  padding: 0;
-  color: var(--dim);
-  font-family: var(--font-ui);
-  font-size: var(--fs-meta);
-  font-weight: 600;
-}
-.fd-spawn .fd-spawn-fleet + .fd-spawn-fleet {
-  margin-top: var(--sp-2);
 }
 .fd-spawn .fd-spawn-scope {
   display: grid;
@@ -594,13 +617,19 @@
   white-space: nowrap;
   cursor: pointer;
 }
+/* The status (a missing step, the outcome) takes the room between Batch and the actions and wraps
+   inside it: with a 0 basis it never pushes the actions onto a second row. SpawnFoot renders it
+   only while it holds a text. */
 .fd-spawn-status {
   display: grid;
-  flex: 1 1 12rem;
+  flex: 1 1 0;
   gap: var(--sp-1);
   justify-items: end;
   min-width: 0;
   text-align: right;
+}
+.fd-spawn-status:empty {
+  display: none;
 }
 .fd-spawn-status .fd-note {
   color: var(--faint);
@@ -692,9 +721,8 @@
     flex: 1 1 100%;
     order: 1;
   }
-  /* The stations: two equal columns that fill the line, like the provider list and the Where
-     segment. Without the sheet fill a pill at rest sits on --bg: it takes the --raised fill and
-     --shadow-lift of a 44px tap target (hover and the pressed look stay). */
+  /* The stations: the track is a grid of two equal columns that fills the line, like the provider
+     list and the Where segment (one 44px segment per station). */
   .fd-spawn-fields > .fd-spawn-stations {
     flex: 1 1 100%;
   }
@@ -703,23 +731,32 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .fd-spawn-station {
-    justify-content: flex-start;
     min-width: 0;
-    background: var(--raised);
-    box-shadow: var(--shadow-lift);
   }
   /* A plain button on --bg: the --btn-edge of a panel button (settings.css .fd-set-grid). */
   .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
-  .fd-spawn .fd-outcome > button,
-  .fd-spawn
-    :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
-      :disabled
-    ),
-  .fd-spawn .fd-outcome > button:hover:not(:disabled) {
+  .fd-spawn .fd-folder-foot > button:not(.fd-ghost),
+  .fd-spawn .fd-outcome > button {
     border-color: var(--btn-edge);
   }
-  .fd-spawn-options > :not(summary) {
+  @media (hover: hover) {
+    .fd-spawn
+      :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
+        :disabled
+      ),
+    .fd-spawn .fd-folder-foot > button:not(.fd-ghost):hover:not(:disabled),
+    .fd-spawn .fd-outcome > button:hover:not(:disabled) {
+      border-color: var(--btn-edge);
+    }
+  }
+  .fd-spawn-options-body {
     margin-left: 0;
+  }
+  /* The open folder panel stops above the sticky footer (60px) and the bottom bar (60px and the
+     safe area), not under them. */
+  .fd-spawn .fd-folder {
+    scroll-margin-top: var(--sp-3);
+    scroll-margin-bottom: calc(60px + 60px + env(safe-area-inset-bottom) + var(--sp-3));
   }
   /* The sticky footer joins the --surface bottom bar as one docked layer, with a visible top rule.
      While the page scrolls on under it (`data-more`), the form fades out over the last 24px above
@@ -751,46 +788,19 @@
     justify-items: start;
     text-align: left;
   }
-  .fd-spawn-status:empty {
-    display: none;
-  }
+  /* One row of buttons: Cancel as wide as its word, Start session takes the rest. */
   .fd-spawn-actions {
     flex: 1 1 auto;
   }
-  .fd-spawn-actions > * {
-    flex: 1 1 0;
+  .fd-spawn-actions > .fd-primary {
+    flex: 1 1 auto;
   }
-  /* A touch screen has no ⌘↵: the key hint goes. */
+  /* A touch screen has no ⌘↵: the key chips go. */
   .fd-spawn-foot .fd-kbd {
     display: none;
   }
 }
 
-/* ── pinned and recent folders (the folder picker, the Files page) ── */
-.fd-recent {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-.fd-recent .fd-chip {
-  max-width: 100%;
-  overflow: hidden;
-  background: var(--raised);
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  font-weight: 400;
-  text-overflow: ellipsis;
-}
-.fd-recent .fd-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
-  color: var(--text);
-}
-.fd-recent .fd-chip[data-pinned] .fd-icon {
-  fill: currentColor;
-}
 /* A path in a list (the Files panel). */
 .fd-path {
   font-family: var(--font-data);
@@ -836,8 +846,10 @@
   box-shadow: var(--shadow-lift);
   transition: background-color var(--t-fast);
 }
-.fd-native-row:hover {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  .fd-native-row:hover {
+    background: var(--raised-hi);
+  }
 }
 .fd-native-row[data-depth="1"] {
   margin-left: var(--sp-5);
@@ -860,8 +872,10 @@
   line-height: 1.4;
   text-align: left;
 }
-.fd-native-open:hover:not(:disabled) {
-  background: none;
+@media (hover: hover) {
+  .fd-native-open:hover:not(:disabled) {
+    background: none;
+  }
 }
 .fd-native-title {
   min-width: 0;

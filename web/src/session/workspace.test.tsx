@@ -8,8 +8,9 @@ import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
+import { checkpointText, hasSnapshot, outsideGit } from './checkpoint';
 import { type PaneTab, SessionView } from './SessionView';
-import { DiffFlight, diffOpen, SinceNotes } from './TurnsPanel';
+import { DiffFlight, diffOpen, rollbackNote, SinceNotes, SinceTotal } from './TurnsPanel';
 import {
   artifactFiles,
   fileActions,
@@ -144,7 +145,10 @@ describe('turns and reverts (DL-097)', () => {
       'The turn is reverted.',
     );
     expect(revertBlock({ ...turn, start: gone('queued_input') }, quiet, codexCaps())).toBe(
-      'No start checkpoint: queued_input.',
+      'No snapshot at the start of this turn: a queued message started next.',
+    );
+    expect(revertBlock({ ...turn, start: gone('submodule') }, quiet, codexCaps())).toBe(
+      'No snapshot at the start of this turn.',
     );
     expect(revertBlock(turn, { ...quiet, revert: recon }, codexCaps())).toBe(
       'Another revert holds the session.',
@@ -162,15 +166,111 @@ describe('turns and reverts (DL-097)', () => {
       /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat"><span class="fd-add">\+2<\/span><span class="fd-del">−1<\/span><span class="fd-turn-files">1 file<\/span><\/span>/,
     );
     expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
+    // The reason in plain words; the station code stays in the title.
     expect(html).toContain(
-      '<span class="fd-turn-stat">no completion checkpoint: queued_input</span>',
+      '<span class="fd-turn-stat" title="queued_input">No snapshot: a queued message started next</span>',
     );
+    expect(html).not.toContain('data-note="no-snapshots"');
     expect(html).toContain('Show the diff');
     expect(html).toMatch(/<button type="button" class="fd-sm">Revert to here<\/button>/);
     expect(html).not.toContain('cannot roll back its conversation, so the board');
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('a folder outside Git: one empty state, no rows, no notes and no Branches view', () => {
+    const outside = gone('not_a_git_worktree');
+    const turns = [
+      finalized('t1', outside, gone('background_writers')),
+      finalized('t2', outside, outside),
+    ];
+    const html = view(codex(), turns);
+    // §4.7: a 20px --faint icon, a title and one sentence, with no box (ui/page EmptyState).
+    expect(html).toContain('<div class="fd-emptystate"><svg');
+    expect(html).toContain('lucide-file-diff');
+    expect(html).toContain('<p class="fd-emptystate-title">No changes to show</p>');
+    expect(html).toContain(
+      '<p class="fd-emptystate-body">This folder is not a Git repository, so the board keeps no file snapshots for this session.</p>',
+    );
+    // No list of dead rows, no notes, and no Branches segment for a folder that has no Git.
+    expect(html).not.toContain('No snapshot');
+    expect(html).not.toContain('data-note="no-snapshots"');
+    expect(html).not.toContain('cannot be rolled back');
+    expect(html).not.toContain('Branches');
+    expect(html).not.toContain('aria-label="Changes view"');
+    // One turn outside Git is the same state.
+    expect(view(codex(), [finalized('t1', outside, outside)])).toContain('No changes to show');
+    // Claude (no rollback) gets the same empty state, with no rollback note.
+    const claude: DeckSession = {
+      station_id: 'station-a',
+      status: 'idle',
+      summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
+    };
+    const claudeHtml = view(claude, turns);
+    expect(claudeHtml).toContain('No changes to show');
+    expect(claudeHtml).not.toContain('cannot be rolled back');
+  });
+
+  test('turns without a snapshot at their end: the reason once above the list of revert rows', () => {
+    const outside = gone('not_a_git_worktree');
+    // Background work on two of three turns: that reason once; the other row keeps its own words.
+    // The starts have snapshots, so each row still offers "Revert to here": the list stays.
+    const busy = view(codex(), [
+      finalized('t1', ok('a'), gone('background_writers')),
+      finalized('t2', ok('b'), gone('queued_input')),
+      finalized('t3', ok('c'), gone('background_writers')),
+    ]);
+    expect(busy).toContain(
+      'The board kept no file snapshots for these turns: background work was running.',
+    );
+    expect(busy).toContain(
+      'title="queued_input">No snapshot: a queued message started next</span>',
+    );
+    expect(busy).toContain('Revert to here');
+    expect(busy).not.toContain('fd-emptystate');
+    // One turn, or a turn with changes: no note.
+    expect(view(codex(), [finalized('t1', ok('a'), outside)])).not.toContain('no-snapshots');
+    expect(checkpointText('submodule')).toBe('No snapshot of the files for this turn');
+  });
+
+  test('turns that all lost their snapshots: one empty state, not a list of "No snapshot" rows', () => {
+    const busy = gone('background_writers');
+    const turns = [
+      finalized('t1', busy, busy),
+      finalized('t2', busy, gone('queued_input')),
+      finalized('t3', busy, busy),
+    ];
+    const html = view(codex(), turns);
+    // §4.7, as a folder outside Git: the icon, a title and why, with no box and no rows.
+    expect(html).toContain('<div class="fd-emptystate"><svg');
+    expect(html).toContain('lucide-file-diff');
+    expect(html).toContain('<p class="fd-emptystate-title">No changes to show</p>');
+    expect(html).toContain(
+      '<p class="fd-emptystate-body">The board kept no file snapshots for the 3 finished turns: background work was running.</p>',
+    );
+    expect(html).not.toContain('No snapshot');
+    expect(html).not.toContain('Turn 1');
+    expect(html).not.toContain('Revert to here');
+    expect(html).not.toContain('data-note="no-snapshots"');
+    // Claude cannot roll back: start snapshots offer no revert either, so the state is the same.
+    const claude: DeckSession = {
+      station_id: 'station-a',
+      status: 'idle',
+      summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
+    };
+    const started = [finalized('t1', ok('a'), busy), finalized('t2', ok('b'), busy)];
+    const claudeHtml = view(claude, started);
+    expect(claudeHtml).toContain('No changes to show');
+    expect(claudeHtml).toContain('for the 2 finished turns: background work was running.');
+    expect(claudeHtml).not.toContain('cannot be rolled back');
+    // A turn with changes keeps the list.
+    const mixed = view(codex(), [
+      finalized('t1', busy, busy),
+      finalized('t2', ok('s'), ok('e'), { files_changed: 1, insertions: 2, deletions: 0 }),
+    ]);
+    expect(mixed).not.toContain('fd-emptystate');
+    expect(mixed).toContain('Show the diff');
   });
 
   test('the diff button: a loaded diff hides; nothing or a failed load shows (and retries)', () => {
@@ -243,11 +343,20 @@ describe('turns and reverts (DL-097)', () => {
       summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
     };
     const html = view(s, [finalized('t1')]);
-    expect(html).toContain(
-      'This provider cannot roll back its conversation, so the board offers no revert.',
-    );
+    // The note names the provider.
+    expect(html).toContain('Claude sessions cannot be rolled back, so the board offers no revert.');
     expect(html).not.toContain('file-only restore');
     expect(html).not.toContain('Revert to here');
+    expect(rollbackNote(null)).toBe(
+      'This session cannot be rolled back, so the board offers no revert.',
+    );
+    // Without any snapshot no revert is possible anyway: no note (one empty state says why).
+    const none = view(s, [
+      finalized('t1', gone('background_writers'), gone('background_writers')),
+      finalized('t2', gone('background_writers'), gone('background_writers')),
+    ]);
+    expect(none).not.toContain('cannot be rolled back');
+    expect(none).toContain('<p class="fd-emptystate-title">No changes to show</p>');
   });
 
   test('read-only scopes and a running turn disable the revert; a read-only board has no files', () => {
@@ -289,14 +398,53 @@ describe('the diff since the session started (R1.2)', () => {
     inferred: false,
   };
 
-  test('with a base the Changes tab opens "Since spawn", also before the first turn', () => {
+  test('with a base the Changes tab opens "Whole session", also before the first turn', () => {
     const html = view(codex({ base }), []);
     expect(html).toContain('aria-label="Changes view"');
-    expect(html).toMatch(/aria-pressed="true"[^>]*>Since spawn</);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Whole session</);
     expect(html).toMatch(/aria-pressed="false"[^>]*>By turn</);
-    expect(html).toContain('Since the session started');
-    expect(html).toContain('<code>main</code> <code>01234567</code>');
+    // One head row: where the changes count from (the totals come first once the diff loaded),
+    // then the Refresh icon button at the end of the row.
+    expect(html).toContain(
+      '<div class="fd-since-head"><span class="fd-since-base">Changes since <code>main</code> at <code>01234567</code></span><button type="button" class="fd-iconbtn fd-sm" aria-label="Refresh"',
+    );
     expect(html).toContain('Loading the diff');
+    // No base ref: the commit only.
+    const noRef = view(codex({ base: { oid: base.oid, inferred: false } }), []);
+    expect(noRef).toContain(
+      '<span class="fd-since-base">Changes since <code>01234567</code></span>',
+    );
+  });
+
+  test('the head row puts the totals first: `+1,286 −400 · 3 files`', () => {
+    const html = renderToStaticMarkup(
+      <SinceTotal stat={{ files_changed: 3, insertions: 1286, deletions: 400 }} />,
+    );
+    expect(html).toBe(
+      '<span class="fd-since-total"><span class="fd-add">+1,286</span><span class="fd-del">−400</span><span class="fd-since-files">· 3 files</span></span>',
+    );
+    // Files without line counts: no leading dot.
+    expect(
+      renderToStaticMarkup(<SinceTotal stat={{ files_changed: 1, insertions: 0, deletions: 0 }} />),
+    ).toContain('<span class="fd-since-files">1 file</span>');
+  });
+
+  test('outsideGit: a turn says the folder is outside Git and no turn has a snapshot', () => {
+    const turn = (start: CheckpointSide | null, end: CheckpointSide | null) => ({
+      turnId: 't',
+      start,
+      end,
+      diff: null,
+      reverted: false,
+    });
+    const outside = gone('not_a_git_worktree');
+    expect(outsideGit([turn(outside, outside)])).toBe(true);
+    expect(outsideGit([turn(null, gone('background_writers')), turn(outside, outside)])).toBe(true);
+    expect(outsideGit([turn(ok('a'), outside)])).toBe(false);
+    expect(outsideGit([turn(gone('queued_input'), gone('queued_input'))])).toBe(false);
+    expect(outsideGit([])).toBe(false);
+    expect(hasSnapshot([turn(outside, outside)])).toBe(false);
+    expect(hasSnapshot([turn(ok('a'), outside)])).toBe(true);
   });
 
   test('a guessed base opens "By turn" and without a base there is no toggle', () => {
@@ -305,20 +453,20 @@ describe('the diff since the session started (R1.2)', () => {
       [finalized('t1')],
     );
     expect(guessed).toContain('aria-label="Changes view"');
-    expect(guessed).toMatch(/aria-pressed="false"[^>]*>Since spawn</);
+    expect(guessed).toMatch(/aria-pressed="false"[^>]*>Whole session</);
     expect(guessed).toMatch(/aria-pressed="true"[^>]*>By turn</);
     expect(guessed).toContain('Show the diff');
-    expect(guessed).not.toContain('Since the session started');
+    expect(guessed).not.toContain('fd-since-head');
     const plain = view(codex(), [finalized('t1')]);
     // DL-191: the owner has the Branches view, so the toggle shows without a base.
     expect(plain).toContain('Changes view');
-    expect(plain).not.toContain('Since spawn');
+    expect(plain).not.toContain('Whole session');
     expect(plain).toMatch(/aria-pressed="true"[^>]*>By turn</);
     expect(plain).toMatch(/aria-pressed="false"[^>]*>Branches</);
     expect(plain).toContain('Show the diff');
   });
 
-  test('the "Since spawn" view says when the start commit was guessed', () => {
+  test('the "Whole session" view says when the start commit was guessed', () => {
     const html = renderToStaticMarkup(
       <SinceNotes
         base={{ git_ref: 'origin/HEAD', oid: base.oid, inferred: true }}

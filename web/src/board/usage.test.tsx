@@ -3,11 +3,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import type { DeckSession } from '../gen';
 import { card, station } from '../testing/fleet';
+import { sessionsText, UsageGlance } from './UsageGlance';
 import { UsageMeters } from './UsageMeters';
 import {
   costText,
   dollars,
   fleetUsage,
+  inputLabel,
   instanceLimit,
   limitChip,
   limitSuffix,
@@ -195,5 +197,75 @@ describe('usage meters (DL-303)', () => {
       <UsageMeters sessions={[sessions[1] as DeckSession]} stations={[]} now={NOW} />,
     );
     expect(reported).toContain('<dd>$1.20</dd>');
+  });
+});
+
+describe('the usage glance totals (live UI audit)', () => {
+  const big = (id: string, provider: 'claude' | 'codex' = 'claude') =>
+    card(id, 'working', 'station-a', {
+      provider,
+      usage: {
+        input_tokens: 1550,
+        output_tokens: 750_000,
+        cost_usd: 25_867.93,
+        cost_inferred: false,
+      },
+    });
+
+  test('a cost has digit groups and cents (one money format, DESIGN-SYSTEM §5)', () => {
+    expect(dollars(1.2)).toBe('$1.20');
+    expect(dollars(812.4)).toBe('$812.40');
+    expect(dollars(51_735.857)).toBe('$51,735.86');
+    expect(dollars(1_234_567.8)).toBe('$1,234,567.80');
+    expect(dollars(0)).toBe('$0.00');
+  });
+
+  test('Claude counts only new input: a Claude fleet says "new input"', () => {
+    expect(inputLabel([big('a'), big('b')])).toBe('new input');
+    expect(inputLabel([big('a'), big('c', 'codex')])).toBe('input');
+    expect(inputLabel([])).toBe('input');
+  });
+
+  test('the glance says its scope and keeps the exact values as titles', () => {
+    const html = renderToStaticMarkup(
+      <UsageGlance sessions={[big('a'), big('b')]} stations={[station()]} now={NOW} />,
+    );
+    expect(html).toContain('<p class="fd-glance-span">2 live sessions</p>');
+    expect(html).toContain('<dd title="1,500,000">1.5M</dd>');
+    // One-line labels, the words of the Properties panel ("682 input · 309K output").
+    expect(html).toContain('<dt>new input</dt>');
+    expect(html).toContain('<dt>output</dt>');
+    // The cost is the price at the API rates: named so, and explained in the title.
+    const about =
+      'What the tokens of these sessions cost at the provider&#x27;s API prices, cached input included. A subscription does not bill it.';
+    expect(html).toContain(`<dt title="${about}">at API prices</dt>`);
+    expect(html).toContain(`<dd title="$51,735.86\n${about}">$51,735.86</dd>`);
+    expect(html).not.toContain('>cost<');
+  });
+
+  test('the scope names the live and the ended sessions, as the header counts them', () => {
+    const live = card('a');
+    const ended = card('e', 'ended');
+    expect(sessionsText([live])).toBe('1 live session');
+    expect(sessionsText([live, card('b', 'idle')])).toBe('2 live sessions');
+    expect(sessionsText([live, card('b'), ended, card('l', 'lost')])).toBe(
+      '2 live and 2 ended sessions',
+    );
+    expect(sessionsText([live, card('b'), ended])).toBe('2 live and 1 ended session');
+    expect(sessionsText([live, card('u', 'unreachable'), ended])).toBe(
+      '1 live, 1 unreachable and 1 ended session',
+    );
+    expect(sessionsText([ended])).toBe('1 ended session');
+  });
+
+  test('the All usage tab keeps the unit in its labels: New input tokens, Output tokens', () => {
+    const html = renderToStaticMarkup(
+      <UsageMeters sessions={[big('a')]} stations={[station()]} now={NOW} />,
+    );
+    expect(html).toContain('<dt class="fd-label">New input tokens</dt>');
+    expect(html).toContain('<dt class="fd-label">Output tokens</dt>');
+    expect(html).toMatch(
+      /<dt class="fd-label" title="What the tokens of this session[^"]*">At API prices<\/dt>/,
+    );
   });
 });

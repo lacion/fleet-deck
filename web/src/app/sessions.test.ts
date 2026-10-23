@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { BOARD_ARRIVALS, rememberArrivals, resetBoardArrivals } from '../board/fleet';
 import { card, station } from '../testing/fleet';
 import {
   basename,
@@ -13,6 +14,9 @@ import {
 
 const ids = (cards: readonly { summary: { session_id: string } }[]) =>
   cards.map((c) => c.summary.session_id);
+
+// Every test starts as a fresh board: no arrival is known yet.
+beforeEach(() => resetBoardArrivals());
 
 describe('relativeAge', () => {
   test('now, minutes, hours and days', () => {
@@ -95,10 +99,18 @@ describe('sidebar model', () => {
     ]);
   });
 
-  test('stations without sessions show only when there is no query', () => {
+  test('a station without a session has no group (the Stations page lists it)', () => {
     const only = [card('w1', 'working', 'station-a')];
-    expect(sidebarModel(only, stations, '').groups).toHaveLength(2);
+    expect(sidebarModel(only, stations, '').groups.map((g) => g.id)).toEqual(['station-a']);
     expect(sidebarModel(only, stations, 'w1').groups).toHaveLength(1);
+    expect(sidebarModel([], stations, '').groups).toEqual([]);
+  });
+
+  test('a station whose only session needs you lists it in Needs you, with no empty group', () => {
+    const model = sidebarModel([card('n1', 'needs_you', 'station-a')], stations, '');
+    expect(model.groups).toEqual([]);
+    expect(ids(model.needs)).toEqual(['n1']);
+    expect(ids(sidebarOrder(model))).toEqual(['n1']);
   });
 
   test('a search whose only match on a station needs you shows no empty station group', () => {
@@ -126,6 +138,65 @@ describe('sidebar model', () => {
     const model = sidebarModel([card('x', 'working', 'station-z')], [], '');
     expect(model.groups.map((g) => g.id)).toEqual(['station-z']);
     expect(model.groups[0]?.reachable).toBe(false);
+  });
+});
+
+describe('the status order of the live rows', () => {
+  const stations = [station('station-a')];
+  const at = (id: string, status: 'working' | 'idle', updated_at: number) =>
+    card(id, status, 'station-a', { updated_at });
+  // A render reads the board record of arrivals; the app writes it after the render.
+  const rows = (list: ReturnType<typeof card>[]) => {
+    const out = ids(sidebarModel(list, stations, '').groups[0]?.live ?? []);
+    rememberArrivals(list, BOARD_ARRIVALS);
+    return out;
+  };
+
+  test('a fresh board lists each status the last activity first', () => {
+    expect(rows([at('w1', 'working', 1), at('w2', 'working', 5), at('i1', 'idle', 9)])).toEqual([
+      'w2',
+      'w1',
+      'i1',
+    ]);
+  });
+
+  test('an event keeps every row in place; a new status puts the row first in that status', () => {
+    expect(rows([at('a', 'working', 3), at('b', 'working', 2), at('c', 'idle', 9)])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    // b has a newer event in the same status: it stays under a (it went first before).
+    expect(rows([at('a', 'working', 3), at('b', 'working', 8), at('c', 'idle', 9)])).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    // c starts to work: it arrives first in the working rows, as on the fleet lanes.
+    expect(rows([at('a', 'working', 3), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
+      'c',
+      'a',
+      'b',
+    ]);
+    // a waits, then works again: each time first in its new status.
+    expect(rows([at('a', 'idle', 11), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+    expect(rows([at('a', 'working', 12), at('b', 'working', 13), at('c', 'working', 14)])).toEqual([
+      'a',
+      'c',
+      'b',
+    ]);
+  });
+
+  test('the j/k keys follow the rows; a session hidden by the query keeps its place', () => {
+    const list = [at('a', 'working', 1), at('b', 'working', 2)];
+    expect(ids(sidebarOrder(sidebarModel(list, stations, 'a')))).toEqual(['a']);
+    rememberArrivals(list, BOARD_ARRIVALS);
+    const later = [at('a', 'working', 9), at('b', 'working', 2)];
+    expect(ids(sidebarOrder(sidebarModel(later, stations, '')))).toEqual(['b', 'a']);
   });
 });
 
@@ -194,15 +265,50 @@ describe('sidebar stars and archive (DL-141)', () => {
 });
 
 describe('palette matches', () => {
-  test('needs you first, then newest, at most max', () => {
+  const both = (g: ReturnType<typeof paletteMatches>) => [...ids(g.live), '|', ...ids(g.ended)];
+
+  test('needs you, then running, then idle, then ended; the newest first in each; at most max', () => {
     const list = [
-      card('a', 'working', 'station-a', { updated_at: 1 }),
-      card('b', 'working', 'station-a', { updated_at: 3 }),
-      card('c', 'needs_you', 'station-a', { updated_at: 0 }),
+      card('e-new', 'ended', 'station-a', { updated_at: 9 }),
+      card('i-old', 'idle', 'station-a', { updated_at: 1 }),
+      card('w', 'working', 'station-a', { updated_at: 2 }),
+      card('q', 'queued', 'station-a', { updated_at: 3 }),
+      card('n', 'needs_you', 'station-a', { updated_at: 0 }),
+      card('i-new', 'idle', 'station-a', { updated_at: 4 }),
+      card('l', 'lost', 'station-a', { updated_at: 5 }),
     ];
-    expect(ids(paletteMatches(list, ''))).toEqual(['c', 'b', 'a']);
-    expect(ids(paletteMatches(list, '', 2))).toEqual(['c', 'b']);
-    expect(ids(paletteMatches(list, 'a'))).toEqual(['a']);
+    expect(both(paletteMatches(list, ''))).toEqual([
+      'n',
+      'q',
+      'w',
+      'i-new',
+      'i-old',
+      '|',
+      'e-new',
+      'l',
+    ]);
+    // The cap cuts the ended group first: a live session never hides behind an ended one.
+    expect(both(paletteMatches(list, '', undefined, 3))).toEqual(['n', 'q', 'w', '|']);
+    expect(both(paletteMatches(list, 'e-new'))).toEqual(['|', 'e-new']);
+  });
+
+  test('a hibernated session lists with the idle ones', () => {
+    const list = [
+      card('h', 'ended', 'station-a', { updated_at: 9, state: 'exited', hibernated: true }),
+      card('i', 'idle', 'station-a', { updated_at: 1 }),
+    ];
+    expect(both(paletteMatches(list, ''))).toEqual(['h', 'i', '|']);
+  });
+
+  test('an archived session shows only for a query that matches it, after the other ended', () => {
+    const list = [
+      card('old-job', 'ended', 'station-a', { updated_at: 9 }),
+      card('old-doc', 'ended', 'station-a', { updated_at: 1 }),
+      card('w', 'working', 'station-a', { updated_at: 2 }),
+    ];
+    const cleared = new Set(['station-a/old-job']);
+    expect(both(paletteMatches(list, '', cleared))).toEqual(['w', '|', 'old-doc']);
+    expect(both(paletteMatches(list, 'old', cleared))).toEqual(['|', 'old-doc', 'old-job']);
   });
 
   test('the needs-you sessions list the longest wait first, as the Needs you panel', () => {
@@ -225,7 +331,7 @@ describe('palette matches', () => {
       card('old', 'needs_you', 'station-a', { updated_at: 5, open_requests: asks(4) }),
       card('w', 'working', 'station-a', { updated_at: 10 }),
     ];
-    expect(ids(paletteMatches(list, ''))).toEqual(['old', 'new', 'w']);
+    expect(ids(paletteMatches(list, '').live)).toEqual(['old', 'new', 'w']);
     expect(ids(sidebarModel(list, [station()], '').needs)).toEqual(['old', 'new']);
     // Starred stays the first key.
     const starred = sidebarModel(list, [station()], '', {

@@ -2,6 +2,7 @@
 // reported is "unknown", never zero; a total over sessions with unknown
 // parts says how many sessions it leaves out.
 import type { DeckSession, StationView, Usage } from '../gen';
+import { countText, usdText } from '../ui/format';
 import { stationName } from './fleet';
 
 /** A fleet total of one usage part. */
@@ -48,8 +49,37 @@ export function totalText(t: UsageTotal, format: (n: number) => string): string 
     : `at least ${sum} (${t.unknown} ${t.unknown === 1 ? 'session' : 'sessions'} unknown)`;
 }
 
-export const tokens = (n: number): string => n.toLocaleString('en-US');
-export const dollars = (n: number): string => `$${n.toFixed(2)}`;
+/** A token count with digit groups ("1,500"): `countText` of ui/format (DESIGN-SYSTEM §5). */
+export const tokens = (n: number): string => countText(n);
+
+/** A cost with digit groups and cents ("$1.20", "$51,735.86"): `usdText` (§5: one format). */
+export const dollars = (n: number): string => usdText(n);
+
+/**
+ * The word of the input token total: "input", as "output" (one word for one count on every
+ * surface, DESIGN-SYSTEM §1). Claude reports only the input that the cache did not hold (its
+ * cache reads and writes are other counts), so a fleet of Claude sessions says "new input";
+ * Codex counts the cached input too.
+ */
+export function inputLabel(sessions: readonly DeckSession[]): string {
+  const known = sessions.filter((s) => s.summary.usage.input_tokens !== null);
+  return known.length > 0 && known.every((s) => s.summary.provider === 'claude')
+    ? 'new input'
+    : 'input';
+}
+
+/**
+ * The name of a session cost on every surface (the ops glance, Properties, the strip): the price
+ * that the provider reports at its API rates. It counts the cached input, which the token totals
+ * leave out, and an owner on a subscription never pays it: "cost" read as money spent.
+ */
+export const API_PRICES = 'at API prices';
+
+/** What a cost at API prices is, for the title of the number: of one session or of the shown ones. */
+export function apiPricesTitle(sessions: number): string {
+  const whose = sessions === 1 ? 'this session' : 'these sessions';
+  return `What the tokens of ${whose} cost at the provider's API prices, cached input included. A subscription does not bill it.`;
+}
 
 /** The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); `null` when unknown. */
 export function costText(usage: Usage, format: (n: number) => string = dollars): string | null {

@@ -95,6 +95,7 @@ export function groupDevices(devices: readonly Device[]): DeviceGroups {
 const OS_LABELS: Readonly<Record<string, string>> = {
   linux: 'Linux',
   macos: 'macOS',
+  darwin: 'macOS',
   omarchy: 'Omarchy',
   windows: 'Windows',
   ios: 'iOS',

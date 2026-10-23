@@ -1,6 +1,6 @@
 // DL-171: the frame of every secondary page of the board and its form parts (UI-DESIGN.md §3.6).
 import { type ReactNode, useId } from 'react';
-import { Icon, type LucideIcon } from './icons';
+import { ChevronLeft, Icon, type LucideIcon, OctagonAlert } from './icons';
 
 type PageProps = {
   readonly title: string;
@@ -15,8 +15,14 @@ type PageProps = {
   readonly filters?: ReactNode;
   /** The page actions, at the right of the title. */
   readonly actions?: ReactNode;
-  /** 1280 px instead of 1040 px (tables, the wall). */
+  /**
+   * The body fills the main column, as the fleet home (tables, lists, grids, dashboards). Without
+   * it the body keeps a 1040 px measure (forms, prose). The header runs the full column on every
+   * page, so that its rule has one length (§4.3).
+   */
   readonly wide?: boolean;
+  /** A link back to the parent list ('‹ All projects'), above the title (§4.3). */
+  readonly back?: { readonly href: string; readonly label: string } | undefined;
   /** The accessible name of the section; the title by default. */
   readonly label?: string | undefined;
   /** An extra class of the section. */
@@ -27,7 +33,8 @@ type PageProps = {
 /**
  * The page frame: padding, a left-aligned column, and the page header (DESIGN-SYSTEM §4.3): the
  * title and its count with the description under them at the left, the filters and then the
- * actions at the right, then a rule.
+ * actions at the right, then a rule. A back link is a row of its own above them all, so that the
+ * filters and the actions stay level with the title row.
  */
 export function Page({
   title,
@@ -36,6 +43,7 @@ export function Page({
   filters,
   actions,
   wide = false,
+  back,
   label,
   className,
   children,
@@ -47,6 +55,13 @@ export function Page({
       aria-label={label ?? title}
     >
       <header className="fd-page-head">
+        {back === undefined ? null : (
+          <div className="fd-page-backrow">
+            <a className="fd-btn fd-ghost fd-sm fd-page-back" href={back.href}>
+              <Icon of={ChevronLeft} size={14} /> {back.label}
+            </a>
+          </div>
+        )}
         <div className="fd-page-titles">
           <div className="fd-page-titlerow">
             <h1 className="fd-page-title">{title}</h1>
@@ -89,7 +104,7 @@ export function Section({
   );
 }
 
-/** What an empty list shows: a 20px icon, a title, a sentence and one action (§4.7). */
+/** What an empty list shows, with no box: a 20px icon, a title, a sentence and one action (§4.7). */
 export function EmptyState({
   icon,
   title,
@@ -102,11 +117,38 @@ export function EmptyState({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className="fd-panel fd-emptystate">
+    <div className="fd-emptystate">
       <Icon of={icon} size={20} />
       <p className="fd-emptystate-title">{title}</p>
       <p className="fd-emptystate-body">{body}</p>
       {action === undefined ? null : action}
+    </div>
+  );
+}
+
+/**
+ * A load error of a page, a list or a panel (§4.7): the notice row in the error tone (a 3px
+ * --hazard holder, the octagon icon, the words in --text), with an optional "Try again". The words
+ * are the alert; the row is a card in the page (`data-place="page"`, shell.css), not a banner.
+ */
+export function ErrorNotice({
+  text,
+  onRetry,
+}: {
+  readonly text: ReactNode;
+  readonly onRetry?: (() => void) | undefined;
+}) {
+  return (
+    <div className="fd-notice fd-notice-row" data-tone="error" data-place="page">
+      <Icon of={OctagonAlert} size={14} />
+      <span className="fd-notice-text" role="alert">
+        {text}
+      </span>
+      {onRetry === undefined ? null : (
+        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
+          Try again
+        </button>
+      )}
     </div>
   );
 }
@@ -139,6 +181,7 @@ export function Field({
   error,
   span,
   group = false,
+  layout,
   onBlur,
   children,
 }: {
@@ -147,6 +190,8 @@ export function Field({
   readonly error?: string | null | undefined;
   readonly span?: 2;
   readonly group?: boolean;
+  /** `row`: the label in a 200px column at the left of its control (§4.7, the settings rows). */
+  readonly layout?: 'row';
   /** Fired when the focus leaves the field (the form marks it touched). */
   readonly onBlur?: () => void;
   readonly children: ReactNode;
@@ -171,6 +216,7 @@ export function Field({
     // The blur handler only listens: a focus leaving any control of the field marks it touched.
     <div
       className="fd-fieldwrap"
+      data-layout={layout}
       data-span={span}
       data-invalid={failed ? 'true' : undefined}
       role={group ? 'group' : undefined}

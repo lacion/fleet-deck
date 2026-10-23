@@ -3,6 +3,8 @@
 // screen, and the pairing dialog closes on Escape and on an outside click.
 import { expect, type Page, test } from '@playwright/test';
 import { logIn, openFleet, quietShells } from './fake-deck';
+import { DEV1, stationFields, stationValues } from './gallery-data';
+import { galleryDeck } from './gallery-scene';
 import { ALPHA, threeSessionDeck } from './scenes';
 
 async function start(page: Page) {
@@ -140,4 +142,36 @@ test('the pairing dialog closes on Escape and on an outside click', async ({ pag
   await expect(page.getByRole('dialog', { name: 'Add station' })).toBeVisible();
   await page.mouse.click(5, 5);
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('every settings tab fits 390px and keeps the bottom bar on the screen', async ({ page }) => {
+  // The gallery deck has an Omarchy station with a desktop (dev1): its tab holds the Omarchy and
+  // Desktop tools cards, whose long lines once widened the layout viewport (§4.8 frame guard).
+  const deck = galleryDeck();
+  deck.on(`/api/stations/${DEV1}/settings`, () => ({
+    status: 200,
+    body: { values: stationValues, fields: stationFields, revision: 'rev-1', overrides: [] },
+  }));
+  await quietShells(page);
+  await deck.install(page);
+  await logIn(page);
+  await page.locator('a.fd-srow').first().waitFor();
+  await go(page, '#/settings');
+  const tabs = page.getByRole('tablist').first().getByRole('tab');
+  await expect(tabs.first()).toBeVisible();
+  const count = await tabs.count();
+  expect(count).toBeGreaterThan(1);
+  for (let i = 0; i < count; i += 1) {
+    await tabs.nth(i).click();
+    await page.waitForTimeout(300);
+    const fit = await page.evaluate(() => ({
+      sw: document.documentElement.scrollWidth,
+      bottom: Math.round(
+        document.querySelector('.fd-bottombar')?.getBoundingClientRect().bottom ?? -1,
+      ),
+      ih: window.innerHeight,
+    }));
+    expect(fit.sw, `tab ${i}`).toBeLessThanOrEqual(390);
+    expect(fit.bottom, `tab ${i}`).toBe(fit.ih);
+  }
 });

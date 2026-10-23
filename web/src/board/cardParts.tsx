@@ -4,6 +4,7 @@ import type { CardStatus, DeckSession } from '../gen';
 import { MIN_SIBLINGS } from '../compare/compare';
 import type { RunningTool } from '../gen';
 import { errorSentence } from '../ui/format';
+import { digestLine } from '../ui/generated';
 import {
   FileText,
   Globe,
@@ -66,6 +67,9 @@ const FOCUS_STATUSES: readonly CardStatus[] = [
   'queued',
   'idle',
 ];
+
+/** The statuses whose glyph and holder already say what the status note would say. */
+const QUIET_STATUSES: readonly CardStatus[] = ['working', 'verifying', 'queued'];
 
 /** The icon of a running tool, by its kind (the same icons as the chat's tool rows). */
 const TOOL_ICON: Record<RunningTool['tool_kind'], LucideIcon> = {
@@ -138,6 +142,16 @@ function NoteLine({ card, focus }: { readonly card: DeckSession; readonly focus:
   // The focus line is the agent's own words: only while the session is live.
   if (focus && FOCUS_STATUSES.includes(card.status) && focusOf(s) !== null) {
     return <FocusLine summary={s} />;
+  }
+  // On a strip, "Working", "Verifying" or "Queued" repeats the holder and the glyph: the field
+  // shows the digest line when there is one, else nothing (§1 rule 7: a missing value is absent).
+  if (focus && QUIET_STATUSES.includes(card.status)) {
+    const digest = digestLine(s.digest);
+    return digest === null ? null : (
+      <span className="fd-card-note" data-note="digest">
+        {digest}
+      </span>
+    );
   }
   return (
     <span className="fd-card-note" data-note={card.status}>

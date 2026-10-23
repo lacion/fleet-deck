@@ -118,7 +118,7 @@ describe('member mode (R11.4)', () => {
       expect(sidebar).not.toContain(`href="${href}"`);
     const more = renderToStaticMarkup(
       <PeopleProvider value={memberEnv('viewer')}>
-        <More stationCount={1} terminalCount={0} />
+        <More terminalCount={0} />
       </PeopleProvider>,
     );
     expect(more).toContain('href="#/watch"');

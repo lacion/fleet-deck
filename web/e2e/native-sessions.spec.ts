@@ -136,13 +136,13 @@ test('browse the sessions of a station, preview one, continue it', async ({ page
   await dialog.getByRole('button', { name: /Fix the login bug/ }).click();
   await dialog.getByRole('button', { name: 'Continue it' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(form.getByLabel('Import CLI session id (optional)')).toHaveValue(
+  await expect(form.getByLabel('Session to import (optional)')).toHaveValue(
     '0b6c1d2e-aaaa-4bbb-8ccc-123456789abc',
   );
   await expect(form.getByLabel('Directory path')).toHaveValue(
     '/home/me/projects/some/very/long/folder/name/that/keeps/going/app',
   );
-  await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
+  await expect(form.getByLabel('Provider')).toContainText('Claude (personal)');
   await expect(form.getByRole('button', { name: 'Import session' })).toBeEnabled();
 });
 

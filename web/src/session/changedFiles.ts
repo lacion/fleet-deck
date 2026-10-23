@@ -1,3 +1,4 @@
+import type { DiffSummary } from '../gen';
 import type { FileActions, FinalizedTurn } from './workspace';
 
 /** The most paths the Files panel lists as changed. */
@@ -105,8 +106,10 @@ export function allChangedPaths(patch: string, max = CHANGED_FILES_MAX): string[
   return [...found];
 }
 
-/** What one read of the session diff says: the openable files, and every changed path. */
+/** What one read of the session diff says: its size, the openable files, and every changed path. */
 export interface SessionChanges {
+  /** The size of the whole diff (also of the files that a cut patch does not list). */
+  readonly summary: DiffSummary;
   /** The files for the Files browser (readable files only); `null` when the diff has none. */
   readonly changed: ChangedFiles | null;
   /** Every changed path for diff navigation (deleted files too); empty when the diff is clean. */
@@ -119,6 +122,7 @@ export async function loadSessionChanges(files: FileActions): Promise<SessionCha
     const diff = await files.sessionDiff();
     const { paths, changes } = changedFiles(diff.patch);
     return {
+      summary: diff.summary,
       changed: paths.length === 0 ? null : { paths, changes, truncated: diff.truncated },
       all: allChangedPaths(diff.patch),
     };

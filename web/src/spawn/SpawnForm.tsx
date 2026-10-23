@@ -23,17 +23,29 @@ import {
   NO_FLEET,
   showFleetFields,
 } from './fleetControl';
+import { CoordinatorOption, ImportField } from './OptionFields';
 import { KindChoice, PlacementFields, StationChoice, TypedDirectory } from './PlacementFields';
 import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
-import { CloneFields, PropRow, Seg, type SegOption, SheetHead, SpawnFoot } from './SpawnSheet';
+import {
+  BatchSwitch,
+  CloneFields,
+  OptionsSummary,
+  optionsHint,
+  PropRow,
+  Seg,
+  type SegOption,
+  SheetHead,
+  SpawnFoot,
+} from './SpawnSheet';
 import {
   AUTO,
   autoOffered,
   baseProblem,
   batchPrompts,
   branchProblem,
+  DIR_PLACEHOLDER,
   importIdProblem,
   knownModels,
   limitBadge,
@@ -63,12 +75,12 @@ const NEED_ID = 'fd-spawn-need';
 
 /** The workspace choices: a short segment, the full sentence as its tooltip (DL-144). */
 const PLACES: readonly SegOption<'here' | 'worktree' | 'clone'>[] = [
-  { value: 'here', label: 'This directory', title: 'Work in this directory' },
+  { value: 'here', label: 'This folder', title: 'Work in this folder' },
   { value: 'worktree', label: 'New worktree', title: 'A new worktree on its own branch' },
   {
     value: 'clone',
     label: 'Clone repository',
-    title: 'Clone a repository into a new directory here',
+    title: 'Clone a repository into a new folder here',
   },
 ];
 
@@ -231,11 +243,14 @@ export function SpawnForm({
     setImportPin(fill.pin);
   };
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
-  const optionsOpen = moreOptionsOpen(optionsUser, {
-    setup: setupShown ? setupCmd : '',
-    coordinator,
-    importId,
-  });
+  // DL-308: a clone is one session: no Batch switch then. A phone shows the switch in "More
+  // options" (its sticky footer is one row of buttons); the fold stays open while Batch is on.
+  const batchShown = place !== 'clone';
+  const narrow = useNarrow();
+  const batchInOptions = narrow && batchShown;
+  const optionsOpen =
+    moreOptionsOpen(optionsUser, { setup: setupShown ? setupCmd : '', coordinator, importId }) ||
+    (batchInOptions && batch);
   const branchName = branch.trim();
   const branchFields = place === 'worktree' && !batch;
   const refProblem =
@@ -295,16 +310,26 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
-  // A phone shows the directory, board and scope notes in the sticky footer, where the disabled
-  // button is in view (the form scrolls under the footer).
-  const needInFoot = useNarrow();
+  // A phone shows the board and scope notes in the sticky footer, where the disabled button is in
+  // view (the form scrolls under the footer). Without providers there is no form and no footer:
+  // the notes stay at the top.
+  const notesInFoot = narrow && targets.length > 0;
+  // A phone also says "Choose a folder to start." in the footer, right above Start session (under
+  // the field it sat in the fade over the footer). A path that is not absolute stays at its field.
+  const needInFoot = notesInFoot && cwd === null && dirNote !== null;
+  // Right under the folder input: the folder picker's hint, or after the typed directory of Auto.
+  const needNote =
+    dirNote === null || needInFoot ? null : (
+      <p className="fd-note fd-spawn-need" id={NEED_ID}>
+        {dirNote}
+      </p>
+    );
   const scopeNote = actions !== undefined && !canDrive;
   const topNotes = [
     scopeNote ? { id: 'fd-spawn-scope', text: 'Starting sessions needs the drive scope.' } : null,
     live ? null : { id: 'fd-spawn-live', text: 'The form is off until the board is live.' },
   ].filter((note) => note !== null);
-  // Without providers there is no form and no footer: the notes stay at the top.
-  const notesInFoot = needInFoot && targets.length > 0;
+  const footNotes = needInFoot ? [...topNotes, { id: NEED_ID, text: dirNote }] : topNotes;
   const missing = (
     busy
       ? []
@@ -312,8 +337,8 @@ export function SpawnForm({
           canDrive || scopeNote ? null : 'your login needs the drive scope',
           auto || station !== undefined ? null : 'choose a station',
           hasTarget || (!auto && station === undefined) ? null : 'choose a provider',
-          cwdOk || dirNote !== null ? null : 'choose a directory',
-          cloneReady || repoError !== null ? null : 'enter the new directory name',
+          cwdOk || dirNote !== null ? null : 'choose a folder',
+          cloneReady || repoError !== null ? null : 'enter the new folder name',
         ]
   ).filter((m): m is string => m !== null);
   const describedBy =
@@ -334,11 +359,9 @@ export function SpawnForm({
       .join(' ') || undefined;
   const startable = ready && importProblem === null;
 
-  // DL-308: a clone is one session: no Batch switch then.
-  const batchShown = place !== 'clone';
   return (
     <section className="fd-spawn" aria-label="New session">
-      <SheetHead station={auto ? undefined : station} />
+      <SheetHead station={station} auto={auto} />
       {notesInFoot
         ? null
         : topNotes.map((note) => (
@@ -350,7 +373,7 @@ export function SpawnForm({
         <p className="fd-empty">No linked station has reported its providers yet.</p>
       ) : (
         <form
-          // ⌘↵ (Ctrl+↵) starts, as the kbd hint of the Start button says.
+          // ⌘↵ (Ctrl+Enter) starts, as the kbd hint of the Start button says.
           onKeyDown={(event) => {
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && startable) {
               event.preventDefault();
@@ -625,20 +648,17 @@ export function SpawnForm({
                     list={actions?.list}
                     sessions={sessions}
                     label="Directory path"
-                    placeholder="Folder on the station"
+                    placeholder={DIR_PLACEHOLDER}
                     invalid={cwd !== null && !cwdOk}
                     describedBy={dirNote === null ? undefined : NEED_ID}
                     browseDisabled={!live || !canDrive}
                     initialOpen={initialListing !== null}
                     initialListing={initialListing}
+                    hint={needNote}
                   />
                 </div>
               )}
-              {dirNote === null || needInFoot ? null : (
-                <p className="fd-note fd-spawn-need" id={NEED_ID}>
-                  {dirNote}
-                </p>
-              )}
+              {auto ? needNote : null}
               {branchFields ? (
                 <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
               ) : null}
@@ -668,84 +688,65 @@ export function SpawnForm({
             </PropRow>
           </div>
           <details className="fd-spawn-options" open={optionsOpen}>
-            <summary
-              className="fd-label"
-              onClick={(event) => {
-                event.preventDefault();
-                setOptionsUser(!optionsOpen);
-              }}
-            >
-              More options
-            </summary>
-            {setupShown ? (
-              <SetupField
-                value={setupCmd}
-                remember={setupRemember}
-                onValue={(v) => {
-                  setupEdited.current = true;
-                  setSetupCmd(v);
-                }}
-                onRemember={setSetupRemember}
-              />
-            ) : null}
-            <label className="fd-spawn-opt">
-              <input
-                type="checkbox"
-                checked={coordinator}
-                onChange={(event) => {
-                  setCoordinator(event.target.checked);
-                  if (!event.target.checked) {
+            <OptionsSummary
+              hint={optionsHint({ batch: batchInOptions, setup: setupShown })}
+              onToggle={() => setOptionsUser(!optionsOpen)}
+            />
+            {/* One grid for the groups: Chrome puts every child after the summary in the
+                ::details-content box, so the grid of the fold spaces only the summary. */}
+            <div className="fd-spawn-options-body">
+              {batchInOptions ? <BatchSwitch on={batch} onChange={setBatch} /> : null}
+              {setupShown ? (
+                <SetupField
+                  value={setupCmd}
+                  remember={setupRemember}
+                  onValue={(v) => {
+                    setupEdited.current = true;
+                    setSetupCmd(v);
+                  }}
+                  onRemember={setSetupRemember}
+                />
+              ) : null}
+              <CoordinatorOption
+                on={coordinator}
+                onChange={(on) => {
+                  setCoordinator(on);
+                  if (!on) {
                     setFleet(NO_FLEET);
                     setPickedTargets([]);
                   }
                 }}
-              />
-              Coordinator: this session may read the fleet, send mail and drive the sessions it
-              starts
-            </label>
-            {fleetShown ? <FleetControlFields fleet={fleet} onChange={setFleet} /> : null}
-            {fleetShown ? (
-              <TargetStations
-                stations={stations}
-                ownId={stationId}
-                picked={targetIds}
-                onChange={setPickedTargets}
-              />
-            ) : null}
-            <label>
-              Import CLI session id (optional)
-              <input
+              >
+                {fleetShown ? (
+                  <>
+                    <FleetControlFields fleet={fleet} onChange={setFleet} />
+                    <TargetStations
+                      stations={stations}
+                      ownId={stationId}
+                      picked={targetIds}
+                      onChange={setPickedTargets}
+                    />
+                  </>
+                ) : null}
+              </CoordinatorOption>
+              <ImportField
                 value={importId}
-                spellCheck={false}
-                autoCapitalize="off"
-                data-native-pin={
-                  importPin === null ? undefined : `${importPin.dev}/${importPin.ino}`
-                }
-                onChange={(event) => {
-                  setImportId(event.target.value);
+                pin={importPin}
+                onChange={(id) => {
+                  setImportId(id);
                   setImportPin(null);
                 }}
+                onBrowse={browse === null ? null : () => setBrowsing(true)}
+                problem={importProblem}
               />
-            </label>
-            {browse === null ? null : (
-              <button type="button" className="fd-spawn-browse" onClick={() => setBrowsing(true)}>
-                Browse sessions on this station
-              </button>
-            )}
-            <p className="fd-note">
-              Continue a Claude or Codex session that you started in a terminal. Close it there
-              first. An import runs in the chosen directory and ignores the workspace and batch
-              choices.
-            </p>
-            {importProblem === null ? null : <p role="alert">{importProblem}</p>}
+            </div>
           </details>
           <SpawnFoot
-            batchShown={batchShown}
+            batchShown={batchShown && !batchInOptions}
             batch={batch}
             onBatch={setBatch}
             missing={missing}
-            notes={notesInFoot ? topNotes : []}
-            need={needInFoot ? dirNote : null}
+            notes={notesInFoot ? footNotes : []}
             grantProblem={fleetBad ? fleetProblem(fleet) : null}
             describedBy={describedBy}
             outcome={outcome}

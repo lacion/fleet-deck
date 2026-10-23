@@ -170,8 +170,8 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
     'Changes',
     'Artifacts',
   ]);
-  // the root listing loads at once, once
-  await expect(side.getByRole('button', { name: 'docs/' })).toBeVisible();
+  // the root listing loads at once, once (a folder row is named without a trailing "/")
+  await expect(side.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
   expect(lists).toEqual(['']);
   // a new summary of the session re-renders the pane but does not list again
   const docs = threeSessions()[1];
@@ -183,12 +183,12 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   await expect(pane.getByRole('heading', { level: 2 })).toHaveText('Write the docs now');
   expect(lists).toEqual(['']);
 
-  await side.getByRole('button', { name: 'docs/' }).click();
+  await side.getByRole('button', { name: 'docs', exact: true }).click();
   await expect(side.getByRole('button', { name: /^guide\.md/ })).toBeVisible();
   const crumbs = side.getByRole('navigation', { name: 'Folder path' });
   await expect(crumbs.getByRole('button', { name: 'docs' })).toBeVisible();
   await crumbs.getByRole('button', { name: 'root' }).click();
-  await expect(side.getByRole('button', { name: 'docs/' })).toBeVisible();
+  await expect(side.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
   expect(lists).toEqual(['', 'docs', '']);
 
   // the toggle closes the panel, the Files tab takes its place, and the choice is kept
@@ -277,14 +277,17 @@ test('a file name of a diff opens the file in the Files side panel, rendered or 
   );
 });
 
-test('the sidebar footer has the theme and compact switches', async ({ page }) => {
+test('the sidebar footer has the theme switches; Compact cards is in the account menu', async ({
+  page,
+}) => {
   const { sidebar } = await setUp(page);
   const theme = sidebar.getByRole('group', { name: 'Theme' });
   await theme.getByRole('button', { name: 'Light theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await theme.getByRole('button', { name: 'Dark theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await sidebar.getByRole('button', { name: 'Compact cards' }).click();
+  await sidebar.locator('summary[aria-label="Account"]').click();
+  await sidebar.getByRole('switch', { name: 'Compact cards' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await expect(sidebar.locator('.fd-srow-meta').first()).toBeHidden();
 });
@@ -327,7 +330,7 @@ test('a starred session sorts first and ended sessions are cleared into Archived
   await alpha.locator('details.fd-sended > summary').click();
   await alpha.getByRole('button', { name: 'Archive the ended sessions of Alpha' }).click();
   await expect(alpha.locator('details.fd-sended')).toHaveCount(0);
-  const toggle = sidebar.getByRole('button', { name: /^Archived \(2\)/ });
+  const toggle = sidebar.getByRole('button', { name: 'Archived 2' });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');

@@ -81,13 +81,14 @@ test('the Agents menu lists the agents; a subagent shows its own chat and the wa
 }) => {
   const { view } = await setUp(page);
   const summaryEl = view.locator('.fd-chat-toolbar summary');
-  await expect(summaryEl).toContainText('Agents');
+  // §5: a label and its count pill, for the commands too.
+  await expect(summaryEl.locator('.fd-agents-part')).toHaveText(['Agents 1', 'Commands 1']);
   await expect(summaryEl).toContainText('2 running');
   await summaryEl.click();
   const menu = view.locator('.fd-chat-toolbar .fd-menu-body');
   await expect(menu.getByRole('button', { name: /^Main chat/ })).toBeVisible();
   await expect(menu.getByText('Read the docs')).toBeVisible();
-  await expect(menu.getByText('Background command')).toBeVisible();
+  await expect(menu.locator('.fd-agent-group')).toHaveText(['Agents 1', 'Background commands 1']);
   await expect(menu.getByText('Wait ten minutes')).toBeVisible();
   expect(await fitsWidth(page)).toBe(true);
 

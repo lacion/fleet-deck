@@ -181,7 +181,7 @@ describe('spawn form: the setup command (DL-148)', () => {
     expect(withFlag(false)).not.toContain('Setup command');
     const on = withFlag(true);
     expect(on).toContain('Setup command (optional)');
-    expect(on).toContain('Remember for this directory');
+    expect(on).toContain('Remember this command for this folder');
     expect(on).toContain('class="fd-spawn-setup"');
   });
 

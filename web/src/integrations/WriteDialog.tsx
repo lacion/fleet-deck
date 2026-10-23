@@ -130,11 +130,6 @@ export function WriteDialog({
           <p className="fd-note">
             <code>{result.url}</code>
           </p>
-          <div className="fd-pane-row">
-            <button type="button" className="fd-primary" onClick={onClose}>
-              Close
-            </button>
-          </div>
         </div>
       ) : null}
     </Dialog>

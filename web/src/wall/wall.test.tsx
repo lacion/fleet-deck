@@ -8,8 +8,9 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
-import { StreamArea } from './Areas';
+import { NeedsArea, SideArea, StreamArea } from './Areas';
 import { ChatPane } from './ChatPane';
+import { stationStats } from './stationStats';
 import { WallPage } from './WallPage';
 import {
   ambientCounts,
@@ -123,6 +124,16 @@ describe('the wall renders no write control', () => {
     expect(html).not.toContain('Allow');
     expect(html).toContain('Fleet Deck wall');
     expect(html).toContain('>Live<');
+  });
+
+  test('with no request the needs area says the calm words of the board, in green', () => {
+    const html = renderToStaticMarkup(
+      <NeedsArea needs={[]} stations={[station()]} origin="https://deck.example" now={1} />,
+    );
+    expect(html).toContain('<p class="fd-wall-note fd-wall-clear">All clear.</p>');
+    expect(html).not.toContain('Nothing needs you.');
+    const calm = wall({ mode: 'ambient' }, true, { w: 3440, h: 1440 });
+    expect(calm).not.toContain('Nothing needs you.');
   });
 
   test('the needs list is oldest first', () => {
@@ -331,6 +342,57 @@ describe('the stream follows the wall filter', () => {
     const html = stream([]);
     expect(html.indexOf('Alpha said hi')).toBeLessThan(html.indexOf('Beta said hi'));
   });
+
+  test('the session is a column with its whole name in the title, then the event', () => {
+    const html = stream(['station-a']);
+    expect(html).toContain('<strong title="busy">busy</strong> <span class="fd-wall-event">');
+  });
+
+  test('a provider error in a message row reads as its cause, with the raw words in the title', () => {
+    const html = renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={board}
+        filter={{ stations: [], repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={[
+          item(
+            'station-a',
+            'busy',
+            'API Error: Request rejected (429) · All credentials are cooling down',
+          ),
+        ]}
+      />,
+    );
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).not.toContain('>API Error');
+    expect(html).toContain(
+      'title="API Error: Request rejected (429) · All credentials are cooling down"',
+    );
+  });
+
+  test('prose is one plain line: no Markdown marks, the first line only', () => {
+    const html = renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={board}
+        filter={{ stations: [], repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={[
+          item(
+            'station-a',
+            'busy',
+            'The fix workflow (`wnzrhrv6c`) is **running**. It works in this order:\n1. Read',
+          ),
+        ]}
+      />,
+    );
+    expect(html).toContain('The fix workflow (wnzrhrv6c) is running. It works in this order:');
+    expect(html).not.toContain('`');
+    expect(html).not.toContain('1. Read');
+  });
 });
 
 describe('a tool row of the stream draws its target as code', () => {
@@ -376,7 +438,8 @@ describe('a tool row of the stream draws its target as code', () => {
         ]}
       />,
     );
-    expect(html).toContain('Edit <code>src/a.ts</code>');
+    // The tool name in words (weight 600), the target in mono: the Activity page reading.
+    expect(html).toContain('<b class="fd-wall-tool">Edit</b> <code>src/a.ts</code>');
   });
 });
 
@@ -390,6 +453,22 @@ describe('the focus chat pane', () => {
     const html = renderToStaticMarkup(<ChatPane events={[]} ready={false} unavailable={false} />);
     expect(html).toContain('Loading…');
     expect(html).not.toContain('No chat yet.');
+  });
+
+  test('a provider error in an agent message reads as its cause, with the raw words in the title', () => {
+    const raw = 'API Error: Request rejected (429) · All credentials are cooling down';
+    const html = renderToStaticMarkup(
+      <ChatPane
+        events={envelopes('s', [
+          { kind: 'message.completed', turn_id: 't1', parent_node_id: null, text: raw },
+        ])}
+        ready
+        unavailable={false}
+      />,
+    );
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).not.toContain('>API Error');
+    expect(html).toContain(`title="${raw}"`);
   });
 
   test('a call that is not done says its state to a screen reader', () => {
@@ -420,5 +499,47 @@ describe('the focus chat pane', () => {
     );
     expect(ended).toContain('data-state="ended"');
     expect(ended).toContain('<span class="fd-vh"> · Ended</span>');
+  });
+});
+
+describe('the figures of a station row', () => {
+  test('the CPU is a share of all cores, the memory whole GB, the disk ends in free', () => {
+    expect(
+      stationStats({
+        cpu: { cores: 32, load1_x100: 0, load5_x100: 30 },
+        memory: { total_bytes: 46.8e9, available_bytes: 40.8e9 },
+        disks: [
+          { total_bytes: 2000e9, free_bytes: 1204.7e9 },
+          { total_bytes: 500e9, free_bytes: 216.9e9 },
+        ],
+      }),
+    ).toEqual(['CPU 1%', 'Memory 6 of 47 GB', 'Disk 217 GB free']);
+    expect(
+      stationStats({ cpu: { cores: 4, load1_x100: 0, load5_x100: 600 }, memory: null, disks: [] }),
+    ).toEqual(['CPU 150%']);
+  });
+
+  test('the glyph says online (the word is for a screen reader); offline shows in words', () => {
+    const html = renderToStaticMarkup(
+      <SideArea
+        sessions={[]}
+        stations={[station('station-a'), station('station-b', { reachable: false })]}
+        now={1}
+      />,
+    );
+    expect(html).toContain(
+      '<span class="fd-wall-station-name">Alpha</span><span class="fd-vh"> online</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-wall-station-name">Beta</span><span class="fd-wall-note">Offline</span>',
+    );
+    expect(html).not.toContain('Online');
+  });
+
+  test('a part that the station does not report is left out', () => {
+    expect(stationStats(null)).toEqual([]);
+    expect(
+      stationStats({ cpu: { cores: 0, load1_x100: 0, load5_x100: 50 }, memory: null, disks: [] }),
+    ).toEqual([]);
   });
 });

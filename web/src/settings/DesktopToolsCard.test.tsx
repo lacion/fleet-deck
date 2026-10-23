@@ -9,12 +9,13 @@ import {
   InstallationsView,
   type InstallState,
   InstallView,
+  RUN_DATE,
   type RunsState,
   type ToolsState,
 } from './DesktopToolsCard';
 import type { SettingsActions } from './actions';
 import type { DesktopToolsActions } from './desktopTools';
-import { view as settingsView } from './fixtures';
+import { meta, view as settingsView } from './fixtures';
 import { lineTexts, MaintenanceView } from './MaintenancePanel';
 import type { OmarchyActions } from './omarchy';
 import { SettingsTab } from './SettingsTab';
@@ -96,23 +97,38 @@ describe('the card', () => {
   test('loading, and a failed read with Refresh diagnostics', () => {
     const loading = view({ kind: 'loading' });
     expect(loading).toContain('aria-label="Desktop tools"');
+    expect(loading).toContain('id="fd-set-sec-desktop-tools"');
     expect(loading).toContain('<h2>Desktop tools</h2>');
-    expect(loading).toContain('Loading the desktop tools…');
+    expect(loading).toContain(
+      '<p class="fd-note fd-loading" role="status">Loading the desktop tools…</p>',
+    );
     const error = view({ kind: 'error' });
     expect(error).toContain('role="alert"');
     expect(error).toContain('The desktop tools could not be read.');
     expect(error).toContain('Refresh diagnostics');
   });
 
-  test('the tool rows, in the answer order, and both buttons', () => {
+  test('the summary, the tool rows in the answer order, and both buttons', () => {
     const html = view({ kind: 'ready', tools: tools() });
-    expect(html).toContain('wtype: Present · version 0.4 (package)');
-    expect(html).toContain('wf-recorder: Missing');
-    expect(html.indexOf('wtype: Present')).toBeLessThan(html.indexOf('wf-recorder: Missing'));
-    expect(html).toContain('Keyboard layouts: us');
-    expect(html).toContain('Fleet plugin: valid');
+    expect(html).toContain('<p class="fd-dt-summary">1 of 2 tools installed.</p>');
+    const row = (status: string, name: string, state: string) =>
+      `<li><span class="fd-dot" data-status="${status}" aria-hidden="true"></span>${name}<span class="fd-note">${state}</span></li>`;
+    expect(html).toContain(row('online', '<code>wtype</code>', 'Installed · 0.4 (package)'));
+    expect(html).toContain(row('idle', '<code>wf-recorder</code>', 'Not installed'));
+    expect(html.indexOf('<code>wtype</code>')).toBeLessThan(
+      html.indexOf('<code>wf-recorder</code>'),
+    );
+    expect(html).toContain(row('online', '<span>Keyboard layouts</span>', 'American English (us)'));
+    expect(html).toContain(row('online', '<span>Fleet plugin</span>', 'Installed'));
+    expect(html).not.toContain('<details');
     expect(html).toContain('Refresh diagnostics');
     expect(html).toContain('Install desktop tools…');
+  });
+
+  test('a station without a desktop folds the list', () => {
+    const html = view({ kind: 'ready', tools: tools({ desktop: 'none' }) });
+    expect(html).toContain('<p class="fd-dt-summary">1 of 2 tools installed.</p>');
+    expect(html).toContain('<details class="fd-dt-fold"><summary>Show the tools</summary>');
   });
 
   test('buttons are off while a read runs', () => {
@@ -130,11 +146,15 @@ describe('the card', () => {
         })}
       />,
     );
-    expect(html).toContain('A different program with this name is used on the desktop.');
+    expect(html).toContain(
+      '<code>wtype</code>: A different program with this name is used on the desktop.',
+    );
     expect(html).toContain('role="note"');
     expect(html).toContain('Passwordless sudo is enabled on this station.');
-    expect(html).toContain('Fleet plugin: not installed');
-    expect(html).toContain('Keyboard layouts could not be read.');
+    expect(html).toContain('<span>Fleet plugin</span><span class="fd-note">Not installed</span>');
+    expect(html).toContain(
+      '<span>Keyboard layouts</span><span class="fd-note">Check failed</span>',
+    );
     const none = renderToStaticMarkup(<FactsView tools={tools()} />);
     expect(none).not.toContain('A different program');
     expect(none).not.toContain('Passwordless sudo');
@@ -145,7 +165,9 @@ describe('the install panel', () => {
   test('reading', () => {
     const html = installView({ kind: 'reading' });
     expect(html).toContain('<h3>Install desktop tools</h3>');
-    expect(html).toContain('Reading the install plan…');
+    expect(html).toContain(
+      '<p class="fd-note fd-loading" role="status">Reading the install plan…</p>',
+    );
   });
 
   test('an error shows its text and Close', () => {
@@ -218,8 +240,10 @@ describe('the install panel', () => {
       notice: 'Another installation is running on this station.',
       busy: true,
     });
-    expect(html).toContain('role="alert"');
-    expect(html).toContain('Another installation is running on this station.');
+    // The settings notice row in the error tone, never a bare alert paragraph.
+    expect(html).toContain('<div class="fd-set-notice" data-tone="error" role="alert"><svg');
+    expect(html).toContain('<span>Another installation is running on this station.</span>');
+    expect(html).not.toContain('<p role="alert">');
     expect(html).toMatch(/disabled=""[^>]*>Open installation terminal/);
   });
 });
@@ -228,13 +252,22 @@ describe('the Installations list', () => {
   const list = (state: RunsState) =>
     renderToStaticMarkup(<InstallationsView state={state} onOpen={noop} />);
 
-  test('a 501 hides it; loading; empty; a failed read', () => {
+  test('a 501 hides it; loading; no row before the first run; a failed read', () => {
     expect(list({ kind: 'hidden' })).toBe('');
-    expect(list({ kind: 'loading' })).toContain('Loading…');
-    expect(list({ kind: 'ready', runs: [] })).toContain('No installations yet.');
+    expect(list({ kind: 'loading' })).toContain(
+      '<p class="fd-note fd-loading" role="status">Loading the installations…</p>',
+    );
+    // §1.7: no installation yet is an absent row, not a row that says so.
+    expect(list({ kind: 'ready', runs: [] })).toBe('');
+    // A failed read is the ErrorNotice of a list, with Try again when the card can read again.
     const error = list({ kind: 'error' });
-    expect(error).toContain('role="alert"');
-    expect(error).toContain('The installations could not be read.');
+    expect(error).toContain('class="fd-notice fd-notice-row" data-tone="error"');
+    expect(error).toContain('role="alert">The installations could not be read.</span>');
+    expect(error).not.toContain('Try again');
+    const retry = renderToStaticMarkup(
+      <InstallationsView state={{ kind: 'error' }} onOpen={noop} onRetry={noop} />,
+    );
+    expect(retry).toContain('>Try again</button>');
   });
 
   test('one row for each run, with its tools, state and button', () => {
@@ -248,8 +281,9 @@ describe('the Installations list', () => {
         run({ maintenance_id: 'e'.repeat(32), state: 'lost' }),
       ],
     });
-    expect(html).toContain('<h3>Installations</h3>');
-    expect(html).toContain(new Date(1_792_400_000_000).toLocaleString());
+    expect(html).toContain('class="fd-fieldlabel">Installations</span>');
+    // The month is a word, so that the date cannot read two ways.
+    expect(html).toContain(new Date(1_792_400_000_000).toLocaleString(undefined, RUN_DATE));
     expect(html).toContain('wtype, wf-recorder');
     for (const text of ['Starting', 'Running', 'Finished', 'Ended with code 3', 'Runner lost']) {
       expect(html).toContain(`<span>${text}</span>`);
@@ -313,6 +347,7 @@ describe('SettingsTab with the card', () => {
         initial={{ view: settingsView() }}
         omarchy={props.omarchy}
         desktopTools={props.desktopTools}
+        os="linux"
       />,
     );
 
@@ -321,6 +356,33 @@ describe('SettingsTab with the card', () => {
     expect(html).toContain('aria-label="Desktop tools"');
     expect(html.indexOf('aria-label="Omarchy"')).toBeLessThan(
       html.indexOf('aria-label="Desktop tools"'),
+    );
+  });
+
+  test('the cards follow the Desktop section, where their settings are', () => {
+    const fields = [
+      ...settingsView().fields,
+      meta('allow_desktop', 'Desktop control', 'bool', { danger: true }),
+    ];
+    const html = renderToStaticMarkup(
+      <SettingsTab
+        stationId="st-alpha"
+        name="Alpha"
+        actions={settings}
+        live
+        initial={{ view: settingsView({ fields }) }}
+        omarchy={omarchy}
+        desktopTools={desktopTools}
+        os="linux"
+      />,
+    );
+    const desktop = html.indexOf('aria-label="Desktop"');
+    const card = html.indexOf('aria-label="Omarchy"');
+    expect(desktop).toBeGreaterThan(-1);
+    expect(desktop).toBeLessThan(card);
+    expect(card).toBeLessThan(html.indexOf('aria-label="Desktop tools"'));
+    expect(html.indexOf('aria-label="Desktop tools"')).toBeLessThan(
+      html.indexOf('aria-label="Providers"'),
     );
   });
 

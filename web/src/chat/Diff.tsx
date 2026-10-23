@@ -14,6 +14,7 @@ import {
 import { Thread } from '../review/Thread';
 import { ThreadLists } from '../review/ThreadLists';
 import type { DiffReview } from '../review/types';
+import { addedText, removedText } from '../ui/format';
 import { FileText, Icon } from '../ui/icons';
 import {
   diffLineKinds,
@@ -23,6 +24,8 @@ import {
   isPlumbing,
   type LineNo,
   lineNumbers,
+  type OneSide,
+  oneSidedLines,
 } from './diffLines';
 
 export type { DiffReview } from '../review/types';
@@ -107,8 +110,8 @@ function FileHeader({
       <FileStatusBadge status={head.status} />
       {head.add > 0 || head.del > 0 ? (
         <span className="fd-dl-stat">
-          {head.add > 0 ? <span data-sign="add">{`+${head.add}`}</span> : null}
-          {head.del > 0 ? <span data-sign="del">{`\u2212${head.del}`}</span> : null}
+          {head.add > 0 ? <span data-sign="add">{addedText(head.add)}</span> : null}
+          {head.del > 0 ? <span data-sign="del">{removedText(head.del)}</span> : null}
         </span>
       ) : null}
     </span>
@@ -150,6 +153,8 @@ export function Diff({
       : undefined;
   const kinds = useMemo(() => diffLineKinds(lines), [lines]);
   const heads = useMemo(() => fileHeads(lines), [lines]);
+  // A whole new or deleted file (one hunk) has one side: no hunk row, one gutter.
+  const sides = useMemo(() => oneSidedLines(lines, kinds, heads), [lines, kinds, heads]);
   // DL-179: with review, each hunk line shows its old and its new number in two gutters.
   const numbered = review !== undefined && arranged !== null;
   const numbers = useMemo(() => (numbered ? lineNumbers(patch) : null), [patch, numbered]);
@@ -180,15 +185,22 @@ export function Diff({
     ) : (
       <span className="fd-dl-n">{row.line}</span>
     );
-  /** The old and the new gutter: the comment target sits in the gutter of its side. */
-  const gutters = (row: DiffRow, no: LineNo | undefined): ReactNode => (
+  /**
+   * The old and the new gutter: the comment target sits in the gutter of its side. A line of a
+   * whole new (or deleted) file has only the new (or the old) gutter.
+   */
+  const gutters = (row: DiffRow, no: LineNo | undefined, only: OneSide | undefined): ReactNode => (
     <>
-      <span className="fd-dl-g" data-side="old">
-        {row?.side === 'old' ? target(row) : (no?.old ?? null)}
-      </span>
-      <span className="fd-dl-g" data-side="new">
-        {row?.side === 'new' ? target(row) : (no?.new ?? null)}
-      </span>
+      {only === 'new' ? null : (
+        <span className="fd-dl-g" data-side="old">
+          {row?.side === 'old' ? target(row) : (no?.old ?? null)}
+        </span>
+      )}
+      {only === 'old' ? null : (
+        <span className="fd-dl-g" data-side="new">
+          {row?.side === 'new' ? target(row) : (no?.new ?? null)}
+        </span>
+      )}
     </>
   );
   const style = numbers ? ({ '--dl-digits': `${digits}ch` } as CSSProperties) : undefined;
@@ -201,14 +213,17 @@ export function Diff({
         const here = arranged?.under.get(n);
         // The git plumbing (index, ---, +++) of a file header is left out: the file header row
         // says the same. In a hunk every line shows (`diffLineKinds` makes its -/+ lines del/add).
-        const shown = kind !== 'meta' || !isPlumbing(line);
+        // The one hunk row of a whole new or deleted file goes too: its badge says it.
+        const only = sides.get(n);
+        const shown =
+          (kind !== 'meta' || !isPlumbing(line)) && !(kind === 'hunk' && only !== undefined);
         return (
           <Fragment key={n}>
             {head ? (
               <FileHeader head={head} onOpenFile={onOpenFile} />
             ) : shown ? (
-              <span className="fd-dl" data-kind={kind}>
-                {numbers && kind !== 'meta' ? gutters(row, numbers.get(n)) : null}
+              <span className="fd-dl" data-kind={kind} data-sides={only}>
+                {numbers && kind !== 'meta' ? gutters(row, numbers.get(n), only) : null}
                 {line === '' ? ' ' : line}
               </span>
             ) : null}

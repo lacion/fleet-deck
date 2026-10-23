@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SubagentLog } from '../gen';
 import { ApiError } from '../runtime/api';
+import { ErrorNotice } from '../ui/page';
 import { historyErrorLine, historyStateLine } from './history';
 import { HistoryItemView } from './HistoryBlock';
 
@@ -68,7 +69,7 @@ export function SubagentWorkView({
         log.items.length > 0 ? (
           <div className="fd-subagent-work" role="log" aria-label="Subagent work">
             {log.items.map((item) => (
-              <HistoryItemView key={item.id} item={item} />
+              <HistoryItemView key={item.id} item={item} sender={false} />
             ))}
           </div>
         ) : log.state.kind === 'empty' ? (
@@ -76,11 +77,8 @@ export function SubagentWorkView({
         ) : null
       ) : null}
       {line === null ? null : <p className="fd-note">{line.text}</p>}
-      {error === null ? null : (
-        <p className="fd-note fd-subagent-error" role="alert">
-          {error}
-        </p>
-      )}
+      {/* No Try again of its own: the Refresh (Show its work) button under it is the retry. */}
+      {error === null ? null : <ErrorNotice text={error} />}
       <button type="button" className="fd-ghost fd-sm" disabled={loading} onClick={onRun}>
         {loading ? 'Loading…' : log === null ? 'Show its work' : 'Refresh'}
       </button>

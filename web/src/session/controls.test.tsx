@@ -2,7 +2,7 @@
 // dock is in approvalDock.test.tsx.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeckSession, ModelChoice } from '../gen';
+import type { DeckSession } from '../gen';
 import { claudeCaps, minimalCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { matchAt } from './at';
@@ -10,10 +10,9 @@ import { sessionActions } from './commands';
 import { Composer, ComposerMenu, searchFailure } from './Composer';
 import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
-import { ModelPicker } from './SessionSettings';
 import { matchSlash } from './slash';
 import { matchHash } from '../review/hashMenu';
-import { submitKeyHint } from '../spawn/keyHint';
+import { submitKeyMod } from '../spawn/keyHint';
 
 const key = { station_id: 'station-a', session_id: 's1' };
 const drive = sessionActions(async () => ({}), key, ['read', 'drive', 'approve']);
@@ -274,7 +273,12 @@ describe('composer menus (DL-174)', () => {
     const bar = composer({ enabled: false, onResume: noop });
     expect(bar).toContain('<div class="fd-composer-resume">');
     expect(bar).toContain('<span class="fd-composer-note">The session ended.</span>');
+    // The header shows no Resume next to the bar: the bar has the one primary (§2.2), on the
+    // desktop and on the phone.
     expect(bar).toMatch(/<button type="button" class="fd-primary">.*Resume<\/button>/);
+    expect(composer({ enabled: false, onResume: noop, phone: true })).toMatch(
+      /<button type="button" class="fd-primary">.*Resume<\/button>/,
+    );
     expect(bar).not.toContain('<textarea');
     expect(bar).not.toContain('Add image');
     // the reason of the session replaces the default text
@@ -379,7 +383,10 @@ describe('session header (DL-140)', () => {
     // Stop and Force stop are items of the session menu
     expect(html).toContain('aria-label="Session menu"');
     expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Stop<\/button>/);
-    expect(html).toContain('Force stop…');
+    // Force stop has its icon, so its text starts on the column of the other items.
+    expect(html).toMatch(
+      /class="fd-danger"[^>]*><svg[^>]*lucide-octagon-alert[^>]*>[\s\S]*?<\/svg> Force stop…/,
+    );
     expect(html).toContain('Fix login');
     expect(html).toContain('Alpha');
     expect(html).not.toContain('Resume');
@@ -432,9 +439,11 @@ describe('session header (DL-140)', () => {
   test('a station with shells off gives no Open in terminal and says why in the menu', () => {
     const html = header(session(), { terminal: { available: false } });
     expect(html).not.toContain('aria-label="Open in terminal"');
+    // The setting is changed on the board (remote first): a prose link to the station tab.
     expect(html).toContain(
-      'Shells are off on this station. Set allow_shell = true in station.toml to open a terminal.',
+      '<p class="fd-menu-text">Shells are off on this station. <a href="#/settings/station/station-a">Turn them on in Settings</a>.</p>',
     );
+    expect(html).not.toContain('station.toml');
     // an available terminal does not show the text
     expect(header(session(), { terminal: { available: true } })).not.toContain('Shells are off');
     // a board without the admin scope has no terminal: no control and no text
@@ -491,6 +500,13 @@ describe('session header (DL-140)', () => {
       expect(html).toContain(`<span class="fd-sh-status" data-status="${status}">`);
       expect(html).toContain(`${word}</span>`);
     }
+    // The card says working for background work too: without a run no turn is active.
+    const background = header(session({ current_run: null }, 'working'));
+    expect(background).toContain(
+      '<span class="fd-sh-status" data-status="working" title="Background work runs; no turn is active.">',
+    );
+    expect(background).toContain('Working in background</span>');
+    expect(background).not.toContain('Interrupt');
     const html = header(session({ model: 'claude-sonnet-4-5' }));
     expect(html).toContain('class="fd-sh-model" data-family="sonnet"');
     expect(html).toContain('class="fd-sh-provider"');
@@ -505,13 +521,14 @@ describe('session header (DL-140)', () => {
     expect(html).toContain('default model');
   });
 
-  test('a long cwd is shortened in the middle and kept whole in the title', () => {
+  test('the folder chip shows the home-short path (it fits its room by whole folders) and its title', () => {
     const cwd = `/home/someone/${'deep/'.repeat(20)}repo`;
     const html = header(session({ cwd, branch: 'main' }));
-    expect(html).toContain(`title="${cwd}"`);
+    expect(html).toContain(
+      `<span class="fd-badge fd-sh-chip" data-mono="" data-folder="" title="${cwd}">`,
+    );
+    expect(html).toContain(`<bdi>~/${'deep/'.repeat(20)}repo</bdi>`);
     expect(html).toContain('main');
-    expect(html).toMatch(/…/);
-    expect(html).not.toContain(`>${cwd}<`);
   });
 
   test('a stale board says the controls are off', () => {
@@ -544,31 +561,6 @@ describe('session header (DL-140)', () => {
     expect(html).not.toContain('>Dismiss<');
   });
 
-  test('the settings menu holds mode, model and auto-continue', () => {
-    const html = header(session());
-    expect(html).toContain('aria-label="Session menu"');
-    expect(html).not.toContain('aria-label="Session settings"');
-    expect(html).toContain('Mode (most restrictive first)');
-    expect(html).toContain('Set model');
-    expect(html).toContain('Continue after a station restart');
-  });
-
-  test('the details block lists the facts of the session', () => {
-    const html = header(
-      session({ callsign: 'falcon', worktree: '/wt/fix', session_seq: 42, updated_at: Date.now() }),
-    );
-    expect(html).toContain('class="fd-sh-details"');
-    expect(html).toContain('<dt>Session</dt><dd><span>s1</span>');
-    expect(html).toContain('aria-label="Copy the session id"');
-    expect(html).toContain('<dt>Callsign</dt><dd>falcon</dd>');
-    expect(html).toContain('<dt>Worktree</dt><dd>/wt/fix</dd>');
-    expect(html).toContain('<dt>Updated</dt><dd>now</dd>');
-    expect(html).toContain('<dt>Events</dt><dd>42</dd>');
-    const bare = header(session());
-    expect(bare).not.toContain('<dt>Callsign</dt>');
-    expect(bare).not.toContain('<dt>Worktree</dt>');
-  });
-
   test('the menu offers a status update, Star and (when ended) Archive', () => {
     const html = header(session());
     expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Ask for a status update<\/button>/);
@@ -590,8 +582,11 @@ describe('session header (DL-140)', () => {
       session({ state: 'exited', current_run: null, last_error: error }, 'ended'),
     );
     expect(shown).toContain(strip);
-    expect(shown).toContain('usage_limit: The limit is reached');
-    expect(shown).not.toContain('retry in');
+    // The words of the error; the raw code only in the title.
+    expect(shown).toContain('title="usage_limit: The limit is reached"');
+    expect(shown).toMatch(/<\/svg> The limit is reached\.<\/p>/);
+    expect(shown).not.toContain('</svg> usage_limit');
+    expect(shown).not.toContain('Retry in');
     expect(header(session({ current_run: null, last_error: error }, 'idle'))).toContain(strip);
     // a running session with a run hides an old error
     expect(header(session({ last_error: error }))).not.toContain(strip);
@@ -600,9 +595,9 @@ describe('session header (DL-140)', () => {
   test('the last error tells when a retry is possible', () => {
     const at = (ms: number) => ({ code: 'rate', message: 'slow down', retry_at: Date.now() + ms });
     const text = (ms: number) => header(session({ current_run: null, last_error: at(ms) }, 'idle'));
-    expect(text(5 * 60_000 + 30_000)).toContain('slow down · retry in 6 min');
-    expect(text(40_000)).toMatch(/slow down · retry in \d+ s/);
-    expect(text(-1000)).not.toContain('retry in');
+    expect(text(5 * 60_000 + 30_000)).toContain('Slow down. Retry in 6 min.');
+    expect(text(40_000)).toMatch(/Slow down\. Retry in \d+ s\./);
+    expect(text(-1000)).not.toContain('Retry in');
   });
 });
 
@@ -638,8 +633,9 @@ describe('composer (DL-140)', () => {
   });
 
   test('the buttons keep their texts and the textarea keeps its label', () => {
+    // The Return key is an icon chip: Mona Sans has no ↵ glyph.
     expect(composer()).toMatch(
-      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
     expect(composer()).toContain('>Message</label>');
     expect(composer()).toContain('Add image');
@@ -647,9 +643,15 @@ describe('composer (DL-140)', () => {
     expect(working).toContain('Steer now');
     expect(working).toContain('Queue follow-up');
     expect(working).toContain('The station holds a follow-up until the turn ends.');
-    // §4.5: Steer now carries its ⌘↵ hint, the same as Queue follow-up carries ↵.
-    expect(working).toContain(
-      `aria-keyshortcuts="Meta+Enter Control+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
+    // §4.5: Steer now carries its ⌘ ↵ (Ctrl ↵) chips, and Queue follow-up its ↵ chip: one
+    // notation for the keys of one toolbar.
+    expect(working).toMatch(
+      new RegExp(
+        `aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+      ),
+    );
+    expect(working).toMatch(
+      /Queue follow-up<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
   });
 });
@@ -679,56 +681,6 @@ describe('stop and resume commands (DL-140)', () => {
       { op: 'stop', session_id: 's1', how: 'kill' },
       { op: 'resume', session_id: 's1' },
     ]);
-  });
-});
-
-describe('model picker (DL-151)', () => {
-  const models: ModelChoice[] = [
-    { value: 'default', label: 'Default', description: 'The recommended model' },
-    { value: 'opus', label: 'Opus', description: null },
-  ];
-  const picker = (current: string | null, list: readonly ModelChoice[] | null, enabled = true) =>
-    renderToStaticMarkup(
-      <ModelPicker current={current} models={list} enabled={enabled} onSet={() => {}} />,
-    );
-
-  test('a list renders a select with the models and Other…', () => {
-    const html = picker('opus', models);
-    expect(html).toContain('<select');
-    expect(html).toContain('aria-label="Model"');
-    expect(html).toContain('Model (now opus)');
-    expect(html).toContain('>Default</option>');
-    expect(html).toContain('title="The recommended model"');
-    expect(html).toContain('>Other…</option>');
-    // no text form until "Other…" is chosen
-    expect(html).not.toContain('Set model');
-  });
-
-  test('the option that equals the current model is selected', () => {
-    const html = picker('opus', models);
-    expect(html).toMatch(/<option value="opus" selected/);
-    expect(html).not.toMatch(/<option value="" disabled="" selected/);
-  });
-
-  test('a current id that matches no value selects the placeholder', () => {
-    const html = picker('claude-opus-5-5[1m]', models);
-    expect(html).toMatch(/<option value="" disabled="" selected="">Choose a model<\/option>/);
-    expect(html).toContain('Model (now claude-opus-5-5[1m])');
-  });
-
-  test('without models the free-text form stays', () => {
-    for (const list of [null, []]) {
-      const html = picker(null, list);
-      expect(html).not.toContain('<select');
-      expect(html).toContain('Model (now unknown)');
-      expect(html).toContain('placeholder="Model id or alias"');
-      expect(html).toContain('Set model');
-    }
-  });
-
-  test('a disabled picker disables the select', () => {
-    expect(picker('opus', models, false)).toMatch(/<select[^>]*disabled/);
-    expect(picker('opus', null, false)).toMatch(/<input[^>]*disabled/);
   });
 });
 

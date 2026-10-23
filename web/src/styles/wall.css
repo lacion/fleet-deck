@@ -88,15 +88,17 @@
 .fd-wall-root :is(.fd-dot, .fd-holder, .fd-mark) {
   zoom: var(--fd-wall-k, 1);
 }
-/* The badge and the count hold text: their box follows the wall units. */
+/* The badge and the count hold text: their box is in em of their text (20 × 7 and 18 × 5 wall
+   units at the wall type), so that it grows with the type of its area (a tile, the needs and the
+   side areas grow by --fd-wall-tile-k) and a larger text never fills its box to the edges. */
 .fd-wall-root .fd-badge {
-  height: calc(var(--fd-wall-u) * 20);
-  padding: 0 calc(var(--fd-wall-u) * 7);
+  height: 1.44em;
+  padding: 0 0.5em;
 }
 .fd-wall-root .fd-count {
-  min-width: calc(var(--fd-wall-u) * 18);
-  height: calc(var(--fd-wall-u) * 18);
-  padding: 0 calc(var(--fd-wall-u) * 5);
+  min-width: 1.42em;
+  height: 1.42em;
+  padding: 0 0.4em;
   font-size: var(--fs-micro);
 }
 
@@ -181,6 +183,12 @@
   font-size: var(--fs-meta);
 }
 
+/* Nothing waits: the calm words of the fleet and Watch headers, in their green (§4.4). */
+.fd-wall-clear {
+  color: var(--ok);
+  font-weight: 500;
+}
+
 .fd-wall-h {
   display: flex;
   align-items: center;
@@ -244,6 +252,18 @@
 .fd-wall-root[data-shape="wide"] .fd-wall-grid {
   grid-template-columns: 26% minmax(0, 1fr);
   grid-template-rows: minmax(0, auto) minmax(0, 1fr) minmax(0, 30%);
+  /* The side panel ends with the tiles; the Activity stream takes the whole width under both, so
+     a row has room for its command and the side has no empty foot. */
+  grid-template-areas:
+    "needs tiles"
+    "side tiles"
+    "stream stream";
+}
+
+/* While requests wait, the needs area takes the top of the left column: the side blocks keep the
+   column down to the screen foot (else they would be cut), and the stream sits under the tiles.
+   The tiles do not move. */
+.fd-wall-root[data-shape="wide"] .fd-wall-grid:has(> [data-area="needs"] .fd-wall-need) {
   grid-template-areas:
     "needs tiles"
     "side tiles"
@@ -268,28 +288,35 @@
     "stream";
 }
 
-/* An area is a bay: the panel fill, no edge (depth from fills). */
+/* An area is a bay: the panel fill, no edge (depth from fills). `--panel-bg` is `--surface` on
+   the dark deck and the white `--raised` with `--shadow-lift` in light, where `--surface` was
+   1.04:1 on the canvas and the areas vanished into the page (§2.1). */
 .fd-wall-area {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
+  background: var(--panel-bg);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-wall-area[data-area="tiles"] {
   padding: 0;
   background: transparent;
+  box-shadow: none;
 }
 
 /* The needs area grows with its requests, up to most of the screen. Its type grows with the tile
-   type (`--fd-wall-tile-k`): a request never reads smaller than a tile. */
+   type (`--fd-wall-tile-k`): a request never reads smaller than a tile (the side column too, see
+   "side"). The area sets its own text size, so that a text without a size token grows with it. */
 .fd-wall-area[data-area="needs"] {
+  --fs-micro: calc(var(--fd-wall-t) * 11 * var(--fd-wall-tile-k));
   --fs-meta: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
   --fs-data: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
   --fs-ui: calc(var(--fd-wall-t) * 13 * var(--fd-wall-tile-k));
   --fs-title: calc(var(--fd-wall-t) * 14 * var(--fd-wall-tile-k));
+  font-size: var(--fs-ui);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   max-height: 64dvh;
@@ -458,7 +485,10 @@
   text-align: center;
 }
 
+/* The code and its note keep the wall size: the column has a fixed width in wall units, and a
+   note that grew with the needs type took four lines. */
 .fd-wall-need-qr .fd-wall-note {
+  --fs-micro: calc(var(--fd-wall-t) * 11);
   font-size: var(--fs-micro);
   line-height: 1.25;
 }
@@ -537,10 +567,26 @@
   zoom: calc(var(--fd-wall-k, 1) * var(--fd-wall-tile-k));
 }
 
+/* The status glyph of the head and the working glyph of the call that runs now hang at the left,
+   as list markers: the title, the meta lines and every chat line start at one x. The hang is the
+   glyph (12px zoomed by --fd-wall-k × --fd-wall-tile-k: 12 wall units × the tile factor) and its
+   8-unit gap. The tile body keeps the hang as its padding (its overflow clips at the padding
+   edge, so the glyph shows there), and the head and the running line move into it: a margin of
+   the zoomed glyph itself would be zoomed too. */
+.fd-wall-tiles {
+  --fd-wall-hang: calc(var(--fd-wall-u) * (12 * var(--fd-wall-tile-k) + 8));
+}
+
 .fd-wall-root .fd-wtile-open {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  padding-inline-start: var(--fd-wall-hang);
+}
+
+.fd-wall-root .fd-wtile-head,
+.fd-wall-root .fd-wtile-tool {
+  margin-inline-start: calc(-1 * var(--fd-wall-hang));
 }
 
 /* The parts of a tile keep their height; only the chat lines give way. */
@@ -549,7 +595,10 @@
 }
 
 /* The chat lines show whole lines only, the newest kept: the column runs from the bottom up (the
-   newest first by `order`, packed at the top), and a line that does not fit wraps into a second column, out of view. */
+   newest first by `order`, packed at the top), and a line that does not fit wraps into a second
+   column, out of view. The call that runs now is the newest line of the box (Tile `readOnly`), so
+   the room that no whole line fills falls at the tile foot, never between the chat and the call.
+   The box reaches into the hang of the tile body (its padding), where the running glyph hangs. */
 .fd-wall-root .fd-wtile-open > .fd-wtile-lines {
   flex: 0 1 auto;
   flex-flow: column-reverse wrap;
@@ -557,6 +606,8 @@
   column-gap: var(--sp-4);
   min-height: 0;
   overflow: hidden;
+  margin-inline-start: calc(-1 * var(--fd-wall-hang));
+  padding-inline-start: var(--fd-wall-hang);
 }
 
 .fd-wall-root .fd-wtile-line {
@@ -584,6 +635,25 @@
   min-height: calc(var(--fd-wall-u) * 20 * var(--fd-wall-tile-k));
 }
 
+/* The call that runs now, the newest chat line: the working glyph first (its shape tells it from
+   the past calls; a .fd-vh "Running now" says it), in the hang. The glyph sits on the first line
+   of a command that wraps (a phone), as a list marker; its gap is the 8 units of the head glyph:
+   the 4-unit gap of the line and a 4-unit margin of the tool name (not of the zoomed glyph). */
+.fd-wall-root .fd-wtile-line[data-running] {
+  width: calc(100% + var(--fd-wall-hang));
+  margin-inline-start: calc(-1 * var(--fd-wall-hang));
+}
+
+.fd-wall-root :is(.fd-wtile-line[data-running], .fd-wtile-tool) > .fd-dot {
+  flex: none;
+  align-self: baseline;
+  margin-right: 0;
+}
+
+.fd-wall-root :is(.fd-wtile-line[data-running], .fd-wtile-tool) > .fd-wtile-toolname {
+  margin-inline-start: var(--sp-1);
+}
+
 .fd-wall-root .fd-wtile-ask {
   flex: none;
 }
@@ -596,6 +666,13 @@
   vertical-align: -0.125em;
 }
 
+/* The request hangs its icon as the head hangs its glyph: the icon and its space take about the
+   hang, and a second line of the request starts at the text x of the tile. */
+.fd-wall-root .fd-wtile-ask > .fd-card-ask {
+  padding-inline-start: var(--fd-wall-hang);
+  text-indent: calc(-1 * var(--fd-wall-hang));
+}
+
 .fd-wall-root .fd-wtile:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -605,6 +682,32 @@
 .fd-wall-area[data-area="side"] {
   display: flex;
   flex-direction: column;
+}
+
+/* The side column grows with the tile type, as the needs area, where it has the room: a station
+   line or a load cell, read across the room as a tile is, never reads smaller than a tile line.
+   The room is a column of 30em of the wall type (450 wall units: a 1920 × 1080 wall, an ultra
+   wall); in a narrower one (1440 × 900) the larger type broke every station line in two and left
+   no room for the load cells. The side band of a standard wall keeps the wall type: its height is
+   capped under the tiles, and a larger type left stations out (the cap must not follow the type,
+   which follows the height of the tiles area). */
+.fd-wall-root:not([data-shape="standard"]) .fd-wall-area[data-area="side"] {
+  container: fd-wall-side / inline-size;
+}
+
+@container fd-wall-side (min-width: 30em) {
+  .fd-wall-block {
+    --fs-micro: calc(var(--fd-wall-t) * 11 * var(--fd-wall-tile-k));
+    --fs-meta: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+    --fs-data: calc(var(--fd-wall-t) * 12 * var(--fd-wall-tile-k));
+    --fs-ui: calc(var(--fd-wall-t) * 13 * var(--fd-wall-tile-k));
+    --fs-title: calc(var(--fd-wall-t) * 14 * var(--fd-wall-tile-k));
+    font-size: var(--fs-ui);
+  }
+
+  .fd-wall-block .fd-dot {
+    zoom: calc(var(--fd-wall-k, 1) * var(--fd-wall-tile-k));
+  }
 }
 
 .fd-wall-block {
@@ -724,21 +827,24 @@
   font-weight: 620;
 }
 
-.fd-wall-station > .fd-wall-note {
-  color: var(--dim);
-}
-
+/* "Offline" in words, in --hazard; "online" is for a screen reader only: the glyph says it (the
+   station identity of §4.7). */
 .fd-wall-station[data-reachable="false"] > .fd-wall-note {
   color: var(--hazard);
 }
 
-/* The figures of a station on one line; the line ends in an ellipsis when it is too long. */
+/* The figures of a station: one line when it fits, else two, so that the last word ("free") never
+   drops; a line breaks only after a middle dot (each figure is a `.fd-wall-part`). A third line
+   ends in an ellipsis. */
 .fd-wall-station-stats {
   grid-column: 2 / -1;
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
   color: var(--faint);
   font-size: var(--fs-meta);
 }
@@ -753,14 +859,26 @@
   overflow: hidden;
 }
 
-/* The load of each session (R13 P9). It is the last block and takes the height that is left.
-   The cells are fuel: the busier, the stronger. */
+/* The CPU of each session (R13 P9). It is the last block and takes the height that is left.
+   A CPU load is not usage, so the cells are neutral, as `.fd-meter[data-tone="neutral"]`: the
+   busier, the stronger, and a high load is --act. */
 .fd-wall-loadblock {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The heading keeps its height; the cells give way (a cell that does not fit is hidden). */
+.fd-wall-loadblock > .fd-wall-h {
+  flex: none;
+}
+
+/* No cell fits under the blocks above: the block shows nothing rather than half a heading. It
+   keeps its box, so that the wall measures it again when the side grows. */
+.fd-wall-loadblock[data-fit="none"] {
+  visibility: hidden;
 }
 
 .fd-wall-load {
@@ -770,7 +888,8 @@
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 72), 1fr));
+  /* A cell is wide enough for a title on one or two lines ("Deploy Latest Fairly"). */
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 128), 1fr));
   grid-auto-flow: dense;
   gap: var(--sp-1);
   margin: 0;
@@ -783,7 +902,7 @@
   flex-direction: column;
   min-width: 0;
   padding: var(--sp-1) var(--sp-2);
-  background: var(--fuel-bg);
+  background: var(--badge-bg);
   border-radius: var(--r-chip);
   font-size: var(--fs-meta);
   line-height: 1.25;
@@ -797,23 +916,25 @@
   grid-column: span 3;
 }
 
+/* --text 9.3:1 (dark) and 12.0:1 (light) on the mid fill. */
 .fd-wall-load li[data-heat="mid"] {
-  background: color-mix(in srgb, var(--fuel) 28%, var(--surface));
+  background: color-mix(in srgb, var(--dim) 22%, var(--surface));
 }
 
+/* --text 13.3:1 / 16.5:1 and --act 10.9:1 / 5.7:1 on --act-bg. */
 .fd-wall-load li[data-heat="high"] {
-  background: color-mix(in srgb, var(--fuel) 52%, var(--surface));
+  background: var(--act-bg);
 }
 
-.fd-wall-load li[data-heat="unknown"] {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
+/* A name is the session title, as on its tile: two lines, so that two titles that start alike
+   ("Fleet Deck UI", "Fleet Deck backlog") still differ. */
 .fd-wall-load-name {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
   color: var(--text);
 }
 
@@ -821,9 +942,14 @@
   color: var(--dim);
 }
 
-/* --dim on the mid fill is under 4.5:1 in the dark theme (4.37:1); --text passes in both. */
-.fd-wall-load li:is([data-heat="mid"], [data-heat="high"]) .fd-wall-load-value {
+/* The value of a busier cell steps up: --text on the mid fill, --act on a high load. */
+.fd-wall-load li[data-heat="mid"] .fd-wall-load-value {
   color: var(--text);
+}
+
+.fd-wall-load li[data-heat="high"] .fd-wall-load-value {
+  color: var(--act);
+  font-weight: 600;
 }
 
 /* ── stream: the newest under the heading; the oldest give way at the bottom ───────────────── */
@@ -866,15 +992,30 @@
   white-space: nowrap;
 }
 
-/* An ultra wall gives the stream a whole column of height but only 22 % of the width: a row wraps
-   onto a second line (under the name, not under the time) rather than end in an ellipsis. */
+/* An ultra wall gives the stream a whole column of height but only 22 % of the width: the event
+   wraps onto a second line (a hanging indent: under the event, not under the time or the name)
+   rather than end in an ellipsis. The row is a grid of the three columns. */
 .fd-wall-root[data-shape="ultra"] .fd-wall-stream li {
+  display: grid;
+  grid-template-columns: 6ch 16ch minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--sp-2);
+  white-space: normal;
+}
+
+.fd-wall-root[data-shape="ultra"] .fd-wall-stream :is(time, strong) {
+  width: auto;
+  min-width: 0;
+  margin-right: 0;
+}
+
+.fd-wall-root[data-shape="ultra"] .fd-wall-event {
   display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  padding-left: calc(6ch + var(--sp-2));
-  text-indent: calc(-6ch - var(--sp-2));
-  white-space: normal;
+  line-clamp: 2;
   overflow-wrap: anywhere;
 }
 
@@ -886,16 +1027,24 @@
 .fd-wall-stream time {
   display: inline-block;
   min-width: 6ch;
-  /* an inline block: it must not take the hanging indent of an ultra row */
-  text-indent: 0;
   margin-right: var(--sp-2);
   color: var(--faint);
   text-align: right;
 }
 
+/* The session is a column of its own (16ch, as the Activity page): every event starts at one x,
+   and the name, the subject of the row, steps back (--dim, 500) behind the event, whose tool name
+   keeps --text weight 600. A longer name ends in an ellipsis; its title keeps it whole. */
 .fd-wall-stream strong {
-  color: var(--text);
-  font-weight: 600;
+  display: inline-block;
+  width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  margin-right: var(--sp-2);
+  color: var(--dim);
+  font-weight: 500;
 }
 
 /* The target of a tool row: a command or a path. */
@@ -903,6 +1052,19 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
   font-variant-ligatures: none;
+}
+/* The tool name of a tool row (§4.5: weight 600), the hazard word of a failed or denied call (the
+   Activity page's `.fd-arow-result`) and the count of a repeated event. */
+.fd-wall-stream .fd-wall-tool {
+  color: var(--text);
+  font-weight: 600;
+}
+.fd-wall-stream .fd-wall-result {
+  color: var(--hazard);
+  font-weight: 500;
+}
+.fd-wall-stream .fd-count {
+  vertical-align: baseline;
 }
 
 /* ── focus and review: the chat and the changes of one session ────────────────────────────── */
@@ -920,6 +1082,9 @@
   grid-template-rows: minmax(0, 1fr) minmax(0, 40%);
 }
 
+/* The focus panes are bays, as the mission areas: `--panel-bg` with `--shadow-lift` (light: the
+   white lifted panel; `--surface` was 1.04:1 on the canvas). The diff itself sits on `--code`
+   (§2.2: a diff never sits on a `--raised` fill, and the light `--panel-bg` is `--raised`). */
 .fd-wall-focus-chat,
 .fd-wall-diff,
 .fd-wall-single {
@@ -929,13 +1094,15 @@
   min-height: 0;
   overflow: hidden;
   padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
+  background: var(--panel-bg);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-wall-single {
   padding: 0;
   background: transparent;
+  box-shadow: none;
 }
 
 .fd-wall-single > .fd-wall-h {
@@ -1092,12 +1259,14 @@
   font-size: var(--fs-meta);
 }
 
-/* The person's prompt is a bubble at the right. */
+/* The person's prompt is a bubble at the right, on the neutral fill a step above its pane
+   (`--badge-bg`): the panes and the tiles are --raised in light (a tile in dark too), where a
+   --raised bubble vanished. */
 .fd-wall-chatline[data-kind="prompt"] {
   align-self: flex-end;
   max-width: 75%;
   padding: var(--sp-2) var(--sp-3);
-  background: var(--raised);
+  background: var(--badge-bg);
   border-radius: var(--r-card);
   color: var(--text);
 }
@@ -1122,6 +1291,8 @@
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   font-size: var(--fs-data);
+  background: var(--code);
+  border-radius: var(--r-card);
 }
 
 .fd-wall-diff .fd-dl {
@@ -1182,8 +1353,9 @@
   min-height: 0;
   overflow: hidden;
   padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
+  background: var(--panel-bg);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-wall-col > .fd-wall-note {
@@ -1321,17 +1493,26 @@
 }
 
 /* ── phone ─────────────────────────────────────────────────────────────────────────────────── */
-/* A phone: the wall scrolls. The needs and the activity take their height; the tiles keep a fixed
-   share of the screen (the tile count reads that height, so it must not follow the tiles). */
+/* A phone: the wall scrolls. Every area takes its content height, a tile too: it ends under its
+   last line, not in a blank band. The tile count and the tile type read a fixed share of the
+   screen (`tileBox`, shape.ts), never this height, which follows the tiles. The rows pack at the
+   top: a short wall leaves its room under the stream, not inside the panels. */
 @media (max-width: 639px) {
   .fd-wall-root[data-shape="portrait"] .fd-wall-grid {
-    grid-template-rows: auto minmax(60dvh, 1fr) minmax(calc(var(--fd-wall-u) * 240), auto);
+    grid-template-rows: auto auto minmax(calc(var(--fd-wall-u) * 240), auto);
+    align-content: start;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
 
-  /* The needs and the activity are as tall as their content (the grid scrolls, not the area). */
-  .fd-wall-root[data-shape="portrait"] .fd-wall-area:is([data-area="needs"], [data-area="stream"]) {
+  .fd-wall-root[data-shape="portrait"] .fd-wall-tiles {
+    grid-auto-rows: auto;
+    align-content: start;
+  }
+
+  /* Every area is as tall as its content (the grid scrolls, not the area): with a zero minimum,
+     the rows of the content of the others squeezed the tiles to their rules. */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-area {
     min-height: auto;
     max-height: none;
     overflow: visible;
@@ -1343,5 +1524,19 @@
     flex: none;
     height: max-content;
     max-height: calc(var(--fd-wall-u) * 320);
+  }
+
+  /* A phone row is short: the session column is narrower, so the event keeps half of the row. */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-stream strong {
+    width: 12ch;
+  }
+
+  /* The scroll column has the same inset at both sides: it runs to the screen edges, the
+     scrollbar keeps a gutter of its own at the right and the left edge reserves the same (an
+     overlay scrollbar of a phone takes none), and the padding keeps the panels off both. */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-grid {
+    margin-inline: calc(-1 * var(--sp-3));
+    padding-inline: var(--sp-3);
+    scrollbar-gutter: stable both-edges;
   }
 }

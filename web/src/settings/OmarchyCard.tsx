@@ -6,10 +6,12 @@ import { Icon, RefreshCw } from '../ui/icons';
 import type { ElevationAsk } from './elevation';
 import { NoticeIcon } from './NoticeIcon';
 import { DeckError } from './http';
+import { Loading } from '../ui/Loading';
+import { sectionId } from './model';
 import {
   buttons,
   type CardState,
-  cardLines,
+  cardView,
   errorText,
   LOADING_TEXT,
   type OmarchyAction,
@@ -24,6 +26,7 @@ import {
   UNSUPPORTED_TEXT,
   WORKING_TEXT,
 } from './omarchy';
+import { CardRow, FactList } from './CardRow';
 import {
   FileLines,
   type PlanLoad,
@@ -215,7 +218,29 @@ export async function watchStatus(
   }
 }
 
-/** The card for a state. No card for an older deck (404). */
+/**
+ * A station without Omarchy whose card would only say so: no fact (no screensaver, no
+ * provisioning), no button, no repair of before, nothing that runs or failed. The page leaves the
+ * section out (§1.7: a missing thing is an absent element).
+ */
+export function onlyAbsence(
+  status: OmarchyStatus,
+  repairs: RepairsState,
+  busy: boolean,
+  failure: Failure | null,
+): boolean {
+  return (
+    !status.omarchy.present &&
+    status.running === null &&
+    !busy &&
+    failure === null &&
+    buttons(status).length === 0 &&
+    cardView(status).facts.length === 0 &&
+    !(repairs.kind === 'ready' && repairs.journals.length > 0)
+  );
+}
+
+/** The card for a state. No card for an older deck (404), nor for a station without Omarchy. */
 export function OmarchyView({
   state,
   busy,
@@ -231,9 +256,11 @@ export function OmarchyView({
   onRestore = none,
 }: ViewProps) {
   if (state.kind === 'hidden') return null;
+  if (state.kind === 'ready' && onlyAbsence(state.status, repairs, busy, failure)) return null;
   let body: React.ReactNode;
+  let version: string | null = null;
   if (state.kind === 'loading') {
-    body = <p role="status">{LOADING_TEXT}</p>;
+    body = <Loading text={LOADING_TEXT} />;
   } else if (state.kind === 'unsupported') {
     body = <p className="fd-note">{UNSUPPORTED_TEXT}</p>;
   } else if (state.kind === 'error') {
@@ -242,12 +269,13 @@ export function OmarchyView({
         <NoticeIcon tone="error" />
         <span>{READ_ERROR_TEXT}</span>
         <button type="button" className="fd-sm" onClick={onRetryRead}>
-          <Icon of={RefreshCw} size={14} /> Retry
+          <Icon of={RefreshCw} size={14} /> Try again
         </button>
       </div>
     );
   } else {
-    const lines = cardLines(state.status);
+    const view = cardView(state.status);
+    version = view.version;
     const shown = buttons(state.status);
     const working = busy || state.status.running !== null;
     // The review needs the feature: it shows once the repairs were read, and a 501 hides it.
@@ -256,12 +284,13 @@ export function OmarchyView({
       reviewVisible(state.status, refused);
     body = (
       <>
-        {lines.map((line) => (
+        {view.facts.length === 0 ? null : <FactList facts={view.facts} />}
+        {view.notes.map((line) => (
           <p className="fd-note" key={line}>
             {line}
           </p>
         ))}
-        {busy && state.status.running === null ? <p role="status">{WORKING_TEXT}</p> : null}
+        {busy && state.status.running === null ? <Loading text={WORKING_TEXT} /> : null}
         {failure === null ? null : (
           <div
             className="fd-set-notice"
@@ -280,7 +309,8 @@ export function OmarchyView({
               <button
                 key={b.action}
                 type="button"
-                className="fd-sm"
+                // Uninstall… removes the integration: the danger look, apart from the safe actions.
+                className={b.action === 'uninstall' ? 'fd-danger fd-sm' : 'fd-sm'}
                 disabled={working}
                 onClick={() => onAct(b.action)}
               >
@@ -294,21 +324,30 @@ export function OmarchyView({
             ) : null}
           </div>
         )}
-        <RepairsSection
-          state={repairs}
-          open={repairsOpen}
-          working={working}
-          onToggle={onToggleRepairs}
-          onResume={onResume}
-          onRestore={onRestore}
-        />
+        {/* Without Omarchy there is nothing to repair, unless a repair of before is listed. */}
+        {state.status.omarchy.present ||
+        (repairs.kind === 'ready' && repairs.journals.length > 0) ? (
+          <RepairsSection
+            state={repairs}
+            open={repairsOpen}
+            working={working}
+            onToggle={onToggleRepairs}
+            onResume={onResume}
+            onRestore={onRestore}
+          />
+        ) : null}
       </>
     );
   }
+  // The card keeps the columns of the page: its state in a "Status" row; the version of Omarchy
+  // after the heading, when the station knows it.
   return (
-    <section className="fd-set-sec fd-omarchy" aria-label="Omarchy">
-      <h2>Omarchy</h2>
-      {body}
+    <section id={sectionId('Omarchy')} className="fd-set-sec fd-omarchy" aria-label="Omarchy">
+      <div className="fd-set-sechead-row">
+        <h2 className="fd-set-sechead">Omarchy</h2>
+        {version === null ? null : <span className="fd-set-secnote">{version}</span>}
+      </div>
+      <CardRow label="Status">{body}</CardRow>
     </section>
   );
 }

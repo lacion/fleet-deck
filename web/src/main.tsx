@@ -37,6 +37,39 @@ import './styles/displays.css';
 
 initTheme();
 initDensity();
+// The last kind of input on `<html data-modality>`: `pointer` after a press of a mouse, a pen or a
+// finger, `keyboard` after a key. Chromium matches :focus-visible on a <select> picked with the
+// pointer, so the quiet ghost select (base.css `select.fd-ghost`, DESIGN-SYSTEM §3) reads this to
+// keep its focus edge for the keyboard only. A key press brings the edge back at once.
+for (const [type, modality] of [
+  ['pointerdown', 'pointer'],
+  ['keydown', 'keyboard'],
+] as const) {
+  document.addEventListener(
+    type,
+    () => {
+      document.documentElement.dataset['modality'] = modality;
+    },
+    { capture: true, passive: true },
+  );
+}
+// A theme change is one step (base.css `:root[data-theme-switching]`, DESIGN-SYSTEM §2.5). Every
+// write of `<html data-theme>` (the Appearance choice, the System scheme at sunset, forced colors,
+// an Omarchy palette: `ui/theme.ts`, `ui/palette.ts`) stops the color transitions for two frames,
+// so that no button, tab or segment fades for 120ms through the old theme. The observer runs
+// before the next style update, and a transition that a style read had started is cancelled.
+const html = document.documentElement;
+let themeWrites = 0;
+const themeWatch = new MutationObserver(() => {
+  const write = ++themeWrites;
+  html.dataset['themeSwitching'] = '';
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      if (write === themeWrites) delete html.dataset['themeSwitching'];
+    }),
+  );
+});
+themeWatch.observe(html, { attributeFilter: ['data-theme'] });
 const root = document.getElementById('root');
 if (root === null) {
   throw new Error('index.html has no #root element');

@@ -169,6 +169,58 @@ done
 report "a diff on a --raised fill (diff fills sit on --code or --bg only)" \
     "$(printf '%s' "$diff_out" | sed '/^$/d')"
 
+# 5e. Hover only where a pointer hovers (DESIGN-SYSTEM §3): iOS and Android keep :hover on the
+# element that was tapped last, so a tapped row kept its hover fill and looked selected. A rule
+# with `:hover` in its selector sits in a `@media (hover: hover)` block (alone, or with another
+# feature: `(forced-colors: active) and (hover: hover)`). The awk parser reads one file; it
+# ignores comments. The budget is the count of older rules of a file that are not in such a block
+# yet: it only goes down (a file that moves a rule into the block lowers its number; a new
+# unguarded rule fails). A file that is not listed has a budget of 0.
+hover_awk='
+function trim(s) { gsub(/^[ \t\n]+|[ \t\n]+$/, "", s); gsub(/[ \t\n]+/, " ", s); return s }
+{
+    line = $0 "\n"
+    for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (incomment) {
+            if (c == "*" && substr(line, i + 1, 1) == "/") { incomment = 0; i++ }
+            continue
+        }
+        if (c == "/" && substr(line, i + 1, 1) == "*") { incomment = 1; i++; continue }
+        if (c == "{") {
+            pre = trim(buf); buf = ""
+            sp++
+            if (pre ~ /^@/) hov[sp] = (pre ~ /hover: *hover/)
+            else {
+                hov[sp] = 0
+                inh = 0
+                for (k = 1; k < sp; k++) if (hov[k]) inh = 1
+                if (!inh && pre ~ /:hover/) print FILENAME ":" startline ": " pre
+            }
+            continue
+        }
+        if (c == "}") { buf = ""; if (sp > 0) sp--; continue }
+        if (c == ";") { buf = ""; continue }
+        if (trim(buf) == "" && c !~ /[ \t\n]/) startline = FNR
+        buf = buf c
+    }
+}
+'
+hover_budget='displays.css=1 home.css=14 integrations.css=9 page.css=2 settings.css=9 terminal.css=5'
+hover_out=""
+for f in $(find "$styles" -name '*.css' ! -name 'tokens.css' | sort); do
+    found=$(awk "$hover_awk" "$f")
+    n=$(printf '%s\n' "$found" | sed '/^$/d' | wc -l | tr -d ' ')
+    budget=$(printf '%s\n' $hover_budget | sed -n "s/^$(basename "$f")=//p")
+    if [ "$n" -gt "${budget:-0}" ]; then
+        hover_out="$hover_out$(basename "$f"): $n rules, budget ${budget:-0}
+$found
+"
+    fi
+done
+report "a :hover rule outside @media (hover: hover) (touch screens keep the hover of a tap)" \
+    "$(printf '%s' "$hover_out" | sed '/^$/d')"
+
 # 6. Components: no raw colors or font sizes in inline styles.
 tsx=$(find web/src -name '*.tsx' ! -name '*.test.tsx' ! -path '*/gen/*')
 report "inline style with a raw color or size (use a class and tokens)" \

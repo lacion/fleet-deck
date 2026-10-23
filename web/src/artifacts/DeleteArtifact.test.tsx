@@ -66,13 +66,18 @@ describe('Delete artifact in the viewer', () => {
   });
 
   test('the button, then the confirmation text, then the pending text instead of the body', () => {
-    expect(render(view({ kind: 'idle' }))).toContain('Delete artifact');
+    const idle = render(view({ kind: 'idle' }));
+    // The last row of the More actions menu, in the danger style.
+    expect(idle).toContain('aria-label="More actions"');
+    expect(idle).toMatch(
+      /<button type="button" class="fd-danger"><svg[\s\S]*?<\/svg> Delete artifact<\/button><\/div><\/details>/,
+    );
     const confirm = render(view({ kind: 'confirm' }));
     expect(CONFIRM_TEXT).toBe(
       'Delete this artifact and all its versions? Downloaded copies and provider conversations will remain.',
     );
     expect(confirm).toContain(CONFIRM_TEXT);
-    expect(confirm).not.toContain('>Delete artifact<');
+    expect(confirm).not.toContain('Delete artifact');
     const hidden = render(view({ kind: 'hidden', state: { state: 'pending', reason: 'offline' } }));
     expect(hidden).toContain('Hidden on this deck. Waiting for station deletion.');
     expect(hidden).not.toContain('<iframe');

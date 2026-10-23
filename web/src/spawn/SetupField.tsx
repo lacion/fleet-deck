@@ -7,7 +7,7 @@ type Props = {
   readonly onRemember: (on: boolean) => void;
 };
 
-/** DL-148: the optional setup command of a start, and the choice to remember it for the directory. */
+/** DL-148: the optional setup command of a start, and the choice to remember it for the folder. */
 export function SetupField({ value, remember, onValue, onRemember }: Props) {
   const problem = setupProblem(value);
   return (
@@ -39,7 +39,7 @@ export function SetupField({ value, remember, onValue, onRemember }: Props) {
           checked={remember}
           onChange={(event) => onRemember(event.target.checked)}
         />
-        Remember for this directory
+        Remember this command for this folder
       </label>
     </div>
   );

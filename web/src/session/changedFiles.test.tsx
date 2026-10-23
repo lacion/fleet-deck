@@ -147,18 +147,18 @@ describe('the changed files section', () => {
     expect(out.match(/<button/g)).toHaveLength(3);
   });
 
-  test('each row shows its +/− counts and the badge of a diff file header at the right', () => {
+  test('each row shows the badge of a diff file header, then its +/− counts, at the right', () => {
     const out = html(false);
     // A modified file has no badge (as a diff file header); its kind is a hidden name.
     expect(out).toContain(
-      '<span class="fd-files-stat"><span class="fd-add">+9</span><span class="fd-del">−3</span>' +
-        '<span class="fd-vh">modified</span></span>',
+      '<span class="fd-files-stat"><span class="fd-vh">modified</span>' +
+        '<span class="fd-add">+9</span><span class="fd-del">−3</span></span>',
     );
-    // A new file: the ok "new" badge. No deletions: no −0.
+    // A new file: the ok "new" badge before the counts (the diff header order). No −0.
     expect(out).toContain(
-      '<span class="fd-files-stat"><span class="fd-add">+4</span>' +
+      '<span class="fd-files-stat">' +
         '<span class="fd-badge" data-tone="ok" title="New file"><span aria-hidden="true">new</span>' +
-        '<span class="fd-vh">added</span></span></span>',
+        '<span class="fd-vh">added</span></span><span class="fd-add">+4</span></span>',
     );
     // A renamed file: a neutral word.
     expect(out).toContain(
@@ -199,9 +199,9 @@ describe('all changed paths for diff navigation', () => {
 
   test('a clean session diff gives an empty list, an error gives none', async () => {
     const clean = await loadSessionChanges(actions(async () => diff({ patch: '' })));
-    expect(clean).toEqual({ changed: null, all: [] });
+    expect(clean).toEqual({ summary: diff({}).summary, changed: null, all: [] });
     const gone = await loadSessionChanges(actions(async () => diff({ patch: deleteOnly })));
-    expect(gone).toEqual({ changed: null, all: ['gone.rs'] });
+    expect(gone).toEqual({ summary: diff({}).summary, changed: null, all: ['gone.rs'] });
     const failed = actions(async () => {
       throw new Error('refused');
     });

@@ -1,4 +1,6 @@
 // DL-141: the one icon set of the board (lucide-react). Components import icons from here only.
+// One icon has one meaning (DESIGN-SYSTEM §7): `Layers` is the Sessions tab only, `ListTodo` the
+// background tasks of a session, `Boxes` a space (a group of sessions that is shared).
 import type { LucideIcon } from 'lucide-react';
 
 export type { LucideIcon } from 'lucide-react';
@@ -13,6 +15,7 @@ export {
   Ban,
   Bell,
   BellOff,
+  Boxes,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -27,17 +30,21 @@ export {
   CloudOff,
   Code,
   Copy,
+  CornerDownLeft,
   Ellipsis,
   Eye,
+  FileDiff,
   FileText,
   Folder,
   FolderGit2,
   FolderOpen,
+  FolderTree,
   Fuel,
   GitBranch,
   GitCompare,
   GitPullRequest,
   Globe,
+  House,
   ImageIcon,
   Inbox,
   Info,
@@ -46,6 +53,7 @@ export {
   LayoutGrid,
   Link,
   ListFilter,
+  ListTodo,
   Lock,
   LogOut,
   Mail,
@@ -65,6 +73,7 @@ export {
   Plus,
   Power,
   Radar,
+  Radio,
   RefreshCw,
   RotateCcw,
   Rows3,
@@ -86,6 +95,7 @@ export {
   TriangleAlert,
   Undo2,
   Upload,
+  User,
   Users,
   Workflow,
   Wrench,

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import { card, station } from '../testing/fleet';
-import { ArtifactList, visible } from './ArtifactList';
+import { ArtifactList, exactTime, groupCopies, visible } from './ArtifactList';
 import { ArtifactsListBody, ArtifactsPage } from './ArtifactsPage';
 import { deckArtifact, fakeActions, NOW } from './fixtures';
 import { publishable, kindOfPath } from './kinds';
@@ -29,11 +29,56 @@ describe('artifact list', () => {
       />,
     );
     expect(html).toContain('Plan');
-    expect(html).toContain('>HTML<');
-    expect(html).toContain('v2');
+    // The kind is a quiet word (the icon says it too): a muted badge, no fill. The icon carries
+    // the name for a screen reader; the badge is for the eye (a phone hides it).
+    expect(html).toContain(
+      '<span class="fd-badge" data-kind="html" data-tone="muted" aria-hidden="true">HTML</span>',
+    );
+    expect(html).toContain('<span class="fd-vh">HTML: </span>');
+    // A version after the first is a neutral badge after the title.
+    expect(html).toContain('<span class="fd-badge fd-art-ver">v2</span>');
     expect(html).toContain('5 min');
     expect(html).toContain('Alpha · Review');
     expect(html).toContain('href="#/artifact/station-a/a1"');
+  });
+
+  test('a title that is a file name of its kind shows no kind word; the row title keeps it', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactList items={[deckArtifact('a1', { title: 'fleet.html' })]} now={NOW} />,
+    );
+    expect(html).not.toContain('data-tone="muted"');
+    expect(html).toContain('title="HTML"');
+    expect(html).toContain('<span class="fd-vh">HTML: </span>');
+  });
+
+  test('v1 says nothing: the version shows only after the first', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactList items={[deckArtifact('a1', { latest_version: 1 })]} now={NOW} />,
+    );
+    expect(html).not.toContain('fd-art-ver');
+  });
+
+  test('the copies of one title of one session are one row, the older ones fold under it', () => {
+    const items = [
+      deckArtifact('new', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 60_000 }),
+      deckArtifact('old', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 3_600_000 }),
+      deckArtifact('older', { title: 'fleet.html', session_id: 's1', updated_at: NOW - 7_200_000 }),
+      deckArtifact('other', { title: 'fleet.html', session_id: 's2', updated_at: NOW - 120_000 }),
+      deckArtifact('solo', { title: 'new.html', session_id: 's1', updated_at: NOW - 90_000 }),
+    ];
+    expect(groupCopies(items).map((g) => [g.newest.artifact_id, g.older.length])).toEqual([
+      ['new', 2],
+      ['solo', 0],
+      ['other', 0],
+    ]);
+    const html = renderToStaticMarkup(<ArtifactList items={items} now={NOW} />);
+    // The fold is the one notation of the copies: no count pill after the title.
+    expect(html).not.toContain('fd-count');
+    expect(html).not.toContain(' copies</span>');
+    expect(html).toContain('<summary>2 older copies</summary>');
+    expect(html).toContain('href="#/artifact/station-a/old"');
+    expect(html).toContain(`>${exactTime(NOW - 3_600_000)}</time>`);
+    expect(html.match(/class="fd-art-row"/g)).toHaveLength(3);
   });
 
   test('a session row is a button that opens in place', () => {
@@ -92,7 +137,7 @@ describe('artifacts page states', () => {
       />,
     );
     expect(html).toContain('<h1 class="fd-page-title">Artifacts</h1>');
-    expect(html).toContain('aria-label="Search by title"');
+    expect(html).toContain('aria-label="Search artifacts"');
     expect(html).toContain('All kinds');
     expect(html).toContain('>Markdown<');
     expect(html).toContain('All stations');
@@ -100,6 +145,36 @@ describe('artifacts page states', () => {
     expect(html).toContain('All sessions');
     expect(html).toContain('>Review<');
     expect(html).toContain('Plan');
+    // The title row counts the rows of the list (§4.3: title + count).
+    expect(html).toContain(
+      '<h1 class="fd-page-title">Artifacts</h1><span class="fd-count">1</span>',
+    );
+  });
+
+  test('an empty list has no count; a session listed on two stations keeps both options', () => {
+    const empty = renderToStaticMarkup(
+      <ArtifactsPage
+        actions={fakeActions()}
+        stations={[station()]}
+        sessions={[]}
+        now={NOW}
+        initial={{ kind: 'ok', items: [] }}
+      />,
+    );
+    expect(empty).toContain('<h1 class="fd-page-title">Artifacts</h1></div>');
+    const twice = renderToStaticMarkup(
+      <ArtifactsPage
+        actions={fakeActions()}
+        stations={[station(), station('station-b', { name: 'Beta' })]}
+        sessions={[
+          card('s1', 'working', 'station-a', { title: 'Moved' }),
+          card('s1', 'ended', 'station-b', { title: 'Moved' }),
+        ]}
+        now={NOW}
+        initial={{ kind: 'ok', items: [] }}
+      />,
+    );
+    expect(twice.match(/<option value="s1">Moved<\/option>/g)).toHaveLength(2);
   });
 
   test('the page without a deck says so', () => {
@@ -116,7 +191,9 @@ describe('artifacts page states', () => {
       );
     expect(list({ kind: 'loading' })).toContain('Loading the artifacts…');
     expect(list({ kind: 'error', text: 'nope' })).toContain('Try again');
-    expect(list({ kind: 'ok', items: [] })).toContain('This session has no artifacts yet.');
+    expect(list({ kind: 'ok', items: [] })).toContain(
+      '<p class="fd-emptystate-title">No artifacts yet</p>',
+    );
     expect(list({ kind: 'ok', items: [deckArtifact('a1')] })).toContain('Report a1');
   });
 });
@@ -130,7 +207,7 @@ describe('the board shell', () => {
         artifacts={fakeActions()}
       />,
     );
-    expect(page).toContain('aria-label="Search by title"');
+    expect(page).toContain('aria-label="Search artifacts"');
     const viewer = renderToStaticMarkup(
       <App
         initialRoute={{ name: 'artifact', station: 'station-a', id: 'a1', version: null }}

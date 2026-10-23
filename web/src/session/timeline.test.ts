@@ -218,7 +218,8 @@ describe('session timeline tree (PLAN D15)', () => {
       ['Read the docs', 'done'],
     ]);
     const answered = later.subagents[2]?.items[1];
-    expect(answered?.type === 'approval' && answered.outcome).toBe('Allow (by board)');
+    // The board is the owner: the outcome names no one.
+    expect(answered?.type === 'approval' && answered.outcome).toBe('Allow');
     const shell = later.subagents[2]?.items[0];
     expect(shell?.type === 'tool' && [shell.status, shell.output]).toEqual(['ok', 'PLAN.md\n']);
 
@@ -245,7 +246,7 @@ describe('session timeline tree (PLAN D15)', () => {
     const tree = buildTimeline(recorded('tool_call_approve'));
     expect(tree.subagents).toEqual([]);
     const approval = tree.items.find((i) => i.type === 'approval');
-    expect(approval).toMatchObject({ state: 'answered', outcome: 'Allow once (by board)' });
+    expect(approval).toMatchObject({ state: 'answered', outcome: 'Allow once' });
     expect(tree.items.find((i) => i.type === 'tool')).toMatchObject({
       title: 'Bash',
       status: 'ok',
@@ -256,7 +257,7 @@ describe('session timeline tree (PLAN D15)', () => {
     const approve = buildTimeline(recorded('codex-tool_call_approve'));
     expect(approve.items.find((i) => i.type === 'approval')).toMatchObject({
       state: 'answered',
-      outcome: 'Allow once (by board)',
+      outcome: 'Allow once',
     });
     expect(approve.items.find((i) => i.type === 'tool')).toMatchObject({ status: 'ok' });
     // Codex reports the child's message under the spawnAgent node (D15).
@@ -319,7 +320,15 @@ describe('chat timeline items (DL-140)', () => {
     });
     const open = buildTimeline(envelopes('r', [reasoning('t1', 'a'), reasoning('t1', 'b')]));
     expect(open.items).toEqual([
-      { type: 'reasoning', key: '1', turn_id: 't1', text: 'ab', done: false },
+      {
+        type: 'reasoning',
+        key: '1',
+        turn_id: 't1',
+        text: 'ab',
+        done: false,
+        started_at: 1_760_000_001_000,
+        ended_at: 1_760_000_002_000,
+      },
     ]);
     const closed = buildTimeline(
       envelopes('r', [reasoning('t1', 'a'), toolStarted('n1'), reasoning('t1', 'b')]),
@@ -416,11 +425,65 @@ describe('chat timeline items (DL-140)', () => {
       ]),
     );
     expect(tree.items.map((i) => (i.type === 'notice' ? i.text : i.type))).toEqual([
-      'Model changed to opus',
+      'Model changed to Opus',
       'Some output is missing here (events 4–9).',
       'Opened in a terminal.',
-      'Returned to board control: tui exited',
-      'Returned to board control',
+      'Returned to board control: the terminal closed.',
+      'Returned to board control.',
+    ]);
+  });
+
+  test('the notices use words, and keep the raw text of the station in their title', () => {
+    const lost =
+      'the station cannot tell whether input 01M5KXDYADTF7EEG7DYNPJSG1X reached the provider (process_lost); it does not send it again';
+    const tree = buildTimeline(
+      envelopes('w', [
+        { kind: 'model.changed', model: 'claude-opus-5-5[1m]' },
+        { kind: 'mode.changed', mode: 'bypassPermissions' },
+        { kind: 'error', code: 'delivery_unknown', message: lost, retry_at: null },
+        { kind: 'error', code: 'delivery_unknown', message: lost, retry_at: null },
+      ]),
+    );
+    expect(tree.items).toEqual([
+      expect.objectContaining({
+        text: 'Model changed to Opus 5.5 (1M context)',
+        title: 'claude-opus-5-5[1m]',
+      }),
+      expect.objectContaining({ text: 'Mode: Bypass permissions', title: 'bypassPermissions' }),
+      // Two lost inputs in a row are one notice with a count.
+      expect.objectContaining({
+        text: 'A message may not have reached the agent: the agent process stopped. The station does not send it again.',
+        title: `delivery_unknown: ${lost}`,
+        tone: 'error',
+        repeat: 2,
+      }),
+    ]);
+  });
+
+  test('a request outcome says who answered and why it expired in words', () => {
+    const request = (id: string): Parameters<typeof envelopes>[1][number] => ({
+      kind: 'approval.requested',
+      request_id: id,
+      node_id: null,
+      request_kind: 'question',
+      title: 'AskUserQuestion',
+      details: '',
+      input: null,
+      options: [{ option_id: 'allow', label: 'Allow', kind: 'allow_once' }],
+      response: 'message',
+      provider_refs: {},
+    });
+    const tree = buildTimeline(
+      envelopes('o', [
+        request('q1'),
+        { kind: 'approval.expired', request_id: 'q1', reason: 'process_lost' },
+        request('q2'),
+        { kind: 'approval.resolved', request_id: 'q2', option_id: 'allow', by: 'policy' },
+      ]),
+    );
+    expect(tree.items.map((i) => (i.type === 'approval' ? i.outcome : i.type))).toEqual([
+      'expired: the agent process stopped',
+      'Allow, by a rule',
     ]);
   });
 

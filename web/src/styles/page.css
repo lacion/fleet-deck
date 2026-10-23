@@ -4,6 +4,10 @@
    tokens.css. */
 
 /* ── the page frame ─────────────────────────────────────────────── */
+/* Every page fills the main column on the same 24px gutter, as the fleet home does (§4.3): the
+   header rule and the tabs under it have one length on every page. A wide page (tables, lists,
+   grids) gives its body the whole column too; a form or prose page keeps a 1040px measure for its
+   body (`--page-w`), left-aligned under the header. */
 .fd-page {
   --page-w: 1040px;
   --page-pad: var(--sp-5);
@@ -13,14 +17,12 @@
   align-content: start;
   gap: 20px;
   width: 100%;
-  max-width: calc(var(--page-w) + 2 * var(--page-pad));
   min-width: 0;
-  /* Left-aligned: every page starts at the same gutter; only the max width changes. */
   margin: 0;
   padding: var(--sp-2) var(--page-pad) 48px;
 }
-.fd-page[data-wide="true"] {
-  --page-w: 1280px;
+.fd-page:not([data-wide="true"]) > :not(.fd-page-head, [role="tablist"]) {
+  max-width: var(--page-w);
 }
 .fd-page > * {
   min-width: 0;
@@ -28,13 +30,27 @@
 
 /* The page header (§4.3): at the left a column of the title row (title + count, --header-h)
    and the one summary sentence under it; at the right the actions, level with the title row; a
-   soft rule closes it. */
+   soft rule closes it. The header runs the full main column (its rule has one length on every
+   page, the fleet home and the session tabs too) and keeps its content on the page gutter. */
 .fd-page-head {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2) var(--sp-4);
   min-width: 0;
-  padding-bottom: var(--sp-3);
+  margin-inline: calc(-1 * var(--page-pad));
+  padding: 0 var(--page-pad) var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+/* A tab row right under the header (Settings, a project) closes the header: one rule, the tab
+   row's, divides the head of the page from its panel, not two rules with the tabs between them.
+   The tab row runs the full column as the header does, its tabs on the page gutter. */
+.fd-page-head:has(+ [role="tablist"]) {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.fd-page > .fd-page-head + [role="tablist"] {
+  margin-inline: calc(-1 * var(--page-pad));
+  padding-inline: var(--page-pad);
   border-bottom: 1px solid var(--border-soft);
 }
 .fd-page-titles {
@@ -50,9 +66,11 @@
   min-width: 0;
   min-height: var(--header-h);
 }
+/* A long word breaks only when it alone is wider than the column: the min-content width of the
+   title is its longest word, so a squeezed header never shows the title one letter per line. */
 .fd-page-titlerow > .fd-page-title {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .fd-page-actions {
   flex: none;
@@ -83,6 +101,17 @@
 .fd-page-filters + .fd-page-actions {
   margin-left: 0;
 }
+/* A back link is a row of its own above the title row (§4.3): the filters and the actions start
+   on the next line with the title column, so they stay level with the title row (they lined up
+   with the back link, 32px above the title). */
+.fd-page-head:has(> .fd-page-backrow) {
+  flex-wrap: wrap;
+}
+.fd-page-backrow {
+  display: flex;
+  flex: 0 0 100%;
+  min-width: 0;
+}
 .fd-page-desc {
   max-width: min(80ch, 100%);
   margin: calc(-1 * var(--sp-2)) 0 0;
@@ -103,7 +132,8 @@
     gap: var(--sp-4);
     padding-top: var(--sp-3);
   }
-  /* The title column stays first; the actions take the next line. */
+  /* The title column stays first. The filters take the next line; actions with a text button
+     take a line of their own. */
   .fd-page-head {
     flex-wrap: wrap;
   }
@@ -112,11 +142,69 @@
   }
   .fd-page-filters,
   .fd-page-actions {
-    flex-basis: 100%;
     justify-content: flex-start;
     min-height: 0;
     margin-left: 0;
   }
+  .fd-page-filters {
+    flex: 1 1 auto;
+  }
+  .fd-page-actions {
+    flex-basis: 100%;
+  }
+  /* A lone icon action (Refresh) takes no line of its own: it ends the filters line, or it sits
+     at the right of the title column when the page has no filters. The icon ends on the gutter.
+     (`:only-child`, not a :has() inside a :has(): the browser drops such a selector.) */
+  .fd-page-actions:has(> .fd-iconbtn:only-child) {
+    flex: none;
+    margin-left: auto;
+  }
+  .fd-page-actions > .fd-iconbtn:only-child {
+    margin-inline-end: calc((16px - var(--ctl-h)) / 2);
+  }
+  .fd-page-head:not(:has(> .fd-page-filters)):has(> .fd-page-actions > .fd-iconbtn:only-child)
+    > .fd-page-titles {
+    flex: 1 1 0;
+  }
+  /* Without the phone top bar the title row shows: the icon stays level with it. */
+  .fd-page-head:not(:has(> .fd-page-filters)) > .fd-page-actions:has(> .fd-iconbtn:only-child) {
+    min-height: var(--header-h);
+  }
+  /* A quiet control at the start of a line has its label on the gutter, not 8–10px in from the
+     description (its hover or pressed fill reaches into the gutter, as the back link's does).
+     The filters wrap, so every ghost filter moves back by its padding, and the wider gap keeps
+     the labels 24px apart; in the actions only the first control starts a line. */
+  .fd-page-filters {
+    column-gap: calc(var(--sp-2) + 8px);
+  }
+  .fd-page-filters > :is(.fd-ghost.fd-sm, :has(> select.fd-ghost.fd-sm)) {
+    margin-inline-start: -8px;
+  }
+  .fd-page-filters > .fd-ghost:not(.fd-sm),
+  .fd-page-actions > .fd-ghost:not(.fd-sm):first-child {
+    margin-inline-start: -10px;
+  }
+  .fd-page-actions > .fd-ghost.fd-sm:first-child {
+    margin-inline-start: -8px;
+  }
+  .fd-page-actions > .fd-iconbtn:first-child:not(:only-child) {
+    margin-inline-start: calc((16px - var(--ctl-h)) / 2);
+  }
+}
+/* The phone top bar carries the title (shell.css): a lone icon action of a page without filters
+   sits at the right end of the description and centers on its first line. The title row is empty
+   there (the h1 stays for screen readers only) and the 2px gap of the title column comes before
+   the description, whose line is --fs-ui × 1.45 high: the target (--ctl-h) reaches out by half of
+   what it is taller than that line above and below it, so it takes the room of the line only and
+   the rule stays 12px under the description. (Centered on the whole column, it sat about 11px
+   low.) */
+.fd-app[data-phonebar="true"]
+  .fd-page-head:not(:has(> .fd-page-filters))
+  > .fd-page-actions:has(> .fd-iconbtn:only-child) {
+  align-self: flex-start;
+  min-height: 0;
+  margin-block: calc(2px + (var(--fs-ui) * 1.45 - var(--ctl-h)) / 2)
+    calc((var(--fs-ui) * 1.45 - var(--ctl-h)) / 2);
 }
 
 /* ── links ──────────────────────────────────────────────────────── */
@@ -156,28 +244,52 @@
 }
 
 /* ── the empty state: a 20px icon, a sentence, one button (§4.7) ── */
+/* An empty state has no box (§4.7): it sits on the page, centered. */
 .fd-emptystate {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-1);
-  padding: var(--sp-6) var(--sp-5);
+  max-width: 60ch;
+  margin: 0 auto;
+  padding: var(--sp-6) 0;
   text-align: center;
+}
+/* The way back to the parent list (§4.3): a ghost link above the title; its icon lines up with
+   the title. A phone has Back in its top bar. */
+.fd-page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 0 calc(-1 * var(--sp-2));
+  text-decoration: none;
+}
+@media (pointer: coarse) {
+  .fd-page-back {
+    min-height: var(--tap-min);
+  }
+}
+.fd-app[data-layout="phone"] .fd-page-backrow {
+  display: none;
 }
 .fd-emptystate > .fd-icon {
   margin-bottom: var(--sp-1);
   color: var(--faint);
 }
+/* The title and the sentence are balanced: a phone left a one-word last line ("… a review sweep on
+   a / schedule."). */
 .fd-emptystate-title {
   margin: 0;
   font-size: var(--fs-title);
   font-weight: 600;
+  text-wrap: balance;
 }
 .fd-emptystate-body {
   max-width: 60ch;
   margin: 0 0 var(--sp-2);
   color: var(--dim);
   font-size: var(--fs-ui);
+  text-wrap: balance;
 }
 
 /* ── the form: grid, field, actions (no boxed fieldsets) ────────── */
@@ -238,6 +350,8 @@
 .fd-fieldhint {
   color: var(--faint);
   font-size: var(--fs-meta);
+  /* No orphan word on the last line of a hint ('edits.', 'station.'). */
+  text-wrap: pretty;
 }
 .fd-fielderror {
   color: var(--hazard);
@@ -247,6 +361,100 @@
 .fd-fieldwrap[data-invalid="true"] select,
 .fd-fieldwrap[data-invalid="true"] textarea {
   border-color: var(--hazard);
+}
+/* Field layout="row" (§4.7, the settings field row): the label in a 200px column, the control and
+   its hint in the second. The label of Field wraps the text and the control: display: contents
+   puts both on the grid. */
+.fd-fieldwrap[data-layout="row"] {
+  grid-template-columns: 200px minmax(0, 1fr);
+  column-gap: var(--sp-5);
+  row-gap: var(--sp-1);
+  align-items: start;
+}
+.fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol {
+  display: contents;
+}
+.fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  line-height: 1.25;
+}
+.fd-fieldwrap[data-layout="row"] > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
+.fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol > :not(.fd-fieldlabel) {
+  grid-column: 2;
+  min-width: 0;
+}
+/* A one-value control stays at a readable width; lists and tables use the whole column. */
+.fd-fieldwrap[data-layout="row"]
+  .fd-fieldcontrol
+  > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  width: 100%;
+  max-width: 360px;
+}
+/* The :not() parts give this rule the weight of the one above, so a number field keeps 160px. */
+.fd-fieldwrap[data-layout="row"]
+  .fd-fieldcontrol
+  > input[type="number"]:not([type="checkbox"]):not([type="radio"]) {
+  max-width: 160px;
+}
+/* The switch sits in the middle of the control row. */
+.fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+  margin-block: calc((var(--ctl-h) - 18px) / 2);
+}
+@media (pointer: coarse) {
+  .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+    margin-block: calc((var(--ctl-h) - 26px) / 2);
+  }
+}
+.fd-fieldwrap[data-layout="row"] .fd-fieldhint,
+.fd-fieldwrap[data-layout="row"] .fd-fielderror {
+  display: block;
+  max-width: 72ch;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+/* Narrow screens: the label goes above its control. */
+@media (max-width: 720px) {
+  .fd-fieldwrap[data-layout="row"] {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+  .fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+    min-height: 0;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-fieldwrap[data-layout="row"] > :not(.fd-fieldlabel):not(.fd-fieldcontrol),
+  .fd-fieldwrap[data-layout="row"] > .fd-fieldcontrol > :not(.fd-fieldlabel),
+  .fd-fieldwrap[data-layout="row"] .fd-fieldlabel {
+    grid-column: 1;
+  }
+  .fd-fieldwrap[data-layout="row"]
+    .fd-fieldcontrol
+    > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+    max-width: none;
+  }
+  .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > .fd-switch {
+    margin-block: 0;
+  }
+  /* A switch field: the switch ends the label row, and the hint takes the line under both. */
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) > .fd-fieldcontrol > .fd-switch {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .fd-fieldwrap[data-layout="row"]:has(.fd-switch) > :is(.fd-fieldhint, .fd-fielderror) {
+    grid-column: 1 / -1;
+  }
 }
 .fd-checkrow {
   display: flex;
@@ -517,6 +725,7 @@
   background: var(--code);
   border-radius: var(--r-card);
 }
+/* The crumbs are folder names, not a path string: sans 12px (the home folder is one `~`). */
 .fd-folder-crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -525,8 +734,8 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
 }
 .fd-folder-crumbs li {
   display: inline-flex;
@@ -549,12 +758,15 @@
   height: auto;
   min-height: 0;
   padding: 2px 6px;
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-}
-.fd-folder-crumbs li:first-child button {
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+}
+.fd-folder-crumbs li:first-child button {
+  padding-left: 0;
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 @media (pointer: coarse) {
   .fd-folder-crumbs button {
@@ -566,20 +778,24 @@
     font-size: max(var(--fs-data), var(--fs-field));
   }
 }
+/* The pinned and recent folders: a label and folder rows (the name, then the parent in --faint).
+   At most five rows and "Show all" (FolderPicker), so the list does not scroll on its own: the
+   panel has one scroller, the folder listing. */
 .fd-folder-quick {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-1);
 }
-.fd-folder-quick > .fd-chip {
-  background: var(--raised);
+.fd-folder-quick > .fd-folder-list {
+  justify-self: stretch;
 }
-.fd-folder-quick > .fd-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
+.fd-folder-panel .fd-recent .fd-folder-list {
+  max-height: none;
+  overflow: visible;
 }
 .fd-folder-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   max-height: 220px;
   margin: 0;
@@ -587,32 +803,131 @@
   overflow: auto;
   list-style: none;
 }
+/* The folder listing: the one scroller of the panel. While folders hide below, its last 16px fade
+   out (the scroll body fade, §7; FolderPicker sets `data-more-below`). */
+.fd-folder-panel > .fd-folder-list {
+  max-height: min(320px, 40vh);
+}
+.fd-folder-panel > .fd-folder-list[data-more-below] {
+  mask-image: linear-gradient(to top, transparent, var(--text) var(--sp-4));
+}
+.fd-folder-list > li {
+  min-width: 0;
+}
+/* A folder row: the name in sans (a folder of a listing and a recent folder alike), the parent in
+   mono after it. */
 .fd-folder-list button {
   width: 100%;
+  min-width: 0;
   justify-content: flex-start;
   height: var(--ctl-h);
   padding: 0 var(--sp-2);
   background: transparent;
   border-color: transparent;
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
   font-weight: 400;
 }
-.fd-folder-list button:hover:not(:disabled) {
-  background: var(--raised);
-  border-color: transparent;
+/* Hover only where a pointer hovers (§3): a touch screen kept the --raised fill on the last
+   tapped row, and it read as the chosen folder. A touch press is the --badge-bg of base.css. */
+@media (hover: hover) {
+  .fd-folder-list button:hover:not(:disabled) {
+    background: var(--raised);
+    border-color: transparent;
+  }
 }
 .fd-folder-list .fd-icon {
+  flex: none;
   color: var(--faint);
 }
+/* The name keeps its full width (it never shrinks: a name that shrinks by a fraction of a pixel
+   gets an ellipsis although it fits); the parent takes the rest and ellipsizes. A name wider than
+   the row stops at the row (100% less the 14px icon and the two 6px gaps) and ellipsizes. */
+.fd-folder-list button > :is(.fd-folder-base, .fd-folder-parent) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-folder-list button > .fd-folder-base {
+  flex: none;
+  max-width: calc(100% - 14px - 2 * 6px);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The parent keeps its end (`PathTail` drops whole leading folders behind "…/": the last folder
+   tells the rows apart), so its box takes the rest of the row (PathTail measures it); its text
+   starts at the name (a button centers its text). */
+.fd-folder-list button > .fd-folder-parent {
+  flex: 1 1 auto;
+  text-align: start;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+/* A row of the listing opens its folder (a Recent row takes it): a trailing --faint chevron at the
+   right edge says so. Its name stops 14px and a 6px gap earlier. */
+.fd-folder-panel > .fd-folder-list button > .fd-icon:last-child {
+  margin-left: auto;
+}
+.fd-folder-panel > .fd-folder-list button > .fd-folder-base {
+  max-width: calc(100% - 2 * 14px - 3 * 6px);
+}
+/* "Show all" and "Show fewer" after the pinned and recent folders. */
+.fd-folder-list button.fd-folder-more {
+  color: var(--dim);
+  font-weight: 500;
+}
+@media (hover: hover) {
+  .fd-folder-list button.fd-folder-more:hover:not(:disabled) {
+    color: var(--text);
+  }
+}
+/* A phone: the page is the only scroller (a list that scrolls inside a scrolling page is poor on
+   touch). Browse… scrolls the field and its panel into view above the bottom bar. */
+@media (max-width: 640px) {
+  .fd-folder-list,
+  .fd-folder-panel > .fd-folder-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .fd-folder-panel > .fd-folder-list[data-more-below] {
+    mask-image: none;
+  }
+  /* The top bar and the safe area are in the scroll-padding of the page (shell.css). */
+  .fd-folder {
+    scroll-margin-top: var(--sp-3);
+    scroll-margin-bottom: calc(60px + env(safe-area-inset-bottom) + var(--sp-3));
+  }
+}
+.fd-folder-list button[data-pinned] .fd-icon {
+  fill: currentColor;
+}
+/* The foot: the folder that "Use this folder" takes (mono, it gives way at its start), then Close
+   and Use this folder at the right, as every action group of the sheet. The path ends right before
+   Close: `right`, not `end`, as the box is `direction: rtl` (a short `~` sat 400px away at the
+   left). */
 .fd-folder-foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sp-2);
   padding-top: var(--sp-1);
 }
 .fd-folder-foot > .fd-note {
   flex: 1;
   min-width: 0;
+}
+.fd-folder-foot > .fd-folder-foot-path {
+  overflow: hidden;
+  direction: rtl;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

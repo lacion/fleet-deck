@@ -4,6 +4,7 @@
 import type {
   ActivityItem,
   DeckArtifact,
+  DeckArtifactDetail,
   DeckSession,
   Event,
   EventEnvelope,
@@ -588,6 +589,29 @@ export function artifacts(now: number): DeckArtifact[] {
     row(DEV1, 'dev1', 'lynx-4kq2', 'art-checkout', 'Checkout flow diagram', 'svg', 2, 50),
     row(LIGHTING, 'Lighting', 'heron-mc2q', 'art-docs', 'Omarchy docs preview', 'html', 1, 120),
   ];
+}
+
+/** The page of one artifact: `art-docs` with a long title (the header must keep it whole). */
+export function artifactDetail(now: number): DeckArtifactDetail {
+  const row = artifacts(now).find((a) => a.artifact_id === 'art-docs');
+  if (row === undefined) throw new Error('art-docs is missing');
+  return {
+    artifact: {
+      ...row,
+      title: 'Omarchy docs preview: the station setup, the wall and the theme sync in one page',
+    },
+    versions: [
+      {
+        artifact_id: row.artifact_id,
+        version: 1,
+        size: 18_400,
+        sha256: 'ab'.repeat(32),
+        files: ['index.html'],
+        created_at: now - 2 * HOUR,
+      },
+    ],
+    shares: [],
+  };
 }
 
 export const pr128 = (now: number): PrSummary => ({

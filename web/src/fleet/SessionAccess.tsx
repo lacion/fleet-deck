@@ -1,6 +1,6 @@
 // The "Fleet access…" dialog of the session menu: give, change, renew or revoke the coordinator
 // grant of one session. It reuses the logic of the Fleet panel.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView } from '../gen';
 import { Dialog } from '../integrations/Dialog';
@@ -10,6 +10,9 @@ import { type FleetControl, fleetProblem, NO_FLEET } from '../spawn/fleetControl
 import { useFleetElevation } from '../spawn/useFleetElevation';
 import { AccessFields } from './AccessForm';
 import { type FleetActions, type FleetResult, grantStatus, NOT_LIVE } from './fleet';
+import { GrantDesktop } from './GrantDesktop';
+import { GrantSpawn, grantTitle, hasCeilings } from './GrantSpawn';
+import { ceilingLabel } from './modes';
 import {
   type AccessValues,
   accessProblem,
@@ -83,7 +86,8 @@ function editValues(f: FleetControl): AccessValues {
 }
 
 type BodyProps = {
-  readonly session: DeckSession;
+  /** `undefined`: a grant whose session is not on the board (opened from its row by its id). */
+  readonly session: DeckSession | undefined;
   readonly stations: readonly StationView[];
   /** `null`: the grants are loading. */
   readonly grant: GrantView | undefined | null;
@@ -113,7 +117,8 @@ type BodyProps = {
   readonly onEdit: () => void;
   readonly onCancelEdit: () => void;
   readonly onSave: () => void;
-  readonly onClose: () => void;
+  /** A change of the session rules or the desktop limits: the grant loads again. */
+  readonly onChanged: () => void;
 };
 
 function Status({ result }: { readonly result: FleetResult | null }) {
@@ -125,21 +130,12 @@ function Status({ result }: { readonly result: FleetResult | null }) {
 }
 
 /** The footer with "Close" only. */
-function CloseFoot({ onClose }: { readonly onClose: () => void }) {
-  return (
-    <div className="fd-access-foot">
-      <button type="button" className="fd-ghost" onClick={onClose}>
-        Close
-      </button>
-    </div>
-  );
-}
-
 /** The body of the dialog, without the load: it shows the grant, or the form that gives one. */
 export function SessionAccessBody({
   session,
   stations,
   grant,
+  actions,
   ask,
   fleet,
   picked,
@@ -159,15 +155,17 @@ export function SessionAccessBody({
   onEdit,
   onCancelEdit,
   onSave,
-  onClose,
+  onChanged,
 }: BodyProps) {
-  const codex = session.summary.provider === 'codex';
-  const liveStation = stations.some(
-    (s) => s.station_id === session.station_id && s.coordinator_live === true,
-  );
+  const codex = session?.summary.provider === 'codex';
+  // The station and the name of the session; a grant without its session says its own.
+  const own = session?.station_id ?? (grant == null ? '' : grant.station_id);
+  const name =
+    session === undefined ? (grant == null ? '' : grantTitle(grant).trim()) : titleOf(session);
+  const liveStation = stations.some((s) => s.station_id === own && s.coordinator_live === true);
   const sub = (
     <p className="fd-access-sub">
-      {titleOf(session)} · {stationName(session.station_id, stations)}
+      {name} · {stationName(own, stations)}
     </p>
   );
   if (grant === null) {
@@ -177,17 +175,25 @@ export function SessionAccessBody({
         <p role="status" className="fd-note">
           Loading…
         </p>
-        <CloseFoot onClose={onClose} />
       </>
     );
   }
   if (grant === undefined) {
+    // The outcome of a revoke stays in view: the revoked grant is no longer the session's.
+    if (session === undefined) {
+      return (
+        <>
+          <Status result={result} />
+          <p className="fd-note">{NO_ACCESS}</p>
+        </>
+      );
+    }
     if (!liveStation || NOT_LIVE.includes(session.status)) {
       return (
         <>
           {sub}
+          <Status result={result} />
           <p className="fd-note">{CANNOT_GIVE}</p>
-          <CloseFoot onClose={onClose} />
         </>
       );
     }
@@ -214,16 +220,13 @@ export function SessionAccessBody({
             codex={codex}
           />
           <Status result={result} />
-          <div className="fd-access-foot">
-            <button type="button" className="fd-ghost" onClick={onClose}>
-              Close
-            </button>
-            {ask === undefined ? null : (
+          {ask === undefined ? null : (
+            <div className="fd-access-foot">
               <button type="submit" className="fd-primary" disabled={busy || problem !== null}>
                 Give access
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </form>
       </>
     );
@@ -243,8 +246,8 @@ export function SessionAccessBody({
         >
           <AccessFields
             stations={stations}
-            ownId={session.station_id}
-            picked={grant.stations.filter((id) => id !== session.station_id)}
+            ownId={own}
+            picked={grant.stations.filter((id) => id !== own)}
             onPicked={() => {}}
             fleet={editFleet(values)}
             onFleet={(f) => onValues(editValues(f))}
@@ -265,15 +268,14 @@ export function SessionAccessBody({
       </>
     );
   }
-  const own = session.station_id;
   const shown = [
     ...grant.stations.filter((id) => id === own),
     ...grant.stations.filter((id) => id !== own),
   ];
   const max = grant.max_modes ?? {};
   const modes = [
-    ...(max['claude'] === undefined ? [] : [`Claude ${max['claude']}`]),
-    ...(max['codex'] === undefined ? [] : [`Codex ${max['codex']}`]),
+    ...(max['claude'] === undefined ? [] : [`Claude: ${ceilingLabel(max['claude'])}`]),
+    ...(max['codex'] === undefined ? [] : [`Codex: ${ceilingLabel(max['codex'])}`]),
   ];
   return (
     <>
@@ -306,6 +308,25 @@ export function SessionAccessBody({
         <dt>Expires</dt>
         <dd>{new Date(grant.expires_at).toLocaleString()}</dd>
       </dl>
+      {/* The session rules and the desktop limits of the grant (they moved here from the rows of
+          the ops panel, which only open this dialog). */}
+      {grant.state === 'revoked' ||
+      (!hasCeilings(grant) && grant.desktop_cap === undefined) ? null : (
+        <div className="fd-access-more">
+          {hasCeilings(grant) ? (
+            <GrantSpawn grant={grant} actions={actions} ask={ask} onChanged={onChanged} />
+          ) : null}
+          {grant.desktop_cap === undefined ? null : (
+            <GrantDesktop
+              grant={grant}
+              stations={stations}
+              actions={actions}
+              ask={ask}
+              onChanged={onChanged}
+            />
+          )}
+        </div>
+      )}
       <Status result={result} />
       {confirmRevoke ? (
         <>
@@ -321,9 +342,6 @@ export function SessionAccessBody({
         </>
       ) : (
         <div className="fd-access-foot">
-          <button type="button" className="fd-ghost" onClick={onClose}>
-            Close
-          </button>
           {grant.state === 'expired' && grant.revoked_reason === 'idle' ? (
             <button type="button" disabled={busy} onClick={onRenew}>
               Renew
@@ -344,14 +362,29 @@ export function SessionAccessBody({
 }
 
 type Props = {
-  readonly session: DeckSession;
+  /** The session; `undefined` for a grant whose session is not on the board (with `grantId`). */
+  readonly session: DeckSession | undefined;
+  /** The grant to show (a row of the ops panel); absent: the grant of the session. */
+  readonly grantId?: string | undefined;
   readonly stations: readonly StationView[];
   readonly actions: FleetActions;
   readonly onClose: () => void;
 };
 
+/** The grant that the dialog shows: the one of `grantId` while it is not revoked, else the
+ * session's grant. */
+export function dialogGrant(
+  grants: readonly GrantView[],
+  session: DeckSession | undefined,
+  grantId: string | undefined,
+): GrantView | undefined {
+  if (grantId !== undefined)
+    return grants.find((g) => g.grant_id === grantId && g.state !== 'revoked');
+  return session === undefined ? undefined : sessionGrant(grants, session);
+}
+
 /** Gives, changes, renews or revokes the coordinator grant of one session. */
-export function SessionAccessDialog({ session, stations, actions, onClose }: Props) {
+export function SessionAccessDialog({ session, grantId, stations, actions, onClose }: Props) {
   const settingsEnv = useSettings();
   const { ask: askElevation, node } = useFleetElevation(settingsEnv);
   const ask = settingsEnv === undefined ? undefined : askElevation;
@@ -365,15 +398,20 @@ export function SessionAccessDialog({ session, stations, actions, onClose }: Pro
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FleetResult | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  // The load follows the session's key, not each new copy of the session (every fleet event).
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const key = session === undefined ? '' : `${session.station_id}/${session.summary.session_id}`;
   useEffect(() => {
     let current = true;
-    // `version` runs the load again after an action.
+    // `key` and `version` run the load again (another session, an action).
+    void key;
     void version;
     actions.grants().then(
       (all) => {
         if (!current) return;
         setFailed(false);
-        setGrant(sessionGrant(all, session));
+        setGrant(dialogGrant(all, sessionRef.current, grantId));
       },
       () => {
         if (current) setFailed(true);
@@ -382,7 +420,7 @@ export function SessionAccessDialog({ session, stations, actions, onClose }: Pro
     return () => {
       current = false;
     };
-  }, [actions, session, version]);
+  }, [actions, key, grantId, version]);
   const reload = () => setVersion((n) => n + 1);
   const act = (call: () => Promise<FleetResult | null>, done?: () => void) => {
     if (busy) return;
@@ -400,12 +438,9 @@ export function SessionAccessDialog({ session, stations, actions, onClose }: Pro
   return (
     <Dialog title="Fleet access" onClose={onClose}>
       {failed ? (
-        <>
-          <p className="fd-note" role="alert">
-            {LOAD_FAILED}
-          </p>
-          <CloseFoot onClose={onClose} />
-        </>
+        <p className="fd-note" role="alert">
+          {LOAD_FAILED}
+        </p>
       ) : (
         <SessionAccessBody
           session={session}
@@ -424,7 +459,7 @@ export function SessionAccessDialog({ session, stations, actions, onClose }: Pro
           onPicked={setPicked}
           onValues={setValues}
           onGive={() => {
-            if (ask === undefined || fleetProblem(fleet) !== null) return;
+            if (session === undefined || ask === undefined || fleetProblem(fleet) !== null) return;
             const targets = picked.filter((id) => id !== session.station_id);
             act(
               () => giveAccess(session, fleet, actions, ask, targets),
@@ -464,7 +499,7 @@ export function SessionAccessDialog({ session, stations, actions, onClose }: Pro
               () => setEditing(false),
             );
           }}
-          onClose={onClose}
+          onChanged={reload}
         />
       )}
       {node}

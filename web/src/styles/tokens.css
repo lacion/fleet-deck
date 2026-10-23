@@ -24,6 +24,9 @@
   --ink-fill: #e9eef4; /* fill of the general primary button */
   --ink-on: #111821; /* text on --ink-fill */
   --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
+  /* a neutral count or key hint on a selected row: --badge-bg is the dark --selected-bg (1:1);
+     one step up (#313b4a, 1.2:1 on --raised-hi, --dim 5.1:1 on it) */
+  --badge-on-selected: color-mix(in srgb, var(--text) 7%, var(--raised-hi));
   --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
   /* edge of a plain button on a --raised surface (a dialog, a strip): the button has the same
      fill there (#3a4556, 1.6:1; it follows an Omarchy palette through --ctl-edge and --border) */
@@ -34,6 +37,10 @@
   --knob-shadow: 0 0 0 0 transparent; /* shadow of the switch knob (the light theme only) */
   --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
   --selected-lift: 0 0 0 0 transparent; /* lift of the selected row (the light theme only) */
+  /* hover of a nav or index row on --bg or --surface: one step under --selected-bg (#1c2532) */
+  --hover-bg: var(--raised);
+  --seg-track: var(--surface); /* track of a .fd-seg segmented control */
+  --panel-bg: var(--surface); /* fill of a .fd-panel (with --shadow-lift, the zero shadow here) */
 
   /* semantic colors: the jersey colors (§2.2) */
   --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
@@ -98,6 +105,7 @@
   --ink-fill: #111821;
   --ink-on: #ffffff;
   --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
+  --badge-on-selected: var(--badge-bg); /* the light selected row is white: the pill shows */
   --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
   --btn-edge-raised: var(--border); /* a white button on a white --raised surface */
   --ctl-edge: #788496;
@@ -106,6 +114,13 @@
   --knob-shadow: 0 1px 2px rgba(17, 24, 33, 0.25);
   --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
   --selected-lift: var(--shadow-lift);
+  /* a grey tint (#e4e9f0) a step under --bg: the selected row is white and lifted, so a hover in
+     --raised looked selected */
+  --hover-bg: var(--border-soft);
+  /* a visible grey track (#e4e9f0): the white pressed segment with --shadow-lift stands on it
+     (--surface was 1.04:1 on --bg) */
+  --seg-track: var(--badge-bg);
+  --panel-bg: var(--raised); /* a white panel with --shadow-lift (--surface was 1.04:1 on --bg) */
 
   --act: #7f5c00; /* 4.5:1 also on --badge-bg and the add/del diff fills */
   --act-fill: #ffd43b;

@@ -215,6 +215,11 @@ pub struct ClaudeCore {
     /// counter so the ids of the other host requests do not move.
     #[serde(default)]
     pub(super) usage_seq: u64,
+    /// The `total_cost_usd` of the last `result` of this CLI process: the CLI
+    /// reports the running total of its process, so a result adds only the
+    /// growth since the last one (the fold sums the parts).
+    #[serde(default)]
+    pub(super) last_total_cost: Option<f64>,
 }
 
 impl ClaudeCore {
@@ -248,6 +253,7 @@ impl ClaudeCore {
             usage_asked: None,
             usage_stopped: false,
             usage_seq: 0,
+            last_total_cost: None,
         }
     }
 

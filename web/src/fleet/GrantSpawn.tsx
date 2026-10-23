@@ -4,8 +4,9 @@ import type { GrantView } from '../gen';
 import type { ElevationAsk } from '../settings/elevation';
 import { CLAUDE_CEILINGS, CODEX_CEILINGS, LimitInput } from '../spawn/FleetControlFields';
 import type { FleetActions, FleetResult } from './fleet';
+import { ceilingLabel } from './modes';
 
-/** The select value of a family without a ceiling; its option text is "not allowed". */
+/** The select value of a family without a ceiling; its option text is "Not allowed". */
 export const NOT_ALLOWED = '';
 
 /** The inputs of the session rules form. */
@@ -162,10 +163,10 @@ export function SpawnForm({ grant, values, busy, onChange, onSave, onCancel }: F
               value={values.claude}
               onChange={(event) => onChange({ ...values, claude: event.target.value })}
             >
-              <option value={NOT_ALLOWED}>not allowed</option>
+              <option value={NOT_ALLOWED}>Not allowed</option>
               {CLAUDE_CEILINGS.map((mode) => (
                 <option key={mode} value={mode}>
-                  {mode}
+                  {ceilingLabel(mode)}
                 </option>
               ))}
             </select>
@@ -176,10 +177,10 @@ export function SpawnForm({ grant, values, busy, onChange, onSave, onCancel }: F
               value={values.codex}
               onChange={(event) => onChange({ ...values, codex: event.target.value })}
             >
-              <option value={NOT_ALLOWED}>not allowed</option>
+              <option value={NOT_ALLOWED}>Not allowed</option>
               {CODEX_CEILINGS.map((mode) => (
                 <option key={mode} value={mode}>
-                  {mode}
+                  {ceilingLabel(mode)}
                 </option>
               ))}
             </select>

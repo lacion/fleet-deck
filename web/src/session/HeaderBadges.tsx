@@ -1,4 +1,5 @@
 // DL-140: the facts, the place chips and the details of a session header ("Flight Deck" §4.5).
+import type { ReactNode } from 'react';
 import { relativeAge } from '../app/sessions';
 import { providerLabel } from '../board/lanes';
 import { limitChip, rateMeters } from '../board/usage';
@@ -6,11 +7,27 @@ import type { DeckSession } from '../gen';
 import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
-import { digestLines } from '../ui/generated';
-import { Folder, GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
-import { isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
+import { digestLines, GeneratedMark } from '../ui/generated';
+import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
+import {
+  countText,
+  homeShort,
+  isRiskyMode,
+  modeLabel,
+  modelFamily,
+  shortModel,
+} from '../ui/format';
 import { isHibernated } from '../views/hibernate';
-import { CopyButton, homeShort, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
+import { CopyButton } from './CopyButton';
+import { FolderChip } from './PathFit';
+
+/**
+ * The card says `working` for background work too (an `activity: background` without a run): then
+ * no turn runs, so there is nothing to interrupt and the composer sends a new prompt.
+ */
+function inBackground(session: DeckSession): boolean {
+  return session.status === 'working' && session.summary.current_run === null;
+}
 
 /** The word of the status fact. A hibernated session says so. */
 export function statusWord(session: DeckSession): string {
@@ -19,7 +36,7 @@ export function statusWord(session: DeckSession): string {
     case 'needs_you':
       return 'Needs you';
     case 'working':
-      return 'Working';
+      return inBackground(session) ? 'Working in background' : 'Working';
     case 'verifying':
       return 'Verifying';
     case 'queued':
@@ -44,7 +61,11 @@ export function modeTone(mode: string): 'plan' | 'hazard' | undefined {
 /** The status glyph and word of a session. */
 export function StatusFact({ session }: { readonly session: DeckSession }) {
   return (
-    <span className="fd-sh-status" data-status={session.status}>
+    <span
+      className="fd-sh-status"
+      data-status={session.status}
+      title={inBackground(session) ? 'Background work runs; no turn is active.' : undefined}
+    >
       <span className="fd-dot" data-status={session.status} aria-hidden="true" />
       {statusWord(session)}
     </span>
@@ -152,62 +173,97 @@ export function Place({
           <span>{branch}</span>
         </span>
       ) : null}
-      {cwd ? (
-        <span className="fd-badge fd-sh-chip" data-mono="" title={cwd}>
-          <Icon of={Folder} size={13} />
-          <span>{shortenMiddle(homeShort(cwd), MAX_PATH_CHARS)}</span>
-        </span>
-      ) : null}
+      {cwd ? <FolderChip cwd={cwd} /> : null}
       {session === undefined ? null : <ModeFact session={session} />}
     </span>
   );
 }
 
-/** The facts of a session: its id (with a copy button), callsign, worktree, age and event count. */
-export function Details({ session, now }: { readonly session: DeckSession; readonly now: number }) {
+/**
+ * The mark after the label of a text that model help wrote: the 12px sparkles of `GeneratedMark`
+ * (§7), named for a summary ("Generated"; the title mark of `ui/generated` says "Named by").
+ */
+export function GeneratedText() {
+  return <GeneratedMark label="Generated" title="Written by model help" />;
+}
+
+/** The generated summary of a session as a list, or `null` without one. */
+export function DigestList({ digest }: { readonly digest: string | null | undefined }) {
+  const lines = digestLines(digest);
+  if (lines.length === 0) return null;
+  return (
+    <ul className="fd-sh-digest">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+/** `2 min` → `2 min ago`; a change under a minute ago: `just now` (as the Properties since text). */
+export function agoText(age: string): string {
+  return age === 'now' ? 'just now' : `${age} ago`;
+}
+
+/**
+ * The facts of a session that the header does not show: its id (with a copy button), worktree,
+ * generated summary, last change (`now`: Unix ms) and event count; `fleet` is the fleet-control
+ * fact of a coordinator. The session menu shows them while the Properties panel is closed (the
+ * phone has none: there the menu is the one place of the last change).
+ */
+export function Details({
+  session,
+  now,
+  fleet,
+}: {
+  readonly session: DeckSession;
+  readonly now: number;
+  readonly fleet?: ReactNode;
+}) {
   const s = session.summary;
-  const digest = digestLines(s.digest);
   return (
     <dl className="fd-sh-details">
       <div>
         <dt>Session</dt>
         <dd>
-          <span>{s.session_id}</span>
+          <span className="fd-sh-sid" title={s.session_id}>
+            {s.session_id}
+          </span>
           <CopyButton text={s.session_id} label="Copy the session id" />
         </dd>
       </div>
-      {s.callsign ? (
-        <div>
-          <dt>Callsign</dt>
-          <dd>{s.callsign}</dd>
-        </div>
-      ) : null}
       {s.worktree ? (
         <div>
           <dt>Worktree</dt>
-          <dd>{s.worktree}</dd>
+          <dd>
+            <span title={s.worktree}>{homeShort(s.worktree)}</span>
+          </dd>
         </div>
       ) : null}
-      {digest.length > 0 ? (
+      {digestLines(s.digest).length > 0 ? (
         <div data-field="digest">
-          <dt>Summary (generated)</dt>
+          <dt>
+            Summary <GeneratedText />
+          </dt>
           <dd>
-            <ul className="fd-sh-digest">
-              {digest.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
+            <DigestList digest={s.digest} />
           </dd>
         </div>
       ) : null}
       <div>
         <dt>Updated</dt>
-        <dd>{relativeAge(s.updated_at, now)}</dd>
+        <dd>{agoText(relativeAge(s.updated_at, now))}</dd>
       </div>
       <div>
         <dt>Events</dt>
-        <dd>{s.session_seq}</dd>
+        <dd>{countText(s.session_seq)}</dd>
       </div>
+      {fleet == null ? null : (
+        <div data-field="fleet">
+          <dt>Fleet control</dt>
+          <dd>{fleet}</dd>
+        </div>
+      )}
     </dl>
   );
 }

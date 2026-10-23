@@ -13,7 +13,7 @@ export const ALL = '';
 export const emptyFilter: FleetFilter = { station: ALL, provider: ALL, repo: ALL, search: '' };
 
 /** The repo name of a session without a repository. */
-export const NO_REPO = 'No repository';
+export const NO_REPO = 'Outside a repository';
 
 /** `git@github.com:org/app.git` and `https://github.com/org/app.git` → `org/app`; no origin → the root's folder. */
 export function repoName(card: DeckSession): string {
@@ -29,7 +29,7 @@ export function repoName(card: DeckSession): string {
   return basename(repo.root);
 }
 
-/** The distinct repo names of `sessions`, sorted, with "No repository" last. */
+/** The distinct repo names of `sessions`, sorted, with "Outside a repository" last. */
 export function repoNames(sessions: readonly DeckSession[]): string[] {
   const names = [...new Set(sessions.map(repoName))];
   return names.sort((a, b) =>
@@ -93,6 +93,15 @@ export function stationName(id: string, stations: readonly StationView[]): strin
   return stations.find((station) => station.station_id === id)?.name ?? id;
 }
 
+/** A live session runs or can run now: not ended, not lost, and its station is reachable (the
+ * Watch rule, `watch/tiles.ts`). */
+export const isLiveSession = (card: DeckSession): boolean =>
+  card.status !== 'ended' && card.status !== 'lost' && card.status !== 'unreachable';
+
+/** The count of the header sentences (fleet home, Watch): "1 live session", "4 live sessions". */
+export const liveSessionsText = (n: number): string =>
+  n === 1 ? '1 live session' : `${n} live sessions`;
+
 /** Changes when any session changes, so derived panels load again. */
 export function fleetVersion(sessions: readonly DeckSession[]): string {
   let newest = 0;
@@ -144,6 +153,69 @@ export function statusGroups(sessions: readonly DeckSession[]): Record<CardStatu
     );
   }
   return groups;
+}
+
+/**
+ * When each session came into its status: a rising number, for one card (by `cardKey`). A session
+ * keeps its place in its status group while it works (each tool call changes its `updated_at`), and
+ * moves only when its status changes; a session that comes into a status goes to the top of its
+ * group. Linear never moves a row under the pointer: a click lands on the row that the eye chose.
+ */
+export type Arrivals = {
+  last: number;
+  readonly of: Map<string, { readonly status: CardStatus; readonly seq: number }>;
+};
+
+export const newArrivals = (): Arrivals => ({ last: 0, of: new Map() });
+
+/**
+ * The arrivals of the board for the page life: one record for the fleet lanes, the sidebar rows and
+ * the j/k keys, so they agree. A render only reads it; the app and the fleet board write it after a
+ * render (`rememberArrivals`).
+ */
+export const BOARD_ARRIVALS = newArrivals();
+
+/** Forgets the arrivals of the board (tests: every test starts as a fresh board). */
+export function resetBoardArrivals(): void {
+  BOARD_ARRIVALS.last = 0;
+  BOARD_ARRIVALS.of.clear();
+}
+
+/**
+ * The order of two sessions of one status: the newest arrival first; a session that has no arrival
+ * in its status yet (it just came into it) before the others. 0 when neither has one: a stable sort
+ * then keeps the newest-first order of `statusGroups`.
+ */
+export function byArrival(arrivals: Arrivals): (a: DeckSession, b: DeckSession) => number {
+  const seq = (card: DeckSession): number | null => {
+    const seen = arrivals.of.get(cardKey(card));
+    return seen !== undefined && seen.status === card.status ? seen.seq : null;
+  };
+  return (a, b) => {
+    const x = seq(a);
+    const y = seq(b);
+    if (x === y) return 0;
+    if (x === null) return -1;
+    if (y === null) return 1;
+    return y - x;
+  };
+}
+
+/**
+ * Gives every session that has no arrival in its status one, in the order that the board shows
+ * (`byArrival`), so the next render keeps the places: the top session of a group gets the highest
+ * number.
+ */
+export function rememberArrivals(cards: readonly DeckSession[], arrivals: Arrivals): void {
+  const order = byArrival(arrivals);
+  for (const group of Object.values(statusGroups(cards))) {
+    for (const card of [...group].sort(order).reverse()) {
+      const key = cardKey(card);
+      if (arrivals.of.get(key)?.status === card.status) continue;
+      arrivals.last += 1;
+      arrivals.of.set(key, { status: card.status, seq: arrivals.last });
+    }
+  }
 }
 
 /** Observed session data is not the configured provider inventory. */

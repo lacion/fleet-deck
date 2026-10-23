@@ -1,12 +1,15 @@
 // R13 P4 task F2: the token mapping of an Omarchy palette, and how it sets and removes the inline
 // properties. The pure parts run without a DOM: the root is a fake object.
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ApiError } from '../runtime/api';
 import type { PaletteColors } from '../gen';
 import {
   applyPalette,
   contrast,
   mixHex,
+  PALETTE_ALIASES,
   PALETTE_VARS,
   type Palette,
   paletteVars,
@@ -222,6 +225,37 @@ describe('paletteVars', () => {
     }
     // Any of the ten colors counts, also one that no token uses.
     expect(paletteVars({ mode: 'dark', colors: { ...colors, muted: 'x' } })).toEqual({});
+  });
+});
+
+describe('the alias tokens follow a palette', () => {
+  const css = readFileSync(join(import.meta.dir, '..', 'styles', 'tokens.css'), 'utf8');
+  /** The declarations of one theme block of tokens.css, by name. */
+  const block = (head: string): Map<string, string> => {
+    const start = css.indexOf(head);
+    const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('\n}', start));
+    const out = new Map<string, string>();
+    for (const m of body.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+      out.set(m[1] ?? '', (m[2] ?? '').trim());
+    }
+    return out;
+  };
+  const known = new Set<string>([...PALETTE_VARS, ...PALETTE_ALIASES]);
+
+  test('each alias is made of palette tokens in both themes, never a raw color', () => {
+    const wrong: string[] = [];
+    for (const head of [':root,\n.fd-scope-dark {', '[data-theme="light"] {']) {
+      const decls = block(head);
+      for (const name of PALETTE_ALIASES) {
+        const value = decls.get(name) ?? '';
+        const refs = [...value.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1] ?? '');
+        if (value === '' || /#|rgba?\(|hsla?\(/.test(value) || refs.length === 0) {
+          wrong.push(`${head} ${name}: ${value}`);
+        }
+        for (const ref of refs) if (!known.has(ref)) wrong.push(`${head} ${name} → ${ref}`);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 });
 

@@ -18,16 +18,43 @@
 [data-layout="phone"] .fd-chat {
   --chat-gutter: 20px;
 }
+/* The log scrolls up and down only: every wide part (a code block, a table) scrolls in its own
+   box, and the rows below fit the column. `overflow-x: hidden` is the guard, so that a part that
+   still sticks out never lets the log pan sideways under a finger (`clip` next to `auto` computes
+   to `hidden` anyway). */
 .fd-chat-scroll {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  /* The scrollbar keeps its room on both sides (as .fd-pane-body of the other tabs): the column
+     stays on the center of the pane, under the Agents bar and over the composer, and does not
+     move when the log grows a scrollbar. */
+  scrollbar-gutter: stable both-edges;
 }
-/* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 16px under the
-   tab row, so that a row does not end in a hard cut at the rule (ChatView sets `data-scrolled`).
-   The mask reads only the alpha. */
+/* A phone draws its scrollbar over the content: no room is kept for it. */
+[data-layout="phone"] .fd-chat-scroll {
+  scrollbar-gutter: auto;
+}
+/* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 24px (one 22px
+   prose line: a shorter fade left the lower half of a cut line in plain view) under the Agents bar
+   or the tab row, and with more below it fades out over 16px above the composer, so that a row
+   never ends in a hard cut at an edge (ChatView sets `data-scrolled` and `data-more-below`). The
+   mask reads only the alpha. */
 .fd-chat-scroll[data-scrolled] {
-  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--sp-4));
+  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--sp-5));
+}
+.fd-chat-scroll[data-more-below] {
+  mask-image: linear-gradient(to top, transparent, var(--text) var(--sp-4));
+}
+.fd-chat-scroll[data-scrolled][data-more-below] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    var(--text) var(--sp-5),
+    var(--text) calc(100% - var(--sp-4)),
+    transparent
+  );
 }
 .fd-chat-scroll:focus-visible,
 .fd-chat summary:focus-visible,
@@ -44,7 +71,9 @@
   margin: 0 auto;
   padding: var(--sp-5) var(--sp-5) var(--sp-4) calc(var(--sp-5) + var(--chat-gutter));
 }
+/* A row never gets wider than the column (a prompt keeps its 75 %, see .fd-chat-run). */
 .fd-chat-column > * {
+  max-width: 100%;
   margin: 0;
 }
 [data-layout="phone"] .fd-chat-column {
@@ -103,12 +132,26 @@
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
 }
+/* The prompt: the sender (the small account avatar, PromptBubble.tsx) at its start, then the text.
+   The sender and the panel corners (the speech corner at the bottom right, toward the owner's edge
+   of the column) tell a short prompt ("Continue") from a plain button (--r-ctl corners). */
 .fd-chat-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   background: var(--raised);
   border-radius: var(--r-panel) var(--r-panel) var(--r-chip) var(--r-panel);
   box-shadow: var(--shadow-lift);
   line-height: 1.5;
+}
+/* The avatar sits on the first text line (14px × 1.5 = 21px). */
+.fd-chat-bubble > .fd-avatar {
+  margin-block: calc((1.5em - 20px) / 2);
+}
+.fd-chat-bubble-text {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -124,9 +167,11 @@
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
 }
-.fd-chat-more:hover:not(:disabled) {
-  background: none;
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-chat-more:hover:not(:disabled) {
+    background: none;
+    text-decoration: underline;
+  }
 }
 .fd-chat-cut {
   margin: var(--sp-1) 0 0;
@@ -141,6 +186,8 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+/* The end of a text that streams: a still block (§2.5: only the needs-you glow and the working
+   glyph move). */
 .fd-chat-streaming .fd-md > :last-child::after {
   content: "";
   display: inline-block;
@@ -149,7 +196,6 @@
   margin-left: 2px;
   background: var(--dim);
   vertical-align: text-bottom;
-  animation: fd-chat-blink 1s steps(2, start) infinite;
 }
 
 /* A disclosure has no native marker (its chevron turns: see below). */
@@ -179,9 +225,11 @@
 .fd-chat-toolgroup > summary {
   color: var(--dim);
 }
-:is(.fd-chat-reasoning, .fd-chat-toolgroup) > summary:hover {
-  background: var(--surface);
-  color: var(--text);
+@media (hover: hover) {
+  :is(.fd-chat-reasoning, .fd-chat-toolgroup) > summary:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
 }
 :is(.fd-chat-reasoning, .fd-chat-toolgroup) > summary > .fd-icon:first-child {
   color: var(--faint);
@@ -196,9 +244,6 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.fd-chat-pulse {
-  animation: fd-chat-pulse 1.6s ease-in-out infinite;
-}
 .fd-chat-toolgroup-body {
   --chat-gap: var(--sp-1);
   display: flex;
@@ -211,26 +256,36 @@
 }
 
 /* ── a tool call: icon, name, mono target, result at the right ───── */
+/* The row never gets wider than the column: what does not fit is clipped at its rounded edge.
+   The status node sits on the flight path outside the row; its containing block is the
+   .fd-chat-tool, so the clip never cuts it. */
 .fd-chat-tool > summary {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   min-height: var(--chat-row);
+  overflow: hidden;
   padding: 0 var(--sp-1) 0 var(--sp-2);
   background: var(--surface);
   border-radius: var(--r-ctl);
   transition: background-color var(--t-fast);
 }
-.fd-chat-tool > summary:hover,
 .fd-chat-tool[open] > summary {
   background: var(--raised);
 }
 .fd-chat-nested .fd-chat-tool > summary {
   background: var(--raised);
 }
-.fd-chat-nested .fd-chat-tool > summary:hover,
 .fd-chat-nested .fd-chat-tool[open] > summary {
   background: var(--raised-hi);
+}
+@media (hover: hover) {
+  .fd-chat-tool > summary:hover {
+    background: var(--raised);
+  }
+  .fd-chat-nested .fd-chat-tool > summary:hover {
+    background: var(--raised-hi);
+  }
 }
 .fd-chat-kind {
   display: inline-flex;
@@ -247,6 +302,21 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The server of an MCP tool, after its name (chat/labels.ts toolName). The phone has no room for
+   it: the plug icon already says MCP, and the target matters more. */
+.fd-chat-tool-server {
+  flex: none;
+  max-width: 25%;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-layout="phone"] .fd-chat-tool-server {
+  display: none;
 }
 .fd-chat-tool-arg {
   flex: 1;
@@ -266,6 +336,17 @@
 }
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
+}
+/* The file badges give way before the row gets wider than the column (a phone with three long
+   file names): a file name ends in an ellipsis (the row clips at its edge as the last guard). */
+.fd-chat-tool > summary > .fd-chat-file {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fd-chat-file > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. It takes
    at most 30% of the row, so that the mono target keeps the most of it. */
@@ -371,8 +452,10 @@
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
 }
-.fd-chat-subagent > details > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-chat-subagent > details > summary:hover {
+    color: var(--text);
+  }
 }
 /* DL-191: "Show its work" under a subagent card */
 .fd-subagent-section {
@@ -392,9 +475,6 @@
   padding: var(--sp-2) var(--sp-3);
   background: var(--code);
   border-radius: var(--r-card);
-}
-.fd-subagent-error {
-  color: var(--hazard);
 }
 .fd-chat-nested {
   --chat-gap: var(--sp-2);
@@ -417,13 +497,11 @@
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+  overflow-wrap: anywhere; /* a long path in a notice or a request wraps in the column */
 }
 .fd-chat-ask {
   color: var(--act);
   font-weight: 500;
-}
-.fd-chat-error {
-  color: var(--hazard);
 }
 .fd-chat-turn {
   display: flex;
@@ -433,8 +511,50 @@
 .fd-chat-turn > * {
   margin: 0;
 }
-.fd-chat-turn > .fd-chat-line[data-status="failed"] {
-  color: var(--hazard);
+/* A failed turn and a station error (ChatAlert.tsx): the §4.7 notice row in the error tone (the
+   hazard holder, the octagon-alert icon, --text 13px), as a card in the column. Its icon sits on
+   the first line of a turn row of several lines. */
+.fd-notice.fd-chat-alert {
+  align-items: flex-start;
+}
+.fd-chat-alert > .fd-icon {
+  margin-top: 2.5px; /* the 14px icon on the 19px first line (13px × 1.4) */
+}
+/* The count of a notice that came again in a row: at the end of the row, on its first line. */
+.fd-chat-alert > .fd-count {
+  flex: none;
+}
+.fd-chat-alert p {
+  margin: 0;
+}
+.fd-chat-alert-cause {
+  color: var(--dim);
+}
+.fd-chat-alert-details {
+  margin-top: var(--sp-1);
+}
+.fd-chat-alert-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: var(--ctl-h-sm);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+@media (hover: hover) {
+  .fd-chat-alert-details > summary:hover {
+    color: var(--text);
+  }
+}
+/* The raw provider error: mono, quiet, wrapped in the row (no box in a box). */
+.fd-chat-alert-details > pre {
+  margin: var(--sp-1) 0 var(--sp-1);
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .fd-chat-diff {
   display: flex;
@@ -459,6 +579,8 @@
 }
 
 /* ── working row and the jump button ─────────────────────────────── */
+/* "Working": the working glyph (it turns, §2.5) is the node of the row on the flight path, where
+   the node of a running call sits; the words start at the column edge, as the prose. */
 .fd-chat-working {
   display: flex;
   align-items: center;
@@ -467,22 +589,11 @@
   color: var(--faint);
   font-size: var(--fs-meta);
 }
-.fd-chat-dots {
-  display: inline-flex;
-  gap: 3px;
-}
-.fd-chat-dots span {
-  width: 4px;
-  height: 4px;
-  background: var(--faint);
-  border-radius: var(--r-pill);
-  animation: fd-chat-pulse 1.2s ease-in-out infinite;
-}
-.fd-chat-dots span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-.fd-chat-dots span:nth-child(3) {
-  animation-delay: 0.4s;
+.fd-chat-column > .fd-chat-working > .fd-dot {
+  position: absolute;
+  top: calc((var(--ctl-h-sm) - 12px) / 2);
+  left: calc(-1px - var(--chat-gutter));
+  background: var(--bg);
 }
 .fd-chat-jump {
   position: absolute;
@@ -602,13 +713,16 @@
 .fd-tok-c {
   color: var(--faint);
 }
-/* Tables: no outer border, a dim header, rows divided by a soft rule. */
+/* Tables: no outer border, a dim header, rows divided by a soft rule. A table takes the width of
+   its content (up to the column; a wider one scrolls in its box): a short table stretched over
+   the column left a wide empty last column. */
 .fd-md-table {
   margin: var(--sp-3) 0;
   overflow-x: auto;
 }
 .fd-md table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-ui);
   line-height: 1.45;
@@ -625,6 +739,10 @@
 .fd-md th:last-child,
 .fd-md td:last-child {
   padding-right: 0;
+}
+/* A column of numbers aligns right (§2.3; tableNumbers.ts marks it), its header too. */
+.fd-md :is(td, th)[data-num] {
+  text-align: right;
 }
 .fd-md th {
   padding-top: 0;
@@ -650,21 +768,6 @@
 }
 .fd-md li > input[type="checkbox"] {
   margin-right: var(--sp-1);
-}
-
-@keyframes fd-chat-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-@keyframes fd-chat-blink {
-  to {
-    visibility: hidden;
-  }
 }
 
 @media (pointer: coarse) {
@@ -712,11 +815,13 @@
     min-height: var(--tap-min);
   }
 }
-.fd-dl-file:hover:not(:disabled) {
-  background: none;
-  border-color: transparent;
-  color: var(--focus);
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-dl-file:hover:not(:disabled) {
+    background: none;
+    border-color: transparent;
+    color: var(--focus);
+    text-decoration: underline;
+  }
 }
 .fd-dl-stat {
   display: inline-flex;
@@ -759,8 +864,10 @@
   margin: 0;
   color: inherit;
 }
-.fd-dl-g > button.fd-dl-n:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-dl-g > button.fd-dl-n:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 /* A phone shows only the new gutter: blank on a deleted line, where the old-side comment target
    keeps its place without a number. */
@@ -774,6 +881,15 @@
 }
 [data-layout="phone"] .fd-dl-g[data-side="new"] {
   margin-left: 0;
+}
+/* A whole new or deleted file (Diff.tsx `data-sides`) has one gutter: the numbers of its side,
+   with the gap to the code (on a phone too, where a deleted file shows its old numbers). */
+.fd-dl[data-sides] > .fd-dl-g {
+  margin: 0 var(--sp-3) 0 0;
+}
+[data-layout="phone"] .fd-dl[data-sides="old"] > .fd-dl-g[data-side="old"] {
+  display: inline-block;
+  color: var(--faint);
 }
 
 /* DL-175: the Show menu. Alone (no Agents bar), it sits at the right end of the session tab row,
@@ -833,8 +949,10 @@
   cursor: pointer;
   user-select: none;
 }
-.fd-chat-show-item:hover {
-  background: var(--badge-bg);
+@media (hover: hover) {
+  .fd-chat-show-item:hover {
+    background: var(--badge-bg);
+  }
 }
 @media (pointer: coarse) {
   .fd-chat-show-item {
@@ -920,17 +1038,26 @@
 }
 
 /* B6: the agents switcher and the agent view. The bar spans the chat column, not the pane. */
+/* The text of its two ghost menus starts and ends on the edges of the prose: the padding of the
+   bar is the padding of the column less the inset of a ghost summary's text (its 8px padding and
+   its 1px edge). The bar keeps the room that the log's scrollbar takes at each side
+   (`--chat-sb-start`, `--chat-sb-end`, measured by ChatView), so that it is as wide as the
+   column and on the same center. */
 .fd-chat-bar {
+  --chat-bar-inset: 9px;
   position: relative;
   flex: none;
   align-self: center;
-  width: 100%;
+  width: calc(100% - var(--chat-sb-start, 0px) - var(--chat-sb-end, 0px));
   max-width: calc(var(--chat-w) + 2 * var(--sp-5));
+  margin-inline: var(--chat-sb-start, 0px) var(--chat-sb-end, 0px);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-5);
+  padding-block: var(--sp-1);
+  padding-inline: calc(var(--sp-5) + var(--chat-gutter) - var(--chat-bar-inset))
+    calc(var(--sp-5) - var(--chat-bar-inset));
 }
 .fd-chat-bar .fd-chat-filters {
   position: static;
@@ -941,19 +1068,47 @@
   display: flex;
   margin-right: auto;
 }
-.fd-chat-toolbar .fd-menu > summary .fd-badge {
-  margin-left: var(--sp-1);
+/* The summary of the Agents menu (AgentsMenu.tsx): "Agents" and "Commands", each a label with its
+   .fd-count pill (§5), 12px apart, then what runs now with the working glyph: the quiet counter of
+   §4.1, in the --dim 12px of the Properties panel, never a green badge (green is a state). The
+   summary puts 6px between its children: a part adds the rest of the 12px. */
+.fd-agents-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.fd-agents-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.fd-agents-part + :is(.fd-agents-part, .fd-agents-running) {
+  margin-left: calc(var(--sp-3) - 6px);
 }
 .fd-chat-toolbar .fd-menu-body {
   right: auto;
   left: 0;
   width: min(440px, 90vw);
 }
+/* The phone: Agents (left) and Show (right) share one row (§4.5); on touch the 44px summaries
+   are the height of the row. */
 [data-layout="phone"] .fd-chat-bar {
-  padding: var(--sp-1) var(--sp-3);
+  padding-inline: calc(var(--sp-2) + var(--chat-gutter) - var(--chat-bar-inset))
+    calc(var(--sp-3) - var(--chat-bar-inset));
 }
 [data-layout="phone"] .fd-chat-toolbar {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@media (pointer: coarse) {
+  .fd-chat-bar {
+    padding-block: 0;
+  }
 }
 [data-layout="phone"] .fd-chat-toolbar .fd-menu {
   position: static;
@@ -963,22 +1118,41 @@
   left: var(--sp-3);
   width: auto;
 }
-.fd-agent-row {
+/* A row of the menu has two lines (the name and its status, then the summary): it grows from
+   the 28px menu row of base.css (`.fd-menu-body > button`, which this selector must outweigh). */
+.fd-menu-body > button.fd-agent-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  justify-content: center; /* a one-line row in the 44px touch row */
   gap: 2px;
   height: auto;
+  min-height: var(--ctl-h);
   padding: var(--sp-2);
   background: transparent;
   text-align: left;
 }
-.fd-agent-row:hover:not(:disabled) {
-  background: var(--badge-bg);
+@media (pointer: coarse) {
+  .fd-menu-body > button.fd-agent-row {
+    min-height: var(--tap-min);
+  }
+}
+@media (hover: hover) {
+  .fd-menu-body > button.fd-agent-row:hover:not(:disabled) {
+    background: var(--badge-bg);
+  }
 }
 /* The chosen agent: the selection fill and the blue marker at the left (.fd-selbar). */
-.fd-agent-row[aria-current="true"] {
+.fd-menu-body > button.fd-agent-row[aria-current="true"] {
   background: var(--raised-hi);
+}
+/* The two groups of the menu (Agents, Background commands): a 12px label with its count. */
+.fd-agent-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-1) var(--sp-2);
 }
 .fd-agent-line {
   display: flex;
@@ -992,6 +1166,12 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A command named by itself (it has no description) reads as code. */
+.fd-agent-name[data-code] {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 500;
 }
 .fd-agent-dim {
   overflow: hidden;
@@ -1082,6 +1262,7 @@
     .fd-chat-tool,
     .fd-chat-toolgroup,
     .fd-chat-card,
+    .fd-chat-alert,
     .fd-chat-line,
     .fd-chat-turn,
     .fd-chat-working
@@ -1095,6 +1276,7 @@
     .fd-chat-tool,
     .fd-chat-toolgroup,
     .fd-chat-card,
+    .fd-chat-alert,
     .fd-chat-line,
     .fd-chat-turn,
     .fd-chat-working
@@ -1115,6 +1297,7 @@
     .fd-chat-tool,
     .fd-chat-toolgroup,
     .fd-chat-card,
+    .fd-chat-alert,
     .fd-chat-line,
     .fd-chat-turn,
     .fd-chat-working
@@ -1125,6 +1308,7 @@
         .fd-chat-tool,
         .fd-chat-toolgroup,
         .fd-chat-card,
+        .fd-chat-alert,
         .fd-chat-line,
         .fd-chat-turn,
         .fd-chat-working
@@ -1133,7 +1317,8 @@
   )::before {
   top: calc(var(--chat-row) / 2);
 }
-/* Rows that follow rows sit close together (4px); prose and cards keep the column gap. */
+/* Rows that follow rows sit close together (4px); prose and cards keep the column gap, and so does
+   a turn that holds an error notice row (ChatAlert.tsx). */
 :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
   > :is(
     .fd-chat-reasoning,
@@ -1142,7 +1327,7 @@
     .fd-chat-line,
     .fd-chat-turn,
     .fd-chat-working
-  )
+  ):not(:has(> .fd-chat-alert))
   + :is(
     .fd-chat-reasoning,
     .fd-chat-tool,
@@ -1150,7 +1335,7 @@
     .fd-chat-line,
     .fd-chat-turn,
     .fd-chat-working
-  ) {
+  ):not(:has(> .fd-chat-alert)) {
   margin-top: calc(var(--sp-1) - var(--chat-gap));
 }
 
@@ -1241,6 +1426,7 @@
       .fd-chat-tool,
       .fd-chat-toolgroup,
       .fd-chat-card,
+      .fd-chat-alert,
       .fd-chat-line,
       .fd-chat-turn,
       .fd-chat-working
@@ -1250,11 +1436,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fd-chat-pulse,
-  .fd-chat-dots span,
-  .fd-chat-streaming .fd-md > :last-child::after {
-    animation: none;
-  }
   .fd-chat summary > .fd-icon:first-child,
   .fd-chat-chev > .fd-icon {
     transition: none;

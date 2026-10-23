@@ -14,6 +14,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  container: fd-artlist / inline-size;
 }
 
 /* Rules only between the rows: the page header or the tab row draws the rule above the list. */
@@ -24,13 +25,14 @@
   border-bottom: 0;
 }
 
-/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns.
-   The texts share one baseline (the 12px where and age sit on the line of the 13px title); the
-   icon and the kind badge are boxes and stay centered. */
+/* One artifact: a 36px row. Kind icon, title, where, kind and age in fixed columns; a version
+   (only after v1) follows the title. The texts share one baseline (the 12px where and age sit on
+   the line of the 13px title); the icon is a box and stays centered. The kind is a muted badge
+   (a quiet word: the icon says the kind too). */
 .fd-art-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
-  grid-template-areas: "icon title where kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 48px;
+  grid-template-areas: "icon title where kind age";
   align-items: baseline;
   align-content: center;
   gap: var(--sp-3);
@@ -49,19 +51,29 @@
   text-decoration: none;
   transition: background-color var(--t-fast);
 }
-.fd-art-row:hover,
-.fd-art-row:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  .fd-art-row:hover,
+  .fd-art-row:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 .fd-art-row:focus-visible {
   outline-offset: -2px;
 }
 /* Without the where column (the session's tab). */
 .fd-art-row:not(:has(> .fd-art-where)) {
-  grid-template-columns: 14px minmax(0, 1fr) 96px 36px 48px;
-  grid-template-areas: "icon title kind version age";
+  grid-template-columns: 14px minmax(0, 1fr) 96px 48px;
+  grid-template-areas: "icon title kind age";
+}
+/* A wide list gives the source room ("Lighting · Generate HTML explainer of journey architect…"
+   was cut at 320px while 600px of the row stayed empty). Every row keeps the one template, so the
+   columns stay aligned. */
+@container fd-artlist (min-width: 1280px) {
+  .fd-art-row:has(> .fd-art-where) {
+    grid-template-columns: 14px minmax(0, 1fr) minmax(0, 480px) 96px 48px;
+  }
 }
 
 /* The kind icon sits 8px before the title (the grid gap is 12px). */
@@ -72,23 +84,32 @@
   margin-right: calc(-1 * var(--sp-1));
   color: var(--faint);
 }
-.fd-art-title {
+.fd-art-titlecell {
+  display: flex;
   grid-area: title;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.fd-art-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A version after v1: a neutral badge after the title, apart from its words (v1 is the rule, so it
+   says nothing). */
+.fd-art-ver {
+  flex: none;
+  align-self: center;
+}
 .fd-art-row > .fd-badge {
   grid-area: kind;
-  align-self: center;
+  align-self: baseline;
   justify-self: start;
   max-width: 100%;
-}
-.fd-art-row > .fd-art-ver {
-  grid-area: version;
-  justify-self: start;
 }
 
 .fd-art-age,
@@ -109,8 +130,76 @@
   color: var(--dim);
 }
 
-/* The filters sit in the Page filters slot (page.css .fd-page-filters, §4.3): the search field,
-   then the three selects. A narrow main column wraps them under the title. */
+/* The older copies of a title fold under its row: a quiet 24px summary whose chevron sits in the
+   icon column and whose words start at the title, then one 28px row per copy with its exact time. */
+.fd-art-copies > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: max-content;
+  height: var(--ctl-h-sm);
+  margin: calc(-1 * var(--sp-1)) 0 var(--sp-1) var(--sp-2);
+  padding-right: var(--sp-2);
+  border-radius: var(--r-ctl);
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  transition: color var(--t-fast);
+}
+.fd-art-copies > summary::before {
+  margin-right: 0;
+}
+@media (hover: hover) {
+  .fd-art-copies > summary:hover {
+    color: var(--text);
+  }
+}
+.fd-art-copies > ul {
+  margin: 0 0 var(--sp-1);
+  padding: 0;
+  list-style: none;
+}
+.fd-art-copy {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  height: auto;
+  min-height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 calc(var(--sp-2) + 14px + var(--sp-3));
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  text-align: left;
+  text-decoration: none;
+  transition: background-color var(--t-fast);
+}
+@media (hover: hover) {
+  .fd-art-copy:hover,
+  .fd-art-copy:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+    text-decoration: none;
+  }
+}
+.fd-art-copy:focus-visible {
+  outline-offset: -2px;
+}
+.fd-art-copy > .fd-art-age {
+  margin-left: auto;
+}
+@media (pointer: coarse) {
+  .fd-art-copy {
+    min-height: var(--row-h-touch);
+  }
+}
+
+/* The filters sit in the Page filters slot (page.css .fd-page-filters, §4.3): a 200px search,
+   then three ghost selects (base.css `select.fd-ghost`; `data-active` while one filters), each at
+   most 180px with an ellipsis. A narrow main column wraps them under the title. */
 .fd-art-filters {
   display: flex;
   flex-wrap: wrap;
@@ -126,15 +215,66 @@
   min-width: 0;
 }
 .fd-art-filters .fd-art-search {
-  width: 240px;
+  width: 200px;
 }
 .fd-art-filters input {
   width: 100%;
   min-width: 0;
 }
+/* The small search keeps the text size of a field (--fs-field; 16px on touch). */
+.fd-art-filters input.fd-sm {
+  font-size: var(--fs-field);
+}
+/* A long session title stops at 180px (an ellipsis): the filter row stays on one line. The ghost
+   select hugs a shorter value (base.css select.fd-ghost). */
 .fd-art-filters select {
   min-width: 0;
-  max-width: 200px;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
+
+/* A phone: the search and one Filters menu on a row, the chosen filters as removable pressed chips
+   under them (the fleet's Filters pattern). */
+.fd-art-filters[data-layout="phone"] {
+  flex: 1 1 100%;
+  justify-content: flex-start;
+  width: 100%;
+}
+.fd-art-filters[data-layout="phone"] .fd-art-search {
+  flex: 1 1 auto;
+  width: auto;
+}
+.fd-art-filtermenu {
+  flex: none;
+}
+.fd-art-filtermenu .fd-menu-body {
+  width: min(320px, calc(100vw - 32px));
+  padding: var(--sp-3);
+}
+.fd-art-filtergrid {
+  display: grid;
+  gap: var(--sp-3);
+}
+.fd-art-filtergrid > label {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-art-filtergrid select {
+  width: 100%;
+  max-width: none;
+}
+.fd-art-chosen {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+.fd-art-chosen .fd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
 }
 
 .fd-art-state {
@@ -147,56 +287,47 @@
 }
 
 @media (max-width: 640px) {
-  /* Two lines: the icon and the title, then the kind and the version at the left, the age at
-     the right (and the where line on the global page). */
+  /* The icon, the title (with its version) and the age, then where it came from on the whole
+     second line. The kind is the icon only (its name is for a screen reader): a kind word at the
+     end of every line took the room of the source. */
   .fd-art-row,
   .fd-art-row:not(:has(> .fd-art-where)) {
-    grid-template-columns: 14px auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "icon title title title"
-      ". kind version age";
-    gap: var(--sp-1) var(--sp-2);
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+    grid-template-areas: "icon title age";
+    gap: 2px var(--sp-2);
     padding: var(--sp-2) 0;
   }
   .fd-art-row:has(> .fd-art-where) {
     grid-template-areas:
-      "icon title title title"
-      ". where where where"
-      ". kind version age";
+      "icon title age"
+      ". where where";
+  }
+  .fd-art-row > .fd-badge[data-kind] {
+    display: none;
   }
   .fd-art-kind {
     margin-right: 0;
   }
-  .fd-art-row:hover,
-  .fd-art-row:hover:not(:disabled) {
-    background: transparent;
+  @media (hover: hover) {
+    .fd-art-row:hover,
+    .fd-art-row:hover:not(:disabled) {
+      background: transparent;
+    }
   }
-  /* The search field on its own line, then Kind and Station in two equal columns and Session
-     across the row: each select shows its full "All …" label inside a 390px screen. */
-  .fd-art-filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    flex: 1 1 100%;
-    width: 100%;
+  /* The chevron in the icon column, the words on the title column (the row gap is 8px here). */
+  .fd-art-copies > summary {
+    gap: var(--sp-2);
+    margin-left: 0;
   }
-  .fd-art-filters .fd-art-search,
-  .fd-art-filters label:last-child {
-    grid-column: 1 / -1;
-  }
-  .fd-art-filters .fd-art-search {
-    width: auto;
-  }
-  .fd-art-filters label {
-    min-width: 0;
-  }
-  .fd-art-filters select {
-    width: 100%;
-    max-width: none;
+  .fd-art-copy {
+    padding-left: calc(14px + var(--sp-2));
   }
 }
 
 /* ---------- the viewer ---------- */
 
+/* The viewer is a container: its actions follow the width of the viewer (the full page, the
+   session panel, a phone), not the window. */
 .fd-art-viewer {
   display: flex;
   flex: 1;
@@ -204,10 +335,16 @@
   gap: var(--sp-3);
   min-width: 0;
   min-height: 0;
+  container: fd-art / inline-size;
 }
-.fd-art-viewer[data-variant="page"] {
-  height: 100%;
-  padding: var(--sp-3) var(--sp-5) var(--sp-5);
+/* The full page is a `Page` (§4.3: the way back above the title, the summary under it, the kind
+   and the version as filters, the actions at the right): a column whose body fills the rest of
+   the route, so that the frame runs to the bottom. */
+.fd-page.fd-art-pageview {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  container: fd-art / inline-size;
 }
 .fd-pane-body[data-tab="artifacts"] {
   display: flex;
@@ -217,7 +354,8 @@
   flex: 1;
 }
 
-/* The viewer bar: back, the title, the kind and the version, then the actions. */
+/* The bar of the session panel: back, the title, the kind and the version, then the actions and
+   the More actions menu. The parts keep their size; only the title gives way (an ellipsis). */
 .fd-art-bar {
   display: flex;
   flex: none;
@@ -228,7 +366,10 @@
   padding-bottom: var(--sp-2);
   border-bottom: 1px solid var(--border-soft);
 }
-.fd-art-name {
+.fd-art-bar > * {
+  flex: none;
+}
+.fd-art-bar > .fd-art-name {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0 var(--sp-1) 0 0;
@@ -239,20 +380,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The version: a ghost select (base.css `select.fd-ghost.fd-sm`) while there are versions to pick,
+   else the muted "v1" badge. In the panel bar it ends the title group, so the actions go right. */
 .fd-art-version {
   display: inline-flex;
+  align-items: center;
+}
+.fd-art-bar > .fd-art-version {
   margin-right: auto;
-}
-.fd-art-version select {
-  height: var(--ctl-h-sm);
-  padding-left: var(--sp-2);
-  font-size: var(--fs-meta);
-}
-@media (pointer: coarse) {
-  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
-  .fd-art-version select {
-    font-size: var(--fs-field);
-  }
 }
 .fd-art-back,
 .fd-art-action {
@@ -268,6 +403,136 @@
   .fd-art-back {
     min-height: 44px;
   }
+}
+
+/* A wide viewer: one row; Download and Share… sit in the bar, the menu holds Send to wall… and
+   Delete artifact (and is absent when it has nothing else). */
+@container fd-art (min-width: 641px) {
+  .fd-art-bar {
+    flex-wrap: nowrap;
+  }
+  .fd-art-narrow,
+  .fd-art-more[data-wide="none"] {
+    display: none;
+  }
+}
+
+/* A narrow viewer (a phone, the session panel): the title on a row of its own (two lines at most),
+   then one row of actions: the version, Open in a new tab and the menu, which holds
+   Download, Send to wall…, Share… and Delete artifact. */
+@container fd-art (max-width: 640px) {
+  /* The row holds the version, Open in a new tab and the menu: the kind badge gives way. */
+  .fd-art-wide,
+  .fd-art-bar > .fd-badge[data-kind],
+  .fd-art-pageview .fd-page-filters > .fd-badge[data-kind] {
+    display: none;
+  }
+  /* The version select then starts the row. Its text sits on the page gutter: the phone rule of
+     page.css moves the label back by the padding of the ghost select (a second margin here put
+     the text 7px left of the gutter). */
+  .fd-art-bar > .fd-art-name {
+    display: -webkit-box;
+    flex: 1 1 100%;
+    margin: 0;
+    line-height: 1.25;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+}
+
+/* The header of the page: the back link is a row of its own (page.css wraps the head), then the
+   title column, the kind and the version, and the actions, level with the title row (§4.3). The
+   title takes the room that the filters and the actions leave and wraps in its own column (never
+   an ellipsis); it never gets narrower than 32 characters (a `nowrap` head pushed the filters and
+   the actions off the screen and left the title one letter wide). A narrow page (a phone, where
+   the top bar names the artifact, §4.8) has the summary, then the actions at its end. */
+.fd-page.fd-art-pageview > .fd-page-head > .fd-page-titles {
+  flex: 1 1 0;
+  min-width: min(32ch, 100%);
+}
+.fd-page.fd-art-pageview > .fd-page-head > :is(.fd-page-filters, .fd-page-actions) {
+  flex: none;
+}
+/* A title of two lines keeps its summary under it: the title row grows with the title (the 48px
+   row of §4.3 is the height of one line with its padding), and the summary keeps its place. */
+.fd-page.fd-art-pageview .fd-page-titlerow {
+  min-height: 0;
+  padding-block: var(--sp-3) var(--sp-1);
+}
+.fd-page.fd-art-pageview .fd-page-desc {
+  margin-top: 0;
+}
+/* The phone top bar has the title (shell.css): the row keeps no padding of its own. */
+.fd-app[data-phonebar="true"] .fd-page.fd-art-pageview .fd-page-titlerow {
+  padding-block: 0;
+}
+@container fd-art (max-width: 899px) {
+  .fd-page.fd-art-pageview > .fd-page-head {
+    flex-wrap: wrap;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-titles {
+    flex-basis: 100%;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > :is(.fd-page-filters, .fd-page-actions) {
+    align-self: center;
+    min-height: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-filters {
+    flex: 0 1 auto;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    margin-left: auto;
+  }
+}
+
+/* A phone page (§4.8) says the one version in its summary ("Lighting · Review · v1 · published
+   5 h ago"): the version has one look, the words of the summary, and no muted badge of a second
+   size. Open in a new tab and the menu then end the summary line, so the frame starts one row
+   higher. More versions keep the ghost select, which starts the row of the actions under the
+   summary. */
+.fd-art-metaver {
+  display: none;
+}
+@container fd-art (max-width: 640px) {
+  .fd-art-metaver {
+    display: inline;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-filters {
+    display: none;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-titles {
+    flex: 1 1 0;
+    align-self: center;
+    min-width: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-actions {
+    flex: none;
+  }
+}
+
+/* The phone page is a screen of a fixed height, as the session is (shell.css): the frame runs from
+   the action row to the top edge of the bottom bar and is the one thing that scrolls. A taller
+   body (a video and its provenance) scrolls the route. */
+.fd-app[data-layout="phone"][data-route="artifact"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.fd-app[data-layout="phone"][data-route="artifact"] .fd-route {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.fd-app[data-layout="phone"][data-route="artifact"] .fd-art-pageview {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 0;
 }
 
 /* The delete confirmation under the bar. */
@@ -297,6 +562,19 @@
   border: 0;
   border-radius: var(--r-card);
   box-shadow: var(--shadow-lift);
+}
+/* The phone page: the frame runs to the screen edges (the artifact gets the whole width) and down
+   to the bottom bar (the fixed-height screen above): the body and the frame fill, they do not
+   push. */
+.fd-app[data-layout="phone"] .fd-art-pageview .fd-art-body {
+  min-height: 0;
+}
+.fd-app[data-layout="phone"] .fd-art-pageview .fd-art-frame {
+  width: auto;
+  min-height: 0;
+  margin-inline: calc(-1 * var(--sp-4));
+  border-radius: 0;
+  box-shadow: none;
 }
 .fd-art-image {
   align-self: center;
@@ -377,18 +655,28 @@
 .fd-art-chip-line {
   margin: 0;
 }
+/* In its chat line the chip fits the column: a long title ends in an ellipsis. */
 .fd-art-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   background: var(--raised);
   color: var(--dim);
   text-decoration: none;
 }
-.fd-art-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
-  color: var(--text);
-  text-decoration: none;
+.fd-art-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (hover: hover) {
+  .fd-art-chip:hover:not(:disabled) {
+    background: var(--raised-hi);
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 /* Each file row has a fixed 24px trailing slot for "Publish as artifact" (empty when it is not
@@ -406,8 +694,10 @@
   width: var(--ctl-h-sm);
   color: var(--faint);
 }
-.fd-files-item > button.fd-files-publish:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-files-item > button.fd-files-publish:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 @media (pointer: coarse) {
   .fd-files-item > .fd-files-publish {

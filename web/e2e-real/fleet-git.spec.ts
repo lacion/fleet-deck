@@ -46,10 +46,10 @@ test('the project Git settings save in the board and the station verifies the ho
   await page.evaluate(() => {
     window.location.hash = '#/projects';
   });
-  await page
-    .getByRole('row', { name: 'Project App' })
-    .getByRole('button', { name: 'Edit' })
-    .click();
+  // The row actions are in one row menu (the audit's Projects table).
+  const row = page.getByRole('row', { name: 'Project App' });
+  await row.locator('summary[aria-label="Actions for App"]').click();
+  await row.getByRole('button', { name: 'Edit' }).click();
   const form = page.getByRole('form', { name: 'Git sync' });
   await expect(form).toBeVisible();
   await form.getByLabel('Sync this project across stations').check();

@@ -9,7 +9,7 @@ import { ElevationDialog, RestartDialog, RestartOverlay, SecretDialog, waitStep 
 import { elevate, keysOfError, relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { FIELDS, meta, VALUES, view } from './fixtures';
 import { DeckError } from './http';
-import { badgesOf, changedKeys, changesOf, groupFields } from './model';
+import { CARD_KEYS, changedKeys, changesOf, groupFields } from './model';
 import { Notice, noticesOfSaved, SaveBar, SettingsTab } from './SettingsTab';
 import { SettingsFields } from './SettingsFields';
 
@@ -108,17 +108,48 @@ describe('the sections of the page (DL-172)', () => {
     expect(deck[0]?.fields.map((f) => f.key)).toEqual(['link_listen', 'tailnet_hostname']);
   });
 
-  test('a hidden field is left out, also from Other, and tailnet_auto is in Network', () => {
-    const groups = groupFields([
+  test('a hidden field and a key of the Tailnet card are left out, also from Other', () => {
+    // While the Tailnet card has its view it shows and saves tailnet_auto and tailscale_cert
+    // (`omit`); when it cannot read Tailscale, the fields stay, so the keys can still change.
+    const all = [
       meta('listen', 'Listen', 'addresses'),
       meta('tailnet_auto', 'Use Tailscale automatically', 'bool'),
+      meta('tailscale_cert', 'Trusted certificate from Tailscale', 'bool'),
       meta('tailnet_auto_listen', 'Added automatically', 'addresses', { hidden: true }),
       meta('zz_hidden', 'Hidden future key', 'text', { hidden: true }),
       meta('zz_shown', 'Shown future key', 'text', { hidden: false }),
-    ]);
+    ];
+    const groups = groupFields(all, [], CARD_KEYS);
     expect(groups.map((g) => g.title)).toEqual(['Network', 'Other']);
-    expect(groups[0]?.fields.map((f) => f.key)).toEqual(['listen', 'tailnet_auto']);
+    expect(groups[0]?.fields.map((f) => f.key)).toEqual(['listen']);
     expect(groups[1]?.fields.map((f) => f.key)).toEqual(['zz_shown']);
+    const failed = groupFields(all).find((g) => g.title === 'Network');
+    expect(failed?.fields.map((f) => f.key)).toEqual(['listen', 'tailnet_auto', 'tailscale_cert']);
+  });
+
+  test('a kept section shows without a field, in its place', () => {
+    const groups = groupFields(
+      [meta('name', 'Name', 'text'), meta('conflict_mail', 'Mail', 'bool')],
+      ['Network'],
+    );
+    expect(groups.map((g) => g.title)).toEqual(['General', 'Network', 'Notifications']);
+    expect(groups[1]?.fields).toEqual([]);
+  });
+
+  test('the desktop keys have their section after Shells and setup', () => {
+    const groups = groupFields([
+      meta('fleet_summary', 'Fleet summary', 'bool'),
+      meta('allow_desktop', 'Desktop control', 'bool'),
+      meta('allow_shell', 'Allow terminals', 'bool'),
+      meta('max_sessions', 'Most sessions', 'int'),
+      meta('capture_monitors', 'Screenshot monitors', 'texts'),
+    ]);
+    expect(groups.map((g) => g.title)).toEqual(['Sessions', 'Shells and setup', 'Desktop']);
+    expect(groups[2]?.fields.map((f) => f.key)).toEqual([
+      'allow_desktop',
+      'capture_monitors',
+      'fleet_summary',
+    ]);
   });
 
   test('the fleet control keys have their section and tailscale_bin is in Network (ADR-008)', () => {
@@ -154,15 +185,21 @@ describe('field rendering for each kind', () => {
     // The host options show words; the values stay the same.
     expect(html).toContain('<option value="direct">Directly</option>');
     expect(html).toContain(
-      '<option value="shim" selected="">In a shim (survives restarts)</option>',
+      '<option value="shim" selected="">Apart from the station (survives restarts)</option>',
     );
-    expect(html).toContain('<option value="claude">claude</option>');
+    // The provider of model help shows its name, and the empty option says what it means.
+    expect(html).toContain('<option value="claude">Claude</option>');
+    expect(html).toContain(
+      '<option value="" selected="">Default (the first signed-in provider)</option>',
+    );
   });
 
   test('paths are folder pickers with Remove and "Add folder" on a station tab', () => {
     expect(html).toContain('class="fd-folder"');
     expect(html).toContain('aria-label="Remove Allowed folders 1"');
     expect(html).toContain('Add folder');
+    // A settings row has no pin button: pinning belongs to the New session sheet.
+    expect(html).not.toContain('Pin this folder');
     // The deck tab has no folders to browse: plain inputs.
     const deck = fields({ stationId: null });
     expect(deck).not.toContain('class="fd-folder"');
@@ -178,11 +215,12 @@ describe('field rendering for each kind', () => {
     expect(html).toContain('value="/work/app"');
   });
 
-  test('trackers are a read-only table with the note', () => {
-    expect(html).toContain('aria-label="Trackers from the config file"');
+  test('trackers are a read-only table; the help sends the owner to the Accounts tab', () => {
+    expect(html).toContain('aria-label="Trackers in the station file"');
     expect(html).toContain('acme.atlassian.net');
     expect(html).toContain('env JIRA_TOKEN');
-    expect(html).toContain('From station.toml. Connect accounts in the Accounts tab.');
+    expect(html).toContain('Connect Jira and Linear accounts in the Accounts tab.');
+    expect(html).not.toContain('From the config file');
   });
 
   test('the instances table has a row with the env variables as "set"', () => {
@@ -207,34 +245,6 @@ describe('field rendering for each kind', () => {
     expect(fields({ errors: { allowed_roots: '`allowed_roots` has an invalid value' } })).toContain(
       '`allowed_roots` has an invalid value',
     );
-  });
-});
-
-describe('the badges of a field', () => {
-  test('restart, command line and re-auth', () => {
-    const listen = FIELDS.find((f) => f.key === 'listen');
-    expect(listen).toBeDefined();
-    if (listen === undefined) return;
-    expect(badgesOf(listen, ['listen'])).toEqual([
-      { text: 'Applies after a restart' },
-      { text: 'Set by the command line (--listen)' },
-      {
-        text: 'Needs re-auth',
-        tone: 'muted',
-        title: 'Saving this asks for your password or an elevation code',
-      },
-    ]);
-    expect(badgesOf(meta('name', 'Name', 'text'), [])).toEqual([]);
-  });
-
-  test('they are in the page, and a command line key is disabled', () => {
-    const html = fields();
-    expect(html).toContain('Applies after a restart');
-    expect(html).toContain('Set by the command line (--listen)');
-    expect(html).toContain('data-tone="muted"');
-    expect(html).toContain('title="Saving this asks for your password or an elevation code"');
-    expect(html).toContain('aria-label="Listen addresses 1"');
-    expect(html).toMatch(/<input[^>]*aria-label="Listen addresses 1" disabled=""/);
   });
 });
 
@@ -435,7 +445,7 @@ describe('the save outcomes', () => {
     expect(html).toContain('These settings changed since you opened them.');
     expect(html).toContain('>Reload</button>');
     expect(html).toContain('The disk did not confirm the write; check the disk.');
-    expect(html).toContain('1 changed');
+    expect(html).toContain('Unsaved changes <span class="fd-count">1</span>');
     expect(html).toContain('>Discard</button>');
     expect(html).toContain('>Save</button>');
     // No edit: no bar.
@@ -448,7 +458,7 @@ describe('the save outcomes', () => {
         initial={{ view: view(), edits: { name: 'Alpha' } }}
       />,
     );
-    expect(clean).not.toContain('changed</span>');
+    expect(clean).not.toContain('fd-set-bar');
     expect(clean).not.toContain('Unsaved changes');
   });
 
@@ -456,7 +466,7 @@ describe('the save outcomes', () => {
     const bar = renderToStaticMarkup(
       <SaveBar count={3} saving={false} onDiscard={noop} onSave={noop} />,
     );
-    expect(bar).toContain('3 changed');
+    expect(bar).toContain('Unsaved changes <span class="fd-count">3</span>');
     expect(bar).toContain('fd-ghost');
     expect(bar).toContain('fd-primary');
     expect(
@@ -750,10 +760,10 @@ describe('the Settings link (DL-172)', () => {
       renderToStaticMarkup(
         withEnv ? (
           <SettingsProvider env={env}>
-            <More stationCount={1} terminalCount={0} />
+            <More terminalCount={0} />
           </SettingsProvider>
         ) : (
-          <More stationCount={1} terminalCount={0} />
+          <More terminalCount={0} />
         ),
       );
     expect(more(true)).toContain('href="#/settings"');

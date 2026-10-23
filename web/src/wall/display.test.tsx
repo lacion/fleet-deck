@@ -70,6 +70,22 @@ describe('the lines of a display timeline', () => {
     ]);
   });
 
+  test('a provider error in a tile line reads as its cause, with the raw words in the label', () => {
+    const lines = displayTileLines([
+      ev(1, {
+        item: 'message',
+        turn_id: 't',
+        text: 'API Error: Request rejected (429) · All credentials are cooling down',
+      }),
+    ]);
+    expect(lines.map((l) => l.text)).toEqual([
+      "The provider's rate limit stopped it. Try again later.",
+    ]);
+    expect(lines[0]?.label).toBe(
+      'API Error: Request rejected (429) · All credentials are cooling down',
+    );
+  });
+
   test('a tile shows the last text and tool lines, one line each, without the run end', () => {
     const lines = displayTileLines(events);
     expect(lines.map((l) => l.text)).toEqual([
@@ -79,6 +95,39 @@ describe('the lines of a display timeline', () => {
       'Approve a command · answered',
     ]);
     expect(displayTileLines(events, 2)).toHaveLength(2);
+  });
+
+  test('one tool call is one line: its end replaces its start', () => {
+    const call: DisplayEvent[] = [
+      ev(1, { item: 'tool', node_id: 'n1', name: 'Bash', status: null }),
+      ev(2, { item: 'tool', node_id: 'n1', name: 'Bash', status: 'failed' }),
+      ev(3, { item: 'tool', node_id: 'n2', name: 'Read', status: null }),
+    ];
+    expect(displayTileLines(call).map((l) => [l.key, l.text])).toEqual([
+      ['1', 'Bash (failed)'],
+      ['3', 'Read'],
+    ]);
+    expect(displayChatLines(call).map((l) => l.text)).toEqual(['Bash (failed)', 'Read']);
+  });
+
+  test('the same line in a row is one tile line with its count, and a call keeps its node', () => {
+    const repeats: DisplayEvent[] = [
+      ev(1, { item: 'tool', node_id: 'n1', name: 'Bash', status: 'ok' }),
+      ev(2, { item: 'tool', node_id: 'n2', name: 'Bash', status: 'ok' }),
+      ev(3, { item: 'tool', node_id: 'n3', name: 'Bash', status: null }),
+    ];
+    expect(displayTileLines(repeats)).toEqual([
+      { key: '3', kind: 'tool', text: 'Bash', node: 'n3', repeat: 3 },
+    ]);
+  });
+
+  test('a message with only Markdown marks draws no blank tile row', () => {
+    const marks: DisplayEvent[] = [
+      ev(1, { item: 'message', turn_id: 't', text: 'First' }),
+      ev(2, { item: 'message', turn_id: 't', text: '``' }),
+      ev(3, { item: 'message', turn_id: 't', text: '**Second**' }),
+    ];
+    expect(displayTileLines(marks).map((l) => l.text)).toEqual(['First', 'Second']);
   });
 
   test('the last message and an expired request', () => {
@@ -472,9 +521,12 @@ describe('the wall for a display login', () => {
     expect(html).toContain('This artifact is not available.');
   });
 
-  test('the station row shows the load, the memory and the fullest disk in one short line', () => {
+  test('the station row shows the CPU share, the memory and the fullest disk in short figures', () => {
     const html = wall({});
-    expect(html).toContain('CPU 2.5/8 · Mem 8.0/16.0 GB · Disk 40.0 GB free');
+    // One part for each figure: a second line starts with a part, never inside one.
+    expect(html).toContain(
+      '<span class="fd-wall-part">CPU 31% ·</span> <span class="fd-wall-part">Memory 8 of 16 GB ·</span> <span class="fd-wall-part">Disk 40 GB free</span>',
+    );
   });
 
   test('the side area reads the same resources', () => {
@@ -495,7 +547,7 @@ describe('the wall for a display login', () => {
         now={1}
       />,
     );
-    expect(html).toContain('CPU 0.5/4');
+    expect(html).toContain('CPU 13%');
   });
 });
 

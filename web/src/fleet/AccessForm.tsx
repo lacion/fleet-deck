@@ -4,12 +4,14 @@ import type { StationView } from '../gen';
 import { CLAUDE_CEILINGS, CODEX_CEILINGS } from '../spawn/FleetControlFields';
 import { answerCapProblem, type FleetControl, spawnCapProblem } from '../spawn/fleetControl';
 import { targetChoices } from '../spawn/TargetStations';
+import { ceilingLabel } from './modes';
 
 export const CODEX_NOTE = 'Codex sees the change when the session resumes.';
 const ALWAYS_NOTE =
   'Always: read the fleet, send mail and tasks, and drive the sessions it starts.';
 const LOCKED_NOTE = 'To change the stations, revoke the access and give it again.';
 const CEILING_NOTE = 'Sessions that it starts, resumes or changes never get a higher mode.';
+const OWN_NOTE = 'The station of this session: always in the access.';
 
 type PermissionKey = 'spawn' | 'scope' | 'inspect' | 'manage' | 'answer';
 
@@ -47,7 +49,42 @@ type StationsProps = {
   readonly locked?: boolean;
 };
 
-/** The "Stations" section: the own station (always on) and one box for each other station. */
+/** One row of the form: the title (and its description under it) at the left, the switch at the
+ * right, on one line (DESIGN-SYSTEM §4.7: no box in a box, a rule between the rows). */
+function SwitchRow({
+  title,
+  desc,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  readonly title: string;
+  readonly desc?: string | undefined;
+  readonly checked: boolean;
+  readonly disabled?: boolean;
+  readonly onChange?: ((on: boolean) => void) | undefined;
+}) {
+  return (
+    <label className="fd-access-row">
+      <span className="fd-access-text">
+        <span className="fd-access-title">{title}</span>
+        {desc === undefined ? null : <span className="fd-access-desc">{desc}</span>}
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        className="fd-switch"
+        aria-checked={checked}
+        checked={checked}
+        disabled={disabled}
+        readOnly={onChange === undefined}
+        onChange={onChange === undefined ? undefined : (event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+
+/** The "Stations" section: the own station (always on) and one switch for each other station. */
 export function AccessStations({
   stations,
   ownId,
@@ -57,30 +94,21 @@ export function AccessStations({
 }: StationsProps) {
   return (
     <section className="fd-access-sec">
-      <h4 className="fd-access-h">Stations</h4>
-      <label className="fd-access-row">
-        <input type="checkbox" checked disabled readOnly />
-        <span className="fd-access-title">
-          {stationName(ownId, stations)} <span className="fd-access-desc">this session</span>
-        </span>
-      </label>
-      {targetChoices(stations, ownId).map((s) => (
-        <label key={s.station_id} className="fd-access-row">
-          <input
-            type="checkbox"
+      <h4 className="fd-label fd-access-h">Stations</h4>
+      <div className="fd-access-rows">
+        <SwitchRow title={stationName(ownId, stations)} desc={OWN_NOTE} checked disabled />
+        {targetChoices(stations, ownId).map((s) => (
+          <SwitchRow
+            key={s.station_id}
+            title={stationName(s.station_id, stations)}
             checked={picked.includes(s.station_id)}
             disabled={locked}
-            onChange={(event) =>
-              onPicked(
-                event.target.checked
-                  ? [...picked, s.station_id]
-                  : picked.filter((id) => id !== s.station_id),
-              )
+            onChange={(on) =>
+              onPicked(on ? [...picked, s.station_id] : picked.filter((id) => id !== s.station_id))
             }
           />
-          <span className="fd-access-title">{stationName(s.station_id, stations)}</span>
-        </label>
-      ))}
+        ))}
+      </div>
       {locked ? <p className="fd-note">{LOCKED_NOTE}</p> : null}
     </section>
   );
@@ -111,7 +139,7 @@ type LimitProps = {
 
 function Limit({ label, value, min, max, problem, onChange }: LimitProps) {
   return (
-    <div>
+    <div className="fd-access-field">
       <label>
         {label}
         <input
@@ -139,15 +167,16 @@ type ModeProps = {
   readonly onChange: (value: string) => void;
 };
 
+/** A mode ceiling: the options say the mode in words (`ceilingLabel`); the value stays the id. */
 function Mode({ label, value, modes, onChange }: ModeProps) {
   return (
-    <div>
+    <div className="fd-access-field">
       <label>
         {label}
         <select value={value} onChange={(event) => onChange(event.target.value)}>
           {modes.map((mode) => (
             <option key={mode} value={mode}>
-              {mode}
+              {ceilingLabel(mode)}
             </option>
           ))}
         </select>
@@ -184,23 +213,23 @@ export function AccessFields({
         locked={stationsLocked}
       />
       <section className="fd-access-sec">
-        <h4 className="fd-access-h">Permissions</h4>
+        <h4 className="fd-label fd-access-h">Permissions</h4>
         <p className="fd-note">{ALWAYS_NOTE}</p>
-        {PERMISSIONS.filter((p) => !(editing && p.key === 'scope')).map((p) => (
-          <label key={p.key} className="fd-access-row">
-            <input
-              type="checkbox"
+        <div className="fd-access-rows">
+          {PERMISSIONS.filter((p) => !(editing && p.key === 'scope')).map((p) => (
+            <SwitchRow
+              key={p.key}
+              title={p.title}
+              desc={p.desc}
               checked={fleet[p.key]}
-              onChange={(event) => onFleet({ ...fleet, [p.key]: event.target.checked })}
+              onChange={(on) => onFleet({ ...fleet, [p.key]: on })}
             />
-            <span className="fd-access-title">{p.title}</span>
-            <span className="fd-access-desc">{p.desc}</span>
-          </label>
-        ))}
+          ))}
+        </div>
       </section>
       {showCap || showModes || showAnswerCap ? (
         <section className="fd-access-sec">
-          <h4 className="fd-access-h">New sessions</h4>
+          <h4 className="fd-label fd-access-h">Limits</h4>
           <div className="fd-access-grid">
             {showCap ? (
               <Limit

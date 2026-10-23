@@ -4,12 +4,14 @@ import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import {
   Activity,
+  ChevronRight,
   CircleHelp,
   Eye,
   FileText,
   Folder,
   Icon,
   LogOut,
+  type LucideIcon,
   Paperclip,
   Search,
   Server,
@@ -24,12 +26,11 @@ import { canShare, usePeople } from '../sharing/context';
 import type { StationView } from '../gen';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
-import { Page } from '../ui/page';
+import { EmptyState, Page } from '../ui/page';
 import { CompactSwitch, MotionSwitch, PrefsRow } from './Prefs';
 
 type Props = {
-  readonly stationCount: number;
-  /** The stations of the snapshot (the Omarchy select of the Prefs row). */
+  /** The stations of the snapshot (the offline badge, the Omarchy select of the Prefs row). */
   readonly stations?: readonly StationView[] | undefined;
   readonly terminalCount: number;
   readonly chrome?: Chrome | undefined;
@@ -37,15 +38,66 @@ type Props = {
   readonly onHelp?: (() => void) | undefined;
 };
 
+/**
+ * A row that opens another page: the icon, the name, a count when it has one, and a 16px
+ * chevron at the right (a row that opens a dialog or holds a control has none).
+ */
+function PageLink({
+  href,
+  icon,
+  label,
+  count,
+  alert,
+}: {
+  readonly href: string;
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly count?: number | undefined;
+  /** A hazard badge with its word ("1 offline") in place of a count. */
+  readonly alert?: string | undefined;
+}) {
+  return (
+    <li>
+      <a href={href}>
+        <Icon of={icon} />
+        {label}
+        {count === undefined ? null : <span className="fd-count">{count}</span>}
+        {alert === undefined ? null : (
+          <span className="fd-badge" data-tone="hazard">
+            {alert}
+          </span>
+        )}
+        <span className="fd-more-chev">
+          <Icon of={ChevronRight} />
+        </span>
+      </a>
+    </li>
+  );
+}
+
+/**
+ * The phone Terminals page without a terminal (§4.7 empty state): what to do, and the way to the
+ * stations, where a shell opens.
+ */
+export function TerminalsEmpty() {
+  return (
+    <Page title="Terminals" description="Shells that you open from a station or a session.">
+      <EmptyState
+        icon={SquareTerminal}
+        title="No terminals open"
+        body="Open a shell from a station or a session."
+        action={
+          <a href="#/stations" className="fd-btn fd-primary">
+            Go to Stations
+          </a>
+        }
+      />
+    </Page>
+  );
+}
+
 /** The phone's "More" page: the pages that have no place in the bottom bar. */
-export function More({
-  stationCount,
-  stations = [],
-  terminalCount,
-  chrome,
-  onPalette,
-  onHelp,
-}: Props) {
+export function More({ stations = [], terminalCount, chrome, onPalette, onHelp }: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
   const settingsLink = useSettings() !== undefined;
@@ -55,82 +107,39 @@ export function More({
   // DL-172: the settings are the owner's login only.
   const settings = settingsLink && !guest;
   const tools = onPalette !== undefined || settings || onHelp !== undefined;
+  const offline = stations.filter((station) => !station.reachable).length;
   return (
     <Page title="More" className="fd-more">
       {/* The pages in the order of the desktop sidebar, then the tools (§4.2, §4.8). */}
       <nav aria-label="More pages" className="fd-more-nav">
         <ul className="fd-more-links">
-          <li>
-            <a href="#/watch">
-              <Icon of={Eye} />
-              Watch
-            </a>
-          </li>
+          <PageLink href="#/watch" icon={Eye} label="Watch" />
           {guest ? null : (
             <>
-              <li>
-                <a href="#/activity">
-                  <Icon of={Activity} />
-                  Activity
-                </a>
-              </li>
-              <li>
-                <a href="#/stations">
-                  <Icon of={Server} />
-                  Stations
-                  <span className="fd-count">{stationCount}</span>
-                </a>
-              </li>
-              <li>
-                <a href="#/plans">
-                  <Icon of={FileText} />
-                  Plans
-                </a>
-              </li>
-              <li>
-                <a href="#/automations">
-                  <Icon of={Workflow} />
-                  Automations
-                </a>
-              </li>
-              <li>
-                <a href="#/artifacts">
-                  <Icon of={Paperclip} />
-                  Artifacts
-                </a>
-              </li>
+              <PageLink href="#/activity" icon={Activity} label="Activity" />
+              <PageLink
+                href="#/stations"
+                icon={Server}
+                label="Stations"
+                alert={offline > 0 ? `${offline} offline` : undefined}
+              />
+              <PageLink href="#/plans" icon={FileText} label="Plans" />
+              <PageLink href="#/automations" icon={Workflow} label="Automations" />
+              <PageLink href="#/artifacts" icon={Paperclip} label="Artifacts" />
               {projectsLink ? (
-                <li>
-                  <a href="#/projects">
-                    <Icon of={FolderGit2} />
-                    Projects
-                  </a>
-                </li>
+                <PageLink href="#/projects" icon={FolderGit2} label="Projects" />
               ) : null}
-              <li>
-                <a href="#/files">
-                  <Icon of={Folder} />
-                  Files
-                </a>
-              </li>
+              <PageLink href="#/files" icon={Folder} label="Files" />
             </>
           )}
-          {canShare(people) ? (
-            <li>
-              <a href="#/shares">
-                <Icon of={Users} />
-                Shares
-              </a>
-            </li>
-          ) : null}
+          {canShare(people) ? <PageLink href="#/shares" icon={Users} label="Shares" /> : null}
           {guest ? null : (
-            <li>
-              <a href="#/terminals">
-                <Icon of={SquareTerminal} />
-                Terminals
-                {terminalCount > 0 ? <span className="fd-count">{terminalCount}</span> : null}
-              </a>
-            </li>
+            <PageLink
+              href="#/terminals"
+              icon={SquareTerminal}
+              label="Terminals"
+              count={terminalCount > 0 ? terminalCount : undefined}
+            />
           )}
         </ul>
         {tools ? (
@@ -143,14 +152,7 @@ export function More({
                 </button>
               </li>
             )}
-            {settings ? (
-              <li>
-                <a href="#/settings">
-                  <Icon of={Settings} />
-                  Settings
-                </a>
-              </li>
-            ) : null}
+            {settings ? <PageLink href="#/settings" icon={Settings} label="Settings" /> : null}
             {onHelp === undefined ? null : (
               <li>
                 <button type="button" onClick={onHelp}>
@@ -169,12 +171,7 @@ export function More({
             <Icon of={Sun} />
             Appearance
           </span>
-          <PrefsRow
-            stations={stations}
-            getPalette={chrome?.getPalette}
-            density={false}
-            iconSize={16}
-          />
+          <PrefsRow stations={stations} getPalette={chrome?.getPalette} iconSize={16} />
         </li>
         <li>
           <CompactSwitch />

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatHash } from '../app/routes';
-import { basename, relativeAge, stationOrder } from '../app/sessions';
+import { stationOrder } from '../app/sessions';
 import type {
   CardStatus,
   DeckSession,
@@ -10,44 +9,40 @@ import type {
   StationView,
 } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { hasChanges } from '../session/changes';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
-import { runningSubagents } from '../session/timeline';
-import { useDiffTotal } from '../session/workspace';
 import { batchCountOf, batchCounts } from '../compare/compare';
-import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
-import { digestLine, GeneratedMark } from '../ui/generated';
+import { archLabel, isRiskyMode, modeLabel } from '../ui/format';
 import {
   Archive,
   ArchiveRestore,
-  Folder,
-  GitBranch,
   Icon,
-  Layers,
-  Mail,
-  Paperclip,
+  Plus,
   RotateCcw,
-  Star,
+  ShieldAlert,
   TriangleAlert,
-  Workflow,
 } from '../ui/icons';
 import { archived } from '../ui/archive';
-import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
 import { projectGroups } from '../integrations/projectGroups';
-import { ProjectChip } from '../integrations/ProjectChip';
-import { IssueChip } from '../integrations/IssueChip';
-import { PrChip } from '../integrations/PrChip';
+import { osLabel } from '../tailnet/model';
 import { useNow } from '../ui/useNow';
-import { buckets } from './activity';
-import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
-import { CardNote, CompareChip } from './cardParts';
-import { FleetStrip } from './FleetStrip';
+import {
+  type Arrivals,
+  BOARD_ARRIVALS,
+  byArrival,
+  type Contested,
+  cardKey,
+  NO_REPO,
+  rememberArrivals,
+  repoName,
+  stationName,
+  statusGroups,
+} from './fleet';
+import { FleetStrip, useChangesColumn } from './FleetStrip';
 import { resourceWarnings } from './resources';
-import { Sparkline } from './Sparkline';
-import { costText } from './usage';
+import { archTitle, SlotMeter } from './StationTraits';
 
 /** How the lanes of the board are made (DL-141, DL-176). */
 export type FleetGroup = 'station' | 'repo' | 'project';
@@ -67,14 +62,21 @@ type Props = {
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
   /**
    * DESIGN-SYSTEM §4.2, §4.4: the ended and lost strips of each lane fold into a collapsed
-   * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Clear,
-   * and the lane count is the shown live strips. The board-wide offline row then shows only while
-   * two or more lanes have ended or lost sessions (one Resume all, Clear and Restore all for every
-   * lane).
+   * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Archive,
+   * and the lane count is the shown live strips. The board-wide "All ended" row then shows only
+   * while two or more lanes have ended or lost sessions (one Resume all, Archive and Restore all
+   * for every lane).
    * Off: the ended strips stay in their lane, the lane count is every strip, and one offline row
    * for the ended, lost and unreachable sessions closes the board.
    */
   readonly foldEnded?: boolean | undefined;
+  /**
+   * A station board without a filter: every online station has a lane, also one without a session
+   * (its head and "No sessions.", with New session when `onSpawnAt` is given).
+   */
+  readonly emptyLanes?: boolean | undefined;
+  /** Opens New session with this station picked (the New session of an empty lane). */
+  readonly onSpawnAt?: ((stationId: string) => void) | undefined;
 };
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
@@ -140,13 +142,29 @@ export const STRIP_ORDER: readonly CardStatus[] = [
   'ended',
 ];
 
-/** The strips of one lane: starred first, then by `STRIP_ORDER`, then newest first. */
+/** The status groups of a lane: newest arrival first (`byArrival`); a strip with no arrival yet
+ * (it just came into its status) before the others, newest first. Without arrivals: newest first. */
+function arrivalGroups(
+  cards: readonly DeckSession[],
+  arrivals: Arrivals | undefined,
+): Record<CardStatus, DeckSession[]> {
+  const groups = statusGroups([...cards]);
+  if (arrivals === undefined) return groups;
+  // A stable sort: the strips with no arrival keep their newest-first order.
+  for (const status of STRIP_ORDER) groups[status].sort(byArrival(arrivals));
+  return groups;
+}
+
+/**
+ * The strips of one lane: starred first, then by `STRIP_ORDER`, then by arrival in the status
+ * (`arrivals`, the board) or newest first (no arrivals).
+ */
 export function stripCards(
   cards: readonly DeckSession[],
   starred?: ReadonlySet<string>,
+  arrivals?: Arrivals,
 ): DeckSession[] {
-  const groups = statusGroups([...cards]);
-  const ordered = columnCards(groups, STRIP_ORDER);
+  const ordered = columnCards(arrivalGroups(cards, arrivals), STRIP_ORDER);
   if (starred === undefined || starred.size === 0) return ordered;
   const star = (c: DeckSession) => starred.has(sessionRef(c.station_id, c.summary.session_id));
   return [...ordered.filter(star), ...ordered.filter((c) => !star(c))];
@@ -156,177 +174,6 @@ const isOffline = (c: DeckSession) =>
   c.status === 'ended' || c.status === 'unreachable' || c.status === 'lost';
 
 const isDone = (c: DeckSession) => c.status === 'ended' || c.status === 'lost';
-
-/** One session card: the whole card is the link to the session. */
-export function FleetCard({
-  card,
-  stations,
-  freshness,
-  now,
-  showStation,
-  contested,
-  extra,
-  batchCount = 0,
-}: {
-  readonly card: DeckSession;
-  readonly stations: readonly StationView[];
-  readonly freshness: Freshness;
-  readonly now: number;
-  readonly showStation: boolean;
-  readonly contested?: Contested | undefined;
-  readonly extra?: SessionExtras | undefined;
-  /** How many sessions of the card's batch are on the board (R1.4); the chip shows for two or more. */
-  readonly batchCount?: number;
-}) {
-  const s = card.summary;
-  const ref = sessionRef(card.station_id, s.session_id);
-  const starred = priority.use().has(ref);
-  const projects = useProjects();
-  const cleared = archived.use().has(ref) && (card.status === 'ended' || card.status === 'lost');
-  const bypass = isRiskyMode(s.mode);
-  const subagents = runningSubagents(s);
-  const where =
-    s.branch !== null && s.branch !== '' ? (
-      <>
-        <Icon of={GitBranch} size={12} /> {s.branch}
-      </>
-    ) : s.cwd !== null && s.cwd !== '' ? (
-      <>
-        <Icon of={Folder} size={12} /> {basename(s.cwd)}
-      </>
-    ) : null;
-  const files = extra?.files ?? [];
-  const total = useDiffTotal(ref);
-  const digest = digestLine(s.digest);
-  const activity = buckets(ref, now);
-  const station = showStation
-    ? `${stationName(card.station_id, stations)}${where === null ? '' : ' · '}`
-    : '';
-  return (
-    <li className="fd-cardwrap">
-      <a
-        className="fd-card"
-        href={formatHash({
-          name: 'session',
-          station: card.station_id,
-          session: s.session_id,
-          tab: 'chat',
-        })}
-        data-session={s.session_id}
-        data-station={card.station_id}
-        data-status={card.status}
-        data-contested={contested === undefined ? undefined : 'true'}
-        data-archived={cleared ? 'true' : undefined}
-      >
-        <span className="fd-card-head">
-          <span className="fd-dot" data-status={card.status} aria-hidden="true" />
-          <span className="fd-card-title">{s.title ?? s.callsign ?? s.session_id}</span>
-          {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
-          {starred ? (
-            <span className="fd-card-star" title="Priority">
-              <Icon of={Star} size={12} />
-            </span>
-          ) : null}
-          <UnreadMark count={unreadOf(card)} />
-          {extra !== undefined && extra.mail_pending > 0 ? (
-            <span className="fd-card-mail" title="Mail waiting for delivery">
-              <Icon of={Mail} size={12} /> {extra.mail_pending}
-            </span>
-          ) : null}
-        </span>
-        <span className="fd-card-where">
-          {station === '' && where === null ? null : (
-            <span className="fd-card-place">
-              {station}
-              {where}
-            </span>
-          )}
-          <span className="fd-badge" data-family={modelFamily(s.model) ?? undefined}>
-            {shortModel(s.model)}
-          </span>
-        </span>
-        <CardNote card={card} />
-        <FocusLine summary={s} />
-        {digest === null ? null : (
-          <span className="fd-card-digest" title="Generated summary">
-            {digest}
-          </span>
-        )}
-        {files.length === 0 ? null : (
-          <span className="fd-card-files">
-            {files.map((path) => (
-              <span
-                key={path}
-                className="fd-filechip"
-                title={path}
-                data-hot={contested?.files.includes(path) ? 'true' : undefined}
-              >
-                {basename(path)}
-              </span>
-            ))}
-          </span>
-        )}
-        {total === undefined || !hasChanges(total) ? null : (
-          <span className="fd-card-diff" title="Changed since the session started">
-            <span className="fd-add">+{total.insertions}</span>{' '}
-            <span className="fd-del">−{total.deletions}</span>
-          </span>
-        )}
-        {contested === undefined ? null : (
-          <span className="fd-card-contested">
-            <Icon of={TriangleAlert} size={12} /> contested with {contested.with.join(', ')}
-          </span>
-        )}
-        <span className="fd-card-foot">
-          {bypass ? (
-            <span className="fd-badge" data-tone="hazard" title="Permission mode">
-              {s.mode}
-            </span>
-          ) : null}
-          {cleared ? (
-            <span className="fd-badge" data-tone="muted">
-              Archived
-            </span>
-          ) : null}
-          {subagents > 0 ? (
-            <span className="fd-badge" title="Subagents running" data-running-subagents={subagents}>
-              <Icon of={Workflow} size={12} /> {subagents}
-            </span>
-          ) : null}
-          {s.artifacts_count > 0 ? (
-            <span className="fd-badge" title="Artifacts" data-artifacts={s.artifacts_count}>
-              <Icon of={Paperclip} size={12} /> {s.artifacts_count}
-            </span>
-          ) : null}
-          {s.background_tasks.length > 0 ? (
-            <span className="fd-badge" title="Background tasks">
-              <Icon of={Layers} size={12} /> {s.background_tasks.length}
-            </span>
-          ) : null}
-          {s.terminal != null ? (
-            <span className="fd-badge" data-tone="act">
-              In terminal
-            </span>
-          ) : null}
-          {costText(s.usage) !== null ? (
-            <span className="fd-badge">{costText(s.usage)}</span>
-          ) : null}
-          {freshness === 'stale' ? (
-            <span className="fd-badge" data-tone="muted">
-              Stale
-            </span>
-          ) : null}
-          {activity.some((n) => n > 0) ? <Sparkline values={activity} /> : null}
-          <span className="fd-card-age">{relativeAge(s.updated_at, now)}</span>
-        </span>
-      </a>
-      <CompareChip card={card} count={batchCount} />
-      <IssueChip summary={s} projects={projects} station={card.station_id} />
-      <PrChip card={card} />
-      <ProjectChip card={card} />
-    </li>
-  );
-}
 
 /** The swimlane order: the known stations first, then the other station ids (the sidebar order). */
 function laneOrder(sessions: readonly DeckSession[], stations: readonly StationView[]): string[] {
@@ -343,8 +190,9 @@ const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
 const RESUMED_MS = 6000;
 
 /**
- * The offline tools: Resume all, Clear, and Restore all (DL-141). `row`: the labelled row at the
- * end of the board; `lane`: the buttons inside a lane's Ended group.
+ * The offline tools: Resume all, Archive, and Restore all (DL-141). `row`: the labelled row at the
+ * end of the board ("All ended", the ended sessions of every lane); `lane`: the buttons inside a
+ * lane's Ended group. The counts are `.fd-count` pills (as "Ended 2").
  */
 export function OfflineTools({
   cards,
@@ -390,7 +238,7 @@ export function OfflineTools({
   };
   return (
     <div className="fd-offline-tools" data-variant={variant}>
-      {variant === 'lane' ? null : <span className="fd-label">Offline sessions</span>}
+      {variant === 'lane' ? null : <span className="fd-label">All ended</span>}
       <button
         type="button"
         className="fd-ghost fd-sm"
@@ -398,7 +246,13 @@ export function OfflineTools({
         onClick={() => void resumeAll()}
       >
         <Icon of={RotateCcw} size={12} />{' '}
-        {running ? 'Resuming…' : `Resume all (${resumable.length})`}
+        {running ? (
+          'Resuming…'
+        ) : (
+          <>
+            Resume all <span className="fd-count">{resumable.length}</span>
+          </>
+        )}
       </button>
       {report === null ? null : (
         <span className="fd-offline-report" role="status">
@@ -411,7 +265,7 @@ export function OfflineTools({
         disabled={clearable.length === 0}
         onClick={() => archived.add(refsOf(clearable))}
       >
-        <Icon of={Archive} size={12} /> Clear ({clearable.length})
+        <Icon of={Archive} size={12} /> Archive <span className="fd-count">{clearable.length}</span>
       </button>
       {restorable.length === 0 ? null : (
         <button
@@ -470,20 +324,40 @@ function lanesOf(
   });
 }
 
+/**
+ * The lanes of the online stations (at their last report: a stale board keeps it) that have no
+ * session: after the other lanes, in the deck's station order.
+ */
+export function emptyStationLanes(
+  lanes: readonly { readonly id: string }[],
+  stations: readonly StationView[],
+): Lane[] {
+  const taken = new Set(lanes.map((l) => l.id));
+  return stations
+    .filter((s) => s.reachable && !taken.has(s.station_id))
+    .map((s) => ({ id: s.station_id, name: s.name, label: `Station ${s.name}`, cards: [] }));
+}
+
 /** A lane with only ended or lost sessions goes after the lanes with a live session. */
 const settled = (lane: Lane) =>
   lane.cards.every((c) => c.status === 'ended' || c.status === 'lost');
 
-/** The platform names of the station traits, as the owner reads them. */
-const OS_NAME: Readonly<Record<string, string>> = {
-  linux: 'Linux',
-  macos: 'macOS',
-  darwin: 'macOS',
-  omarchy: 'Omarchy',
-  windows: 'Windows',
-};
+/**
+ * The risky permission mode that every live strip of a lane shares, when the lane has two or more:
+ * the lane head names it once, and the strips drop their flag (§4.1). A hazard on every row stops
+ * saying "look here". One strip keeps its own flag: there is nothing to fold.
+ */
+export function laneMode(cards: readonly DeckSession[]): string | null {
+  const live = cards.filter((c) => !isDone(c));
+  const mode = live[0]?.summary.mode ?? null;
+  if (live.length < 2 || mode === null || !isRiskyMode(mode)) return null;
+  return live.every((c) => c.summary.mode === mode) ? mode : null;
+}
 
-/** The station facts of a lane head: platform, and the reach (dot and word). */
+/**
+ * The station facts of a lane head: the platform, and the reach. The dot says online (its word is
+ * for screen readers only, as the station head of Settings); an offline station says it in words.
+ */
 function StationFacts({
   station,
   freshness,
@@ -496,21 +370,22 @@ function StationFacts({
   return (
     <>
       {traits === undefined ? null : (
-        <span className="fd-lane-platform">
-          {OS_NAME[traits.os.toLowerCase()] ?? traits.os} · {traits.arch}
+        <span className="fd-lane-platform" title={archTitle(traits.arch)}>
+          {osLabel(traits.os)} · {archLabel(traits.arch)}
         </span>
       )}
       <span className="fd-lane-reach" data-up={up ? 'true' : 'false'}>
-        {up ? 'online' : 'offline'}
+        {up ? <span className="fd-vh">online</span> : 'offline'}
       </span>
     </>
   );
 }
 
-/** A slot meter shows one tick per slot up to this many; a bigger station shows the count only. */
-const MAX_TICKS = 16;
-
-/** The slot meter of a station lane: "3 of 12", the needs-you slots first (DESIGN-SYSTEM §4.4). */
+/**
+ * The slot meter of a station lane (`SlotMeter`, the notation of the station card and Properties):
+ * the ticks, the needs-you slots first, and "3 of 12", or "12 free" while the station runs no
+ * session (DESIGN-SYSTEM §4.4).
+ */
 function LaneSlots({
   station,
   cards,
@@ -523,16 +398,10 @@ function LaneSlots({
   const max = info.max_sessions;
   const used = Math.min(info.live_sessions, max);
   const needs = Math.min(cards.filter((c) => c.status === 'needs_you').length, used);
+  const free = max > 0 && info.live_sessions === 0;
   return (
-    <span className="fd-lane-slots">
-      {max > 0 && max <= MAX_TICKS ? (
-        <span className="fd-slots" aria-hidden="true">
-          {Array.from({ length: max }, (_, i) => (
-            <span key={i} data-slot={i < needs ? 'needs_you' : i < used ? 'used' : undefined} />
-          ))}
-        </span>
-      ) : null}
-      {info.live_sessions} of {max}
+    <span className={free ? 'fd-lane-slots fd-lane-free' : 'fd-lane-slots'}>
+      <SlotMeter max={max} used={info.live_sessions} needs={needs} />
     </span>
   );
 }
@@ -563,15 +432,26 @@ export function FleetBoard({
   sessionActions,
   extras,
   foldEnded = false,
+  emptyLanes = false,
+  onSpawnAt,
 }: Props) {
   const now = useNow(given, 30000);
   const starred = priority.use();
   const projects = useProjects();
   const batches = batchCounts(sessions);
   const all = lanesOf(sessions, stations, group, projects);
-  const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
+  const lanes = [
+    ...all.filter((l) => !settled(l)),
+    ...all.filter(settled),
+    ...(emptyLanes && group === 'station' ? emptyStationLanes(all, stations) : []),
+  ];
   const offline = foldEnded ? boardEnded(lanes) : sessions.filter(isOffline);
-  const strip = (card: DeckSession) => (
+  // The changes column is a choice of the board, and it stays once a strip showed changes.
+  const changes = useChangesColumn();
+  useEffect(() => {
+    rememberArrivals(sessions, BOARD_ARRIVALS);
+  }, [sessions]);
+  const strip = (card: DeckSession, mode: string | null) => (
     <FleetStrip
       key={cardKey(card)}
       card={card}
@@ -582,10 +462,11 @@ export function FleetBoard({
       contested={contested?.get(sessionRef(card.station_id, card.summary.session_id))}
       extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
       batchCount={batchCountOf(card, batches)}
+      hideMode={mode !== null && card.summary.mode === mode}
     />
   );
   return (
-    <main className="fd-board" aria-label="Fleet board">
+    <main className="fd-board" data-changes={changes ? 'true' : undefined} aria-label="Fleet board">
       {lanes.map((lane) => {
         const contestedCount =
           contested === undefined
@@ -596,11 +477,13 @@ export function FleetBoard({
         const view =
           group === 'station' ? stations.find((s) => s.station_id === lane.id) : undefined;
         const warnings = group === 'station' ? resourceWarnings(view?.info?.resources) : [];
-        const ordered = stripCards(lane.cards, starred);
+        const ordered = stripCards(lane.cards, starred, BOARD_ARRIVALS);
+        const mode = laneMode(ordered);
         const live = foldEnded ? ordered.filter((c) => !isDone(c)) : ordered;
         const done = foldEnded ? ordered.filter(isDone) : [];
         // The count after the name is the shown strips (the sidebar's rule): a folded lane's
-        // Ended row carries its own count, and the lane total stays in the title.
+        // Ended row carries its own count, and the lane total stays in the title. A lane with no
+        // shown strip has no count: a zero pill is nothing to act on (§4.2, §5).
         const total =
           live.length === lane.cards.length
             ? undefined
@@ -616,27 +499,57 @@ export function FleetBoard({
           >
             <div className="fd-lane-head">
               <h2 className="fd-lane-name fd-wide">{lane.name}</h2>
-              <span className="fd-count" title={total}>
-                {live.length}
-              </span>
+              {live.length === 0 ? null : (
+                <span className="fd-count" title={total}>
+                  {live.length}
+                </span>
+              )}
               {view === undefined ? null : <StationFacts station={view} freshness={freshness} />}
+              {mode === null ? null : (
+                <span
+                  className="fd-lane-warn"
+                  data-warn="mode"
+                  title={`Permission mode of every live session of ${lane.name}`}
+                >
+                  <Icon of={ShieldAlert} size={12} /> {modeLabel(mode)}
+                </span>
+              )}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
-                  ▲ Low resources
+                  <Icon of={TriangleAlert} size={12} /> Low resources
                 </span>
               ) : null}
               {group === 'repo' && contestedCount > 0 ? (
-                <span className="fd-lane-conf">▲ {contestedCount} contested</span>
+                <span className="fd-lane-conf">
+                  <Icon of={TriangleAlert} size={12} /> {contestedCount} contested
+                </span>
               ) : null}
               {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
             </div>
-            {live.length === 0 ? null : <ul className="fd-strips">{live.map(strip)}</ul>}
+            {live.length === 0 ? null : (
+              <ul className="fd-strips">{live.map((card) => strip(card, mode))}</ul>
+            )}
+            {lane.cards.length > 0 ? null : (
+              <div className="fd-lane-none">
+                <p className="fd-note">No sessions.</p>
+                {onSpawnAt === undefined ? null : (
+                  <button
+                    type="button"
+                    className="fd-ghost fd-sm"
+                    aria-label={`New session on ${lane.name}`}
+                    onClick={() => onSpawnAt(lane.id)}
+                  >
+                    <Icon of={Plus} size={12} /> New session
+                  </button>
+                )}
+              </div>
+            )}
             {done.length === 0 ? null : (
               <details className="fd-lane-ended">
                 <summary>
                   Ended <span className="fd-count">{done.length}</span>
                 </summary>
-                <ul className="fd-strips">{done.map(strip)}</ul>
+                <ul className="fd-strips">{done.map((card) => strip(card, mode))}</ul>
                 <OfflineTools
                   cards={done}
                   freshness={freshness}

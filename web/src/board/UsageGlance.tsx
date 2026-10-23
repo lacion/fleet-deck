@@ -2,22 +2,49 @@
 // rate-limit windows as fuel meters and the fleet totals. The Usage tab keeps every meter and the
 // unknown parts; this glance shows only what is known.
 import type { DeckSession, StationView } from '../gen';
+import { compactCount } from '../ui/format';
 import { Fuel, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
-import { dollars, fleetUsage, rateMeters, resetsText, scopeText, WARN_PERCENT } from './usage';
+import { isLiveSession } from './fleet';
+import {
+  API_PRICES,
+  apiPricesTitle,
+  dollars,
+  fleetUsage,
+  inputLabel,
+  rateMeters,
+  resetsText,
+  scopeText,
+  tokens,
+  WARN_PERCENT,
+} from './usage';
 
 /** How many windows the glance shows (the tightest first). */
 const SHOWN = 3;
 
-/** "4.2 M", "610 k", "940". */
-export function compactCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} M`;
-  if (n >= 10_000) return `${Math.round(n / 1000)} k`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)} k`;
-  return String(n);
-}
-
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * What the totals count, in the words of the header sentence: "7 live and 2 ended sessions" (the
+ * header says "7 live sessions"; the ended ones are the Ended folds). A part of zero is left out;
+ * the noun agrees with the last number ("1 live session", "6 live and 1 ended session").
+ */
+export function sessionsText(sessions: readonly DeckSession[]): string {
+  const live = sessions.filter(isLiveSession).length;
+  const away = sessions.filter((s) => s.status === 'unreachable').length;
+  const ended = sessions.length - live - away;
+  const parts = [
+    { n: live, word: 'live' },
+    { n: away, word: 'unreachable' },
+    { n: ended, word: 'ended' },
+  ].filter((p) => p.n > 0);
+  const last = parts.at(-1);
+  if (last === undefined) return '0 sessions';
+  const words = parts.map((p) => `${p.n} ${p.word}`);
+  const head = words.slice(0, -1).join(', ');
+  const noun = last.n === 1 ? 'session' : 'sessions';
+  return `${head === '' ? '' : `${head} and `}${words.at(-1)} ${noun}`;
+}
 
 export function UsageGlance({
   sessions,
@@ -34,13 +61,19 @@ export function UsageGlance({
   // The station name tells two accounts apart only when several stations report limits.
   const manyStations = new Set(known.map((m) => m.stationId)).size > 1;
   const usage = fleetUsage(sessions);
+  const approx = usage.costInferred ? '≈ ' : '';
+  // Each total has its exact value as its title: the row shows a count short ("1.5M"). The cost is
+  // the price at the provider's API rates (cached input included), named and explained as such.
+  const priced = apiPricesTitle(sessions.length);
   const totals = [
-    { label: 'input tokens', value: usage.input.known, text: compactCount },
-    { label: 'output tokens', value: usage.output.known, text: compactCount },
+    { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
+    { label: 'output', value: usage.output.known, text: compactCount, exact: tokens },
     {
-      label: 'cost',
+      label: API_PRICES,
       value: usage.cost.known,
-      text: (n: number) => `${usage.costInferred ? '≈ ' : ''}${dollars(n)}`,
+      text: (n: number) => `${approx}${dollars(n)}`,
+      exact: (n: number) => `${approx}${dollars(n)}\n${priced}`,
+      about: priced,
     },
   ].filter((t) => t.value !== null);
   if (meters.length === 0 && totals.length === 0) return null;
@@ -76,14 +109,21 @@ export function UsageGlance({
         </ul>
       )}
       {totals.length === 0 ? null : (
-        <dl className="fd-glance-totals">
-          {totals.map((t) => (
-            <div key={t.label}>
-              <dt>{t.label}</dt>
-              <dd>{t.value === null ? null : t.text(t.value)}</dd>
-            </div>
-          ))}
-        </dl>
+        <>
+          {/* The scope of the totals: the sessions on the board (the archived ones only while
+              Filters shows them), each since it started, in the live words of the header. */}
+          <p className="fd-glance-span">{sessionsText(sessions)}</p>
+          <dl className="fd-glance-totals">
+            {totals.map((t) => (
+              <div key={t.label}>
+                <dt title={'about' in t ? t.about : undefined}>{t.label}</dt>
+                <dd title={t.value === null ? undefined : t.exact(t.value)}>
+                  {t.value === null ? null : t.text(t.value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
     </div>
   );

@@ -68,7 +68,7 @@ async function chooseApp(page: Page): Promise<void> {
   await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
-  await form.getByRole('button', { name: 'Open projects' }).click();
+  // The station has one allowed root (projects): Browse… opens inside it.
   await form.getByRole('button', { name: 'Open app' }).click();
   await form.getByRole('button', { name: 'Use this folder' }).click();
   await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);

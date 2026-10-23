@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import type { WorkspaceListing } from '../src/gen';
 import { claudeCaps, codexCaps } from '../src/testing/capabilities';
 import { summary } from '../src/testing/summary';
+import { modeLabel } from '../src/ui/format';
 import { CSRF, FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
 
 const alpha = stationView('st-alpha', 'Alpha', {
@@ -69,7 +70,7 @@ async function chooseApp(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('link', { name: 'New', exact: true }).click();
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
-  await form.getByRole('button', { name: 'Open projects' }).click();
+  // The station has one allowed root (projects): Browse… opens inside it.
   await expect(form.getByRole('button', { name: 'Open app' })).toContainText('git');
   await form.getByRole('button', { name: 'Open app' }).click();
   await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('app');
@@ -106,7 +107,7 @@ test('a session starts from the form with a picked directory and opens', async (
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
+  await expect(form.getByLabel('Provider')).toContainText('Claude (personal)');
   await form.getByLabel('Permission mode').selectOption('plan');
   await form.getByLabel('Model (optional)').fill('sonnet');
   await form.getByLabel('Title (optional)').fill('Fix the login');
@@ -185,13 +186,14 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   const mode = form.getByLabel('Permission mode');
+  // The modes show their names, as in the session header: never the raw ids.
   await expect(mode.locator('option')).toHaveText([
-    'Station default',
-    'default',
-    'plan',
-    'acceptEdits',
-    'dontAsk',
-    'auto',
+    'Default mode',
+    'Default',
+    'Plan',
+    'Accept edits',
+    "Don't ask",
+    'Auto',
   ]);
   await mode.selectOption('plan');
   // Another provider resets the mode and offers its own native modes.
@@ -200,7 +202,10 @@ test('the mode list follows the capabilities of the chosen provider (P5-3)', asy
     .getByText(/\(work\)/)
     .click();
   await expect(mode).toHaveValue('');
-  await expect(mode.locator('option')).toHaveText(['Station default', ...codexCaps().modes]);
+  await expect(mode.locator('option')).toHaveText([
+    'Default mode',
+    ...codexCaps().modes.map(modeLabel),
+  ]);
   await mode.selectOption('untrusted/read-only');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
@@ -279,6 +284,8 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  // A phone shows the Batch switch in "More options": its sticky footer is one row of buttons.
+  await form.getByText('More options', { exact: true }).click();
   await form.getByLabel(/Batch: one session/).check();
   await form
     .getByLabel('What should the agent do? (optional)')
@@ -319,7 +326,7 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('radiogroup', { name: 'Workspace' }).getByText('Clone repository').click();
   await form.getByLabel('Repository', { exact: true }).fill('https://github.com/acme/app.git');
-  await form.getByLabel('New directory name').fill('app-copy');
+  await form.getByLabel('New folder name').fill('app-copy');
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-c$/);
   const starts = deck.calls.filter((c) => c.path === '/api/commands/session.start');
@@ -347,7 +354,7 @@ test('More options is folded and stays open while an option has a value', async 
   await expect(fold).not.toHaveAttribute('open', '');
   // An option with a value keeps the fold open.
   await form.getByText('More options', { exact: true }).click();
-  await form.getByLabel('Import CLI session id (optional)').fill('abc');
+  await form.getByLabel('Session to import (optional)').fill('abc');
   await form.getByText('More options', { exact: true }).click();
   await expect(fold).toHaveAttribute('open', '');
 });
@@ -370,7 +377,7 @@ test('a terminal CLI session is imported by its id as a driven session (6-12)', 
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByText('More options', { exact: true }).click();
-  const id = form.getByLabel('Import CLI session id (optional)');
+  const id = form.getByLabel('Session to import (optional)');
   await id.fill('--resume');
   await expect(form.getByRole('alert')).toContainText('starts with a letter or a digit');
   await expect(form.getByRole('button', { name: 'Import session' })).toBeDisabled();
@@ -402,6 +409,8 @@ test('a batch lists its prompts and counts the sessions on the button', async ({
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  // A phone shows the Batch switch in "More options": its sticky footer is one row of buttons.
+  await form.getByText('More options', { exact: true }).click();
   await form.getByLabel(/Batch: one session/).check();
   const preview = form.getByLabel('Sessions to start');
   // one line is one session: no preview and the plain button
@@ -448,12 +457,13 @@ test('a recent directory chip selects its directory for the start', async ({ pag
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   const recent = form.getByLabel('Recent directories');
-  await expect(recent.getByRole('button')).toHaveText(['projects/app', 'projects/notes']);
-  await expect(recent.getByRole('button', { name: 'projects/app' })).toHaveAttribute(
+  // A folder row shows its name, then its parent from the root; its name is the whole short path.
+  await expect(recent.getByRole('button')).toHaveText(['app~/projects/', 'notes~/projects/']);
+  await expect(recent.getByRole('button', { name: '~/projects/app' })).toHaveAttribute(
     'title',
     `${ROOT}/app`,
   );
-  await recent.getByRole('button', { name: 'projects/notes' }).click();
+  await recent.getByRole('button', { name: '~/projects/notes' }).click();
   await expect(form.getByLabel('Directory path')).toHaveValue(`${ROOT}/notes`);
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-r$/);
@@ -471,17 +481,17 @@ test('a pinned directory stays after a reload and unpins again', async ({ page }
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
   await expect(form.getByLabel('Recent directories')).toHaveCount(0);
-  await form.getByRole('button', { name: 'Pin this directory' }).click();
-  await expect(form.getByRole('button', { name: 'Unpin this directory' })).toBeVisible();
+  await form.getByRole('button', { name: 'Pin this folder' }).click();
+  await expect(form.getByRole('button', { name: 'Unpin this folder' })).toBeVisible();
   await expect(form.getByLabel('Recent directories')).toContainText('Pinned and recent');
   await page.reload();
   const again = page.getByRole('region', { name: 'New session' });
   await again.getByRole('button', { name: 'Browse…' }).click();
   const recent = again.getByLabel('Recent directories');
-  await expect(recent.getByRole('button', { name: 'projects/app' })).toBeVisible();
-  await recent.getByRole('button', { name: 'projects/app' }).click();
+  await expect(recent.getByRole('button', { name: '~/projects/app' })).toBeVisible();
+  await recent.getByRole('button', { name: '~/projects/app' }).click();
   await expect(again.getByLabel('Directory path')).toHaveValue(`${ROOT}/app`);
-  await again.getByRole('button', { name: 'Unpin this directory' }).click();
+  await again.getByRole('button', { name: 'Unpin this folder' }).click();
   await again.getByRole('button', { name: 'Browse…' }).click();
   await expect(again.getByLabel('Recent directories')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('fd-dir-pins'))).toBe('{"st-alpha":[]}');

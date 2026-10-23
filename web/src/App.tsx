@@ -8,7 +8,7 @@ import { AutomationsPage } from './automations/AutomationsPage';
 import type { AutomationActions } from './automations/automations';
 import type { FeedItem } from './board/feed';
 import type { ConflictLoader } from './board/conflicts';
-import { stationName } from './board/fleet';
+import { BOARD_ARRIVALS, rememberArrivals, stationName } from './board/fleet';
 import { markOnStart, type PlanActions } from './board/plans';
 import type { StationActions } from './board/pairing';
 import { PlanLibrary } from './board/PlanLibrary';
@@ -37,8 +37,8 @@ import { HelpNotice, useHelpNotice } from './app/HelpNotice';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
 import { noteNavigation, startBackNav } from './app/backNav';
-import { Layout } from './app/Layout';
-import { More } from './app/More';
+import { type FrameNotice, Layout } from './app/Layout';
+import { More, TerminalsEmpty } from './app/More';
 import { Palette } from './app/Palette';
 import { formatHash, type Navigate, parseHash, type Route, useRoute } from './app/routes';
 import { SessionRoute } from './app/SessionRoute';
@@ -126,6 +126,11 @@ type Props = {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
 
+const NO_TERMINALS: Notice = {
+  text: 'No terminal is open. Open a session and select Terminal to start one.',
+  tone: 'info',
+};
+
 const noSubscribe = () => () => {};
 
 /** How many terminal tabs the dock has. */
@@ -207,13 +212,20 @@ export function App({
   const routeKey = formatHash(route);
   const tabCount = useTabCount(terminals);
 
+  // '#/terminals' on a desktop opens the dock; without a terminal the dock does not show, so the
+  // home says why nothing opened (until the owner leaves the home or a terminal opens).
+  const [noTerminals, setNoTerminals] = useState(false);
   useEffect(() => {
     // The dock body is hidden while the store is closed: the terminals screen opens it.
     if (urlRoute.name === 'terminals') terminals?.setOpen(true);
     if (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) {
       navigate({ name: 'home' }, { replace: true });
+      if (urlRoute.name === 'terminals' && tabCount === 0) setNoTerminals(true);
     }
-  }, [phone, urlRoute.name, terminals, navigate]);
+  }, [phone, urlRoute.name, terminals, navigate, tabCount]);
+  useEffect(() => {
+    if (route.name !== 'home' || tabCount > 0) setNoTerminals(false);
+  }, [route.name, tabCount]);
 
   // The open session; a new route object with the same ids must not reopen the timeline.
   const openStation = route.name === 'session' ? route.station : null;
@@ -286,9 +298,13 @@ export function App({
   // A notice of this screen (a shell that did not open, the outcome of "Return …").
   const [local, setLocal] = useState<{ notice: Notice; at: string } | null>(null);
   const notify = (notice: Notice, at: Route) => setLocal({ notice, at: formatHash(at) });
-  const notices = [
+  // The terminals notice has a Dismiss X: it says why nothing opened, and then it may go.
+  const notices: readonly FrameNotice[] = [
     ...(chrome?.notices ?? []),
     ...(local !== null && local.at === routeKey ? [local.notice] : []),
+    ...(noTerminals && route.name === 'home'
+      ? [{ ...NO_TERMINALS, onDismiss: () => setNoTerminals(false) }]
+      : []),
   ];
 
   // R7.1: a session that ended before it started gets a banner until the owner dismisses it.
@@ -298,6 +314,11 @@ export function App({
 
   const open = (key: SessionKey) => navigate(sessionRoute(key));
   const toTerminals = () => navigate({ name: 'terminals' });
+  // The board record of arrivals (board/fleet.ts): the sidebar rows, the j/k keys and the lanes
+  // keep their places while a session works; a render reads it, this effect writes it.
+  useEffect(() => {
+    rememberArrivals(sessions, BOARD_ARRIVALS);
+  }, [sessions]);
   const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
   const step = (by: 1 | -1) => {
     if (order.length === 0) return;
@@ -332,6 +353,11 @@ export function App({
       const composer = document.getElementById('fd-composer-text');
       if (composer !== null) {
         composer.focus();
+        return;
+      }
+      // The fleet home has one search, the filter of its header (the sidebar hides its own there).
+      if (route.name === 'fleet' || (route.name === 'home' && !phone)) {
+        document.querySelector<HTMLInputElement>('.fd-home-search input')?.focus();
         return;
       }
       // The search box lives in the list: show the list first (phone home, tablet drawer).
@@ -422,6 +448,7 @@ export function App({
         {...(newShell === undefined ? {} : { onNewShell: newShell })}
       />
     ) : null;
+  const terminalsOpen = tabCount > 0 && dock !== null;
 
   const sidebar = (variant: 'full' | 'list') => (
     <Sidebar
@@ -602,6 +629,7 @@ export function App({
             station={route.station}
             id={route.id}
             version={route.version}
+            sessions={sessions}
             onVersion={(version) => navigate({ ...route, version }, { replace: true })}
           />
         );
@@ -646,7 +674,6 @@ export function App({
       case 'more':
         return (
           <More
-            stationCount={stations.length}
             stations={stations}
             terminalCount={tabCount}
             chrome={chrome}
@@ -655,11 +682,7 @@ export function App({
           />
         );
       case 'terminals':
-        return tabCount > 0 && dock !== null ? (
-          dock
-        ) : (
-          <p className="fd-empty fd-screen">No terminals open.</p>
-        );
+        return terminalsOpen ? dock : <TerminalsEmpty />;
       case 'session': {
         if (selected === undefined) {
           return (
@@ -721,6 +744,7 @@ export function App({
         onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
         dock={dock}
         chrome={chrome}
+        terminalsOpen={terminalsOpen}
         onTerminalsBack={() => {
           if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
           else navigate({ name: 'home' });

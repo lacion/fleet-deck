@@ -10,10 +10,12 @@ const md = (text: string) => renderToStaticMarkup(<Markdown text={text} />);
 
 describe('Markdown', () => {
   test('renders a GFM table and a task list', () => {
-    const html = md('| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo\n');
+    const html = md('| a | b |\n|---|---|\n| x | 2 |\n\n- [x] done\n- [ ] todo\n');
     expect(html).toContain('<div class="fd-md">');
     expect(html).toContain('<div class="fd-md-table"><table>');
-    expect(html).toContain('<td>1</td>');
+    expect(html).toContain('<td>x</td>');
+    // A column of numbers aligns right (tableNumbers.ts).
+    expect(html).toContain('<td data-num="">2</td>');
     expect(html).toContain('type="checkbox"');
   });
 
@@ -113,7 +115,7 @@ describe('ChatView', () => {
     // a board run has no label: the bubble is the owner's own message
     expect(html).not.toContain('>You<');
     expect(html).not.toContain('fd-chat-run-label');
-    expect(html.match(/fd-chat-bubble/g)?.length).toBe(1);
+    expect(html.match(/class="fd-chat-bubble"/g)?.length).toBe(1);
     expect(html).toContain('again');
   });
 
@@ -202,16 +204,78 @@ describe('ChatView', () => {
     expect(html).toContain('Review changes');
   });
 
-  test('a done turn without a diff renders nothing; a failed turn says so', () => {
-    const turn = (status: 'done' | 'failed'): Item => ({
+  test('a done turn without a diff renders nothing; a failed turn is an error notice row', () => {
+    const turn = (status: 'done' | 'failed' | 'interrupted'): Item => ({
       type: 'turn',
       key: '1',
       status,
       turn_id: 't1',
       diff: null,
     });
-    expect(view({ items: [turn('done')] })).not.toContain('Turn');
-    expect(view({ items: [turn('failed')] })).toContain('Turn failed');
+    expect(view({ items: [turn('done')] })).not.toContain('fd-chat-turn');
+    const failed = view({ items: [turn('failed')] });
+    // §4.7: the error tone (holder and octagon icon), words not the raw status.
+    expect(failed).toContain(
+      '<div class="fd-notice fd-chat-alert" data-tone="error" data-place="page" data-status="failed">',
+    );
+    expect(failed).toContain('lucide-octagon-alert');
+    expect(failed).toContain('<p>This turn failed.</p>');
+    expect(failed).not.toContain('Turn failed');
+    expect(failed).not.toContain('Details');
+    // An interrupted turn (Steer now interrupts one on purpose) is a quiet line.
+    expect(view({ items: [turn('interrupted')] })).toContain(
+      '<p class="fd-chat-line" data-status="interrupted">The turn was interrupted.</p>',
+    );
+  });
+
+  test('a failed turn shows the provider error of its agent text as its cause, not as prose', () => {
+    const raw =
+      'API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down';
+    const items: Item[] = [
+      { type: 'run', key: 'r', run_id: 'r1', input: 'go', origin: 'board' },
+      { type: 'message', key: 'm1', text: 'I start.', done: true },
+      { type: 'message', key: 'm2', text: raw, done: true },
+      { type: 'turn', key: 't', status: 'failed', turn_id: 't1', diff: null },
+    ];
+    const html = view({ items });
+    expect(html).toContain('I start.');
+    expect(html).not.toContain('<div class="fd-chat-message"><div class="fd-md"><p>API Error');
+    expect(html).toContain(
+      `<p class="fd-chat-alert-cause">The provider&#x27;s rate limit stopped it. Try again later.</p>`,
+    );
+    // The raw text is under a collapsed Details.
+    expect(html).toMatch(
+      /<details class="fd-chat-alert-details"><summary>[\s\S]*?Details<\/summary>/,
+    );
+    expect(html).toContain(`<pre>${raw}</pre>`);
+    // A message that is not a provider error stays prose; a done turn takes nothing.
+    const plain = view({
+      items: [{ type: 'message', key: 'm', text: 'API Error: is a heading', done: true }],
+    });
+    expect(plain).toContain('API Error: is a heading');
+  });
+
+  test('a station error is an error notice row with its raw text in the title and its repeats', () => {
+    const items = [
+      {
+        type: 'notice',
+        key: 'n1',
+        text: 'A message may not have reached the agent: the agent process stopped. The station does not send it again.',
+        tone: 'error',
+        title: 'delivery_unknown: the station cannot tell (process_lost)',
+        repeat: 2,
+      },
+      { type: 'notice', key: 'n2', text: 'Interrupt accepted.', tone: 'info' },
+    ] as Item[];
+    const html = view({ items });
+    expect(html).toContain(
+      '<div class="fd-notice fd-chat-alert" data-tone="error" data-place="page" title="delivery_unknown: the station cannot tell (process_lost)">',
+    );
+    expect(html).toContain(
+      'The station does not send it again.</p><span class="fd-count">2<span class="fd-vh"> times</span></span></div>',
+    );
+    expect(html).toContain('<p class="fd-chat-line">Interrupt accepted.</p>');
+    expect(html).not.toContain('fd-chat-error');
   });
 
   test('an open approval is one line: Waiting for your answer · title', () => {
@@ -251,17 +315,124 @@ describe('ChatView', () => {
     expect(html).not.toContain('Waiting for your answer');
   });
 
-  test('Working… shows unless an unfinished message is last', () => {
+  test('Working shows unless an unfinished message or a running call is last', () => {
     const message = (done: boolean): Item => ({ type: 'message', key: '1', text: 'hi', done });
-    expect(view({ items: [message(true)], working: true })).toContain('Working');
+    // The working glyph (it turns; §2.5), not three pulsing dots.
+    expect(view({ items: [message(true)], working: true })).toContain(
+      '<p class="fd-chat-working"><span class="fd-dot" data-status="working" aria-hidden="true"></span>Working</p>',
+    );
+    expect(view({ items: [message(true)], working: true })).not.toContain('fd-chat-dots');
     const streaming = view({ items: [message(false)], working: true });
     expect(streaming).not.toContain('Working');
     expect(streaming).toContain('fd-chat-streaming');
+    // The running call at the end shows the working glyph already: one mark for one state.
+    const running = view({ items: [message(true), tool(1, 'running')], working: true });
+    expect(running).not.toContain('fd-chat-working');
+    expect(running.match(/data-status="working"/g)?.length).toBe(1);
+  });
+
+  test('a Claude question reads as Question with its question, never as JSON', () => {
+    const ask = (input: string, status: 'ok' | 'failed' = 'failed'): Item => ({
+      ...(tool(1, status) as Extract<Item, { type: 'tool' }>),
+      title: 'AskUserQuestion',
+      tool_kind: 'other',
+      input,
+    });
+    const cut = '{"questions":[{"header":"Reset data","multiSelect":false,"options"…';
+    const html = view({ items: [ask(cut)] });
+    expect(html).toContain(
+      '<span class="fd-chat-tool-title" title="AskUserQuestion">Question</span>',
+    );
+    expect(html).toContain('<bdi>Reset data</bdi>');
+    expect(html).toContain('lucide-message-square');
+    expect(html).not.toContain('<bdi>{');
+    // The expanded body keeps the raw input.
+    expect(html).toContain('<pre class="fd-code">{&quot;questions&quot;');
+    // Its request line uses the word too.
+    const expired = view({
+      items: [
+        {
+          type: 'approval',
+          key: 'a',
+          request_id: 'q1',
+          node_id: null,
+          title: 'AskUserQuestion',
+          details: null,
+          options: [],
+          state: 'expired',
+          outcome: 'expired: the agent process stopped',
+        },
+      ],
+    });
+    expect(expired).toContain('Question · expired: the agent process stopped');
+  });
+
+  test('a tool row names an MCP tool, reads a JSON input as its values and a home folder as ~', () => {
+    const row = (n: number, over: Partial<Extract<Item, { type: 'tool' }>>): Item => ({
+      ...(tool(n) as Extract<Item, { type: 'tool' }>),
+      ...over,
+    });
+    const html = view({
+      items: [
+        row(1, {
+          title: 'mcp__fleetdeck__publish_artifact',
+          tool_kind: 'mcp',
+          input: '/Users/me/project/a.html',
+          files: ['/Users/me/project/a.html'],
+        }),
+        row(2, { title: 'TaskStop', tool_kind: 'other', input: '{"task_id":"bv93ogg6d"}' }),
+        row(3, {
+          title: 'Read',
+          tool_kind: 'read',
+          input: '/home/me/notes/a.md',
+          files: ['/home/me/notes/a.md'],
+        }),
+        row(4, { input: 'cat /home/me/notes/a.md\nwc -l' }),
+      ],
+    });
+    // The deck's own tools are words of the board: no server after the name (watch/tooltext.ts).
+    expect(html).toContain(
+      '<span class="fd-chat-tool-title" title="mcp__fleetdeck__publish_artifact">Publish artifact</span>',
+    );
+    expect(html).not.toContain('fd-chat-tool-server">fleetdeck');
+    expect(html).toContain('<bdi>~/project/a.html</bdi>');
+    expect(html).toContain('<bdi>bv93ogg6d</bdi>');
+    expect(html).toContain('<bdi>~/notes/a.md</bdi>');
+    expect(html).toContain('<bdi>cat ~/notes/a.md</bdi>');
+    // A plain tool name has no tooltip; the expanded body keeps the raw input.
+    expect(html).toContain('<span class="fd-chat-tool-title">TaskStop</span>');
+    expect(html).toContain(
+      '<pre class="fd-code">{&quot;task_id&quot;:&quot;bv93ogg6d&quot;}</pre>',
+    );
+    expect(html).toContain('<pre class="fd-code">cat /home/me/notes/a.md\nwc -l</pre>');
+  });
+
+  test('a finished Thinking row says how long it thought', () => {
+    // The times of the first and the last delta (session/timeline.ts).
+    const thought = {
+      type: 'reasoning',
+      key: '1',
+      turn_id: 't',
+      text: 'hmm',
+      done: true,
+      started_at: 1_000,
+      ended_at: 13_000,
+    } as const;
+    expect(view({ items: [thought] })).toContain('>Thinking · 12 s</summary>');
   });
 
   test('reasoning is closed with a Thinking summary', () => {
-    const items: Item[] = [{ type: 'reasoning', key: '1', turn_id: 't', text: 'hmm', done: true }];
-    const html = view({ items });
+    // One delta: no span of time to show.
+    const thought = {
+      type: 'reasoning',
+      key: '1',
+      turn_id: 't',
+      text: 'hmm',
+      done: true,
+      started_at: 1_000,
+      ended_at: 1_000,
+    } as const;
+    const html = view({ items: [thought] });
     expect(html).toContain('>Thinking</summary>');
     expect(html).not.toContain(' open');
   });
@@ -352,7 +523,7 @@ describe('ChatView and review comments (DL-179)', () => {
     const item: Item = { ...run('first…'), text: 'first paragraph\n\nsecond paragraph\nthird' };
     const html = view({ items: [item] });
     expect(html).toContain(
-      '<div class="fd-chat-bubble">first paragraph\n\nsecond paragraph\nthird</div>',
+      '<div class="fd-chat-bubble-text">first paragraph\n\nsecond paragraph\nthird</div>',
     );
     expect(html).not.toContain('first…');
   });
@@ -367,7 +538,7 @@ describe('ChatView and review comments (DL-179)', () => {
 
   test('an old run without text shows the summary', () => {
     const html = view({ items: [run('the summary')] });
-    expect(html).toContain('<div class="fd-chat-bubble">the summary</div>');
+    expect(html).toContain('<div class="fd-chat-bubble-text">the summary</div>');
     expect(html).not.toContain('Show more');
   });
 

@@ -266,7 +266,7 @@ async fn a_display_gets_fixed_labels_and_no_mail_plan_or_input() {
         "Bash (ok)",
         "Fixed it.",
         "Needs you: Approve a command",
-        "Approval answered",
+        "Answered",
         "Session ended",
         "Beta text",
     ] {

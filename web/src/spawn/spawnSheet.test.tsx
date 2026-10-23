@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { RateMeter } from '../board/usage';
 import type { StationInfo, StationProvider } from '../gen';
 import { station } from '../testing/fleet';
-import { submitKeyHint } from './keyHint';
+import { submitKeyMod } from './keyHint';
 import { AUTO, limitBadge, providerChoice } from './spawn';
-import { SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
+import { OptionsSummary, optionsHint, SheetHead, SpawnFoot, StationPills } from './SpawnSheet';
 
 const info = (extra: Partial<StationInfo>): StationInfo =>
   ({ max_sessions: 4, live_sessions: 1, ...extra }) as StationInfo;
@@ -16,9 +16,12 @@ const pills = (list: ReturnType<typeof station>[], value: string, auto = false) 
   );
 
 describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
-  test('each station is a radio pill with its name, its reach and the free count', () => {
+  test('each station is a radio segment with its name, its reach and the free count', () => {
     const html = pills([station('a', { info: info({}) }), station('b', { info: info({}) })], 'a');
-    expect(html).toContain('role="radiogroup" aria-label="Station"');
+    // One .fd-seg track, the single-choice look of the Agent and Where rows.
+    expect(html).toContain(
+      '<div class="fd-seg fd-spawn-stations" role="radiogroup" aria-label="Station">',
+    );
     expect(html.match(/class="fd-spawn-station"/g)).toHaveLength(2);
     expect(html).toMatch(/checked="" value="a"\/>/);
     expect(html).not.toMatch(/checked="" value="b"/);
@@ -38,32 +41,43 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     expect(html).not.toContain('free');
   });
 
-  test('a deck that places adds the Auto pill after the stations', () => {
+  test('a deck that places adds the Auto pill first, with a sparkles icon and a title', () => {
     const html = pills([station('a', { info: info({}) })], AUTO, true);
     expect(html).toMatch(
-      new RegExp(`checked="" value="${AUTO}"/>Auto<span class="fd-vh"> \\(best station\\)</span>`),
+      new RegExp(
+        `^<div class="fd-seg fd-spawn-stations" role="radiogroup" aria-label="Station"><label class="fd-spawn-station" title="The deck picks the station that fits best"><input type="radio" name="[^"]+" checked="" value="${AUTO}"/><svg[^>]*lucide-sparkles[^>]*>.*?</svg>Auto<span class="fd-vh"> \\(best station\\)</span></label><label class="fd-spawn-station">`,
+      ),
     );
+    // A station pill has no title: its name and its reach are its text.
+    expect(html.match(/ title="/g)).toHaveLength(1);
     expect(pills([station('a', { info: info({}) })], 'a')).not.toContain('Auto');
   });
 
-  test('the head is a breadcrumb with the chosen station; without one, the title only', () => {
-    const head = renderToStaticMarkup(<SheetHead station={station('a', { name: 'Lighting' })} />);
+  test('the head is a breadcrumb with the chosen station or Auto; without one, the title only', () => {
+    const head = renderToStaticMarkup(
+      <SheetHead station={station('a', { name: 'Lighting' })} auto={false} />,
+    );
     expect(head).toMatch(/<span class="fd-badge">.*Lighting<\/span>/);
     expect(head).toContain('<h2>New session</h2>');
-    expect(renderToStaticMarkup(<SheetHead station={undefined} />)).toBe(
+    // Auto keeps the badge and the chevron, so that "New session" does not move.
+    const auto = renderToStaticMarkup(<SheetHead station={undefined} auto />);
+    expect(auto).toMatch(
+      /^<div class="fd-spawn-head"><span class="fd-badge"><svg[^>]*>.*<\/svg>Auto<\/span><span class="fd-spawn-crumb" aria-hidden="true">.*<h2>New session<\/h2><\/div>$/,
+    );
+    expect(auto).not.toContain('Lighting');
+    expect(renderToStaticMarkup(<SheetHead station={undefined} auto={false} />)).toBe(
       '<div class="fd-spawn-head"><h2>New session</h2></div>',
     );
   });
 
-  test('the footer keeps one line: no missing line without missing steps, the kbd hint in Start', () => {
-    const foot = (missing: string[], need: string | null = null, grant: string | null = null) =>
+  test('the footer keeps one line: no status without a text, the key chips in Start', () => {
+    const foot = (missing: string[], grant: string | null = null, batchShown = true) =>
       renderToStaticMarkup(
         <SpawnFoot
-          batchShown
+          batchShown={batchShown}
           batch={false}
           onBatch={() => {}}
           missing={missing}
-          need={need}
           grantProblem={grant}
           describedBy={missing.length === 0 ? undefined : 'fd-spawn-missing'}
           outcome={null}
@@ -73,32 +87,53 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
         />,
       );
     expect(foot([])).not.toContain('data-missing');
-    expect(foot([])).toContain(`<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span>`);
-    expect(foot(['fix the base'])).toContain('data-missing="true">To start: fix the base.</p>');
-    // A phone: the directory note sits first in the status slot, above the sticky buttons.
-    expect(foot([], 'Choose a folder to start.')).toContain(
-      '<div class="fd-spawn-status"><p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p></div>',
+    // The key: two chips, the modifier and Return (an icon: Mona Sans has no ↵ glyph).
+    expect(foot([])).toMatch(
+      new RegExp(
+        `Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+      ),
     );
+    expect(foot(['fix the base'])).toContain(
+      '<div class="fd-spawn-status"><p class="fd-note" id="fd-spawn-missing" data-missing="true">To start: fix the base.</p></div>',
+    );
+    // Nothing to say: no status slot (an empty slot took the room of the actions, and they wrapped
+    // to a second row).
+    expect(foot([])).not.toContain('fd-spawn-status');
     expect(foot([])).not.toContain('fd-spawn-need');
+    // The Batch switch at the left; none for a clone or on a phone (it sits in "More options").
+    expect(foot([])).toContain('<label class="fd-spawn-batch">');
+    expect(foot([], null, false)).not.toContain('Batch');
     // The grant problem: a hidden copy that only the button description reads.
-    expect(foot([], null, 'The session limit is 1 to 50.')).toContain(
+    expect(foot([], 'The session limit is 1 to 50.')).toContain(
       '<span hidden="" id="fd-spawn-grant-error">The session limit is 1 to 50.</span>',
     );
     expect(foot([])).not.toContain('fd-spawn-grant-error');
   });
 
-  test('the kbd hint names the key of the platform: ⌘↵ on Apple systems, else Ctrl+↵', () => {
+  test('"More options" names what it holds in a dim hint', () => {
+    expect(optionsHint({ batch: false, setup: false })).toBe('Coordinator, import');
+    expect(optionsHint({ batch: false, setup: true })).toBe('Setup, coordinator, import');
+    expect(optionsHint({ batch: true, setup: true })).toBe('Batch, setup, coordinator, import');
+    // The name keeps an element of its own (`getByText('More options', { exact: true })`).
+    expect(
+      renderToStaticMarkup(<OptionsSummary hint="Coordinator, import" onToggle={() => {}} />),
+    ).toBe(
+      '<summary class="fd-label"><span>More options</span><span class="fd-spawn-options-hint">Coordinator, import</span></summary>',
+    );
+  });
+
+  test('the key chips name the modifier of the platform: ⌘ on Apple systems, else Ctrl', () => {
     const real = Object.getOwnPropertyDescriptor(navigator, 'platform');
-    const hint = (platform: string) => {
+    const mod = (platform: string) => {
       Object.defineProperty(navigator, 'platform', { configurable: true, value: platform });
-      return submitKeyHint();
+      return submitKeyMod();
     };
     try {
-      expect(hint('MacIntel')).toBe('⌘↵');
-      expect(hint('iPhone')).toBe('⌘↵');
-      expect(hint('iPad')).toBe('⌘↵');
-      expect(hint('Linux x86_64')).toBe('Ctrl+↵');
-      expect(hint('Win32')).toBe('Ctrl+↵');
+      expect(mod('MacIntel')).toBe('⌘');
+      expect(mod('iPhone')).toBe('⌘');
+      expect(mod('iPad')).toBe('⌘');
+      expect(mod('Linux x86_64')).toBe('Ctrl');
+      expect(mod('Win32')).toBe('Ctrl');
     } finally {
       if (real === undefined) delete (navigator as { platform?: string }).platform;
       else Object.defineProperty(navigator, 'platform', real);
@@ -125,15 +160,22 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     });
     expect(limitBadge(limit(100, 'seven_day'), 0)?.text).toBe('100% of weekly window');
     expect(limitBadge(limit(100, 'seven_day_opus'), 0)?.text).toBe('100% of seven day opus');
-    // Each provider choice shows its limit, so the instances compare before a choice.
+    // Each provider choice shows its limit, so the instances compare before a choice. The CLI
+    // version is in the title, not in the name.
     const p = { instance: 'work', provider: 'claude', version: '2.1.5' } as StationProvider;
     expect(providerChoice(p, limit(42), 0, true)).toEqual({
-      label: 'Claude 2.1.5 (work)',
+      label: 'Claude (work)',
       suffix: '42% of 5-hour window, resets in 1 h (most room)',
-      title: '42% of 5-hour window, resets in 1 h',
+      title: 'Claude 2.1.5 · 42% of 5-hour window, resets in 1 h',
     });
     expect(providerChoice(p, null, 0, false)).toEqual({
-      label: 'Claude 2.1.5 (work)',
+      label: 'Claude (work)',
+      suffix: '',
+      title: 'Claude 2.1.5',
+    });
+    // A version that the station did not report is left out: no "version unknown".
+    expect(providerChoice({ ...p, version: null }, null, 0, false)).toEqual({
+      label: 'Claude (work)',
       suffix: '',
       title: undefined,
     });

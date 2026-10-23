@@ -1,10 +1,10 @@
 // FG-11 (design §14.3): the config drift report on the Stations page. Each station is compared
 // with the reference station: the two provider versions and the four hashes. Nothing syncs (O34).
-import { useCallback, useEffect, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { ConfigDigest, DriftItem, StationView } from '../gen';
 import { useIntegrations } from '../integrations/context';
 import { message } from '../integrations/useLoad';
-import { Menu } from '../ui/Menu';
+import { useDismiss } from '../ui/dismiss';
 
 /** The label of each hash, in the order of the report. */
 const ITEM_LABELS: readonly (readonly [DriftItem, string])[] = [
@@ -105,9 +105,12 @@ export function StationConfigDrift({
 }
 
 /**
- * The config reference in the page header: a ghost menu button that names the reference
- * ("Config reference: Alpha", or "Config reference…" before one is picked) and lists the
+ * The config reference in the page header: a ghost menu toggle (a trailing chevron, base.css
+ * `summary[data-variant="toggle"]`: it opens a menu, not a dialog) that says what it does
+ * ("Compare configs" before a reference is picked, then "Configs vs Alpha") and lists the
  * stations. Without the admin scope it is a plain line, and nothing before a reference exists.
+ * The popover behaves like `ui/Menu` (Escape and a press outside close it), whose summary takes
+ * no variant.
  */
 export function ConfigReferenceHeader({
   stations,
@@ -120,30 +123,47 @@ export function ConfigReferenceHeader({
   readonly canSet: boolean;
   readonly onSet: (station: string) => void;
 }) {
-  const label =
-    reference === undefined ? 'Config reference…' : `Config reference: ${reference.name}`;
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  const close = () => {
+    if (ref.current) ref.current.open = false;
+  };
+  useDismiss(ref, open, close);
+  const label = reference === undefined ? 'Compare configs' : `Configs vs ${reference.name}`;
   if (!canSet) {
     return reference === undefined ? null : <span className="fd-note fd-station-ref">{label}</span>;
   }
+  const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
+    if (event.key !== 'Escape' || !ref.current?.open) return;
+    event.stopPropagation();
+    close();
+    ref.current.querySelector('summary')?.focus();
+  };
   return (
-    <Menu summary={label} summaryClass="fd-ghost fd-sm">
-      {(close) => (
-        <>
-          <span className="fd-menu-text">Pick a reference station for the config report.</span>
-          {stations.map((s) => (
-            <button
-              key={s.station_id}
-              type="button"
-              onClick={() => {
-                close();
-                onSet(s.station_id);
-              }}
-            >
-              {s.name}
-            </button>
-          ))}
-        </>
-      )}
-    </Menu>
+    <details
+      className="fd-menu"
+      ref={ref}
+      onKeyDown={onKeyDown}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="fd-ghost fd-sm" data-variant="toggle">
+        {label}
+      </summary>
+      <div className="fd-menu-body">
+        <span className="fd-menu-text">Pick a reference station for the config report.</span>
+        {stations.map((s) => (
+          <button
+            key={s.station_id}
+            type="button"
+            onClick={() => {
+              close();
+              onSet(s.station_id);
+            }}
+          >
+            {s.name}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }

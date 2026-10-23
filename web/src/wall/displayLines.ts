@@ -3,8 +3,9 @@
 // fixed fields: the text of the run start, the assistant message, the tool name and status, and
 // the request state.
 import type { DisplayEvent, DisplayItem, RequestKind } from '../gen';
+import { agentLine } from '../chat/notices';
 import { plainLine } from '../ui/format';
-import { TILE_LINES, type TileLine } from '../watch/tiles';
+import { foldLines, TILE_LINES, type TileLine } from '../watch/tiles';
 
 /** The most items that the chat pane draws (the same as `CHAT_ITEMS`). */
 const CHAT_MAX = 120;
@@ -15,6 +16,8 @@ export type DisplayLine = {
   readonly key: string;
   readonly kind: 'prompt' | 'message' | 'tool' | 'ask';
   readonly text: string;
+  /** The node of a tool call (the call that runs now folds into its tile line). */
+  readonly node?: string;
 };
 
 /** The fixed label of a request kind (the same four texts as the deck's `request_label`). */
@@ -38,7 +41,7 @@ function lineOf(event: DisplayEvent, withEnds: boolean): DisplayLine | null {
       return item.text.trim() === '' ? null : { key, kind: 'message', text: item.text };
     case 'tool': {
       const mark = item.status === 'failed' || item.status === 'denied' ? ` (${item.status})` : '';
-      return { key, kind: 'tool', text: `${item.name}${mark}` };
+      return { key, kind: 'tool', text: `${item.name}${mark}`, node: item.node_id };
     }
     case 'request': {
       const name = requestName(item);
@@ -58,15 +61,35 @@ function lineOf(event: DisplayEvent, withEnds: boolean): DisplayLine | null {
   }
 }
 
+/**
+ * The lines of the events, oldest first. One tool call is one line: a later event of the same call
+ * (its end, with its status) replaces the line of its start in place, so a call never reads twice.
+ */
+function linesOf(events: readonly DisplayEvent[], withEnds: boolean): DisplayLine[] {
+  const out: DisplayLine[] = [];
+  const calls = new Map<string, number>();
+  for (const e of events) {
+    const line = lineOf(e, withEnds);
+    if (line === null) continue;
+    const node = e.item.item === 'tool' ? e.item.node_id : null;
+    const at = node === null ? undefined : calls.get(node);
+    const first = at === undefined ? undefined : out[at];
+    if (at !== undefined && first !== undefined) {
+      out[at] = { ...line, key: first.key };
+      continue;
+    }
+    if (node !== null) calls.set(node, out.length);
+    out.push(line);
+  }
+  return out;
+}
+
 /** The lines of the chat pane, oldest first, at most `max`. */
 export function displayChatLines(
   events: readonly DisplayEvent[],
   max: number = CHAT_MAX,
 ): DisplayLine[] {
-  return events
-    .map((e) => lineOf(e, true))
-    .filter((l): l is DisplayLine => l !== null)
-    .slice(-max);
+  return linesOf(events, true).slice(-max);
 }
 
 const cut = (text: string): string => {
@@ -78,19 +101,31 @@ const cut = (text: string): string => {
   return line.length <= LINE_MAX ? line : `${line.slice(0, LINE_MAX - 1)}…`;
 };
 
-/** The last agent text and tool lines of a tile, oldest first (the form of `tileLines`). */
+/**
+ * The last agent text and tool lines of a tile, oldest first (the form of `tileLines`). A line that
+ * is empty without its Markdown marks is no line: a tile never draws a blank row. Lines that came
+ * several times in a row ("Bash", "Bash") are one line with its count (`foldLines`).
+ */
 export function displayTileLines(
   events: readonly DisplayEvent[],
   max: number = TILE_LINES,
 ): readonly TileLine[] {
   const out: TileLine[] = [];
-  for (const e of events) {
-    const line = lineOf(e, false);
-    if (line === null || (line.kind !== 'message' && line.kind !== 'tool')) continue;
-    const text = cut(line.text);
-    if (text !== '') out.push({ key: line.key, kind: line.kind, text });
+  for (const line of linesOf(events, false)) {
+    if (line.kind !== 'message' && line.kind !== 'tool') continue;
+    // A provider error reads as its cause; the provider's own words stay in the title.
+    const said = line.kind === 'message' ? agentLine(line.text) : line.text;
+    const text = cut(said);
+    if (text === '') continue;
+    out.push({
+      key: line.key,
+      kind: line.kind,
+      text,
+      ...(said === line.text ? {} : { label: line.text.trim() }),
+      ...(line.node === undefined ? {} : { node: line.node }),
+    });
   }
-  return out.slice(-max);
+  return foldLines(out).slice(-max);
 }
 
 /** The last assistant message of a display timeline, or `null` (the race column). */

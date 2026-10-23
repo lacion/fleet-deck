@@ -3,9 +3,9 @@
 // opens the installation terminal (with the elevation) and lists the earlier installations.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DesktopToolsPlan, MaintenanceInfo, StationTools } from '../gen';
+import { ErrorNotice } from '../ui/page';
 import {
   type DesktopToolsActions,
-  keyboardLine,
   LOADING_TEXT,
   makeRequestIds,
   openInstall,
@@ -14,19 +14,23 @@ import {
   type PlanView,
   planErrorText,
   planView,
-  pluginLine,
   READ_ERROR_TEXT,
   shortState,
   SUDO_TEXT,
-  toolLine,
   toolName,
+  toolRows,
+  toolsSummary,
   CONFIRM_TEXT,
+  isCommand,
 } from './desktopTools';
 import type { ElevationAsk } from './elevation';
 import { DeckError } from './http';
+import { Loading } from '../ui/Loading';
 import { MaintenancePanel } from './MaintenancePanel';
+import { sectionId } from './model';
 import { NoticeIcon } from './NoticeIcon';
 import { guarded } from './OmarchyCard';
+import { CardRow } from './CardRow';
 
 export type ToolsState =
   | { readonly kind: 'loading' }
@@ -84,22 +88,41 @@ export function gateDesktopTools(
 
 const unsupported = (e: unknown): boolean => e instanceof DeckError && e.status === 501;
 
-/** The facts of the station: one line for each tool, the keyboard, the plugin, the sudo note. */
+/**
+ * The facts of the station: a summary line, then one row for each tool, the keyboard and the plugin
+ * (a status glyph, the name, the state), then the notes. A station without a desktop folds the
+ * list: there it only says what is missing.
+ */
 export function FactsView({ tools }: { readonly tools: StationTools }) {
+  const rows = (
+    <ul className="fd-dt-tools">
+      {toolRows(tools).map((row) => (
+        <li key={row.key}>
+          <span className="fd-dot" data-status={row.status} aria-hidden="true" />
+          {row.code ? <code>{row.name}</code> : <span>{row.name}</span>}
+          <span className="fd-note">{row.state}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  const mismatch = tools.tools.filter((f) => f.package_matches_executable === false);
   return (
     <>
-      <ul className="fd-dt-tools">
-        {tools.tools.map((fact) => (
-          <li key={fact.id}>
-            <span>{toolLine(fact)}</span>
-            {fact.package_matches_executable === false ? (
-              <span className="fd-note">{PACKAGE_MISMATCH_TEXT}</span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      <p className="fd-note">{keyboardLine(tools.keyboard)}</p>
-      <p className="fd-note">{pluginLine(tools.plugin.status)}</p>
+      <p className="fd-dt-summary">{toolsSummary(tools)}</p>
+      {tools.desktop === 'none' ? (
+        <details className="fd-dt-fold">
+          <summary>Show the tools</summary>
+          {rows}
+        </details>
+      ) : (
+        rows
+      )}
+      {mismatch.map((f) => (
+        <p className="fd-note" key={f.id}>
+          {isCommand(f.id) ? <code>{toolName(f.id)}</code> : toolName(f.id)}:{' '}
+          {PACKAGE_MISMATCH_TEXT}
+        </p>
+      ))}
       {tools.passwordless_sudo === 'on' ? (
         <p className="fd-note" role="note">
           {SUDO_TEXT}
@@ -115,6 +138,16 @@ type InstallProps = {
   readonly onClose: () => void;
 };
 
+/** A failure of the install panel: the settings notice row in the error tone (§4.7). */
+function InstallFailure({ text }: { readonly text: string }) {
+  return (
+    <div className="fd-set-notice" data-tone="error" role="alert">
+      <NoticeIcon tone="error" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
 /** The install dialog (an inline panel): the plan states of the design. */
 export function InstallView({ state, onOpen, onClose }: InstallProps) {
   const close = (label: string) => (
@@ -124,11 +157,11 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
   );
   let body: React.ReactNode;
   if (state.kind === 'reading') {
-    body = <p role="status">{PLAN_LOADING_TEXT}</p>;
+    body = <Loading text={PLAN_LOADING_TEXT} />;
   } else if (state.kind === 'error') {
     body = (
       <>
-        <p role="alert">{state.text}</p>
+        <InstallFailure text={state.text} />
         <div className="fd-set-bar-actions">{close('Close')}</div>
       </>
     );
@@ -151,7 +184,7 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
           </>
         )}
         {view.open ? <p>{CONFIRM_TEXT}</p> : null}
-        {state.notice === null ? null : <p role="alert">{state.notice}</p>}
+        {state.notice === null ? null : <InstallFailure text={state.notice} />}
         <div className="fd-set-bar-actions">
           {view.open ? (
             <>
@@ -175,24 +208,40 @@ export function InstallView({ state, onOpen, onClose }: InstallProps) {
   );
 }
 
-/** The date of a run, in the language of the browser. */
-const dateOf = (run: MaintenanceInfo): string => new Date(run.created_at).toLocaleString();
+/** The words of a run date: the month as a word, so that 1/3 cannot read as 3/1 (`3 Jan 2027, 14:05`). */
+export const RUN_DATE: Intl.DateTimeFormatOptions = {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+};
 
-/** The Installations list; nothing for the state `hidden`. */
+/** The date of a run, in the language of the browser. */
+const dateOf = (run: MaintenanceInfo): string =>
+  new Date(run.created_at).toLocaleString(undefined, RUN_DATE);
+
+/**
+ * The Installations list; nothing for the state `hidden`, and nothing before the first
+ * installation (§1.7: an empty list is an absent row, not a row that says so).
+ */
 export function InstallationsView({
   state,
   onOpen,
+  onRetry,
 }: {
   readonly state: RunsState;
   readonly onOpen: (id: string) => void;
+  /** Read the list again (the Try again of a failed read). */
+  readonly onRetry?: (() => void) | undefined;
 }) {
   if (state.kind === 'hidden') return null;
+  if (state.kind === 'ready' && state.runs.length === 0) return null;
   let body: React.ReactNode;
-  if (state.kind === 'loading') body = <p role="status">Loading…</p>;
+  if (state.kind === 'loading') body = <Loading text="Loading the installations…" />;
   else if (state.kind === 'error') {
-    body = <p role="alert">The installations could not be read.</p>;
-  } else if (state.runs.length === 0) body = <p className="fd-note">No installations yet.</p>;
-  else {
+    body = <ErrorNotice text="The installations could not be read." onRetry={onRetry} />;
+  } else {
     body = (
       <ul className="fd-dt-runs">
         {state.runs.map((run) => (
@@ -208,11 +257,11 @@ export function InstallationsView({
       </ul>
     );
   }
+  // A row of the card: "Installations" in the label column, the list in the control column.
   return (
-    <section className="fd-dt-installations" aria-label="Installations">
-      <h3>Installations</h3>
+    <CardRow label="Installations" className="fd-dt-installations">
       {body}
-    </section>
+    </CardRow>
   );
 }
 
@@ -227,6 +276,8 @@ type ViewProps = {
   readonly onOpenTerminal: () => void;
   readonly onCloseInstall: () => void;
   readonly onOpenRun: (id: string) => void;
+  /** Read the list of installations again. */
+  readonly onRetryRuns?: (() => void) | undefined;
   /** The installation panel, when one is open. */
   readonly panel?: React.ReactNode;
 };
@@ -237,7 +288,7 @@ export function DesktopToolsView(props: ViewProps) {
   if (tools.kind === 'hidden') return null;
   let body: React.ReactNode;
   if (tools.kind === 'loading') {
-    body = <p role="status">{LOADING_TEXT}</p>;
+    body = <Loading text={LOADING_TEXT} />;
   } else if (tools.kind === 'error') {
     body = (
       <div className="fd-set-notice" data-tone="error" role="alert">
@@ -268,14 +319,25 @@ export function DesktopToolsView(props: ViewProps) {
           />
         )}
         {props.panel ?? null}
-        <InstallationsView state={props.runs} onOpen={props.onOpenRun} />
       </>
     );
   }
+  // The card keeps the columns of the page: the tools in a "Tools" row, then the Installations row.
   return (
-    <section className="fd-set-sec fd-desktop-tools" aria-label="Desktop tools">
+    <section
+      id={sectionId('Desktop tools')}
+      className="fd-set-sec fd-desktop-tools"
+      aria-label="Desktop tools"
+    >
       <h2>Desktop tools</h2>
-      {body}
+      <CardRow label="Tools">{body}</CardRow>
+      {tools.kind === 'ready' ? (
+        <InstallationsView
+          state={props.runs}
+          onOpen={props.onOpenRun}
+          onRetry={props.onRetryRuns}
+        />
+      ) : null}
     </section>
   );
 }
@@ -399,6 +461,10 @@ export function DesktopToolsCard({ station, actions: direct, ask }: Props) {
       onOpenTerminal={() => void openTerminal()}
       onCloseInstall={() => setInstall(null)}
       onOpenRun={setOpen}
+      onRetryRuns={() => {
+        setRuns({ kind: 'loading' });
+        void loadRuns();
+      }}
       panel={panel}
     />
   );

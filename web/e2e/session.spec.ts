@@ -154,7 +154,9 @@ test('the subagent tree shows each child timeline and status, and the card count
   await expect(chip(tests)).toHaveText('failed');
   await expect(task(explore)).toHaveText('Explore the code');
   await expect(chip(explore)).toHaveText('done');
-  await expect(docs).toContainText('Bash · Allow (by board)');
+  // The board is the owner: the outcome names no one.
+  await expect(docs).toContainText('Bash · Allow');
+  await expect(docs).not.toContainText('(by board)');
   await expect(view).toContainText('All subagents reported.');
 });
 
@@ -380,24 +382,30 @@ test('steer, follow-up, interrupt and the mode ladder send one command each', as
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(page.getByRole('alert')).toContainText('Delivery is unknown');
   await page.locator('summary[aria-label="Session menu"]').click();
-  const ladder = page.getByRole('group', { name: 'Mode (most restrictive first)' });
+  // The order of the rows says "most restrictive first": the legend is "Mode" ("Model" is the
+  // legend of the model rows, so the name is exact).
+  const ladder = page.getByRole('group', { name: 'Mode', exact: true });
+  // The modes are menu rows with their sentence-case names (the title keeps the raw id).
   await expect(ladder.getByRole('button')).toHaveText([
-    'default',
-    'plan',
-    'acceptEdits',
-    'dontAsk',
-    'auto',
+    'Default',
+    'Plan',
+    'Accept edits',
+    "Don't ask",
+    'Auto',
   ]);
-  await expect(ladder.getByRole('button', { name: 'default' })).toHaveAttribute(
+  await expect(ladder.getByRole('button', { name: 'Default' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await ladder.getByRole('button', { name: 'plan' }).click();
+  await ladder.getByRole('button', { name: 'Plan' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Done.' })).toBeVisible();
-  const model = page.getByRole('form', { name: 'Model' });
-  await model.getByLabel('Model (now unknown)').fill(' claude-haiku-4-5 ');
+  // The phone has no composer model chip: its session menu holds the model rows (no list here:
+  // the id field only).
+  const model = page.getByRole('group', { name: 'Model', exact: true });
+  await model.getByLabel('Model id or alias').fill(' claude-haiku-4-5 ');
   await model.getByRole('button', { name: 'Set model' }).click();
-  await expect(model.getByRole('button', { name: 'Set model' })).toBeDisabled();
+  // A pick closes the menu (the same as a model row).
+  await expect(model).toBeHidden();
   expect(await fitsWidth(page)).toBe(true);
 
   const sent = deck.calls.filter((c) => c.path.startsWith('/api/commands/'));
@@ -495,7 +503,8 @@ test('the menu lists the session facts, asks for a status update, and stars the 
   const details = view.locator('.fd-sh-details');
   await expect(details).toContainText('Session');
   await expect(details).toContainText(ID);
-  await expect(details).toContainText('falcon');
+  // The header shows the callsign: the details do not repeat it.
+  await expect(details).not.toContainText('falcon');
   await expect(details).toContainText('/wt/review');
   await expect(details).toContainText('42');
   await expect(details.getByRole('button', { name: 'Copy the session id' })).toBeVisible();
@@ -543,7 +552,9 @@ test('the last error shows under the header of an ended session, with the retry 
   const strip = page
     .getByRole('region', { name: 'Session' })
     .locator('.fd-sh-strip[data-tone="hazard"]');
-  await expect(strip).toContainText('usage_limit: The limit is reached · retry in');
+  // The words of the error (the code only in the title); the retry is a sentence of its own.
+  await expect(strip).toContainText('The limit is reached. Retry in');
+  await expect(strip).toHaveAttribute('title', 'usage_limit: The limit is reached');
   expect(await fitsWidth(page)).toBe(true);
 });
 

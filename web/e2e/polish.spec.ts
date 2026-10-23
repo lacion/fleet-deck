@@ -1,9 +1,10 @@
 // The UI polish checks of the Flight Deck board (the test gaps of the UI refresh): the `c` key on
-// the wide fleet home, the outcome notes of a coordinator grant, the 44px touch targets of the Add
-// station flow and the folder crumbs, forced colors, the free-text model of New session and the
-// j/k order of the sidebar, the Focus pause of the Watch page and the one-shot Properties file
-// focus. The phone project runs every test that is not desktop-only; the
-// desktop project runs this file too (playwright.config.ts).
+// the wide fleet home, the outcome notes of a coordinator grant in its Fleet access dialog, no
+// sideways scroll of the ops column, the 44px touch targets of the Add station flow and the folder
+// crumbs, forced colors, the free-text model of New session and the j/k order of the sidebar, the
+// Focus pause of the Watch page and the one-shot Properties file focus. The phone project runs
+// every test that is not desktop-only; the desktop project runs this file too
+// (playwright.config.ts).
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import type { Event } from '../src/gen';
 import { codexCaps } from '../src/testing/capabilities';
@@ -11,6 +12,7 @@ import { summary } from '../src/testing/summary';
 import { envelopes } from '../src/testing/timeline';
 import { FakeDeck, fitsWidth, logIn, openSession, PASSWORD, stationView } from './fake-deck';
 import { OTTER } from './gallery-data';
+import { galleryDeck } from './gallery-scene';
 import { LIGHTING, polishDeck, SECRET_PROJECT } from './polish-scene';
 
 const desktopOnly = () =>
@@ -97,25 +99,68 @@ test('2: Revoke and Renew of a coordinator grant show their outcome note', async
   desktopOnly();
   const { grants } = await setUp(page);
   await goTo(page, '#/fleet');
-  const mail = page.getByRole('region', { name: 'Mail and tasks' });
-  const list = mail.getByRole('list', { name: 'Coordinator grants' });
-  await expect(list.getByRole('listitem')).toHaveCount(2);
+  // The grants are rows of their own Fleet access section (no form in the column); a row's
+  // Change… opens the Fleet access dialog, which shows the outcome of Renew and Revoke.
+  const access = page.getByRole('region', { name: 'Fleet access' });
+  const list = access.getByRole('list', { name: 'Coordinator grants' });
+  // The live grant is a row; the expired one waits in the collapsed Expired fold.
+  await expect(list.getByRole('listitem')).toHaveCount(1);
   const live = list.getByRole('listitem').filter({ hasText: 'active' });
-  const idle = list.getByRole('listitem').filter({ hasText: 'expired' });
-  // The form stays folded: the note shows outside the fold.
-  await expect(mail.locator('details.fd-fleet-compose')).not.toHaveAttribute('open');
+  await access.locator('details.fd-access-expired > summary').click();
+  const idle = access
+    .getByRole('list', { name: 'Expired grants' })
+    .getByRole('listitem')
+    .filter({ hasText: 'expired after idle time' });
+  const dialog = page.getByRole('dialog', { name: 'Fleet access' });
 
-  await idle.getByRole('button', { name: 'Renew' }).click();
-  await expect(mail.getByRole('status')).toHaveText(
+  await idle.getByRole('button', { name: 'Change…' }).click();
+  await dialog.getByRole('button', { name: 'Renew' }).click();
+  await expect(dialog.getByRole('status')).toHaveText(
     'Renewal sent; the grant is active when its station confirms.',
   );
-  await expect(mail.getByRole('status')).toBeVisible();
   expect(grants.rows.find((g) => g.grant_id === 'g-idle')?.state).toBe('active');
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toHaveCount(0);
 
-  await live.first().getByRole('button', { name: 'Revoke' }).click();
-  await expect(mail.getByRole('status')).toHaveText('Grant revoked.');
-  await expect(mail.getByRole('status')).toBeVisible();
-  await expect(list).toContainText('read, mail: revoked');
+  await live.first().getByRole('button', { name: 'Change…' }).click();
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await dialog.getByRole('button', { name: 'Revoke' }).click();
+  await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
+  // A revoked grant leaves the list; the renewed grant is the row left.
+  await expect(list.getByRole('listitem')).toHaveCount(1);
+});
+
+test('2b: the page and the ops column never scroll sideways at 1280, 1440 and 1920', async ({
+  page,
+}) => {
+  desktopOnly();
+  await setUp(page);
+  for (const width of [1280, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await goTo(page, '#/fleet');
+    await expect(page.getByRole('heading', { level: 1, name: 'Fleet' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Fleet access' })).toBeVisible();
+    const sizes = await page.evaluate(() => {
+      const ops = document.querySelector<HTMLElement>('.fd-ops');
+      const body = document.querySelector<HTMLElement>('.fd-ops-body');
+      const over = (el: HTMLElement | null) => (el === null ? 0 : el.scrollWidth - el.clientWidth);
+      return {
+        page: document.documentElement.scrollWidth - window.innerWidth,
+        ops: over(ops),
+        body: over(body),
+      };
+    });
+    expect(sizes.page, `the page at ${width}px`).toBeLessThanOrEqual(0);
+    expect(sizes.ops, `the ops column at ${width}px`).toBeLessThanOrEqual(0);
+    expect(sizes.body, `the ops body at ${width}px`).toBeLessThanOrEqual(0);
+    // The foot of the column (Activity, Assign, All usage) is on the screen, not under the fold.
+    const foot = await page.locator('.fd-ops-foot').boundingBox();
+    expect(
+      foot === null ? 0 : foot.y + foot.height,
+      `the ops foot at ${width}px`,
+    ).toBeLessThanOrEqual(900);
+  }
 });
 
 test('3: the text buttons of Add station and the folder crumbs are 44px high on touch', async ({
@@ -125,16 +170,15 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   await setUp(page);
   expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
 
-  // Add station: the start screen ("Other ways" → listen), then the Run step (Stop, the way back).
+  // Add station: the start screen (the listening station is a choice), then the Run step (Stop,
+  // the way back).
   await goTo(page, '#/stations');
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
   await expect(dialog).toContainText('Where is the new station?');
-  await dialog.locator('details.fd-add-fold > summary').click();
-  await expect(
-    dialog.getByRole('button', { name: 'Connect to a station that listens' }),
-  ).toBeVisible();
-  await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station start');
+  const listen = dialog.getByRole('button', { name: /A station that listens for this deck/ });
+  await expect(listen).toBeVisible();
+  await expectTall(listen, 'Add station start');
   await dialog.getByRole('button', { name: /A computer on my tailnet/ }).click();
   await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
   await dialog
@@ -154,7 +198,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   await goTo(page, '#/new');
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByRole('button', { name: 'Browse…' }).click();
-  await form.getByRole('button', { name: 'Open projects' }).click();
+  // The station has one allowed root (projects): Browse… opens inside it.
   await form.getByRole('button', { name: 'Open app' }).click();
   const crumbs = form.getByRole('navigation', { name: 'Folder path' });
   await expect(crumbs.locator('[aria-current="location"]')).toHaveText('app');
@@ -164,6 +208,7 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
 
   // The project page → Secret files → Browse…: the crumbs of the home folder.
   await goTo(page, `#/project/${SECRET_PROJECT}`);
+  await page.getByRole('tab', { name: 'Setup' }).click();
   const secrets = page.getByRole('region', { name: 'Secret files' });
   await secrets.getByRole('button', { name: 'Browse…' }).click();
   const browser = secrets.getByRole('region', { name: 'Browse the home' });
@@ -370,6 +415,10 @@ test('4c: in forced colors the inputs, switches and segments of New session keep
   await forcedColors(page);
   await goTo(page, '#/new');
   await expect(page.getByRole('region', { name: 'New session' })).toBeVisible();
+  // A phone shows the Batch switch in "More options" (its sticky footer is one row of buttons).
+  if (test.info().project.name === 'phone') {
+    await page.getByText('More options', { exact: true }).click();
+  }
   // The checked station ring and the pressed segments are forced-colors rules: a capture shows them.
   await screenshot(page, 'forced-colors-spawn');
   const seen = { inputs: 0, switches: 0, segs: 0 };
@@ -619,4 +668,34 @@ test('8: a changed file of Properties focuses its diff once; a later turn end le
   await expect(view.locator('[data-diff="since-spawn"]')).toBeVisible();
   await expect(view.locator('.fd-dl-file[aria-label="src/b.ts"]')).toBeVisible();
   await expect(refresh).toBeFocused();
+});
+
+test('a page with a back link keeps its filters level with the title row', async ({ page }) => {
+  desktopOnly();
+  const deck = galleryDeck({});
+  await deck.install(page);
+  await logIn(page);
+  // The artifact page: a back link, and the kind and the version as filters (a project page
+  // has its forge badge on its place line, not as a filter).
+  await goTo(page, `#/artifact/${LIGHTING}/art-docs`);
+  await expect(
+    page.getByRole('heading', { level: 1, name: /^Omarchy docs preview/ }),
+  ).toBeVisible();
+  // The back link is a row of its own above the title row (§4.3), so the filters stay level
+  // with the first line of the title (a long title wraps in its own column).
+  const firstLine = await page
+    .locator('.fd-page-title')
+    .first()
+    .evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return r.top + Number.parseFloat(getComputedStyle(e).lineHeight) / 2;
+    });
+  const filters = await page
+    .locator('.fd-page-filters')
+    .first()
+    .evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return r.top + r.height / 2;
+    });
+  expect(Math.abs(firstLine - filters)).toBeLessThan(1.5);
 });

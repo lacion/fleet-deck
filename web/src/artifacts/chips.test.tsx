@@ -51,9 +51,11 @@ const withEnv = (value: ArtifactsEnv | undefined, node: React.ReactNode) =>
 const chip = { artifact_id: 'a1', version: 2, title: 'Report', artifact_kind: 'html' as const };
 
 describe('chips', () => {
-  test('the published chip reads "Artifact: <title> v<n>" and opens the viewer', () => {
+  test('the published chip reads "Artifact · <title>" with its version apart, and opens the viewer', () => {
     const html = withEnv(env({ open: () => {} }), <ArtifactChip chip={chip} />);
-    expect(html).toContain('Artifact: Report v2');
+    expect(html).toContain(
+      '<span class="fd-art-chip-text">Artifact · Report</span><span class="fd-badge" data-tone="muted">v2</span>',
+    );
     expect(html).toContain('<button type="button" class="fd-chip fd-art-chip"');
   });
 
@@ -65,7 +67,7 @@ describe('chips', () => {
   test('a chip of an event is hidden when a "Keep" chip published that version', () => {
     const kept = new Set([keptKey('a1', 2)]);
     expect(withEnv(env({ kept }), <ArtifactChip chip={chip} fromEvent />)).toBe('');
-    expect(withEnv(env({ kept }), <ArtifactChip chip={chip} />)).toContain('Artifact: Report v2');
+    expect(withEnv(env({ kept }), <ArtifactChip chip={chip} />)).toContain('Artifact · Report');
     expect(
       withEnv(env({ kept }), <ArtifactChip chip={{ ...chip, version: 3 }} fromEvent />),
     ).toContain('v3');
@@ -97,7 +99,7 @@ describe('chips', () => {
       env({ open: () => {} }),
       <SuggestedChip path="r.html" initial={{ kind: 'done', chip }} />,
     );
-    expect(html).toContain('Artifact: Report v2');
+    expect(html).toContain('Artifact · Report');
     expect(html).not.toContain('Keep r.html');
   });
 
@@ -112,6 +114,7 @@ describe('chips', () => {
       />,
     );
     expect(html).toContain('Keep r.html as artifact');
-    expect(html).toContain('Artifact: Report v1');
+    // Version 1 shows no version.
+    expect(html).toContain('Artifact · Report</span></button>');
   });
 });

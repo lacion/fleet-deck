@@ -48,6 +48,36 @@ describe('Page (DL-171)', () => {
     expect(none).not.toContain('fd-page-filters');
   });
 
+  test('a back link is a row of its own, so the filters and actions follow the title column', () => {
+    const html = renderToStaticMarkup(
+      <Page
+        title="rannoch"
+        back={{ href: '#/projects', label: 'All projects' }}
+        filters={<span>GitHub</span>}
+        actions={<button type="button">Refresh</button>}
+      >
+        <p />
+      </Page>,
+    );
+    const head = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    expect(head).toStartWith(
+      '<header class="fd-page-head"><div class="fd-page-backrow"><a class="fd-btn fd-ghost fd-sm fd-page-back" href="#/projects">',
+    );
+    // The title column, the filters and the actions are the next siblings, in that order.
+    const titles = head.indexOf('<div class="fd-page-titles">');
+    expect(titles).toBeGreaterThan(head.indexOf('All projects'));
+    expect(head.slice(titles)).not.toContain('fd-page-back');
+    expect(head.indexOf('fd-page-filters')).toBeGreaterThan(titles);
+    expect(head.indexOf('fd-page-actions')).toBeGreaterThan(head.indexOf('fd-page-filters'));
+    expect(
+      renderToStaticMarkup(
+        <Page title="Plans">
+          <p />
+        </Page>,
+      ),
+    ).not.toContain('fd-page-backrow');
+  });
+
   test('a wide page, a label and an extra class', () => {
     const html = renderToStaticMarkup(
       <Page title="Plans" wide label="Plan library" className="fd-x">
@@ -82,7 +112,7 @@ describe('EmptyState (DL-171)', () => {
         action={<button type="button">New share</button>}
       />,
     );
-    expect(html).toContain('class="fd-panel fd-emptystate"');
+    expect(html).toContain('class="fd-emptystate"');
     expect(html).toContain('<p class="fd-emptystate-title">No shares yet</p>');
     expect(html).toContain('<p class="fd-emptystate-body">Share a session.</p>');
     expect(html).toContain('New share</button>');

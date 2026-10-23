@@ -122,6 +122,7 @@ describe('the built-in Linear app (DL-185)', () => {
     // ON has a Jira app only.
     const html = tabAt('https://127.0.0.1:7420', ON);
     expect(html).toContain('Uses the built-in Fleet Deck app.');
+    expect(html).toContain('aria-label="Linear not connected"');
     expect(html).toContain('Set up your own OAuth app…');
     expect(html).not.toContain('Set up the OAuth app first. Then you can connect.');
     expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
@@ -146,16 +147,20 @@ describe('the built-in Linear app (DL-185)', () => {
     }
   });
 
-  test('with the flag off or missing the Linear section is as before DL-185', () => {
+  test('with the flag off or missing, Linear without an app says how to connect', () => {
     for (const list of [LIST, { ...LIST, linear_builtin: false }]) {
       const html = tabAt('https://deck.example', list);
       expect(html).not.toContain('Uses the built-in Fleet Deck app.');
       expect(html).not.toContain(NOTE);
-      expect(html).toContain('No OAuth app yet.');
-      expect(html).toContain('Set up the OAuth app first. Then you can connect.');
-      expect(html).toContain('Set up the OAuth app…');
+      // One line says what the account gives (the buttons say how it connects); there is no
+      // disabled Connect button until an app exists.
+      expect(html).toContain('Connect Linear to start sessions from its issues.');
+      expect(html).not.toContain('Set up an OAuth app or use an API token.');
+      expect(html).not.toContain('No OAuth app yet.');
+      expect(html).not.toContain('Set up the OAuth app first.');
+      expect(html).toContain('Set up OAuth app…');
       expect(html).not.toContain('Set up your own OAuth app…');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
+      expect(html).not.toContain('>Connect Linear<');
     }
   });
 
@@ -188,7 +193,9 @@ describe('the built-in Linear app (DL-185)', () => {
     const html = tabAt('https://127.0.0.1:7420', list);
     expect(html).toContain('>Connect again<');
     expect(html).toContain(message);
-    expect(html).toContain('>reconnect<');
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="needs_you" aria-hidden="true"></span>Reconnect needed',
+    );
     expect(html).not.toContain('>Reconnect<');
     // The other states have no "Connect again".
     expect(tab()).not.toContain('>Connect again<');
@@ -196,9 +203,11 @@ describe('the built-in Linear app (DL-185)', () => {
 });
 
 describe('the Accounts tab (DL-173)', () => {
-  test('a station select when there is more than one station', () => {
+  test('the scope line: a station select when there is more than one station', () => {
     const html = tab();
-    expect(html).toContain('>Station<');
+    expect(html).toContain(
+      '<p class="fd-set-scope">Accounts on <select class="fd-ghost fd-sm" aria-label="Station">',
+    );
     expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
     const one = renderToStaticMarkup(
       <AccountsTab
@@ -209,7 +218,8 @@ describe('the Accounts tab (DL-173)', () => {
         initial={LIST}
       />,
     );
-    expect(one).not.toContain('>Station<');
+    expect(one).not.toContain('aria-label="Station"');
+    expect(one).toContain('Accounts on <span class="fd-wide">Alpha</span>');
   });
 
   test('the env token warning names the variables', () => {
@@ -220,33 +230,103 @@ describe('the Accounts tab (DL-173)', () => {
     expect(tab({}, { ...LIST, env_tokens: [] })).not.toContain('in the station environment');
   });
 
-  test('two sections; the accounts, the host inputs and the connect buttons', () => {
+  test('two sections; a connected kind folds its connect block, the other one is open', () => {
     const html = tab();
     expect(html).toContain('GitHub and GitLab');
     expect(html).toContain('Jira and Linear');
     expect(html).toContain('github.com');
     expect(html).toContain('>Log out<');
-    expect(html).toContain('Connect GitHub');
-    expect(html).toContain('Connect GitLab');
+    // GitHub has an account: no Connect button next to it, only "Connect another…".
+    expect(html).toMatch(
+      /<button type="button" class="fd-sm" aria-expanded="false"><svg[^>]*>[\s\S]*?<\/svg>Connect another GitHub account…<\/button>/,
+    );
+    expect(html).not.toContain('>Connect GitHub<');
+    // GitLab has none: its server field and its Connect button.
+    expect(html).toContain('>Server<');
     expect(html).toContain('value="gitlab.com"');
-    expect(html).toContain('OAuth app: client id');
-    expect(html).toContain('abc123');
-    expect(html).toContain('secret set');
-    expect(html).toContain('Set up the OAuth app…');
-    expect(html).toContain('Connect Jira');
-    expect(html).toContain('Use an API token instead');
-    // Linear has no owner app and the station does not offer the built-in
-    // app: the connect button is off.
-    expect(html).toContain('No OAuth app yet.');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Connect Jira<\/button>/);
+    expect(html).toContain('placeholder="gitlab.com"');
+    expect(html).toContain('>Connect GitLab<');
+    expect(html).not.toContain('GitLab host');
+  });
+
+  test('one table for the trackers: an account row, a Not connected row, the folds after it', () => {
+    const trackers = tab().slice(tab().indexOf('aria-label="Jira and Linear"'));
+    const table = trackers.indexOf('aria-label="Jira and Linear accounts"');
+    expect(table).toBeGreaterThan(-1);
+    // The Jira account, then Linear without an account: the same structure as GitHub and GitLab.
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeGreaterThan(table);
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeLessThan(
+      trackers.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(trackers.indexOf('aria-label="Linear not connected"')).toBeLessThan(
+      trackers.indexOf('Connect another Jira account…'),
+    );
+    expect(trackers).not.toContain('OAuth app <code>abc123</code>');
+    expect(trackers).not.toContain('>Connect Jira<');
+    expect(trackers).not.toContain('No account connected.');
+    expect(trackers).not.toContain('fd-set-trackerhead');
+  });
+
+  test('a tracker without an account but with an app: Connect is on', () => {
+    const html = tab({}, { ...LIST, accounts: [] });
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('<span class="fd-dot" data-status="idle" aria-hidden="true"></span>');
+    expect(jira).toContain('Not connected');
+    expect(jira).toContain('OAuth app <code>abc123</code>');
+    expect(jira).toContain('secret set');
+    expect(jira).toContain('Set up OAuth app…');
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Connect Jira<\/button>/);
+    expect(jira).toContain('Use an API token…');
+    // The row says "Not connected" in its own words, not the line of an empty table.
+    expect(html.slice(html.indexOf('aria-label="Jira and Linear"'))).not.toContain(
+      'No account connected.',
+    );
   });
 
   test('Jira without an owner app has no built-in app (DL-185)', () => {
-    const html = tab({}, { ...LIST, apps: [] });
-    expect(html).toContain('No OAuth app yet.');
-    expect(html).toContain('Set up the OAuth app first. Then you can connect.');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Jira<\/button>/);
+    const html = tab({}, { ...LIST, accounts: [], apps: [] });
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('Connect Jira to start sessions from its issues.');
+    expect(jira).not.toContain('>Connect Jira<');
+    // Two ways to do one step: two plain buttons, one look.
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Set up OAuth app…<\/button>/);
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Use an API token…<\/button>/);
+  });
+
+  test('the account rows: the method and the status in words, the site without its scheme', () => {
+    const html = tab(
+      {},
+      {
+        ...LIST,
+        accounts: [
+          ...LIST.accounts,
+          account({
+            account_id: 'lin-1',
+            kind: 'linear',
+            site: 'https://linear.app/acme',
+            user: 'Ana',
+          }),
+        ],
+      },
+    );
+    expect(html).toContain('GitHub <span class="fd-badge">CLI login</span>');
+    expect(html).toContain('Jira <span class="fd-badge">OAuth</span>');
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="online" aria-hidden="true"></span>Connected',
+    );
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="needs_you" aria-hidden="true"></span>Needs login',
+    );
+    expect(html).toContain('>linear.app/acme<');
+    expect(html).not.toContain('>https://linear.app/acme<');
+    expect(html).not.toContain('>cli<');
+    expect(html).not.toContain('>connected<');
   });
 
   test('"Reconnect" shows for needs_login', () => {

@@ -1,7 +1,7 @@
 // R13 P2c (design §5B item 2, §5C item 1, §5E item 4): the pairings that wait for the owner. A row
 // shows the source and the user agent, never the code: the owner types the 6 digits that the wall
 // screen shows. A managed `wall.open` launch names its display: the form is locked to it.
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useId, useState } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { DisplayView, PendingPairing, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
@@ -52,6 +52,7 @@ function PendingRow({
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modeId = useId();
   const agent =
     pairing.user_agent.length > AGENT_MAX
       ? `${pairing.user_agent.slice(0, AGENT_MAX)}…`
@@ -110,9 +111,12 @@ function PendingRow({
             <strong>{displays.find((d) => d.display_id === expected)?.name}</strong>.
           </p>
         ) : (
-          <fieldset className="fd-disp-modes">
-            <legend className="fd-fieldlabel">Display</legend>
-            <span className="fd-seg">
+          // A field row (§4.7) with the two choices as one segmented control.
+          <div className="fd-fieldwrap" data-layout="row" role="group" aria-labelledby={modeId}>
+            <span id={modeId} className="fd-fieldlabel">
+              Display
+            </span>
+            <span className="fd-seg fd-disp-modeseg">
               <label>
                 <input
                   type="radio"
@@ -134,10 +138,10 @@ function PendingRow({
                 </label>
               )}
             </span>
-          </fieldset>
+          </div>
         )}
         {mode === 'existing' ? (
-          <Field label="Existing display">
+          <Field label="Existing display" layout="row">
             <select
               value={existing}
               disabled={locked}
@@ -152,18 +156,18 @@ function PendingRow({
           </Field>
         ) : (
           <>
-            <Field label="Name">
+            <Field label="Name" layout="row">
               <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
             </Field>
             <StationChoices
               stations={stations}
               value={ceiling}
               onChange={setCeiling}
-              label="Stations that it may show"
+              label="Stations it shows"
             />
           </>
         )}
-        <Field label="Code on the wall screen">
+        <Field label="Code on the wall screen" layout="row">
           <input
             className="fd-disp-code"
             value={code}
@@ -199,15 +203,15 @@ export function PendingPairings(
   const { pending, now: _given, ...rest } = props;
   // The approved row leaves the list at the next read, so the section keeps the text.
   const [approved, setApproved] = useState(false);
+  // A pairing is a passing state: with none (and no approval to tell), the section is absent.
+  if (pending.length === 0 && !approved) return null;
   return (
     <section aria-label="Waiting for a code" className="fd-disp-section">
       <h2 className="fd-form-title fd-disp-title">Waiting for a code</h2>
       {approved ? (
         <p role="status">Approved. The wall display signs in within a few seconds.</p>
       ) : null}
-      {pending.length === 0 ? (
-        <p className="fd-note">No display waits for a code.</p>
-      ) : (
+      {pending.length === 0 ? null : (
         <ul className="fd-disp-list">
           {pending.map((p) => (
             <PendingRow

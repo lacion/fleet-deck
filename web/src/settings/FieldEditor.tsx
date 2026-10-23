@@ -1,9 +1,37 @@
 // DL-172: the control of one settings field, by its kind. It shows the value it is given and
 // reports an edit; the form keeps the edits.
-import type { DeckSession, FieldMeta, MonitorInfo } from '../gen';
+import type { DeckSession, FieldMeta, MonitorInfo, StationView } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
+import { monitorLabel, monitorRaw, shortModel } from '../ui/format';
 import { Icon, Plus, X } from '../ui/icons';
-import { asNumber, asPairs, asStrings, asText, optionLabel } from './model';
+import { defaultOptionLabel, fieldLabel, optionLabel, unitOf } from './copy';
+import { asNumber, asPairs, asStrings, asText } from './model';
+import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
+
+/** The text keys whose value is a host name, a path or an id: mono, as every path and id (§1.5). */
+const MONO_KEYS: readonly string[] = [
+  'tailscale_bin',
+  'tailnet_hostname',
+  'model_help.claude_model',
+  'model_help.codex_model',
+];
+
+/** The text keys whose value is a model id: the name of the model follows the field (§5). */
+const MODEL_KEYS: readonly string[] = ['model_help.claude_model', 'model_help.codex_model'];
+
+/** The placeholder of an empty text field, when the empty value has a meaning. */
+const PLACEHOLDERS: Readonly<Record<string, string>> = {
+  tailscale_bin: 'tailscale (found on PATH)',
+};
+
+/** The words of the add button of a list of texts: it names what it adds. */
+const ADD_LABELS: Readonly<Record<string, string>> = {
+  member_deny: 'Add pattern',
+  traits: 'Add label',
+};
+
+/** The lists of short tokens (the station labels): their rows are 200px (settings.css). */
+const SHORT_KEYS: readonly string[] = ['traits'];
 
 export type EditorProps = {
   readonly meta: FieldMeta;
@@ -17,6 +45,10 @@ export type EditorProps = {
   readonly sessions?: readonly DeckSession[] | undefined;
   /** The monitors that the station reports; `undefined` when it reports no desktop. */
   readonly monitors?: readonly MonitorInfo[] | undefined;
+  /** The paired stations (the stations of a worker grant are picked from them). */
+  readonly stations?: readonly StationView[] | undefined;
+  /** The operating system of the station of this tab (`traits.os`), for the default of `host`. */
+  readonly os?: string | undefined;
 };
 
 /** The remove button of one row: an `x` icon button; its name says which row it removes. */
@@ -52,6 +84,7 @@ function TextRows({
   placeholder,
   addLabel,
   mono = false,
+  short = false,
 }: {
   readonly label: string;
   readonly rows: readonly string[];
@@ -60,9 +93,11 @@ function TextRows({
   readonly placeholder?: string | undefined;
   readonly addLabel: string;
   readonly mono?: boolean;
+  /** The values are short tokens: the rows are narrower than a one-value field. */
+  readonly short?: boolean;
 }) {
   return (
-    <div className="fd-set-rows">
+    <div className="fd-set-rows" data-size={short ? 'short' : undefined}>
       {rows.map((row, i) => (
         <div className="fd-set-row" key={i}>
           <input
@@ -99,11 +134,10 @@ function TextRows({
 /** The key of the field whose names are picked from the monitors of the station. */
 export const MONITOR_KEY = 'capture_monitors';
 
-/** One option text of a monitor: `<name> — <description>`, or only the name. */
-const monitorText = (m: MonitorInfo): string =>
-  m.description === '' ? m.name : `${m.name} — ${m.description}`;
+/** The words of the add button of the monitor rows (typed or picked). */
+const ADD_MONITOR = 'Add monitor';
 
-/** The rows of the monitor names: a drop-down of the station's monitors for each, then "Add". */
+/** The rows of the monitor names: a drop-down of the station's monitors for each, then "Add monitor". */
 function MonitorRows({
   label,
   rows,
@@ -132,8 +166,8 @@ function MonitorRows({
               <option value={row}>{`${row} (not connected)`}</option>
             )}
             {monitors.map((m) => (
-              <option key={m.name} value={m.name}>
-                {monitorText(m)}
+              <option key={m.name} value={m.name} title={monitorRaw(m)}>
+                {monitorLabel(m)}
               </option>
             ))}
           </select>
@@ -152,7 +186,7 @@ function MonitorRows({
           title={unused === undefined ? 'Every monitor is in the list.' : undefined}
           onClick={() => unused !== undefined && onChange([...rows, unused.name])}
         >
-          <Icon of={Plus} size={14} /> Add
+          <Icon of={Plus} size={14} /> {ADD_MONITOR}
         </button>
       </div>
     </div>
@@ -187,6 +221,7 @@ function FolderRows({
             sessions={sessions}
             browseDisabled={disabled}
             label={`${label} ${i + 1}`}
+            pinnable={false}
             onChange={(path) => onChange(rows.map((r, at) => (at === i ? path : r)))}
           />
           <RemoveButton
@@ -343,6 +378,9 @@ export const GROUP_KINDS: readonly FieldMeta['kind'][] = [
   'trackers',
 ];
 
+/** The keys with a control of several parts (a choice and a time, a list of checkboxes). */
+export const GROUP_KEYS: readonly string[] = ['offline_approval_policy', 'worker_grant.stations'];
+
 /** The control of the simple and list kinds. `instances` and `trackers` have their own editors. */
 export function FieldEditor({
   meta,
@@ -353,7 +391,34 @@ export function FieldEditor({
   list,
   sessions,
   monitors,
+  stations,
+  os,
 }: EditorProps) {
+  if (meta.key === 'offline_approval_policy' && meta.kind === 'text') {
+    return <PolicyEditor value={asText(value)} disabled={disabled} onChange={onChange} />;
+  }
+  if (meta.key === 'worker_grant.stations' && meta.kind === 'texts' && stations !== undefined) {
+    return (
+      <StationsEditor
+        value={asStrings(value)}
+        stations={stations}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
+  if (meta.key === 'hibernate_after_min' && meta.kind === 'int') {
+    return (
+      <OffMinutes
+        label={meta.label}
+        value={asNumber(value)}
+        min={meta.min}
+        max={meta.max}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    );
+  }
   switch (meta.kind) {
     case 'bool':
       return (
@@ -361,6 +426,8 @@ export function FieldEditor({
           type="checkbox"
           role="switch"
           className="fd-switch"
+          // Bypass is a hazard (DESIGN-SYSTEM §2.2): its on track is --hazard, not the --ok of "ok".
+          data-tone={meta.key === 'allow_bypass_permissions' ? 'hazard' : undefined}
           aria-checked={value === true}
           checked={value === true}
           disabled={disabled}
@@ -369,10 +436,13 @@ export function FieldEditor({
       );
     case 'int': {
       const n = asNumber(value);
-      return (
+      const unit = unitOf(meta);
+      const input = (
         <input
           type="number"
           inputMode="numeric"
+          className={unit === null ? undefined : 'fd-set-unitnum'}
+          aria-label={unit === null ? undefined : `${fieldLabel(meta)} in ${unit.words}`}
           value={n ?? ''}
           min={meta.min ?? undefined}
           max={meta.max ?? undefined}
@@ -380,12 +450,23 @@ export function FieldEditor({
           onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
         />
       );
+      // One notation for every unit (§5): the unit follows the field, never in its label.
+      return unit === null ? (
+        input
+      ) : (
+        <span className="fd-set-inline">
+          {input}
+          <span className="fd-set-unit" aria-hidden="true">
+            {unit.short}
+          </span>
+        </span>
+      );
     }
     case 'enum': {
       const text = asText(value);
       return (
         <select value={text} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Default</option>
+          <option value="">{defaultOptionLabel(meta.key, os)}</option>
           {meta.options.map((o) => (
             <option key={o} value={o}>
               {optionLabel(meta.key, o)}
@@ -412,6 +493,7 @@ export function FieldEditor({
           sessions={sessions}
           browseDisabled={disabled}
           label={meta.label}
+          pinnable={false}
           onChange={onChange}
         />
       );
@@ -454,7 +536,8 @@ export function FieldEditor({
           rows={asStrings(value)}
           onChange={onChange}
           disabled={disabled}
-          addLabel="Add"
+          addLabel={meta.key === MONITOR_KEY ? ADD_MONITOR : (ADD_LABELS[meta.key] ?? 'Add')}
+          short={SHORT_KEYS.includes(meta.key)}
         />
       );
     case 'addresses':
@@ -487,15 +570,37 @@ export function FieldEditor({
           disabled={disabled}
         />
       );
-    case 'text':
-      return (
+    case 'text': {
+      const mono = MONO_KEYS.includes(meta.key);
+      const text = asText(value);
+      const model = MODEL_KEYS.includes(meta.key);
+      const input = (
         <input
-          value={asText(value)}
+          className={model ? 'fd-set-idfield' : undefined}
+          value={text}
           disabled={disabled}
+          placeholder={PLACEHOLDERS[meta.key]}
           autoComplete="off"
+          spellCheck={mono ? false : undefined}
+          data-mono={mono ? 'true' : undefined}
           onChange={(e) => onChange(e.target.value)}
         />
       );
+      if (!model) return input;
+      // A model id is mono; the name of the model follows it (`Haiku 5.5`), as on every surface.
+      // The field keeps one place in the tree while the name comes and goes (the focus stays).
+      const name = text === '' ? text : shortModel(text);
+      return (
+        <span className="fd-set-inline">
+          {input}
+          {name === text ? null : (
+            <span className="fd-set-unit" aria-hidden="true">
+              {name}
+            </span>
+          )}
+        </span>
+      );
+    }
     default:
       return null;
   }

@@ -13,6 +13,7 @@ import {
   Globe,
   Icon,
   type LucideIcon,
+  MessageSquare,
   Pencil,
   Plug,
   Search,
@@ -21,10 +22,15 @@ import {
   Workflow,
   Wrench,
 } from '../ui/icons';
+import { addedText, homeShort, homeShortIn, removedText } from '../ui/format';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
 import { clock } from '../sharing/people';
-import { runLabel } from './labels';
+import { argText, requestTitle, runLabel, thinkingText, toolName } from './labels';
+import { NoticeLine, TurnAlert } from './ChatAlert';
+import { type NoticeItem, pairTurnErrors } from './notices';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
@@ -94,7 +100,10 @@ const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
   other: Wrench,
 };
 
-const firstLine = (text: string): string => text.split('\n')[0] ?? '';
+/** The icon of a tool row: a Claude question has the question glyph of the board (the Needs you
+    rail, Watch, the fleet cards), every other call the icon of its kind. */
+const toolIcon = (tool: Tool): LucideIcon =>
+  tool.title === 'AskUserQuestion' ? MessageSquare : KIND_ICON[tool.tool_kind];
 
 /**
  * The node of a finished tool call on the flight path (DESIGN-SYSTEM §4.5): its shape and color
@@ -113,6 +122,32 @@ const RESULT: Partial<Record<Tool['status'], { text: string; tone?: 'hazard' }>>
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
 
+/**
+ * The fades of the log (chat.css): away from its top it fades under the tab row
+ * (`data-scrolled`); with more below it fades above the composer (`data-more-below`).
+ */
+function markEdges(el: HTMLElement) {
+  el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+  el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
+
+/**
+ * The room that the scrollbar of the log takes at its start and its end (`scrollbar-gutter:
+ * stable both-edges` keeps half of it at each side; a phone keeps it at the end only; an overlay
+ * scrollbar takes none), as `--chat-sb-start` and `--chat-sb-end` on the chat: the Agents bar
+ * above the log keeps the same room, so that its menus start and end on the edges of the prose.
+ */
+function markGutter(el: HTMLElement, chat: HTMLElement) {
+  const room = Math.max(0, el.offsetWidth - el.clientWidth);
+  const start = getComputedStyle(el).scrollbarGutter.includes('both-edges') ? room / 2 : 0;
+  for (const [name, px] of [
+    ['--chat-sb-start', start],
+    ['--chat-sb-end', room - start],
+  ] as const) {
+    if (chat.style.getPropertyValue(name) !== `${px}px`) chat.style.setProperty(name, `${px}px`);
+  }
+}
+
 type ItemsProps = {
   items: readonly Item[];
   onOpenChanges: OpenChanges;
@@ -128,10 +163,16 @@ const NO_TASKS: ReadonlyMap<string, TaskState> = new Map();
 
 function Items(props: ItemsProps): ReactNode {
   const { compact, provider, onOpenChanges, review, loadSubagent, tasks, shell } = props;
+  // §4.7: a failed turn shows the provider error of its last agent text; the text is not repeated.
+  const turnErrors = pairTurnErrors(props.items);
+  const items =
+    turnErrors.hidden.size === 0
+      ? props.items
+      : props.items.filter((item) => !turnErrors.hidden.has(item.key));
   // B8: a shell card is never folded.
-  const rows = unfoldShells(compactRuns(props.items, compact, provider), compact, provider);
+  const rows = unfoldShells(compactRuns(items, compact, provider), compact, provider);
   // §4.5: a call that waits for an answer shows it in its own row.
-  const waiting = pairWaiting(props.items);
+  const waiting = pairWaiting(items);
   return rows.map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -147,6 +188,7 @@ function Items(props: ItemsProps): ReactNode {
         key={row.item.key}
         item={row.item}
         waiting={waiting}
+        turnErrors={turnErrors.detail}
         {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ),
@@ -187,7 +229,9 @@ function ToolFold(
 
 /** A tool call. `waitingFor`: the title of the open request of the call (it waits for you). */
 function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | undefined }) {
-  const target = tool.input ? firstLine(tool.input) : '';
+  // The row shows the input as one line (a JSON object as its values); the body keeps it raw.
+  const target = argText(tool.input);
+  const { name, server } = toolName(tool.title);
   // One file that the target already names is not repeated as a badge.
   const named =
     tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
@@ -217,17 +261,23 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
           <StatusMark status={tool.status} />
         )}
         <span className="fd-chat-kind" title={tool.tool_kind}>
-          <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
+          <Icon of={toolIcon(tool)} size={14} />
         </span>
-        <span className="fd-chat-tool-title">{tool.title}</span>
-        {tool.input ? (
+        {/* A name in words (an MCP tool, a built-in tool) keeps the raw id in its tooltip. */}
+        <span className="fd-chat-tool-title" title={name === tool.title ? undefined : tool.title}>
+          {name}
+        </span>
+        {server === null ? null : <span className="fd-chat-tool-server">{server}</span>}
+        {target !== '' ? (
+          // A home folder reads as `~`, the same as in the prose and the session header.
           <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
-            {isPath ? <PathTail path={target} /> : <bdi>{target}</bdi>}
+            {isPath ? <PathTail path={homeShort(target)} /> : <bdi>{homeShortIn(target)}</bdi>}
           </span>
         ) : null}
         {shown.map((path) => (
-          <span key={path} className="fd-badge" title={path}>
-            {basename(path)}
+          <span key={path} className="fd-badge fd-chat-file" title={path}>
+            {/* The name gives way with an ellipsis on a narrow row (chat.css). */}
+            <span>{basename(path)}</span>
           </span>
         ))}
         {more > 0 ? <span className="fd-badge">{`+${more}`}</span> : null}
@@ -237,7 +287,7 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
         {waitingFor !== undefined ? (
           // The phone row shows the short label (chat.css); the approval sheet says the rest.
           <span className="fd-chat-tool-result" data-tone="act">
-            <span className="fd-vh">{`${WAITING_LABEL} · ${waitingFor}`}</span>
+            <span className="fd-vh">{`${WAITING_LABEL} · ${requestTitle(waitingFor)}`}</span>
             <span className="fd-chat-wait-long" aria-hidden="true">
               {WAITING_LABEL}
             </span>
@@ -299,7 +349,14 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent; waiti
   );
 }
 
-function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Waiting }) {
+function ItemView(
+  props: Omit<ItemsProps, 'items'> & {
+    item: Item;
+    waiting?: Waiting;
+    /** The raw provider error of each failed turn of the list, by turn key (`pairTurnErrors`). */
+    turnErrors?: ReadonlyMap<string, string>;
+  },
+) {
   const { item } = props;
   switch (item.type) {
     case 'run': {
@@ -340,6 +397,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
           ) : (
             <PromptBubble
               text={item.text ?? item.input}
+              author={name}
               known={props.review?.known}
               onOpen={props.review?.onOpen}
             />
@@ -366,9 +424,9 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
     case 'reasoning':
       return (
         <details className="fd-chat-reasoning">
-          <summary className={item.done ? undefined : 'fd-chat-pulse'}>
+          <summary>
             <Icon of={ChevronRight} size={12} />
-            {item.done ? 'Thinking' : 'Thinking…'}
+            {thinkingText(item)}
           </summary>
           <div className="fd-chat-reasoning-text">{item.text}</div>
         </details>
@@ -387,11 +445,11 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return item.state === 'open' ? (
         <p className="fd-chat-line fd-chat-ask" data-state="open">
           <Icon of={TriangleAlert} size={14} />
-          {`${WAITING_LABEL} · ${item.title}`}
+          {`${WAITING_LABEL} · ${requestTitle(item.title)}`}
         </p>
       ) : (
         <p className="fd-chat-line" data-state={item.state}>
-          {`${item.title} · ${item.outcome ?? 'expired'}`}
+          {`${requestTitle(item.title)} · ${item.outcome ?? 'expired'}`}
           {item.answered_by !== undefined && memberName(item.answered_by) !== null
             ? ` · answered by ${memberName(item.answered_by)}`
             : ''}
@@ -409,7 +467,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
       return (
         <div className="fd-chat-turn">
           {item.status !== 'done' ? (
-            <p className="fd-chat-line" data-status={item.status}>{`Turn ${item.status}`}</p>
+            <TurnAlert status={item.status} detail={props.turnErrors?.get(item.key)} />
           ) : null}
           {item.diff && hasChanges(item.diff) ? (
             <div className="fd-chat-diff">
@@ -418,10 +476,10 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
                 {item.diff.files_changed} {item.diff.files_changed === 1 ? 'file' : 'files'} changed
               </span>
               {item.diff.insertions > 0 ? (
-                <span className="fd-add">+{item.diff.insertions}</span>
+                <span className="fd-add">{addedText(item.diff.insertions)}</span>
               ) : null}
               {item.diff.deletions > 0 ? (
-                <span className="fd-del">−{item.diff.deletions}</span>
+                <span className="fd-del">{removedText(item.diff.deletions)}</span>
               ) : null}
               {props.onOpenChanges ? (
                 <button
@@ -441,18 +499,17 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
     case 'suggestion':
       return <SuggestedChip path={item.path} />;
     case 'notice':
-      return (
-        <p className={item.tone === 'error' ? 'fd-chat-line fd-chat-error' : 'fd-chat-line'}>
-          {item.text}
-        </p>
-      );
+      // The raw text of the station and the repeats are optional fields (`NoticeExtra`).
+      return <NoticeLine item={item as NoticeItem} />;
   }
 }
 
 export function ChatView(props: ChatViewProps) {
   const { items, working, ready, error } = props;
   const provider = props.provider ?? null;
+  const chat = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLDivElement>(null);
   const stick = useRef(true); // the user is near the bottom
   const [behind, setBehind] = useState(false);
   const [filter, setFilter] = useChatFilter(props.initialFilter);
@@ -527,11 +584,26 @@ export function ChatView(props: ChatViewProps) {
     else if (fresh) setBehind(true);
   }, [items, shown, working]);
 
+  // The log also changes its height without a scroll (new rows, an opened row, a filter, a
+  // resized window): the fades follow it, and the bar above it keeps the room of its scrollbar.
+  useEffect(() => {
+    const el = scroller.current;
+    const body = column.current;
+    const root = chat.current;
+    if (!el || !body || !root || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      markEdges(el);
+      markGutter(el, root);
+    });
+    observer.observe(el);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, []);
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    // Away from its top, the log fades under the tab row (chat.css `[data-scrolled]`).
-    el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+    markEdges(el);
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     stick.current = near;
     if (near) setBehind(false);
@@ -541,19 +613,19 @@ export function ChatView(props: ChatViewProps) {
   };
 
   const last = shown.at(-1);
-  // A session that waits for your answer is not working (§4.5: one state per row).
+  // A session that waits for your answer is not working (§4.5: one state per row), and a running
+  // call at the end shows the working glyph already: one working mark for one state.
   const showWorking =
-    working && !(last?.type === 'message' && !last.done) && !hasOpenRequest(items);
+    working &&
+    !(last?.type === 'message' && !last.done) &&
+    !(last?.type === 'tool' && last.status === 'running') &&
+    !hasOpenRequest(items);
 
   let body: ReactNode;
-  if (!ready) body = <p className="fd-chat-state">Loading the conversation…</p>;
-  else if (error) {
-    body = (
-      <p className="fd-chat-state fd-chat-error" role="alert">
-        {error}
-      </p>
-    );
-  } else if (items.length === 0) {
+  // §4.7: the quiet loading line and the error notice of every panel.
+  if (!ready) body = <Loading text="Loading the conversation…" />;
+  else if (error) body = <ErrorNotice text={error} />;
+  else if (items.length === 0) {
     // DL-189: with earlier history above, the empty text would be wrong.
     body =
       historyCount > 0 ? null : (
@@ -586,7 +658,7 @@ export function ChatView(props: ChatViewProps) {
     ) : null;
 
   return (
-    <section className="fd-chat" aria-label="Conversation">
+    <section className="fd-chat" aria-label="Conversation" ref={chat}>
       {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
           end of the session tab row (chat.css), out of the transcript. */}
       {toolbar ? (
@@ -599,7 +671,7 @@ export function ChatView(props: ChatViewProps) {
       )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
-        <div className="fd-chat-column">
+        <div className="fd-chat-column" ref={column}>
           {history === undefined ? null : (
             <>
               {history.view.more ? (
@@ -618,12 +690,8 @@ export function ChatView(props: ChatViewProps) {
           {body}
           {ready && !error && showWorking ? (
             <p className="fd-chat-working">
+              <span className="fd-dot" data-status="working" aria-hidden="true" />
               Working
-              <span className="fd-chat-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
             </p>
           ) : null}
           {props.footer}

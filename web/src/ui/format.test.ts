@@ -1,5 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import { errorSentence, isRiskyMode, modelFamily, plainLine, shortModel, sizeText } from './format';
+import {
+  addedText,
+  archLabel,
+  compactCount,
+  contextLabel,
+  countText,
+  errorSentence,
+  homeOf,
+  homeShort,
+  homeShortIn,
+  isRiskyMode,
+  modelFamily,
+  monitorLabel,
+  monitorRaw,
+  pathParts,
+  plainLine,
+  removedText,
+  shortModel,
+  sizeText,
+  usdText,
+} from './format';
 
 describe('shortModel', () => {
   test('a Claude id becomes the family and the version', () => {
@@ -7,10 +27,10 @@ describe('shortModel', () => {
     expect(shortModel('claude-opus-4-1-20250805')).toBe('Opus 4.1');
   });
 
-  test('a context suffix keeps the minor version and shows after it', () => {
-    expect(shortModel('claude-opus-5-5[1m]')).toBe('Opus 5.5 1M');
+  test('a context suffix is not part of the name and keeps the minor version', () => {
+    expect(shortModel('claude-opus-5-5[1m]')).toBe('Opus 5.5');
     expect(shortModel('claude-opus-5-5')).toBe('Opus 5.5');
-    expect(shortModel('opus[1m]')).toBe('Opus 1M');
+    expect(shortModel('opus[1m]')).toBe('Opus');
   });
 
   test('a date or a leading version does not count as the model version', () => {
@@ -30,6 +50,19 @@ describe('shortModel', () => {
   test('no model is the default', () => {
     expect(shortModel(null)).toBe('default');
     expect(shortModel('')).toBe('default');
+  });
+});
+
+describe('contextLabel', () => {
+  test('the context suffix of a model id', () => {
+    expect(contextLabel('claude-opus-5-5[1m]')).toBe('1M context');
+    expect(contextLabel('opus[200k]')).toBe('200K context');
+  });
+
+  test('is null for an id without a suffix and for no model', () => {
+    expect(contextLabel('claude-opus-5-5')).toBeNull();
+    expect(contextLabel('opus[]')).toBeNull();
+    expect(contextLabel(null)).toBeNull();
   });
 });
 
@@ -97,4 +130,122 @@ test('sizeText uses decimal units', () => {
   expect(sizeText(12_345)).toBe('12.3 KB');
   expect(sizeText(4_500_000)).toBe('4.5 MB');
   expect(sizeText(1_200_000_000)).toBe('1.2 GB');
+});
+
+describe('numbers (DESIGN-SYSTEM §5)', () => {
+  test('countText groups the thousands', () => {
+    expect(countText(0)).toBe('0');
+    expect(countText(940)).toBe('940');
+    expect(countText(1286)).toBe('1,286');
+    expect(countText(36_952)).toBe('36,952');
+    expect(countText(1_234_567)).toBe('1,234,567');
+  });
+
+  test('compactCount keeps two significant digits and no trailing zero', () => {
+    expect(compactCount(522)).toBe('522');
+    expect(compactCount(940)).toBe('940');
+    expect(compactCount(1000)).toBe('1K');
+    expect(compactCount(3100)).toBe('3.1K');
+    expect(compactCount(9400)).toBe('9.4K');
+    expect(compactCount(52_300)).toBe('52K');
+    expect(compactCount(236_400)).toBe('236K');
+    expect(compactCount(999_999)).toBe('1M');
+    expect(compactCount(1_000_000)).toBe('1M');
+    expect(compactCount(1_250_000)).toBe('1.3M');
+    expect(compactCount(12_345_678)).toBe('12M');
+  });
+
+  test('usdText groups the thousands and keeps the cents', () => {
+    expect(usdText(0)).toBe('$0.00');
+    expect(usdText(1.2)).toBe('$1.20');
+    expect(usdText(14_876.41)).toBe('$14,876.41');
+    expect(usdText(51_735.857)).toBe('$51,735.86');
+  });
+
+  test('added and removed lines carry a sign and separators', () => {
+    expect(addedText(1286)).toBe('+1,286');
+    expect(removedText(400)).toBe('\u2212400');
+    expect(removedText(36_952)).toBe('\u221236,952');
+  });
+});
+
+describe('paths (DESIGN-SYSTEM §5)', () => {
+  test('homeShort starts a path under a home folder at ~', () => {
+    expect(homeShort('/home/me/projects/x')).toBe('~/projects/x');
+    expect(homeShort('/Users/me/x')).toBe('~/x');
+    expect(homeShort('/home/me')).toBe('~');
+    expect(homeShort('/home/me2x/a')).toBe('~/a');
+    expect(homeShort('/srv/data')).toBe('/srv/data');
+    expect(homeShort('/home')).toBe('/home');
+  });
+
+  test('homeOf is the home folder that homeShort writes as ~', () => {
+    expect(homeOf('/home/me/projects/x')).toBe('/home/me');
+    expect(homeOf('/home/me')).toBe('/home/me');
+    expect(homeOf('/Users/me/x')).toBe('/Users/me');
+    expect(homeOf('/srv/data')).toBeNull();
+    expect(homeOf('/home')).toBeNull();
+    expect(homeOf('/srv/home/me')).toBeNull();
+  });
+
+  test('homeShortIn shortens every home folder that starts a word of a text', () => {
+    expect(homeShortIn('cat /home/me/a.txt')).toBe('cat ~/a.txt');
+    expect(homeShortIn('/home/me/x && ls /Users/you')).toBe('~/x && ls ~');
+    expect(homeShortIn("--dir=/home/me/x '/home/me/y' (/home/me/z)")).toBe("--dir=~/x '~/y' (~/z)");
+    expect(homeShortIn('a/home/me/b /home /srv/home/me')).toBe('a/home/me/b /home /srv/home/me');
+    expect(homeShortIn('cargo test')).toBe('cargo test');
+  });
+
+  test('pathParts gives the name and the parent from its root', () => {
+    expect(pathParts('/home/me/fleet-deck-worktrees/v2')).toEqual({
+      parent: '~/fleet-deck-worktrees/',
+      base: 'v2',
+    });
+    expect(pathParts('/home/me/fleet/')).toEqual({ parent: '~/', base: 'fleet' });
+    expect(pathParts('/home/me')).toEqual({ parent: '', base: '~' });
+    expect(pathParts('/srv/data')).toEqual({ parent: '/srv/', base: 'data' });
+    expect(pathParts('/srv')).toEqual({ parent: '/', base: 'srv' });
+    expect(pathParts('/')).toEqual({ parent: '', base: '/' });
+  });
+});
+
+describe('monitorLabel', () => {
+  const m = (name: string, description: string) => ({ name, description });
+
+  test('a description loses its hex product code and comes before the connector', () => {
+    expect(monitorLabel(m('DP-1', 'Dell Inc. DELL U2720Q 0x1A2B'))).toBe(
+      'Dell Inc. DELL U2720Q · DP-1',
+    );
+    expect(monitorLabel(m('HDMI-A-1', ''))).toBe('HDMI-A-1');
+    expect(monitorLabel(m('DP-2', '0x41AA'))).toBe('DP-2');
+  });
+
+  test('a laptop panel is the built-in display', () => {
+    expect(monitorLabel(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
+      'Built-in display · eDP-1',
+    );
+    expect(monitorLabel(m('LVDS-1', ''))).toBe('Built-in display · LVDS-1');
+  });
+
+  test('the raw text keeps the name and the description', () => {
+    expect(monitorRaw(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
+      'eDP-1 — Samsung Display Corp. 0x41AA',
+    );
+    expect(monitorRaw(m('DP-1', ''))).toBe('DP-1');
+  });
+});
+
+describe('archLabel (DESIGN-SYSTEM §5)', () => {
+  test('the Rust target names become the names that owners know', () => {
+    expect(archLabel('aarch64')).toBe('arm64');
+    expect(archLabel('arm64')).toBe('arm64');
+    expect(archLabel('x86_64')).toBe('x86_64');
+    expect(archLabel('amd64')).toBe('x86_64');
+    expect(archLabel('AArch64')).toBe('arm64');
+  });
+
+  test('any other architecture stays as it is', () => {
+    expect(archLabel('riscv64')).toBe('riscv64');
+    expect(archLabel('')).toBe('');
+  });
 });

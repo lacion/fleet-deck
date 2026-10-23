@@ -49,13 +49,13 @@ describe('App', () => {
       'Opus 4.1',
       'title="Branch: fd/login"',
       'cargo test',
-      'title="Cost $0.00"',
+      'title="$0.00 at API prices"',
     ])
       expect(html).toContain(text);
     expect(html).not.toContain('Stale');
   });
 
-  test('filter chips name both stations and do not depend on provider inventory', () => {
+  test('filter chips name both stations; the Provider row lists only the providers on the board', () => {
     const html = renderToStaticMarkup(
       <App
         initialRoute={{ name: 'fleet' }}
@@ -64,11 +64,15 @@ describe('App', () => {
       />,
     );
     expect(html).toContain('aria-label="Fleet filters"');
-    for (const name of ['Alpha', 'Beta', 'Claude', 'Codex'])
+    for (const name of ['Alpha', 'Beta'])
       expect(html).toMatch(new RegExp(`<button[^>]*class="fd-chip"[^>]*>${name}</button>`));
+    // One provider on the board: no Provider row (a Codex chip filtered to an empty board).
+    expect(html).not.toContain('<span class="fd-label">Provider</span>');
+    expect(html).not.toContain('>Codex</button>');
     // no filter is set: there is no "N of M" output
     expect(html).not.toContain('<output');
-    expect(html).toContain('2 stations');
+    // The sentence counts the stations that run a live session (§4.3): one of the two.
+    expect(html).toContain('on <span>1 station</span>');
   });
 
   test('provider text and workspace paths are escaped rather than treated as HTML', () => {
@@ -114,7 +118,8 @@ describe('App', () => {
     );
     expect(html).toContain('aria-label="More"');
     expect(html).toContain('Plans');
-    expect(html).toMatch(/Stations<span class="fd-count">1<\/span>/);
+    // No total of machines on the Stations row (nothing to act on); it opens a page: a chevron.
+    expect(html).toMatch(/Stations<span class="fd-more-chev">/);
     expect(html).toMatch(/aria-current="page">(<svg[\s\S]*?<\/svg>)?<span>More<\/span>/);
   });
 
@@ -159,17 +164,14 @@ describe('App', () => {
     expect(needs).toBeGreaterThan(-1);
     expect(html).toContain('Ended <span class="fd-count">1</span>');
     const alpha = html.indexOf('aria-label="Station Alpha"');
-    const beta = html.indexOf('aria-label="Station Beta"');
     expect(needs).toBeLessThan(alpha);
     expect(alpha).toBeGreaterThan(-1);
-    expect(alpha).toBeLessThan(beta);
-    // the sidebar lists the needs-you session once, in "Needs you"; the count of its station is
-    // the rows shown under it, and the station total moves to the title and a hidden text
+    // the sidebar lists the needs-you session once, in "Needs you"; a station with no other row
+    // has no group (no empty header with a 0 count); the count of a station is the rows shown
+    // under it, and the station total moves to the title and a hidden text
     const sidebar = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
     expect(sidebar.match(/Needs me/g)?.length).toBe(1);
-    expect(html.slice(beta, html.indexOf('</h3>', beta))).toContain(
-      '<span class="fd-count" title="1 session on Beta">0</span><span class="fd-vh">, 1 session on Beta</span>',
-    );
+    expect(sidebar).not.toContain('aria-label="Station Beta"');
     expect(html.slice(alpha, html.indexOf('</h3>', alpha))).toContain(
       '<span class="fd-count" title="2 sessions on Alpha">1</span><span class="fd-vh">, 2 sessions on Alpha</span>',
     );

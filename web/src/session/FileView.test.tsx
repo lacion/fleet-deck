@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { FileContent } from '../gen';
-import { FileView } from './FilesPanel';
+import { FilesPanel, FileView } from './FilesPanel';
+import type { FileActions } from './workspace';
 
 const file = (path: string, text: string, extra: Partial<FileContent> = {}): FileContent => ({
   path,
@@ -47,5 +48,31 @@ describe('file view', () => {
     const html = view(file('logo.png', '', { binary: true, text: null }));
     expect(html).toContain('A binary file is not shown.');
     expect(html).toContain('aria-label="Copy the path"');
+  });
+});
+
+describe('files panel', () => {
+  // A read that never answers: the panel shows its first state.
+  const never = () => new Promise<never>(() => {});
+  const files: FileActions = {
+    list: never,
+    read: never,
+    search: never,
+    diff: never,
+    sessionDiff: never,
+  };
+
+  test('"Files in" and the crumbs label the listing; a read is the §4.7 loading line', () => {
+    const html = renderToStaticMarkup(<FilesPanel files={files} root="/home/me/v2" />);
+    // The label of the list, not its first entry: no folder icon, the current crumb marked.
+    expect(html).toContain(
+      '<nav class="fd-files-crumbs" aria-label="Folder path"><span class="fd-files-crumbs-lead">Files in</span>',
+    );
+    expect(html).toContain(
+      'aria-current="location" title="/home/me/v2">v2<span class="fd-vh">, root folder</span></button>',
+    );
+    expect(html).not.toContain('lucide-folder-open');
+    expect(html).toContain('<p class="fd-note fd-loading" role="status">Loading the folder…</p>');
+    expect(html).not.toContain('role="alert"');
   });
 });

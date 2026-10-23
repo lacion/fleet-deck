@@ -7,7 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
-import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Send, X } from '../ui/icons';
+import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Radio, Send } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -76,25 +76,25 @@ export function Start({
       />
     );
   return (
-    <>
-      <h3 className="fd-add-question">Where is the new station?</h3>
-      <div className="fd-add-choices" ref={choices}>
-        {dim ? null : tailnetChoice}
-        <Choice
-          icon={Send}
-          title="Any computer, with a one-time invitation"
-          note="The new station connects to this deck. It works behind a router or a firewall."
-          onClick={() => onPick('invite')}
-        />
-        {dim ? tailnetChoice : null}
-      </div>
-      <details className="fd-add-fold">
-        <summary>Other ways</summary>
-        <button type="button" className="fd-add-text-btn" onClick={() => onPick('listen')}>
-          Connect to a station that listens
-        </button>
-      </details>
-    </>
+    <div className="fd-add-choices" ref={choices}>
+      {dim ? null : tailnetChoice}
+      <Choice
+        icon={Send}
+        title="Any computer, with a one-time invitation"
+        note="The new station connects to this deck. It works behind a router or a firewall."
+        onClick={() => onPick('invite')}
+      />
+      {dim ? tailnetChoice : null}
+      {/* The third way is a choice too, in the quiet look (a station that listens is the rare
+          case): no fold, so that every way shows at once. */}
+      <Choice
+        icon={Radio}
+        title="A station that listens for this deck"
+        note="This deck connects to the station. Paste the invitation that the station prints."
+        dim
+        onClick={() => onPick('listen')}
+      />
+    </div>
   );
 }
 
@@ -156,7 +156,11 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
   };
 
   return (
-    <Dialog title="Add station" onClose={close}>
+    <Dialog
+      title="Add station"
+      description={view === 'start' ? 'Where is the new station?' : undefined}
+      onClose={close}
+    >
       <div className="fd-add-dialog">
         {view === 'start' ? null : (
           <div className="fd-add-back">
@@ -181,14 +185,6 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
         {view === 'listen' ? (
           <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
         ) : null}
-        <button
-          type="button"
-          className="fd-iconbtn fd-add-close"
-          aria-label="Close"
-          onClick={close}
-        >
-          <Icon of={X} />
-        </button>
       </div>
     </Dialog>
   );

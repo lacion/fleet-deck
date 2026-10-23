@@ -1,11 +1,19 @@
-// DL-167 (R10): text that the station's model help wrote. The board labels it
-// as generated, and a missing text is simply not shown (no error state).
+// DL-167 (R10): text that the station's model help wrote. The board marks it with the sparkles
+// icon of model help, and a missing text is simply not shown (no error state).
+import { Icon, Sparkles } from './icons';
 
-/** The small mark next to a title that the model help set and the owner did not change. */
-export function GeneratedMark() {
+/** The small mark next to a text that the model help wrote (a title that the owner did not change,
+ * a summary): a 12px --faint sparkles icon with a name (a word pill read as a tag of the session). */
+export function GeneratedMark({
+  label = 'Named by model help',
+  title = 'Named by model help from the first prompt',
+}: {
+  readonly label?: string;
+  readonly title?: string;
+} = {}) {
   return (
-    <span className="fd-generated" title="Named by model help from the first prompt">
-      generated
+    <span className="fd-generated" role="img" aria-label={label} title={title}>
+      <Icon of={Sparkles} size={12} />
     </span>
   );
 }

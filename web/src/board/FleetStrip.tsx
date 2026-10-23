@@ -1,25 +1,35 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useLayoutEffect, useSyncExternalStore } from 'react';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, SessionExtras, StationView } from '../gen';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
-import { ProjectChip } from '../integrations/ProjectChip';
+import { ProjectChip, useOwnProject } from '../integrations/ProjectChip';
 import { useProjects } from '../integrations/context';
 import type { Freshness } from '../runtime/state';
 import { hasChanges } from '../session/changes';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { archived } from '../ui/archive';
-import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
+import {
+  addedText,
+  compactCount,
+  countText,
+  isRiskyMode,
+  modeLabel,
+  modelFamily,
+  removedText,
+  shortModel,
+} from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
   CloudOff,
   Folder,
+  FolderGit2,
   GitBranch,
   Icon,
-  Layers,
+  ListTodo,
   type LucideIcon,
   Mail,
   Paperclip,
@@ -34,7 +44,50 @@ import { UnreadMark, unreadOf } from '../views/marks';
 import { CardNote, CompareChip } from './cardParts';
 import type { Contested } from './fleet';
 import { stationName } from './fleet';
-import { costText } from './usage';
+import { API_PRICES, costText } from './usage';
+
+// The changes column of the board (DESIGN-SYSTEM §4.1): absent until a strip of the board knows its
+// changes, then there for the page life. A live event never takes it away again, so the where and
+// now cells of every lane do not move when the last diff of the board goes.
+let changesShown = false;
+const changesListeners = new Set<() => void>();
+
+/** Shows the changes column of the board from now on (a strip with known changes calls it). */
+export function showChangesColumn(): void {
+  if (changesShown) return;
+  changesShown = true;
+  for (const listener of [...changesListeners]) listener();
+}
+
+/** Whether the board has its changes column; re-renders when it comes. */
+export function useChangesColumn(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      changesListeners.add(listener);
+      return () => changesListeners.delete(listener);
+    },
+    () => changesShown,
+    () => changesShown,
+  );
+}
+
+/** The longest diff text that the changes column holds whole ("+12,345 −678"). */
+const DIFF_CHARS = 12;
+
+/**
+ * The added and removed lines of a strip: `+1,286` `−400`, or the short form (`+18K` `−6.4K`) when
+ * the whole numbers are longer than the column holds (§5). The title keeps the whole numbers.
+ */
+export function diffTexts(
+  insertions: number,
+  deletions: number,
+): { readonly added: string; readonly removed: string; readonly whole: string } {
+  const added = addedText(insertions);
+  const removed = removedText(deletions);
+  const whole = `${added} ${removed}`;
+  if (whole.length <= DIFF_CHARS) return { added, removed, whole };
+  return { added: `+${compactCount(insertions)}`, removed: `−${compactCount(deletions)}`, whole };
+}
 
 /**
  * One fact of the meta cell: a 12 px icon and an optional number (DESIGN-SYSTEM §4.1: the quiet
@@ -88,6 +141,7 @@ export function FleetStrip({
   contested,
   extra,
   batchCount = 0,
+  hideMode = false,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -98,6 +152,11 @@ export function FleetStrip({
   readonly extra?: SessionExtras | undefined;
   /** How many sessions of the card's batch are on the board (R1.4); the chip shows for two or more. */
   readonly batchCount?: number;
+  /**
+   * The lane head names the permission mode of every live strip of the lane (§4.1): the strip
+   * shows no flag of its own and keeps the words for screen readers.
+   */
+  readonly hideMode?: boolean;
 }) {
   const s = card.summary;
   const ref = sessionRef(card.station_id, s.session_id);
@@ -116,8 +175,18 @@ export function FleetStrip({
         ? { text: basename(s.cwd), title: `Folder: ${basename(s.cwd)}`, branch: false }
         : null;
   const mail = extra?.mail_pending ?? 0;
+  // The project of the session: a chip (a link of its own) on a wide strip; on a narrow strip a
+  // quiet label of the meta line, so the strip stays two lines (§4.1, concept A phone). On the
+  // page of its own project the strip names no project (the page is the project).
+  const own = useOwnProject();
+  const project = projects.find((p) => p.project_id === card.project_id && p.project_id !== own);
   const title = s.title ?? '';
   const changed = total !== undefined && hasChanges(total) ? total : null;
+  const known = changed !== null;
+  useLayoutEffect(() => {
+    if (known) showChangesColumn();
+  }, [known]);
+  const diff = changed === null ? null : diffTexts(changed.insertions, changed.deletions);
   // A lane by repo or project names the station of each strip: the second line of the where
   // cell, under the branch (as the Needs you panel), with the link chips after it.
   const station = showStation ? stationName(card.station_id, stations) : null;
@@ -180,7 +249,7 @@ export function FleetStrip({
                 <Icon of={Star} size={12} />
               </span>
             ) : null}
-            <UnreadMark count={unreadOf(card)} />
+            <UnreadMark count={unreadOf(card)} dot />
           </span>
           <span
             className="fd-strip-now"
@@ -190,21 +259,11 @@ export function FleetStrip({
           </span>
         </span>
         <span className="fd-strip-meta">
-          {isRiskyMode(s.mode) ? (
-            <Ico
-              kind="risky"
-              icon={ShieldAlert}
-              tone="hazard"
-              title={`Permission mode: ${s.mode}`}
-            />
-          ) : null}
-          {contested === undefined ? null : (
-            <Ico
-              kind="contested"
-              icon={TriangleAlert}
-              tone="hazard"
-              title={`Contested with ${contested.with.join(', ')}`}
-            />
+          {project === undefined ? null : (
+            <span className="fd-strip-proj" title={`Project ${project.name}`}>
+              <Icon of={FolderGit2} size={12} />
+              <span className="fd-strip-proj-name">{project.name}</span>
+            </span>
           )}
           {mail > 0 ? (
             <Ico kind="mail" icon={Mail} title="Mail waiting for delivery" n={mail} />
@@ -230,7 +289,7 @@ export function FleetStrip({
           {s.background_tasks.length > 0 ? (
             <Ico
               kind="background"
-              icon={Layers}
+              icon={ListTodo}
               title="Background tasks"
               n={s.background_tasks.length}
             />
@@ -240,6 +299,26 @@ export function FleetStrip({
           ) : null}
           {cleared ? <Ico kind="archived" icon={Archive} title="Archived" /> : null}
           {freshness === 'stale' ? <Ico kind="stale" icon={CloudOff} title="Stale" /> : null}
+          {/* The hazard flags come last: they sit against the where cell in every strip, so a
+              lane reads its risky sessions down one column; the counters grow to their left. */}
+          {!isRiskyMode(s.mode) ? null : hideMode ? (
+            <span className="fd-vh">Permission mode: {modeLabel(s.mode ?? '')}</span>
+          ) : (
+            <Ico
+              kind="risky"
+              icon={ShieldAlert}
+              tone="hazard"
+              title={`Permission mode: ${modeLabel(s.mode ?? '')}`}
+            />
+          )}
+          {contested === undefined ? null : (
+            <Ico
+              kind="contested"
+              icon={TriangleAlert}
+              tone="hazard"
+              title={`Contested with ${contested.with.join(', ')}`}
+            />
+          )}
         </span>
         {station === null ? (
           <span className="fd-strip-where" title={place?.title}>
@@ -251,18 +330,21 @@ export function FleetStrip({
             <span className="fd-strip-station">{station}</span>
           </span>
         )}
-        {changed === null ? null : (
+        {changed === null || diff === null ? null : (
           <span className="fd-strip-changes">
-            <span className="fd-strip-diff" title="Changed since the session started">
-              <span className="fd-add">+{changed.insertions}</span>{' '}
-              <span className="fd-del">−{changed.deletions}</span>
+            <span
+              className="fd-strip-diff"
+              title={`Changed since the session started: ${diff.whole}`}
+            >
+              <span className="fd-add">{diff.added}</span>{' '}
+              <span className="fd-del">{diff.removed}</span>
             </span>
             <span className="fd-strip-files">
-              {changed.files_changed === 1 ? '1 file' : `${changed.files_changed} files`}
+              {changed.files_changed === 1 ? '1 file' : `${countText(changed.files_changed)} files`}
             </span>
           </span>
         )}
-        <span className="fd-strip-age" title={cost === null ? undefined : `Cost ${cost}`}>
+        <span className="fd-strip-age" title={cost === null ? undefined : `${cost} ${API_PRICES}`}>
           {relativeAge(s.updated_at, now)}
         </span>
       </a>

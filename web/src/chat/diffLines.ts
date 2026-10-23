@@ -132,6 +132,42 @@ export function fileHeads(lines: readonly string[]): ReadonlyMap<number, FileHea
   return heads;
 }
 
+/** The one side that a whole new file (`new`) or a whole deleted file (`old`) has. */
+export type OneSide = 'old' | 'new';
+
+/**
+ * The lines of a new or a deleted file whose section is one hunk, by index, with the side that
+ * the file has. Such a section needs neither its hunk row (`@@ -0,0 +1,48 @@` says only that the
+ * file is new: its header badge says it) nor the line-number gutter of the side it lacks.
+ */
+export function oneSidedLines(
+  lines: readonly string[],
+  kinds: readonly DiffLineKind[],
+  heads: ReadonlyMap<number, FileHead>,
+): ReadonlyMap<number, OneSide> {
+  const out = new Map<number, OneSide>();
+  let side: OneSide | null = null;
+  let section: number[] = [];
+  let hunks = 0;
+  const flush = () => {
+    if (side !== null && hunks === 1) for (const n of section) out.set(n, side);
+  };
+  lines.forEach((_line, n) => {
+    if (kinds[n] === 'file') {
+      flush();
+      const status = heads.get(n)?.status?.kind;
+      side = status === 'added' ? 'new' : status === 'deleted' ? 'old' : null;
+      section = [];
+      hunks = 0;
+      return;
+    }
+    if (kinds[n] === 'hunk') hunks += 1;
+    section.push(n);
+  });
+  flush();
+  return out;
+}
+
 /** The old and the new line number of a hunk line; `null` on the side that does not have it. */
 export type LineNo = { readonly old: number | null; readonly new: number | null };
 

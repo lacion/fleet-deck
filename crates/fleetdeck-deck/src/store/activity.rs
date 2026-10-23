@@ -6,7 +6,7 @@
 //! back as far as those do.
 
 use fleetdeck_proto::board::{ACTIVITY_TEXT_CHARS, ActivityItem, ActivityKind, ActivityList};
-use fleetdeck_proto::event::{Event, RequestKind, ToolStatus};
+use fleetdeck_proto::event::{Event, OptionKind, RequestKind, ToolStatus};
 use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
 use rusqlite::{Connection, params};
 
@@ -62,8 +62,74 @@ fn status_word(status: ToolStatus) -> &'static str {
     }
 }
 
+/// The words of the end of a session for the owner: a known reason in
+/// words, every other reason (`process_exit`, an exit cause, a move) none.
+/// The wall says "Session ended" too (`display_activity`).
+fn ended_text(reason: &str) -> String {
+    match reason {
+        "start_failed" => "Session ended: the start failed".to_owned(),
+        "handover" => "Session ended: handed over".to_owned(),
+        _ => "Session ended".to_owned(),
+    }
+}
+
+/// The words of an answered request: the words of the approval card for
+/// the kind of the chosen option ("Allowed", "Denied"), "Answered" for a
+/// question or an option of no known kind. The wall says "Answered" for
+/// every answer (no approval detail on a display).
+fn answer_text(request: Option<RequestKind>, option: Option<OptionKind>) -> &'static str {
+    if request == Some(RequestKind::Question) {
+        return "Answered";
+    }
+    match option {
+        Some(OptionKind::AllowOnce) => "Allowed",
+        Some(OptionKind::AllowSession) => "Allowed for this session",
+        Some(OptionKind::AllowAlways) => "Always allowed",
+        Some(OptionKind::Amend) => "Allowed with changes",
+        Some(OptionKind::Deny) => "Denied",
+        Some(OptionKind::Other) | None => "Answered",
+    }
+}
+
+/// The text of the `approval.resolved` row of `request_id`: the kind of the
+/// request and of its chosen option come from its `approval.requested` row.
+fn resolved_text(
+    conn: &Connection,
+    station: &str,
+    session: &str,
+    request_id: &str,
+    option_id: &str,
+) -> Result<&'static str> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT envelope FROM timeline
+         WHERE station_id = ?1 AND session_id = ?2 AND kind = 'approval.requested'
+           AND json_extract(envelope, '$.event.request_id') = ?3
+         ORDER BY station_seq DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![station, session, request_id])?;
+    let Some(row) = rows.next()? else {
+        return Ok(answer_text(None, None));
+    };
+    let env: EventEnvelope = serde_json::from_str(&row.get::<_, String>(0)?)?;
+    Ok(match env.event.known() {
+        Some(Event::ApprovalRequested {
+            request_kind,
+            options,
+            ..
+        }) => answer_text(
+            Some(*request_kind),
+            options
+                .iter()
+                .find(|o| o.option_id == option_id)
+                .and_then(|o| o.kind),
+        ),
+        _ => answer_text(None, None),
+    })
+}
+
 /// The kind and the text of a timeline event; `None` for a kind that the
-/// stream does not show. A tool call gets its title in `resolve`.
+/// stream does not show. A tool call gets its title, and an answer its
+/// words, in `activity` (they read other rows).
 fn describe(event: &Event) -> Option<(ActivityKind, String)> {
     Some(match event {
         Event::MessageCompleted { text, .. } => (ActivityKind::Message, one_line(text)),
@@ -76,16 +142,12 @@ fn describe(event: &Event) -> Option<(ActivityKind, String)> {
             ActivityKind::Approval,
             one_line(&format!("Needs you: {title}")),
         ),
-        Event::ApprovalResolved { option_id, .. } => (
-            ActivityKind::Approval,
-            one_line(&format!("Approval answered: {option_id}")),
-        ),
-        Event::ApprovalExpired { .. } => (ActivityKind::Approval, "Approval expired".to_owned()),
+        Event::ApprovalResolved { .. } => {
+            (ActivityKind::Approval, answer_text(None, None).to_owned())
+        }
+        Event::ApprovalExpired { .. } => (ActivityKind::Approval, "Request expired".to_owned()),
         Event::SessionStarted { .. } => (ActivityKind::Lifecycle, "Session started".to_owned()),
-        Event::SessionEnded { reason, .. } => (
-            ActivityKind::Lifecycle,
-            one_line(&format!("Session ended: {reason}")),
-        ),
+        Event::SessionEnded { reason, .. } => (ActivityKind::Lifecycle, ended_text(reason)),
         Event::SessionHibernated { after_min } => (
             ActivityKind::Lifecycle,
             format!("Hibernated after {after_min} min idle"),
@@ -182,6 +244,15 @@ impl DeckStore {
                     && let Some(name) = tool_title(conn, &station, &session, node_id.as_str())?
                 {
                     text = one_line(&format!("{name} ({})", status_word(*status)));
+                }
+                if let Some(Event::ApprovalResolved {
+                    request_id,
+                    option_id,
+                    ..
+                }) = env.event.known()
+                {
+                    text = resolved_text(conn, &station, &session, request_id.as_str(), option_id)?
+                        .to_owned();
                 }
                 items.push(ActivityItem {
                     station_id: StationId::from(station),

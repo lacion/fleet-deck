@@ -1,6 +1,7 @@
 // DL-141: the mail form of the fleet panel (static parts; the sends are in the e2e specs).
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { type SettingsEnv, SettingsProvider } from '../settings/context';
 import { card, station } from '../testing/fleet';
 import type { FleetActions } from './fleet';
 import { FleetPanel, LIST_MS, loadLists, type ThrottleClock, throttle } from './FleetPanel';
@@ -79,6 +80,26 @@ describe('fleet panel mail form', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(late).toEqual([]);
+  });
+
+  test('the section layout: Fleet access is a section of its own after Mail & tasks', () => {
+    const live = station('station-a', { coordinator_live: true });
+    const html = renderToStaticMarkup(
+      <SettingsProvider env={{} as SettingsEnv}>
+        <FleetPanel actions={actions} sessions={[card('a')]} stations={[live]} layout="section" />
+      </SettingsProvider>,
+    );
+    expect(html).toContain(
+      '</section><section class="fd-ops-sec fd-ops-access" aria-label="Fleet access">',
+    );
+    const mail = html.slice(0, html.indexOf('aria-label="Fleet access"'));
+    expect(mail).toContain('aria-label="Mail and tasks"');
+    expect(mail).not.toContain('Give fleet access');
+    // No form in the column: one quiet button opens the dialog.
+    expect(html).toContain('<button type="button" class="fd-fleet-give">');
+    for (const text of ['Fleet control', 'Sessions it may start', 'Allow starting sessions'])
+      expect(html).not.toContain(text);
+    expect(html).not.toContain('<fieldset');
   });
 
   test('version changes load the lists at most once in 10 s, with one trailing load', () => {

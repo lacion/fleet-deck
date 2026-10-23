@@ -1,9 +1,8 @@
 // R6.5 (DL-169): the channels of the activity stream: All, one per repository and one per
 // session. A channel is a filter of `GET /api/activity`; posting to a channel is mail to its
 // session, or to every live session of its repository.
-import { repoName } from '../board/fleet';
-import { sessionTitle } from '../app/sessions';
-import type { ActivityItem, DeckSession } from '../gen';
+import { NO_REPO, repoName } from '../board/fleet';
+import type { ActivityItem, CardStatus, DeckSession } from '../gen';
 import type { FleetTarget } from '../fleet/fleet';
 import type { ActivityQuery } from '../runtime/views';
 
@@ -94,26 +93,70 @@ export type ChannelEntry = {
   readonly count: number;
 };
 
-/** The left list below "All": one entry per repository, then one per session, newest first. */
+/** One session channel: its words, its status glyph and what tells it from a namesake. */
+export type SessionEntry = {
+  readonly channel: Channel;
+  /** The title; the callsign (or the id) of a session without a title. */
+  readonly label: string;
+  /** The label is a callsign: it shows in `.fd-callsign`. */
+  readonly callsign: boolean;
+  readonly status: CardStatus;
+  readonly stationId: string;
+  readonly updatedAt: number;
+  /**
+   * Another channel has the same label: `station` when the namesakes are on other stations (the
+   * station name tells them apart), `age` when one station has two of them (the age does).
+   */
+  readonly namesake: 'station' | 'age' | null;
+};
+
+/** A session that ran its course: its channel goes in the folded Ended group. */
+export const isEnded = (status: CardStatus): boolean =>
+  status === 'ended' || status === 'lost' || status === 'unreachable';
+
+/**
+ * The left list below "All": one entry per repository (by name, the sessions outside a repository
+ * last), then the live sessions and the ended ones, each newest first.
+ */
 export function channelList(sessions: readonly DeckSession[]): {
   readonly repos: readonly ChannelEntry[];
-  readonly sessions: readonly ChannelEntry[];
+  readonly live: readonly SessionEntry[];
+  readonly ended: readonly SessionEntry[];
 } {
   const repoCount = new Map<string, number>();
   for (const c of sessions) repoCount.set(repoName(c), (repoCount.get(repoName(c)) ?? 0) + 1);
   const repos = [...repoCount.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a === b ? 0 : a === NO_REPO ? 1 : b === NO_REPO ? -1 : a.localeCompare(b)))
     .map(
       ([name, count]): ChannelEntry => ({ channel: { kind: 'repo', name }, label: name, count }),
     );
-  const list = [...sessions]
+  const labelOf = (c: DeckSession) => c.summary.title ?? c.summary.callsign ?? c.summary.session_id;
+  const stationsOf = new Map<string, string[]>();
+  for (const c of sessions) {
+    const label = labelOf(c);
+    stationsOf.set(label, [...(stationsOf.get(label) ?? []), c.station_id]);
+  }
+  const namesake = (label: string): SessionEntry['namesake'] => {
+    const at = stationsOf.get(label) ?? [];
+    if (at.length < 2) return null;
+    return new Set(at).size === at.length ? 'station' : 'age';
+  };
+  const entries = [...sessions]
     .sort((a, b) => b.summary.updated_at - a.summary.updated_at)
     .map(
-      (c): ChannelEntry => ({
+      (c): SessionEntry => ({
         channel: { kind: 'session', station: c.station_id, session: c.summary.session_id },
-        label: sessionTitle(c),
-        count: 1,
+        label: labelOf(c),
+        callsign: c.summary.title === null || c.summary.title === undefined,
+        status: c.status,
+        stationId: c.station_id,
+        updatedAt: c.summary.updated_at,
+        namesake: namesake(labelOf(c)),
       }),
     );
-  return { repos, sessions: list };
+  return {
+    repos,
+    live: entries.filter((e) => !isEnded(e.status)),
+    ended: entries.filter((e) => isEnded(e.status)),
+  };
 }

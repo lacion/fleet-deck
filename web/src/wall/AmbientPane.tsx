@@ -3,7 +3,7 @@
 import { relativeAge } from '../app/sessions';
 import { rateMeters, resetsText, tightest } from '../board/usage';
 import type { DeckSession, StationView } from '../gen';
-import { ambientCounts, type Need, usageParts } from './model';
+import { ALL_CLEAR, ambientCounts, type Need, usageParts } from './model';
 
 export function AmbientPane({
   sessions,
@@ -57,7 +57,8 @@ export function AmbientPane({
       )}
       <p className="fd-wall-ambient-line">
         {next === undefined ? (
-          'Nothing needs you.'
+          // The calm words of the board and of the mission wall (§4.4), in their green.
+          <span className="fd-wall-clear">{ALL_CLEAR}</span>
         ) : (
           <>
             <span className="fd-wall-part">

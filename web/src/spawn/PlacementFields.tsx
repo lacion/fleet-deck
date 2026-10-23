@@ -1,7 +1,7 @@
 // FG-6 (design §9.3): the placement fields of the spawn form under "Auto (best station)": the
 // labels that the station needs, three preferences, and "Spread over stations" for a batch.
 import type { Prefer, ProjectHome, ProviderKind, StationView } from '../gen';
-import { AUTO } from './spawn';
+import { AUTO, DIR_PLACEHOLDER } from './spawn';
 import { Seg, StationPills } from './SpawnSheet';
 
 /**
@@ -156,7 +156,7 @@ export function TypedDirectory({
       className="fd-spawn-dir"
       value={value}
       aria-label="Directory path"
-      placeholder="Type an absolute path"
+      placeholder={DIR_PLACEHOLDER}
       spellCheck={false}
       autoCapitalize="off"
       aria-invalid={invalid ? true : undefined}

@@ -5,14 +5,20 @@ import {
   clearFilter,
   clearText,
   FleetHome,
+  filtersAlign,
   scopeFleet,
   statusMatches,
 } from '../app/FleetHome';
 import type { FleetActions } from '../fleet/fleet';
-import type { DeckSession, OpenRequest } from '../gen';
+import type { DeckSession, OpenRequest, StationInfo } from '../gen';
 import { sessionActions } from '../session/commands';
+import { IntegrationsProvider } from '../integrations/context';
+import { fakeActions, project } from '../integrations/fixtures';
+import { PeopleProvider } from '../sharing/context';
+import { env, fakeShareCalls } from '../sharing/fixtures';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
+import { archived } from '../ui/archive';
 import { priority } from '../ui/localSet';
 import { emptyFilter } from './fleet';
 import { rememberConflicts } from './ConflictRadar';
@@ -241,7 +247,7 @@ describe('toolbar filters', () => {
     expect(all.map((f) => f.text)).toEqual([
       'Station: Beta',
       'Provider: Codex',
-      'Repo: org/x',
+      'Repository: org/x',
       'Archived shown',
     ]);
   });
@@ -255,11 +261,13 @@ describe('toolbar filters', () => {
 
   test('the toolbar has a Filters menu with the filter group inside, and the group select', () => {
     const html = home([card('a')]);
-    expect(html).toContain('<details class="fd-menu fd-filters-menu">');
+    // The menu hangs from its button: from its right edge until FleetHome measures the column.
+    expect(html).toContain('<details class="fd-menu fd-filters-menu" data-align="end">');
+    // The trigger has the trailing chevron of every menu trigger (summary[data-variant=toggle]).
     expect(html).toMatch(
-      /<summary class="fd-ghost fd-sm"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
+      /<summary class="fd-ghost fd-sm" data-variant="toggle"><svg[^>]*lucide-list-filter[\s\S]*?<\/svg>Filters<\/summary>/,
     );
-    expect(html).toContain('<option value="station" selected="">Group: Station</option>');
+    expect(html).toContain('<option value="station" selected="">Group by station</option>');
     expect(html).toContain('role="group" aria-label="Fleet filters"');
     expect(html).toContain('aria-label="Group by"');
     expect(html).not.toContain('fd-active-filters');
@@ -268,7 +276,8 @@ describe('toolbar filters', () => {
 
   test('the header shows facts as separate spans, and All clear when nothing waits', () => {
     const html = home([card('a')]);
-    expect(html).toContain('<span>1 session</span>');
+    expect(html).toContain('<span>1 live session</span>');
+    expect(html).toContain('on <span>1 station</span>');
     expect(html).toContain('<span class="fd-home-needs" data-clear="true">All clear</span>');
     expect(html).not.toContain(' · ');
     const needs = home([card('n', 'needs_you', 'station-a', { open_requests: [ask] })]);
@@ -276,6 +285,148 @@ describe('toolbar filters', () => {
     // A request of an unreachable station still waits: no All clear.
     const away = home([card('u', 'unreachable', 'station-a', { open_requests: [ask] })]);
     expect(away).toContain('<span class="fd-home-needs">1 needs you</span>');
+  });
+});
+
+describe('live UI audit, fleet', () => {
+  const homeWith = (cards: DeckSession[], stations = [station(), station('station-b')]) =>
+    renderToStaticMarkup(
+      <FleetHome
+        sessions={cards}
+        stations={stations}
+        freshness="live"
+        assign={undefined}
+        fleet={undefined}
+        conflicts={undefined}
+        feed={[]}
+        layout="desktop"
+        onOpen={() => {}}
+        onSpawn={() => {}}
+        onSpawnWith={() => {}}
+      />,
+    );
+
+  test('the header counts the live sessions and the stations that run one, not the ended or archived', () => {
+    const html = homeWith([
+      card('a'),
+      card('b', 'idle'),
+      card('c', 'working', 'station-b'),
+      card('e', 'ended'),
+      card('l', 'lost', 'station-b'),
+    ]);
+    expect(html).toContain('<span>3 live sessions</span>');
+    expect(html).toContain('on <span>2 stations</span>');
+    // An online station without a live session has a lane, but it runs none of them.
+    const idle = homeWith([card('a'), card('e', 'ended', 'station-b')]);
+    expect(idle).toContain('<span>1 live session</span>');
+    expect(idle).toContain('on <span>1 station</span>');
+    const away = [station(), station('station-b', { reachable: false })];
+    const one = homeWith([card('a'), card('e', 'ended', 'station-b')], away);
+    expect(one).toContain('<span>1 live session</span>');
+    expect(one).toContain('on <span>1 station</span>');
+    const none = homeWith([card('e', 'ended')]);
+    expect(none).toContain('<span>0 live sessions</span>');
+    expect(none).not.toContain('fd-home-on');
+  });
+
+  test('the station chips follow the lane order; no "Unknown"; the archived chip says Show archived', () => {
+    const stations = [station('station-b'), station()];
+    const html = homeWith(
+      [card('a', 'working', 'station-a', { provider: null }), card('b', 'working', 'station-b')],
+      stations,
+    );
+    expect(html.indexOf('>Beta</button>')).toBeLessThan(html.indexOf('>Alpha</button>'));
+    expect(html).toContain('aria-pressed="false">Other</button>');
+    expect(html).not.toContain('Unknown');
+    // One word for one meaning: the row of repositories says Repository, not Repo.
+    const repos = homeWith([
+      card('a', 'working', 'station-a', { repo: { root: '/w/alpha', origin: null } }),
+      card('b', 'working', 'station-a', { repo: { root: '/w/beta', origin: null } }),
+    ]);
+    expect(repos).toContain('<span class="fd-label">Repository</span>');
+    expect(repos).not.toContain('>Repo<');
+    // The Archived row's one chip says Show and the count; its name keeps the whole words.
+    archived.add(['station-a/e']);
+    const shelf = homeWith([card('a'), card('e', 'ended')]);
+    archived.remove(['station-a/e']);
+    expect(shelf).toContain(
+      '<span class="fd-label">Archived</span><div class="fd-filters-chips"><button type="button" class="fd-chip" aria-pressed="false">Show <span class="fd-vh">archived </span><span class="fd-count">1</span></button>',
+    );
+    expect(activeFilters({ ...emptyFilter, provider: 'unknown' }, false, stations)).toEqual([
+      { key: 'provider', text: 'Provider: Other' },
+    ]);
+  });
+
+  test('the Filters menu hangs from its button: left edge when it fits, else right edge', () => {
+    expect(filtersAlign({ left: 300 }, { right: 1140 }, 1440)).toBe('start');
+    expect(filtersAlign({ left: 850 }, { right: 1140 }, 1440)).toBe('end');
+    // A narrow window: the menu is the window less 32px wide.
+    expect(filtersAlign({ left: 10 }, { right: 380 }, 390)).toBe('start');
+  });
+
+  test('every online station has a lane, an empty one with No sessions. and New session', () => {
+    const stations = [station(), station('station-b'), station('station-c', { name: 'Gamma' })];
+    const html = homeWith([card('a')], stations);
+    expect(html).toContain('aria-label="Station Beta"');
+    expect(html).toContain('aria-label="Station Gamma"');
+    expect(html).toMatch(
+      /aria-label="Station Beta"[\s\S]*?<p class="fd-note">No sessions\.<\/p><button type="button" class="fd-ghost fd-sm" aria-label="New session on Beta">/,
+    );
+    // An offline station without a session has no lane; a filtered board shows no empty lane.
+    const away = homeWith([card('a')], [station(), station('station-b', { reachable: false })]);
+    expect(away).not.toContain('aria-label="Station Beta"');
+    const lanes = board([card('a')], { emptyLanes: true });
+    expect(lanes).toContain('aria-label="Station Beta"');
+    expect(lanes).not.toContain('New session on Beta');
+    expect(board([card('a')])).not.toContain('aria-label="Station Beta"');
+  });
+
+  test('a working strip shows its digest line in the now field, when it has one', () => {
+    const out = board([card('w', 'working', 'station-a', { digest: 'Fixed the flaky test.' })]);
+    expect(out).toContain(
+      '<span class="fd-strip-now"><span class="fd-card-note" data-note="digest">Fixed the flaky test.</span></span>',
+    );
+  });
+
+  test('a strip has its project as a quiet label of the meta cell (shown on a narrow strip)', () => {
+    const out = renderToStaticMarkup(
+      <IntegrationsProvider actions={fakeActions()} initial={[project()]}>
+        <FleetBoard
+          sessions={[{ ...card('w'), project_id: project().project_id }]}
+          stations={[station()]}
+          freshness="live"
+          now={NOW}
+        />
+      </IntegrationsProvider>,
+    );
+    expect(out).toMatch(
+      /<span class="fd-strip-meta"><span class="fd-strip-proj" title="Project [^"]+"><svg[\s\S]*?<\/svg><span class="fd-strip-proj-name">/,
+    );
+    // The chip, a link of its own, stays in the links row (a wide strip shows it there).
+    expect(out).toContain('fd-int-projectchip');
+  });
+
+  test('Share board keeps a short visible label and its full name; the icon is Share2', () => {
+    const html = renderToStaticMarkup(
+      <PeopleProvider value={env({ shares: fakeShareCalls() })}>
+        <FleetHome
+          sessions={[card('a')]}
+          stations={[station()]}
+          freshness="live"
+          assign={undefined}
+          fleet={undefined}
+          conflicts={undefined}
+          feed={[]}
+          layout="desktop"
+          onOpen={() => {}}
+          onSpawn={() => {}}
+        />
+      </PeopleProvider>,
+    );
+    expect(html).toContain('title="Share board…" aria-label="Share board…"');
+    expect(html).toContain('<span class="fd-home-share-short" aria-hidden="true">Share</span>');
+    expect(html).toContain('lucide-share-2');
+    expect(html).not.toContain('lucide-users');
   });
 });
 
@@ -310,7 +461,7 @@ describe('phone board', () => {
     expect(html).toContain(
       '<details class="fd-lane-ended"><summary>Ended <span class="fd-count">1</span></summary>',
     );
-    expect(html).not.toContain('Offline sessions');
+    expect(html).not.toContain('All ended');
   });
 
   test('the phone shows the conflict radar under the Needs you strip, above the lanes', () => {
@@ -383,20 +534,41 @@ describe('flight deck fixes', () => {
     );
   });
 
+  test('an empty lane has no zero count pill, and its slots say how many are free', () => {
+    const free = station('station-b', {
+      info: { max_sessions: 12, live_sessions: 0, providers: [] } as unknown as StationInfo,
+      info_at: 1,
+    });
+    const html = board([card('a')], { emptyLanes: true, stations: [station(), free] });
+    const beta = html.slice(html.indexOf('aria-label="Station Beta"'));
+    expect(beta).toContain('<h2 class="fd-lane-name fd-wide">Beta</h2>');
+    expect(beta.slice(0, beta.indexOf('No sessions.'))).not.toContain('fd-count');
+    expect(beta).toContain(
+      '<span class="fd-lane-slots fd-lane-free"><span data-free="true">12 free<span class="fd-vh"> session slots</span></span></span>',
+    );
+    expect(beta).not.toContain('data-slot');
+    // A folded lane of ended sessions only: its count is on the Ended row.
+    const ended = board([card('a'), card('e', 'ended', 'station-b')], { foldEnded: true });
+    const lane = ended.slice(ended.indexOf('aria-label="Station Beta"'));
+    expect(lane).toContain('<h2 class="fd-lane-name fd-wide">Beta</h2>');
+    expect(lane.slice(0, lane.indexOf('<details'))).not.toContain('fd-count');
+    expect(lane).toContain('<summary>Ended <span class="fd-count">1</span></summary>');
+  });
+
   test('a folded board puts the ended strips of a lane in a collapsed Ended group with its tools', () => {
     const html = board([card('a'), card('e', 'ended'), card('l', 'lost')], { foldEnded: true });
     expect(html).toContain(
       '<details class="fd-lane-ended"><summary>Ended <span class="fd-count">2</span></summary>',
     );
     expect(html).toMatch(
-      /<details class="fd-lane-ended">[\s\S]*data-session="e"[\s\S]*Resume all \(0\)[\s\S]*Clear \(2\)[\s\S]*<\/details>/,
+      /<details class="fd-lane-ended">[\s\S]*data-session="e"[\s\S]*Resume all <span class="fd-count">0<\/span>[\s\S]*Archive <span class="fd-count">2<\/span>[\s\S]*<\/details>/,
     );
-    expect(html).not.toContain('Offline sessions');
+    expect(html).not.toContain('All ended');
     expect(board([card('a')], { foldEnded: true })).not.toContain('fd-lane-ended');
     // not folded (the phone): the ended strip stays in its lane and the offline row closes the board
     const flat = board([card('a'), card('e', 'ended')]);
     expect(flat).not.toContain('fd-lane-ended');
-    expect(flat).toContain('Offline sessions');
+    expect(flat).toContain('All ended');
   });
 
   test('a folded lane counts its shown strips; the Ended row carries the ended count', () => {
@@ -422,22 +594,22 @@ describe('flight deck fixes', () => {
     });
     expect(html.match(/<details class="fd-lane-ended">/g)).toHaveLength(2);
     const outside = html.replace(/<details class="fd-lane-ended">[\s\S]*?<\/details>/g, '');
-    expect(outside).toContain('<span class="fd-label">Offline sessions</span>');
-    expect(outside).toContain('Resume all (2)');
-    expect(outside).toContain('Clear (2)');
+    expect(outside).toContain('<span class="fd-label">All ended</span>');
+    expect(outside).toContain('Resume all <span class="fd-count">2</span>');
+    expect(outside).toContain('Archive <span class="fd-count">2</span>');
     // One lane to resume: its Ended row has the tools, so no second Resume all.
     const one = board([resumable('e1', 'station-a'), card('b', 'working', 'station-b')], {
       foldEnded: true,
       sessionActions: actions,
     });
-    expect(one).not.toContain('Offline sessions');
-    expect(one.match(/Resume all \(1\)/g)).toHaveLength(1);
+    expect(one).not.toContain('All ended');
+    expect(one.match(/Resume all <span class="fd-count">1<\/span>/g)).toHaveLength(1);
     // An unreachable station cannot resume a session: no dead row.
     const away = board([card('u', 'unreachable'), card('v', 'unreachable', 'station-b')], {
       foldEnded: true,
       sessionActions: actions,
     });
-    expect(away).not.toContain('Offline sessions');
+    expect(away).not.toContain('All ended');
     expect(away).not.toContain('Resume all');
   });
 
@@ -447,9 +619,9 @@ describe('flight deck fixes', () => {
     });
     expect(html.match(/<details class="fd-lane-ended">/g)).toHaveLength(2);
     const outside = html.replace(/<details class="fd-lane-ended">[\s\S]*?<\/details>/g, '');
-    expect(outside).toContain('<span class="fd-label">Offline sessions</span>');
-    expect(outside.match(/Clear \(2\)/g)).toHaveLength(1);
-    expect(outside).toContain('Resume all (0)');
+    expect(outside).toContain('<span class="fd-label">All ended</span>');
+    expect(outside.match(/Archive <span class="fd-count">2<\/span>/g)).toHaveLength(1);
+    expect(outside).toContain('Resume all <span class="fd-count">0</span>');
   });
 
   test('the status filter: Working holds queued and verifying, Needs you an open request', () => {
@@ -496,8 +668,10 @@ describe('flight deck fixes', () => {
     expect(html).toContain('<span class="fd-home-bell"></span>');
     const phone = home([card('a')], 'phone');
     expect(phone).not.toContain('fd-home-status');
-    // The phone header has the slot too: with nothing waiting, the switch goes there.
-    expect(phone).toContain('<span class="fd-home-bell"></span></header>');
+    // The phone has no tooltips: the slot is a row of the board menu, the last item of the header.
+    expect(phone).toMatch(
+      /<details class="fd-menu"><summary class="fd-iconbtn" aria-label="Board options">[\s\S]*<span class="fd-home-bell"><\/span><\/div><\/details><\/header>/,
+    );
   });
 
   test('wide, the ops panel has a Mail & tasks section and Activity, Assign and All usage foot buttons', () => {
@@ -534,7 +708,10 @@ describe('flight deck fixes', () => {
     expect(html).toContain('<span class="fd-count">1</span>');
     expect(html).toContain('1 mail waiting');
     expect(html).toContain('For delivery to heron-mc2q');
-    expect(html).toContain('<details class="fd-fleet-compose"><summary>New mail or task</summary>');
+    // The fold has the look of Give fleet access…: a leading plus, the chevron at the end.
+    expect(html).toMatch(
+      /<details class="fd-fleet-compose"><summary data-variant="toggle"><svg[^>]*lucide-plus[\s\S]*?<\/svg> New mail or task<\/summary>/,
+    );
     expect(html).not.toContain('role="tablist"');
     expect(html).toMatch(
       /<div class="fd-ops-foot"><button type="button" class="fd-ghost" aria-expanded="false">/,

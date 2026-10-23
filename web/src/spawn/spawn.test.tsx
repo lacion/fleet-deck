@@ -3,11 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
-import { submitKeyHint } from './keyHint';
+import { submitKeyMod } from './keyHint';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
+import { modeLabel } from '../ui/format';
 import {
   batchPrompts,
   importIdProblem,
@@ -107,25 +108,20 @@ describe('spawn form (P4-4)', () => {
         version_status: 'unknown',
         capabilities: null,
       }),
-    ).toBe('Codex version unknown');
+    ).toBe('Codex');
   });
 
-  test('the provider label is the capitalized provider and version; the instance shows when it differs', () => {
+  test('the provider label is the capitalized provider; the instance shows when it differs', () => {
     const base = {
       provider: 'claude' as const,
       auth: 'signed_in',
       version_status: 'unknown' as const,
       capabilities: null,
     };
-    expect(providerLabel({ ...base, instance: 'claude', version: '2.1.300' })).toBe(
-      'Claude 2.1.300',
-    );
-    expect(providerLabel({ ...base, instance: 'work', version: '2.1.300' })).toBe(
-      'Claude 2.1.300 (work)',
-    );
-    expect(providerLabel({ ...base, instance: 'work', version: null })).toBe(
-      'Claude version unknown (work)',
-    );
+    // The CLI version is in the title of the choice (providerChoice), not in the name.
+    expect(providerLabel({ ...base, instance: 'claude', version: '2.1.300' })).toBe('Claude');
+    expect(providerLabel({ ...base, instance: 'work', version: '2.1.300' })).toBe('Claude (work)');
+    expect(providerLabel({ ...base, instance: 'work', version: null })).toBe('Claude (work)');
   });
 
   test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
@@ -148,16 +144,22 @@ describe('spawn form (P4-4)', () => {
     expect(html).toMatch(/<span class="fd-badge">.*Alpha<\/span>/);
     expect(html).toMatch(checkedRadio('station-a', 'Alpha'));
     expect(html).toMatch(/role="radiogroup" aria-label="Provider"/);
-    expect(html).toContain('Claude 2.1.999');
+    expect(html).toContain('<label title="Claude 2.1.999">');
     expect(html).toContain('Browse…');
-    expect(html).toContain('<option value="" selected="">Station default</option>');
-    expect(html).toContain('<option value="plan">plan</option>');
+    expect(html).toContain('<option value="" selected="">Default mode</option>');
+    // The modes show their names, as in the session header: never the raw ids.
+    expect(html).toContain('<option value="plan">Plan</option>');
+    expect(html).toContain('<option value="acceptEdits">Accept edits</option>');
     expect(html).toContain('aria-label="Directory path"');
-    // The placeholder is words (sans), not an example path and not a second "choose a folder".
-    expect(html).toContain('placeholder="Folder on the station"');
+    // The placeholder is words (sans) with an absolute example (a `~` path is refused), the same
+    // on every folder field, and not a second "choose a folder".
+    expect(html).toContain('placeholder="Folder, e.g. /home/me/app"');
     // No directory yet: the start button is off and the note under the directory says why.
-    expect(html).toContain(
-      `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta+Enter Control+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
+    // The key is two chips: the modifier and Return (an icon: Mona Sans has no ↵).
+    expect(html).toMatch(
+      new RegExp(
+        `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+      ),
     );
     expect(html).toContain(
       '<p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p>',
@@ -211,8 +213,10 @@ describe('spawn form (P4-4)', () => {
 
   test('the owner can make a coordinator session; it starts off (ADR-006 §4, DL-217)', () => {
     const html = form([reported()]);
-    expect(html).toContain('Coordinator: this session may read the fleet');
-    expect(html).not.toMatch(/<input type="checkbox" checked=""\/>Coordinator/);
+    // A short label, and what it gives as the description of the checkbox.
+    expect(html).toContain(
+      '<div class="fd-spawn-coord"><label class="fd-spawn-opt"><input type="checkbox" aria-describedby="fd-spawn-coord-note"/>Coordinator</label><p class="fd-note" id="fd-spawn-coord-note">This session can read the fleet, send mail and drive the sessions that it starts.</p></div>',
+    );
     // The target stations show only for the owner with Coordinator checked.
     expect(html).not.toContain('Grant stations');
   });
@@ -227,8 +231,10 @@ describe('spawn form (P4-4)', () => {
     const html = form([
       reported('station-a', { info: info({ providers: [...info().providers].reverse() }) }),
     ]);
-    expect(html).toContain('<option value="untrusted/read-only">untrusted/read-only</option>');
-    expect(html).not.toContain('<option value="plan">plan</option>');
+    expect(html).toContain(
+      `<option value="untrusted/read-only">${modeLabel('untrusted/read-only')}</option>`,
+    );
+    expect(html).not.toContain('<option value="plan">');
   });
 
   test('the picker shows entries, git repositories and truncation', () => {
@@ -372,7 +378,9 @@ describe('spawn form (P4-4)', () => {
     for (const bad of ['', '--resume', 'a b', 'a/b', 'x'.repeat(129)]) {
       expect(importIdProblem(bad)).not.toBeNull();
     }
-    expect(form([reported()])).toContain('Import CLI session id (optional)');
+    expect(form([reported()])).toContain(
+      '<div class="fd-spawn-import"><label>Session to import (optional)<input placeholder="Session id"',
+    );
   });
 
   test('a refused or failed start shows the reason and no session', async () => {
@@ -469,7 +477,7 @@ describe('spawn form (P4-4)', () => {
     // Agent, Station and Where are one property row each; the options are folded and closed.
     expect(html.match(/class="fd-spawn-prop"/g)).toHaveLength(3);
     expect(html).toContain(
-      '<details class="fd-spawn-options"><summary class="fd-label">More options</summary>',
+      '<details class="fd-spawn-options"><summary class="fd-label"><span>More options</span><span class="fd-spawn-options-hint">Coordinator, import</span></summary>',
     );
     // Batch is a switch in the footer; Cancel goes back to the fleet.
     expect(html).toMatch(/<input type="checkbox" role="switch" class="fd-switch"[^>]*\/>Batch:/);
@@ -507,15 +515,15 @@ describe('spawn form (P4-4)', () => {
         />,
       );
     const html = render('acme/app');
-    expect(html).toContain('Clone a repository into a new directory here');
+    expect(html).toContain('Clone a repository into a new folder here');
     expect(html).not.toContain('Clone URL');
     expect(html).toContain('Repository');
     expect(html).toContain('placeholder="owner/name, host/owner/name or a URL"');
     expect(html).toContain(
       '<p class="fd-note" id="fd-spawn-repo">Clones https://github.com/acme/app.git</p>',
     );
-    // The directory name follows the repository.
-    expect(html).toContain('New directory name<input value="app"/>');
+    // The folder name follows the repository.
+    expect(html).toContain('New folder name<input value="app"/>');
     // A bare name without a default organization shows the error (no alert before the field was left).
     const bare = render('app');
     expect(bare).toContain(
@@ -568,7 +576,10 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('aria-label="Recent directories"');
     expect(html).toContain('<span class="fd-label">Recent</span>');
     expect(html).toContain('title="/w/two"');
-    expect(html).toContain('>w/two</button>');
+    // A folder row: its name, then its parent from the root (a PathTail: it keeps its end).
+    expect(html).toContain(
+      '<span class="fd-folder-base">two</span><span class="fd-folder-parent"><bdi>/w/</bdi></span></button>',
+    );
     expect(html).not.toContain('/w/other');
   });
 
@@ -685,8 +696,8 @@ describe('spawn form (P4-4)', () => {
         <BranchFields branch={branch} base={base} onBranch={() => {}} onBase={() => {}} />,
       );
     const empty = render('');
-    expect(empty).toContain('placeholder="fd/&lt;callsign&gt;, new"');
-    expect(empty).toContain('Empty: a new branch fd/&lt;callsign&gt;.');
+    expect(empty).toContain('placeholder="Leave empty for a new branch"');
+    expect(empty).toContain('Leave it empty to make a new branch named fd/ and the callsign.');
     expect(empty).not.toContain('Base');
     expect(empty).not.toContain('role="alert"');
     expect(render('   ')).not.toContain('Base');

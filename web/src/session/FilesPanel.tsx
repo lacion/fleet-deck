@@ -4,9 +4,12 @@ import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
 import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
+import { PathTail } from '../chat/PathTail';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
-import { sizeText } from '../ui/format';
-import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
+import { addedText, removedText, sizeText } from '../ui/format';
+import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import {
   type ChangedFiles,
   type ChangeKind,
@@ -22,13 +25,26 @@ import {
   type SearchModeName,
 } from './workspace';
 
+/** A read of the panel, so that "Try again" after a failed read runs the same read again. */
+type Read =
+  | { readonly kind: 'list'; readonly path: string }
+  | { readonly kind: 'file'; readonly path: string }
+  | { readonly kind: 'search'; readonly query: string; readonly mode: SearchModeName };
+
 type View =
   | { readonly kind: 'idle' }
-  | { readonly kind: 'loading' }
-  | { readonly kind: 'error'; readonly text: string }
+  | { readonly kind: 'loading'; readonly read: Read['kind'] }
+  | { readonly kind: 'error'; readonly text: string; readonly read: Read }
   | { readonly kind: 'listing'; readonly listing: FileListing }
   | { readonly kind: 'file'; readonly file: FileContent }
-  | { readonly kind: 'search'; readonly search: FileSearch };
+  | { readonly kind: 'search'; readonly search: FileSearch; readonly query: string };
+
+/** The loading line of each read (§4.7 `Loading`). */
+const LOADING: Record<Read['kind'], string> = {
+  list: 'Loading the folder…',
+  file: 'Loading the file…',
+  search: 'Searching the files…',
+};
 
 /** A Markdown file shows rendered or raw; a path copy is always there. */
 export function FileView({
@@ -109,13 +125,14 @@ const KIND_BADGE: Record<ChangeKind, ReturnType<typeof fileStatusBadge> | null> 
   R: { text: 'renamed', title: 'Renamed file', tone: undefined },
 };
 
-/** The change of one file at the right of its row: `+9 −3` and the badge of its kind. */
+/**
+ * The change of one file at the right of its row: the badge of its kind, then `+9 −3` (the order
+ * of a diff file header, so the counts end on one edge).
+ */
 function ChangeStat({ change }: { readonly change: FileChange }) {
   const badge = KIND_BADGE[change.kind];
   return (
     <span className="fd-files-stat">
-      {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
-      {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
       {badge === null ? (
         <span className="fd-vh">{KIND_NAME[change.kind]}</span>
       ) : (
@@ -124,6 +141,12 @@ function ChangeStat({ change }: { readonly change: FileChange }) {
           <span className="fd-vh">{KIND_NAME[change.kind]}</span>
         </span>
       )}
+      {change.insertions > 0 ? (
+        <span className="fd-add">{addedText(change.insertions)}</span>
+      ) : null}
+      {change.deletions > 0 ? (
+        <span className="fd-del">{removedText(change.deletions)}</span>
+      ) : null}
     </span>
   );
 }
@@ -148,9 +171,10 @@ export function ChangedFilesList({
               <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
                 <Icon of={FileText} size={14} />
                 <span className="fd-files-name">{path.split('/').pop()}</span>
+                {/* Whole folders give way ("…/e2e"): a cut never lands inside a name. */}
                 {dir === '' ? null : (
                   <span className="fd-files-dir">
-                    <bdi>{dir}</bdi>
+                    <PathTail path={dir} />
                   </span>
                 )}
                 {change === undefined ? null : <ChangeStat change={change} />}
@@ -193,7 +217,9 @@ export function FilesPanel({
   /** The session (`<station>/<session>`) whose Properties panel also lists the changed files. */
   readonly diffRef?: string | undefined;
 }) {
-  const [view, setView] = useState<View>(files ? { kind: 'loading' } : { kind: 'idle' });
+  const [view, setView] = useState<View>(
+    files ? { kind: 'loading', read: 'list' } : { kind: 'idle' },
+  );
   /** The last requested folder; the crumbs show it. */
   const [folder, setFolder] = useState('');
   const [query, setQuery] = useState('');
@@ -215,10 +241,11 @@ export function FilesPanel({
     // A request that is there at the start opens its file instead of the root.
     if (requested.current) return;
     setFolder('');
-    setView({ kind: 'loading' });
+    setView({ kind: 'loading', read: 'list' });
     void current.list('').then(
       (listing) => setView({ kind: 'listing', listing }),
-      (e: unknown) => setView({ kind: 'error', text: message(e) }),
+      (e: unknown) =>
+        setView({ kind: 'error', text: message(e), read: { kind: 'list', path: '' } }),
     );
   }, [has]);
   const [changed, setChanged] = useState<ChangedFiles | null>(null);
@@ -245,28 +272,41 @@ export function FilesPanel({
     const wanted = requested.current;
     if (seq === undefined || !wanted || !current) return;
     setFolder(parentPath(wanted.path));
-    setView({ kind: 'loading' });
+    setView({ kind: 'loading', read: 'file' });
     void current.read(wanted.path).then(
       (file) => setView({ kind: 'file', file }),
-      (e: unknown) => setView({ kind: 'error', text: message(e) }),
+      (e: unknown) =>
+        setView({ kind: 'error', text: message(e), read: { kind: 'file', path: wanted.path } }),
     );
   }, [seq]);
   if (!files) return null;
-  const load = <T,>(call: Promise<T>, done: (value: T) => View) => {
-    setView({ kind: 'loading' });
+  const load = <T,>(call: Promise<T>, done: (value: T) => View, what: Read) => {
+    setView({ kind: 'loading', read: what.kind });
     void call.then(
       (value) => setView(done(value)),
-      (e: unknown) => setView({ kind: 'error', text: message(e) }),
+      (e: unknown) => setView({ kind: 'error', text: message(e), read: what }),
     );
   };
   const open = (path: string) => {
     setFolder(path);
-    load(files.list(path), (listing) => ({ kind: 'listing', listing }));
+    load(files.list(path), (listing) => ({ kind: 'listing', listing }), { kind: 'list', path });
   };
   const read = (path: string) => {
     setFolder(parentPath(path));
-    load(files.read(path), (file) => ({ kind: 'file', file }));
+    load(files.read(path), (file) => ({ kind: 'file', file }), { kind: 'file', path });
   };
+  const search = (text: string, how: SearchModeName) =>
+    load(files.search(text, how), (found) => ({ kind: 'search', search: found, query: text }), {
+      kind: 'search',
+      query: text,
+      mode: how,
+    });
+  const again = (what: Read) =>
+    what.kind === 'list'
+      ? open(what.path)
+      : what.kind === 'file'
+        ? read(what.path)
+        : search(what.query, what.mode);
   const segments = folder === '' ? [] : folder.split('/');
   const fileName = view.kind === 'file' ? (view.file.path.split('/').pop() ?? '') : null;
   return (
@@ -277,11 +317,11 @@ export function FilesPanel({
           aria-label="Search the files"
           onSubmit={(event) => {
             event.preventDefault();
-            load(files.search(query.trim(), mode), (search) => ({ kind: 'search', search }));
+            search(query.trim(), mode);
           }}
         >
           <label htmlFor="fd-file-query" className="fd-vh">
-            Search
+            Search files
           </label>
           {/* The search icon in the field is the submit button (Enter submits too). */}
           <div className="fd-field fd-files-query">
@@ -299,51 +339,64 @@ export function FilesPanel({
               <span className="fd-vh">Search</span>
             </button>
           </div>
-          <select
-            className="fd-sm"
-            aria-label="Search in"
-            value={mode}
-            onChange={(event) => setMode(event.target.value === 'content' ? 'content' : 'name')}
-          >
-            <option value="name">Names</option>
-            <option value="content">Content</option>
-          </select>
+          {/* What the search reads: the file names or their content (a choice, not a filter). */}
+          <div className="fd-seg fd-files-mode" role="group" aria-label="Search in">
+            {(['name', 'content'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
+                {m === 'name' ? 'Names' : 'Content'}
+              </button>
+            ))}
+          </div>
         </form>
       </div>
       {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
-        {/* A path, not an entry: the open folder icon, and a "/" after each folder. */}
+        {/* The label of the listing, as "Changed since the session started" labels the changed
+            files: "Files in", then the crumbs (sans, as the Browse crumbs) with a "/" between two
+            of them; the current one is --text weight 600. */}
+        <span className="fd-files-crumbs-lead">Files in</span>
         <span className="fd-files-crumb-item">
-          <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
-            <Icon of={FolderOpen} size={14} />
+          <button
+            type="button"
+            className="fd-files-crumb fd-files-root"
+            aria-current={segments.length === 0 && fileName === null ? 'location' : undefined}
+            title={root ?? undefined}
+            onClick={() => open('')}
+          >
             {root ? (
               <>
                 {folderName(root)}
                 <span className="fd-vh">, root folder</span>
               </>
             ) : (
-              'Root folder'
+              'the root folder'
             )}
           </button>
-          <span className="fd-files-sep" aria-hidden="true">
-            /
-          </span>
         </span>
         {segments.map((segment, n) => {
           const path = segments.slice(0, n + 1).join('/');
+          const here = n === segments.length - 1 && fileName === null;
           return (
             <span key={path} className="fd-files-crumb-item">
-              <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
-                {segment}
-              </button>
               <span className="fd-files-sep" aria-hidden="true">
                 /
               </span>
+              <button
+                type="button"
+                className="fd-files-crumb"
+                aria-current={here ? 'location' : undefined}
+                onClick={() => open(path)}
+              >
+                {segment}
+              </button>
             </span>
           );
         })}
         {fileName !== null ? (
           <span className="fd-files-crumb-item">
+            <span className="fd-files-sep" aria-hidden="true">
+              /
+            </span>
             <span className="fd-files-file">{fileName}</span>
           </span>
         ) : null}
@@ -372,15 +425,9 @@ export function FilesPanel({
           }}
         />
       )}
-      {view.kind === 'loading' ? (
-        <p role="status" className="fd-note">
-          Loading…
-        </p>
-      ) : null}
+      {view.kind === 'loading' ? <Loading text={LOADING[view.read]} /> : null}
       {view.kind === 'error' ? (
-        <p role="alert" className="fd-files-error">
-          {view.text}
-        </p>
+        <ErrorNotice text={view.text} onRetry={() => again(view.read)} />
       ) : null}
       {view.kind === 'listing' ? (
         <div data-listing={view.listing.path}>
@@ -402,22 +449,24 @@ export function FilesPanel({
               const size =
                 e.size !== null ? <span className="fd-size"> {sizeText(e.size)}</span> : null;
               const offer = e.kind === 'file' && canPublish && publishable(e.name);
+              // A file that Publish offers: the button sits before the size (session.css lays
+              // the row out as a grid), so that the sizes end on the edge of the toolbar.
               return (
                 <li
                   key={e.name}
                   data-entry-kind={e.kind}
-                  className={canPublish ? 'fd-files-item' : undefined}
+                  className={offer ? 'fd-files-item' : undefined}
                 >
                   {e.kind === 'dir' || e.kind === 'file' ? (
+                    // The folder icon marks a folder: its name has no trailing "/".
                     <button
                       type="button"
                       className="fd-files-row"
+                      title={root ? `${root}/${path}` : path}
                       onClick={() => (e.kind === 'dir' ? open(path) : read(path))}
                     >
                       <Icon of={e.kind === 'dir' ? Folder : FileText} size={14} />
-                      <span className="fd-files-name">
-                        {e.kind === 'dir' ? `${e.name}/` : e.name}
-                      </span>
+                      <span className="fd-files-name">{e.name}</span>
                       {size}
                     </button>
                   ) : (
@@ -439,8 +488,6 @@ export function FilesPanel({
                     >
                       <Icon of={Upload} size={14} />
                     </button>
-                  ) : canPublish ? (
-                    <span className="fd-files-publish" aria-hidden="true" />
                   ) : null}
                 </li>
               );
@@ -463,7 +510,9 @@ export function FilesPanel({
       ) : null}
       {view.kind === 'search' ? (
         <div data-search={view.search.backend}>
-          {view.search.hits.length === 0 ? <p>No match.</p> : null}
+          {view.search.hits.length === 0 ? (
+            <p className="fd-empty">No file matches “{view.query}”.</p>
+          ) : null}
           <ul>
             {view.search.hits.map((h) => (
               <li key={`${h.path}:${h.line ?? ''}`}>
