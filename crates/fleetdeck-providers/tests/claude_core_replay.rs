@@ -68,6 +68,7 @@ fn replay(path: &Path) -> Report {
                     cwd: "/w".to_owned(),
                     capabilities: caps,
                     resumed: launch.resume.as_ref().map(|_| true),
+                    usage_base: fleetdeck_providers::claude::UsageBase::Zero,
                 }));
                 report.processes += 1;
             }

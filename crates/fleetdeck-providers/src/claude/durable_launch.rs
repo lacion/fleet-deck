@@ -7,6 +7,8 @@ use std::path::Path;
 use fleetdeck_proto::command::SessionSpec;
 
 use super::super::core::CoreConfig;
+use super::super::cost_state;
+use super::super::process_usage::UsageBase;
 use super::super::{Launch, capabilities, cli_args};
 use super::{ClaudeAdapter, env_with_extra};
 use crate::adapter::{NativeSessionId, Result, canonical_workspace};
@@ -44,12 +46,18 @@ impl ClaudeAdapter {
             .into_iter()
             .map(OsString::from)
             .collect();
+        let env = env_with_extra(&self.config.env, spec.extra_env.as_deref());
+        // What the CLI restores from the transcript of a resume (B21).
+        let usage_base = match resume {
+            Some(id) => cost_state::restored_base(&env, &cwd, &id.0),
+            None => UsageBase::Zero,
+        };
         Ok(DurableLaunch {
             process: ProcessSpec {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+                env,
                 launch: pinned,
             },
             core: DurableConfig::Claude(CoreConfig {
@@ -57,6 +65,7 @@ impl ClaudeAdapter {
                 cwd: cwd.to_string_lossy().into_owned(),
                 capabilities: caps,
                 resumed: resume.map(|_| true),
+                usage_base,
             }),
             stop: self.config.stop,
         })
@@ -144,6 +153,55 @@ mod tests {
             panic!("a Claude core");
         };
         assert_eq!(core.resumed, None);
+    }
+
+    #[test]
+    fn a_durable_resume_reads_the_restored_base() {
+        const NATIVE: &str = "4b9142af-6b77-431a-9530-5df5f3e80e1d";
+        let work = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(work.path()).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let dir = home
+            .path()
+            .join("projects")
+            .join(cost_state::project_dir_name(&cwd.to_string_lossy()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{NATIVE}.jsonl")),
+            format!(
+                "{{\"type\":\"cost-state\",\"sessionId\":\"{NATIVE}\",\"totalCostUSD\":0.5,\
+                 \"modelUsage\":{{\"claude-haiku-5-5\":{{\"inputTokens\":18,\"outputTokens\":178,\
+                 \"cacheReadInputTokens\":49743,\"cacheCreationInputTokens\":48491,\"costUSD\":0.5}}}}}}\n"
+            ),
+        )
+        .unwrap();
+        let mut env = ChildEnv::from_process();
+        env.set("CLAUDE_CONFIG_DIR", home.path().to_str().unwrap())
+            .unwrap();
+        let config = ClaudeAdapterConfig::new("claude".into(), "claude".into(), env);
+        let adapter = ClaudeAdapter::new(config, Arc::new(DirectChildHost::new()));
+        let id = NativeSessionId(NATIVE.to_owned());
+        let launch = adapter
+            .durable_resume_launch(&spec(work.path(), None), &id)
+            .unwrap();
+        let DurableConfig::Claude(core) = launch.core else {
+            panic!("a Claude core");
+        };
+        let UsageBase::Restored(totals) = core.usage_base else {
+            panic!("not restored: {:?}", core.usage_base);
+        };
+        assert_eq!(totals.models["claude-haiku-5-5"].input, 18);
+        assert!((totals.cost() - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_new_durable_launch_has_a_zero_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let launch = adapter().durable_launch(&spec(dir.path(), None)).unwrap();
+        let DurableConfig::Claude(core) = launch.core else {
+            panic!("a Claude core");
+        };
+        assert_eq!(core.usage_base, UsageBase::Zero);
     }
 
     #[test]

@@ -10,10 +10,12 @@ pub const KNOWN_BROKEN: &[&str] = &[];
 
 pub mod args;
 pub mod control;
+pub mod cost_state;
 pub mod driver;
 pub mod frames;
 mod host_cmd;
 mod map;
+pub mod process_usage;
 mod requests;
 mod usage;
 
@@ -29,6 +31,7 @@ pub use args::{
 pub use driver::{ClaudeAdapter, ClaudeAdapterConfig, ClaudeSession, Origin, RawLogSettings};
 pub use host_cmd::HostCmd;
 pub use map::{input_summary, tool_kind};
+pub use process_usage::UsageBase;
 pub use requests::request_kind;
 
 #[cfg(test)]
@@ -37,6 +40,8 @@ mod tests;
 mod tests_models;
 #[cfg(test)]
 mod tests_options;
+#[cfg(test)]
+mod tests_process_usage;
 #[cfg(test)]
 mod tests_traps;
 #[cfg(test)]

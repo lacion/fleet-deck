@@ -11,6 +11,7 @@ use fleetdeck_proto::event::ProviderKind;
 
 use super::args::capabilities;
 use super::core::{ClaudeCore, CoreConfig};
+use super::process_usage::{ProcessUsage, UsageBase};
 use crate::checkpoint::{AdapterCheckpoint, CheckpointError};
 
 /// The checkpoint version that this build writes.
@@ -27,6 +28,7 @@ pub(super) fn placeholder_config() -> CoreConfig {
         cwd: String::new(),
         capabilities: capabilities(false),
         resumed: None,
+        usage_base: UsageBase::Zero,
     }
 }
 
@@ -60,6 +62,10 @@ impl ClaudeCore {
         let mut core: Self = serde_json::from_value(checkpoint.state.clone())
             .map_err(|e| CheckpointError::Corrupt(e.to_string()))?;
         core.config = config;
+        // A checkpoint of a build before the per-model totals (DL-442).
+        if core.usage.is_none() {
+            core.usage = Some(ProcessUsage::legacy(core.last_total_cost));
+        }
         Ok(core)
     }
 }

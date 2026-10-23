@@ -530,7 +530,10 @@
         "input_tokens": 18,
         "output_tokens": 189,
         "cost_usd": 0.04950175,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 35800,
+        "cache_write_tokens": 35967,
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -550,7 +553,10 @@
         "input_tokens": 18,
         "output_tokens": 189,
         "cost_usd": 0.04950175,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 35800,
+        "cache_write_tokens": 35967,
+        "scheme": 2
       }
     }
   },

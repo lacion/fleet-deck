@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use super::args::input_uuid;
 use super::frames::CliFrame;
+use super::process_usage::{ProcessUsage, UsageBase};
 use super::{control, map};
 use crate::adapter::{HostInput, ProviderError, Result};
 
@@ -45,6 +46,8 @@ pub struct CoreConfig {
     /// `Some(true)` for a resumed session, `Some(false)` for the "not resumed"
     /// degradation, `None` for a new session.
     pub resumed: Option<bool>,
+    /// What the CLI counts its usage from (B21, DL-443).
+    pub usage_base: UsageBase,
 }
 
 /// Ordinal ids such as `turn-3`. Turns, nodes and requests share one counter,
@@ -215,16 +218,21 @@ pub struct ClaudeCore {
     /// counter so the ids of the other host requests do not move.
     #[serde(default)]
     pub(super) usage_seq: u64,
-    /// The `total_cost_usd` of the last `result` of this CLI process: the CLI
-    /// reports the running total of its process, so a result adds only the
-    /// growth since the last one (the fold sums the parts).
-    #[serde(default)]
+    /// The `total_cost_usd` of the last `result` of a CLI process, written by
+    /// a build before the per-model totals. It is read from an older
+    /// checkpoint and no longer written.
+    #[serde(default, skip_serializing)]
     pub(super) last_total_cost: Option<f64>,
+    /// The per-model running totals of the CLI process (B14, DL-442).
+    /// `None` only in a checkpoint of an older build.
+    #[serde(default)]
+    pub(super) usage: Option<ProcessUsage>,
 }
 
 impl ClaudeCore {
     #[must_use]
     pub fn new(config: CoreConfig) -> Self {
+        let usage = Some(ProcessUsage::new(&config.usage_base));
         Self {
             config,
             ids: Ordinals::default(),
@@ -254,7 +262,14 @@ impl ClaudeCore {
             usage_stopped: false,
             usage_seq: 0,
             last_total_cost: None,
+            usage,
         }
+    }
+
+    /// The usage state; always set after `new` or `restore`.
+    pub(super) fn usage_mut(&mut self) -> &mut ProcessUsage {
+        let last = self.last_total_cost;
+        self.usage.get_or_insert_with(|| ProcessUsage::legacy(last))
     }
 
     #[must_use]
