@@ -52,7 +52,7 @@ use crate::display_event::{
     DisplayDisk, DisplayEvent, DisplayItem, DisplayRequestState, DisplayResources,
     DisplaySessionLoad,
 };
-use crate::event::{Event, EventEnvelope};
+use crate::event::{Event, EventEnvelope, UsageRecount, UsageSource};
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
 use crate::execution_stop::{
     ExecutionStopOutcome, ExecutionStopPlan, ExecutionStopPlanQuery, StopOutcome,
@@ -96,7 +96,7 @@ use crate::recording as rec;
 use crate::resources::{
     CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
 };
-use crate::session::{CardStatus, SessionSummary};
+use crate::session::{CardStatus, LegacyUsage, SessionSummary};
 use crate::settings::{
     Apply, Durability, FieldKind, FieldMeta, RestartAnswer, RestartItem, RestartKind,
     RestartRequest, SecretSet, SecretSetParams, SettingsChange, SettingsSaved, SettingsSetParams,
@@ -278,6 +278,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         BranchDiffQuery::export_all(&cfg),
         ToolResult::export_all(&cfg),
         SessionSummary::export_all(&cfg),
+        LegacyUsage::export_all(&cfg),
+        UsageRecount::export_all(&cfg),
+        UsageSource::export_all(&cfg),
         ReadMark::export_all(&cfg),
         ActivityItem::export_all(&cfg),
         ActivityKind::export_all(&cfg),

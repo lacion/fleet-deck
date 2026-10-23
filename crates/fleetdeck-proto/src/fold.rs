@@ -13,11 +13,11 @@
 //!   background work runs, else `idle`.
 //! - An unknown event kind changes only the sequence and the time (L16).
 
-use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
+use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage, UsageRecount};
 use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
-    Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
-    SessionError, SessionRevert, SessionSummary, TerminalHold,
+    Activity, LegacyUsage, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS,
+    SessionBase, SessionError, SessionRevert, SessionSummary, TerminalHold,
 };
 
 impl SessionSummary {
@@ -152,8 +152,23 @@ impl SessionSummary {
             Event::ModeChanged { mode } => self.mode = Some(mode.clone()),
             Event::ModelChanged { model } => self.model = Some(model.clone()),
             Event::UsageUpdated { usage, rate_limits } => {
-                add_usage(&mut self.usage, usage);
+                self.fold_usage(usage, at);
                 merge_rate_limits(&mut self.rate_limits, rate_limits);
+            }
+            Event::UsageSet {
+                usage,
+                previous,
+                source,
+                command_id,
+            } => {
+                self.usage = usage.clone();
+                self.usage_legacy = None;
+                self.usage_recount = Some(UsageRecount {
+                    at,
+                    source: *source,
+                    command_id: command_id.clone(),
+                    previous: Usage::clone(previous),
+                });
             }
             Event::BackgroundUpdated { tasks } => {
                 self.background_tasks = tasks.iter().map(|t| t.task_id.clone()).collect();
@@ -363,7 +378,59 @@ impl SessionSummary {
     }
 }
 
-fn add_usage(total: &mut Usage, more: &Usage) {
+impl SessionSummary {
+    /// Folds one `usage.updated` part (DL-449). A part of the new scheme is
+    /// never added to an old total: the first one sets the old total apart
+    /// in `usage_legacy`, and a later old-rule part goes there too.
+    fn fold_usage(&mut self, more: &Usage, at: i64) {
+        // A rate-limit-only update carries no usage.
+        if more.is_empty() {
+            return;
+        }
+        match (self.usage.scheme, more.scheme) {
+            (None, Some(_)) => {
+                if self.usage.is_empty() {
+                    self.usage = Usage {
+                        scheme: more.scheme,
+                        ..Usage::default()
+                    };
+                } else {
+                    let old = std::mem::take(&mut self.usage);
+                    match self.usage_legacy.as_mut() {
+                        Some(legacy) => {
+                            add_usage(&mut legacy.usage, &old);
+                            legacy.until = at;
+                        }
+                        None => {
+                            self.usage_legacy = Some(LegacyUsage {
+                                usage: old,
+                                until: at,
+                            });
+                        }
+                    }
+                    self.usage = Usage {
+                        scheme: more.scheme,
+                        ..Usage::default()
+                    };
+                }
+                add_usage(&mut self.usage, more);
+            }
+            (Some(_), None) => {
+                let legacy = self.usage_legacy.get_or_insert_with(|| LegacyUsage {
+                    usage: Usage::default(),
+                    until: at,
+                });
+                add_usage(&mut legacy.usage, more);
+            }
+            // Equal schemes, or two different new schemes (a later scheme
+            // defines its own rule).
+            _ => add_usage(&mut self.usage, more),
+        }
+    }
+}
+
+/// Adds one usage part to a total. A part that is `None` stays unknown.
+pub fn add_usage(total: &mut Usage, more: &Usage) {
     fn add<T: std::ops::Add<Output = T> + Copy>(a: Option<T>, b: Option<T>) -> Option<T> {
         match (a, b) {
             (Some(a), Some(b)) => Some(a + b),
@@ -371,11 +438,27 @@ fn add_usage(total: &mut Usage, more: &Usage) {
             (None, b) => b,
         }
     }
+    // Earlier tokens without a cost are not in a cost that comes now.
+    let earlier_unpriced = total.has_tokens() && total.cost_usd.is_none();
     total.input_tokens = add(total.input_tokens, more.input_tokens);
     total.output_tokens = add(total.output_tokens, more.output_tokens);
+    total.cache_read_tokens = add(total.cache_read_tokens, more.cache_read_tokens);
+    total.cache_write_tokens = add(total.cache_write_tokens, more.cache_write_tokens);
     total.cost_usd = add(total.cost_usd, more.cost_usd);
     // A total with one inferred part is inferred (R4.6).
     total.cost_inferred |= more.cost_inferred && more.cost_usd.is_some();
+    // The latest price table wins.
+    if more.prices.is_some() {
+        total.prices.clone_from(&more.prices);
+    }
+    total.tokens_partial |= more.tokens_partial;
+    total.cost_partial |= more.cost_partial;
+    // `None + Some(x)` must not show a complete-looking cost.
+    if (more.cost_usd.is_none() && more.has_tokens())
+        || (earlier_unpriced && more.cost_usd.is_some())
+    {
+        total.cost_partial = true;
+    }
 }
 
 /// The most rate-limit windows that a summary keeps.
@@ -397,3 +480,7 @@ fn merge_rate_limits(kept: &mut Vec<RateLimit>, more: &[RateLimit]) {
 #[cfg(test)]
 #[path = "fold_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fold_usage_tests.rs"]
+mod usage_tests;

@@ -339,6 +339,12 @@ pub enum SessionCommand {
         session_id: SessionId,
         move_id: String,
     },
+    /// Replace the old count of a session whose executions all ended with the
+    /// provider's own record (B20). Owner action, scope `admin`. Needs
+    /// `usage_recount.v1`.
+    UsageRecount {
+        session_id: SessionId,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -440,6 +446,7 @@ impl SessionCommand {
             Self::MoveIn { .. } => "session.move_in",
             Self::MoveFinish { .. } => "session.move_finish",
             Self::MoveUndo { .. } => "session.move_undo",
+            Self::UsageRecount { .. } => "session.usage_recount",
         }
     }
 
@@ -489,7 +496,8 @@ impl SessionCommand {
             | Self::Land { session_id, .. }
             | Self::MoveOut { session_id, .. }
             | Self::MoveFinish { session_id, .. }
-            | Self::MoveUndo { session_id, .. } => Some(session_id),
+            | Self::MoveUndo { session_id, .. }
+            | Self::UsageRecount { session_id } => Some(session_id),
         }
     }
 }
@@ -745,3 +753,7 @@ pub enum DeckCommandState {
 #[cfg(test)]
 #[path = "command_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "command_usage_tests.rs"]
+mod usage_tests;

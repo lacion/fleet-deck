@@ -161,7 +161,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 41);
+    assert_eq!(count, 42);
 }
 
 #[test]

@@ -129,6 +129,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `desktop_tool_install.v1` | `station.desktop_tools_plan`, `maintenance.open`, `maintenance.list`, `maintenance.attach`, `maintenance.resize` (BG-1, `board-gaps.md` §2.4, §2.9; the desktop tools plan and the maintenance channel: a runner process that outlives the station, the stream purpose `maintenance:<id>`, no shell receipts) |
 | `fleet_view.v1` | `fleet.view` (MCP P3, design `docs/v2/design/mcp-p3.md` §2; the stations, projects, live sessions and the calling session, read by every session of a paired station) |
 | `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
+| `usage_recount.v1` | `session.usage_recount` and the event `usage.set` (B20, DL-448, design `docs/v2/design/usage-cost.md` §4; the owner's recount of an old usage count from the provider record) |
 | `desktop.v1` | `desktop.info`, `desktop.act` (R13 §6, DL-201; desktop control on the station: Hyprland and Omarchy info, and a closed list of actions with typed argv) |
 | `fleet_git.v1` | `fleet_git.projects_set`, `fleet_git.push_now`, `fleet_git` on `session.start`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup` (Fleet Git phase 1, ADR-009; the Git settings of a project, fetch before a start, push, cleanup and worktree bootstrap) |
 | `fleet_git.homes.v1` | `project.ensure_home`, `project.home_status`, `fleet_git.artifact_authorize`, `fleet_git.share_verdict`, the file root `artifacts` of `files.v1`, and the events `artifacts.ready`, `artifacts.unavailable`, `artifacts.revoked` (Fleet Git phase 2, ADR-009; homes of a project on many stations, the artifact share verdicts) |
@@ -355,7 +356,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.coordinator_set`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.stop_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.coordinator_set`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.stop_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `session.usage_recount`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
@@ -466,6 +467,7 @@ close             { reason, detail }
 | `session.stop_execution` | deck → station | admin | `execution_stop.v1` | yes |
 | `session.shell_command` | deck → station | admin | `shell_command.v1` | yes |
 | `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
+| `session.usage_recount` | deck → station | admin | `usage_recount.v1` | yes |
 | `desktop.info` | deck → station | read | `desktop.v1` | no |
 | `desktop.act` | deck → station | drive | `desktop_authority.v1` | no |
 | `desktop.capture_status` | deck → station | admin | `desktop_capture.v1` | no |

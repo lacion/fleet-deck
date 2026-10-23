@@ -167,7 +167,7 @@ fn usage_sums_known_parts_and_keeps_unknown_parts_unknown() {
             input_tokens: i,
             output_tokens: None,
             cost_usd: c,
-            cost_inferred: false,
+            ..Usage::default()
         },
         rate_limits: vec![],
     };
@@ -184,7 +184,7 @@ fn usage_sums_known_parts_and_keeps_unknown_parts_unknown() {
             input_tokens: Some(99),
             output_tokens: Some(99),
             cost_usd: Some(9.0),
-            cost_inferred: false,
+            ..Usage::default()
         }),
     });
     assert_eq!(s.usage.input_tokens, Some(15));

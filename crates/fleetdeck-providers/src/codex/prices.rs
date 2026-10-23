@@ -70,6 +70,7 @@ pub(super) fn usage_of(model: Option<&str>, last: &Value) -> Usage {
         output_tokens: output,
         cost_usd: cost,
         cost_inferred: cost.is_some(),
+        ..Usage::default()
     }
 }
 

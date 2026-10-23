@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::ids::CommandId;
+
 /// Native ids of a provider, scoped by provider + session (L6). Never a global key.
 pub type ProviderRefs = serde_json::Map<String, Value>;
 
@@ -194,10 +196,17 @@ pub enum InputState {
     Refused,
 }
 
+/// The accounting scheme of this design (DL-449). An event or a total
+/// without `scheme` uses the rules before it (an "old count").
+pub const USAGE_SCHEME: u32 = 2;
+
 /// Token usage. `None` means unknown, which is not zero.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export_to = "event/")]
 pub struct Usage {
+    /// Scheme 2: input tokens that the prompt cache did not hold and the turn
+    /// did not write to it ("new input"), for both providers (DL-441).
+    /// Without a scheme: the provider's old meaning (Codex: cached input included).
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cost_usd: Option<f64>,
@@ -205,6 +214,81 @@ pub struct Usage {
     /// the provider.
     #[serde(default)]
     pub cost_inferred: bool,
+    /// Input tokens read from the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cache_read_tokens: Option<u64>,
+    /// Input tokens written to the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cache_write_tokens: Option<u64>,
+    /// The `PRICE_TABLE_VERSION` of an inferred cost; `None` for a cost that
+    /// the provider reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub prices: Option<String>,
+    /// `Some(USAGE_SCHEME)` for usage counted by the rules of this design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scheme: Option<u32>,
+    /// Some tokens of this interval are not in the token counts (a count is
+    /// a lower bound).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub tokens_partial: bool,
+    /// Some usage of this interval has no cost in `cost_usd` (a known cost
+    /// is a lower bound; `None` stays unknown).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub cost_partial: bool,
+}
+
+impl Usage {
+    /// No token part and no cost is known (a rate-limit-only update).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens.is_none()
+            && self.output_tokens.is_none()
+            && self.cache_read_tokens.is_none()
+            && self.cache_write_tokens.is_none()
+            && self.cost_usd.is_none()
+    }
+
+    /// Any token part is `Some`.
+    #[must_use]
+    pub fn has_tokens(&self) -> bool {
+        self.input_tokens.is_some()
+            || self.output_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_write_tokens.is_some()
+    }
+}
+
+/// Where a recounted usage total came from (B20).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum UsageSource {
+    /// The last `cost-state` record of the Claude transcript.
+    ClaudeTranscript,
+    /// The `token_count` records of the Codex rollout file, priced turn by turn.
+    CodexRollout,
+    /// The provider has no record of the session: the total is unknown.
+    None,
+}
+
+/// The last recount of a session (B20).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct UsageRecount {
+    /// Unix ms of the `usage.set` event.
+    pub at: i64,
+    pub source: UsageSource,
+    /// The command that asked for it: the board matches its command to the summary.
+    pub command_id: CommandId,
+    /// The total that the recount replaced (an old count). Kept here, not
+    /// only in the event, so that event retention does not remove it.
+    pub previous: Usage,
 }
 
 /// One provider rate limit window.

@@ -9,7 +9,7 @@ use ts_rs::TS;
 use crate::capability::Capabilities;
 use crate::event::{
     ApprovalOption, ModelChoice, ProviderKind, RateLimit, RequestKind, ResponseChannel,
-    RevertState, SessionState, ToolKind, Usage,
+    RevertState, SessionState, ToolKind, Usage, UsageRecount,
 };
 use crate::fleet_git::{ArtifactsDir, CleanupInfo, LandInfo, MoveInInfo, MovedTo, PushInfo};
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
@@ -104,6 +104,16 @@ pub struct SessionSummary {
     pub running_tools: Vec<RunningTool>,
     /// Sum of the reported usage; `None` parts are unknown.
     pub usage: Usage,
+    /// The old count of a session (DL-449): the total that the session had
+    /// when the first usage of `USAGE_SCHEME` came, plus every later usage
+    /// without a scheme. It is never added to `usage`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub usage_legacy: Option<LegacyUsage>,
+    /// The last recount of `usage` from the provider record (B20, design §4.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub usage_recount: Option<UsageRecount>,
     /// The latest provider rate-limit windows, one per scope, sorted by
     /// scope (M3 6-9, DL-303). Empty: no window reported (unknown, not
     /// zero). Absent in a summary stored before M3.
@@ -205,6 +215,16 @@ pub struct SessionSummary {
     pub updated_at: i64,
 }
 
+/// An old count (DL-449).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "session/")]
+pub struct LegacyUsage {
+    pub usage: Usage,
+    /// Unix ms of the first event of `USAGE_SCHEME`: the old count is the
+    /// usage before it.
+    pub until: i64,
+}
+
 impl SessionSummary {
     /// An empty summary for a session that has no events yet.
     #[must_use]
@@ -234,6 +254,8 @@ impl SessionSummary {
             background_agents: 0,
             running_tools: Vec::new(),
             usage: Usage::default(),
+            usage_legacy: None,
+            usage_recount: None,
             rate_limits: Vec::new(),
             last_error: None,
             revert: None,

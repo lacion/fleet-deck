@@ -123,6 +123,7 @@ fn an_inferred_cost_part_makes_the_total_inferred() {
             output_tokens: Some(1),
             cost_usd: cost,
             cost_inferred: inferred,
+            ..Usage::default()
         },
         rate_limits: vec![],
     };

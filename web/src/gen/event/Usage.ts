@@ -3,9 +3,42 @@
 /**
  * Token usage. `None` means unknown, which is not zero.
  */
-export type Usage = { input_tokens: number | null, output_tokens: number | null, cost_usd: number | null, 
+export type Usage = { 
+/**
+ * Scheme 2: input tokens that the prompt cache did not hold and the turn
+ * did not write to it ("new input"), for both providers (DL-441).
+ * Without a scheme: the provider's old meaning (Codex: cached input included).
+ */
+input_tokens: number | null, output_tokens: number | null, cost_usd: number | null, 
 /**
  * `cost_usd` comes from a local price table (R4.6, DL-161), not from
  * the provider.
  */
-cost_inferred: boolean, };
+cost_inferred: boolean, 
+/**
+ * Input tokens read from the prompt cache.
+ */
+cache_read_tokens?: number, 
+/**
+ * Input tokens written to the prompt cache.
+ */
+cache_write_tokens?: number, 
+/**
+ * The `PRICE_TABLE_VERSION` of an inferred cost; `None` for a cost that
+ * the provider reported.
+ */
+prices?: string, 
+/**
+ * `Some(USAGE_SCHEME)` for usage counted by the rules of this design.
+ */
+scheme?: number, 
+/**
+ * Some tokens of this interval are not in the token counts (a count is
+ * a lower bound).
+ */
+tokens_partial?: boolean, 
+/**
+ * Some usage of this interval has no cost in `cost_usd` (a known cost
+ * is a lower bound; `None` stays unknown).
+ */
+cost_partial?: boolean, };

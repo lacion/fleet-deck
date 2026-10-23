@@ -30,7 +30,7 @@ const fn drive(name: &'static str) -> MethodSpec {
 use Callers::DeckToStation;
 
 /// The first rows of [`METHODS`].
-const HEAD: [MethodSpec; 89] = [
+const HEAD: [MethodSpec; 90] = [
     m("station.info", DeckToStation, Scope::Read, None, false),
     m("session.list", DeckToStation, Scope::Read, None, false),
     m("events.replay", DeckToStation, Scope::Read, None, false),
@@ -618,6 +618,14 @@ const HEAD: [MethodSpec; 89] = [
         DeckToStation,
         Scope::Admin,
         Some(feature::SHELL_COMMAND),
+        true,
+    ),
+    // The owner's recount of an old usage count (B20, DL-448).
+    m(
+        "session.usage_recount",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::USAGE_RECOUNT),
         true,
     ),
 ];

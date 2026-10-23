@@ -518,6 +518,7 @@ fn usage_of(res: &ResultFrame, cost_usd: Option<f64>) -> Usage {
         output_tokens: tokens("output_tokens"),
         cost_usd,
         cost_inferred: false,
+        ..Usage::default()
     }
 }
 

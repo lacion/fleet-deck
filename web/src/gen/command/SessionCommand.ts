@@ -58,4 +58,4 @@ fleet_git?: FleetGitStart, } | { "op": "resume", session_id: SessionId, } | { "o
 /**
  * Boxed to keep the command small (clippy `large_enum_variant`).
  */
-plan: LandPlan, } | { "op": "move_out", session_id: SessionId, move_id: string, to_station: StationId, } | { "op": "move_in", move_id: string, kind: MoveKind, provider_instance: ProviderInstanceId, title?: string, callsign_hint?: string, from: MoveFrom, fleet_git: FleetGitStart, } | { "op": "move_finish", session_id: SessionId, move_id: string, to_station: StationId, to_session: SessionId, } | { "op": "move_undo", session_id: SessionId, move_id: string, };
+plan: LandPlan, } | { "op": "move_out", session_id: SessionId, move_id: string, to_station: StationId, } | { "op": "move_in", move_id: string, kind: MoveKind, provider_instance: ProviderInstanceId, title?: string, callsign_hint?: string, from: MoveFrom, fleet_git: FleetGitStart, } | { "op": "move_finish", session_id: SessionId, move_id: string, to_station: StationId, to_session: SessionId, } | { "op": "move_undo", session_id: SessionId, move_id: string, } | { "op": "usage_recount", session_id: SessionId, };

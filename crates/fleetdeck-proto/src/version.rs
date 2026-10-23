@@ -137,6 +137,10 @@ pub mod feature {
     /// (B8, DL-196).
     pub const SHELL_COMMAND: &str = "shell_command.v1";
 
+    /// `session.usage_recount` and the `usage.set` event: the owner's recount
+    /// of an old usage count from the provider record (B20, DL-448).
+    pub const USAGE_RECOUNT: &str = "usage_recount.v1";
+
     /// `session.import` with a `transcript` pin: the station verifies the pin
     /// before any launch (B7).
     pub const IMPORT_PIN: &str = "import_pin.v1";
@@ -329,6 +333,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        USAGE_RECOUNT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -505,7 +510,17 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
+        let usage = feature::ALL
+            .iter()
+            .position(|x| *x == feature::USAGE_RECOUNT);
+        assert_eq!(usage, Some(at(feature::DESKTOP_TOOL_INSTALL) + 1));
+    }
+
+    #[test]
+    fn the_usage_recount_feature_has_its_name_is_offered_and_not_required() {
+        assert_eq!(feature::USAGE_RECOUNT, "usage_recount.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::USAGE_RECOUNT));
+        assert!(!feature::REQUIRED.contains(&feature::USAGE_RECOUNT));
     }
 
     #[test]

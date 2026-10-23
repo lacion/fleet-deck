@@ -68,6 +68,7 @@ mod task_stop;
 pub mod trash;
 mod turn_rows;
 pub mod turns;
+mod usage_recount;
 mod worker_grant;
 pub mod workspaces;
 pub use adapters::{adapters_from_config, setup_envs_from_config};

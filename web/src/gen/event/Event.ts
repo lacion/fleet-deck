@@ -41,6 +41,7 @@ import type { ToolStatus } from "./ToolStatus";
 import type { TurnCheckpoint } from "./TurnCheckpoint";
 import type { TurnStatus } from "./TurnStatus";
 import type { Usage } from "./Usage";
+import type { UsageSource } from "./UsageSource";
 import type { WorkerOutcome } from "./WorkerOutcome";
 
 /**
@@ -114,7 +115,16 @@ input: JsonValue | null, options: Array<ApprovalOption>, response: ResponseChann
  * Who answered, when it is not the owner: `member:<name>` (R11.5,
  * DL-166). Older peers send no field.
  */
-answered_by?: string, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "turn.finalized", turn_id: TurnId, 
+answered_by?: string, } | { "kind": "approval.expired", request_id: RequestId, reason: ExpiredReason, } | { "kind": "plan.proposed", plan_id: PlanId, turn_id: TurnId | null, markdown: string, } | { "kind": "usage.updated", usage: Usage, rate_limits: Array<RateLimit>, } | { "kind": "usage.set", 
+/**
+ * Scheme 2, `tokens_partial` and `cost_partial` set (design §4.2 step 3).
+ */
+usage: Usage, 
+/**
+ * The total that the summary had before. Boxed to keep the event
+ * small (clippy `large_enum_variant`).
+ */
+previous: Usage, source: UsageSource, command_id: CommandId, } | { "kind": "turn.completed", turn_id: TurnId, status: TurnStatus, usage: Usage | null, } | { "kind": "turn.finalized", turn_id: TurnId, 
 /**
  * Always set by a station with the workspace service.
  */
