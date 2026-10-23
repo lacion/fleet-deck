@@ -1,5 +1,6 @@
 // R13 P1: the figures of a station row on the wall, read across a room: the CPU as a share of all
-// cores, the memory in whole GB, and the free space of the fullest disk.
+// cores, the memory in whole GB (the one exception to `bytesText`, §5 Sizes: a glance needs no
+// decimal), and the free space of the fullest disk.
 import { bytesText, usedShare } from '../board/resources';
 import type { StationResources } from '../gen';
 
@@ -22,8 +23,8 @@ function fullestDisk(disks: readonly DiskLike[]): DiskLike | null {
 type Figures = Pick<StationResources, 'cpu' | 'memory'> & { readonly disks: readonly DiskLike[] };
 
 /**
- * The parts of the row: "CPU 9%" (100% = every core busy), "Mem 6/47 GB", "Disk 217 GB free".
- * A part that the station does not report is left out.
+ * The parts of the row: "CPU 9%" (100% = every core busy), "Memory 6 of 47 GB" (a count reads
+ * "3 of 12", §5), "Disk 217 GB free". A part that the station does not report is left out.
  */
 export function stationStats(r: Figures | null | undefined): readonly string[] {
   if (r == null) return [];
@@ -33,7 +34,7 @@ export function stationStats(r: Figures | null | undefined): readonly string[] {
   }
   if (r.memory !== null) {
     const used = Math.round((r.memory.total_bytes - r.memory.available_bytes) / 1e9);
-    out.push(`Mem ${used}/${Math.round(r.memory.total_bytes / 1e9)} GB`);
+    out.push(`Memory ${used} of ${Math.round(r.memory.total_bytes / 1e9)} GB`);
   }
   const disk = fullestDisk(r.disks);
   // The free space only: "free" is the word that a reader needs, so it ends the part.

@@ -507,7 +507,10 @@ describe('the wall for a display login', () => {
 
   test('the station row shows the CPU share, the memory and the fullest disk in short figures', () => {
     const html = wall({});
-    expect(html).toContain('CPU 31% · Mem 8/16 GB · Disk 40 GB free');
+    // One part for each figure: a second line starts with a part, never inside one.
+    expect(html).toContain(
+      '<span class="fd-wall-part">CPU 31% ·</span> <span class="fd-wall-part">Memory 8 of 16 GB ·</span> <span class="fd-wall-part">Disk 40 GB free</span>',
+    );
   });
 
   test('the side area reads the same resources', () => {

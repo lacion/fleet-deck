@@ -1,6 +1,6 @@
 // R13 P1 (design §4.2): the four areas of the mission mode: needs, tiles, side and stream.
 // Everything here only reads. A part with no data is left out.
-import { type CSSProperties, type RefObject, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, Fragment, type RefObject, useEffect, useMemo, useState } from 'react';
 import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
@@ -113,7 +113,7 @@ export function TilesArea({
   readonly failed: ReadonlySet<string>;
   readonly areaRef: RefObject<HTMLElement | null>;
   /** The columns of the tiles (`tileGrid`); `null` before a measure. The growth of the type,
-   * `--fd-wall-tile-k`, is set on the grid: the needs area grows with the tiles. */
+   * `--fd-wall-tile-k`, is set on the grid: the needs and the side areas grow with the tiles. */
   readonly grid?: { readonly columns: number; readonly k: number } | null;
 }) {
   const style: CSSProperties | undefined =
@@ -161,9 +161,23 @@ function StationRow({ station }: { readonly station: StationView }) {
         aria-hidden="true"
       />
       <span className="fd-wall-station-name">{station.name}</span>
-      <span className="fd-wall-note">{station.reachable ? 'Online' : 'Offline'}</span>
+      {/* The glyph says "online" (§4.7, the station identity): the word is for a screen reader
+          only. "Offline" shows, in --hazard. */}
+      {station.reachable ? (
+        <span className="fd-vh"> online</span>
+      ) : (
+        <span className="fd-wall-note">Offline</span>
+      )}
+      {/* A part keeps its words and its middle dot together: a second line starts with a part. */}
       {stats.length === 0 ? null : (
-        <span className="fd-wall-station-stats">{stats.join(' · ')}</span>
+        <span className="fd-wall-station-stats">
+          {stats.map((part, n) => (
+            <Fragment key={part}>
+              {n === 0 ? null : ' '}
+              <span className="fd-wall-part">{n < stats.length - 1 ? `${part} ·` : part}</span>
+            </Fragment>
+          ))}
+        </span>
       )}
     </li>
   );

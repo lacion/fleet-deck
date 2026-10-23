@@ -1,7 +1,15 @@
 // R13 P1: the shape class and the tile count are pure functions of the viewport and the URL.
 import { describe, expect, test } from 'bun:test';
 import { MAX_TILES } from '../watch/tiles';
-import { baseRemPx, shapeOf, TILE_GROW_MAX, tileGrid, tileLimit } from './shape';
+import {
+  baseRemPx,
+  SCROLL_TILES_SHARE,
+  shapeOf,
+  TILE_GROW_MAX,
+  tileBox,
+  tileGrid,
+  tileLimit,
+} from './shape';
 
 describe('shapeOf', () => {
   test('the aspect ratio picks the shape', () => {
@@ -98,5 +106,27 @@ describe('tileLimit', () => {
 
   test('never more than the 24 subscriptions', () => {
     expect(tileLimit(100_000, 100_000, 14, 0.75, GAP)).toBe(MAX_TILES);
+  });
+});
+
+describe('tileBox', () => {
+  const area = { w: 358, h: 1200, gap: 8 };
+
+  test('a phone held upright scrolls: the tiles count on a fixed share of the screen', () => {
+    expect(tileBox(area, 'portrait', { w: 390, h: 844 })).toEqual({
+      w: 358,
+      h: Math.round(844 * SCROLL_TILES_SHARE),
+      gap: 8,
+    });
+    // The count does not follow the height of the tiles: a taller area gives the same box.
+    expect(tileBox({ ...area, h: 300 }, 'portrait', { w: 390, h: 844 })).toEqual(
+      tileBox(area, 'portrait', { w: 390, h: 844 }),
+    );
+  });
+
+  test('a wall that does not scroll reads its tiles area', () => {
+    expect(tileBox(area, 'portrait', { w: 1080, h: 1920 })).toBe(area);
+    expect(tileBox(area, 'standard', { w: 600, h: 480 })).toBe(area);
+    expect(tileBox(area, 'wide', { w: 1920, h: 1080 })).toBe(area);
   });
 });

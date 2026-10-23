@@ -2,18 +2,23 @@
 // named as its tile (the title), sized by `cpu_pct`, with a tooltip for the memory. It has no
 // control and no focus stop. It is the last block of the side area and takes the height that the
 // other blocks leave: a cell whose bottom edge is below the grid is hidden. The heading counts
-// the sessions without a cell (idle, hidden or over the limit) in a `.fd-count` pill after its
-// name (§5: never "(+3 more)"). When no cell fits, the whole block is hidden.
+// the sessions without a cell (idle, hidden or over the limit) in a `+3` `.fd-count` pill after
+// its name (§5: a count of hidden items, never "(+3 more)"). When no cell fits, the whole block
+// is hidden.
 import { useLayoutEffect, useRef, useState } from 'react';
+import { countText } from '../ui/format';
 import { LOAD_TITLE, type LoadMapData } from './loadCells';
 
-/** The sessions that have no cell: a neutral pill after the heading; its name says "more". */
+/**
+ * The sessions that have no cell: a neutral `+N` pill after the heading. The plus says "beyond
+ * these cells" (a bare number read as the total of the cells under it); its name says the rest.
+ */
 export function LoadCount({ n }: { readonly n: number }) {
   if (n <= 0) return null;
   return (
     <span className="fd-count">
-      {n}
-      <span className="fd-vh"> more</span>
+      {`+${countText(n)}`}
+      <span className="fd-vh"> more sessions</span>
     </span>
   );
 }
