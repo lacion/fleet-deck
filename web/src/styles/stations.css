@@ -108,9 +108,11 @@
   overflow-wrap: anywhere;
 }
 
-.fd-plan-meta .fd-link:hover:not(:disabled) {
-  background: transparent;
-  text-decoration-thickness: 2px;
+@media (hover: hover) {
+  .fd-plan-meta .fd-link:hover:not(:disabled) {
+    background: transparent;
+    text-decoration-thickness: 2px;
+  }
 }
 
 .fd-plan-fold {
@@ -126,8 +128,10 @@
   font-weight: 500;
 }
 
-.fd-plan-fold > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-plan-fold > summary:hover {
+    color: var(--text);
+  }
 }
 
 .fd-plan-fold > .fd-note {
@@ -382,9 +386,9 @@
 }
 
 /* ── the properties: columns with the label on top (concept B). A wide card has three columns,
-   Providers | Resources | Busiest sessions; a medium card two (Busiest sessions under
-   Providers); a narrow card one. The columns keep their place when a card has no busiest
-   sessions, so the columns of the cards line up. The Taildrive shares span the card. ── */
+   Providers | Resources | Session load; a medium card two (Session load under Providers); a
+   narrow card one (a phone folds Session load). The columns keep their place when a card has no
+   session load, so the columns of the cards line up. The Taildrive shares span the card. ── */
 .fd-station-props {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -411,13 +415,15 @@
   }
 }
 
-/* A wide card: three columns capped at their content (concept B rows are dense), spread so
-   that the first starts at the left padding edge and the last ends at the right one, under the
-   slots and the menu of the header. */
+/* A wide card: Providers and Session load capped at their content (concept B rows are dense),
+   Resources takes the rest, so that no dead space opens between the columns of a wide window
+   and Session load ends at the right padding edge, under the slots and the menu of the header.
+   Resources keeps the room of one line per row, the aside too (380px); the two others give way
+   first. */
 @container fd-stations (min-width: 1040px) {
   .fd-station-props {
-    grid-template-columns: minmax(0, 320px) minmax(0, 520px) minmax(0, 360px);
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 300px) minmax(380px, 1fr) minmax(0, 400px);
+    column-gap: var(--sp-6);
   }
 
   .fd-station-prop[data-prop="resources"] {
@@ -570,19 +576,48 @@
   white-space: nowrap;
 }
 
-/* A narrow card (a phone) has no room for the value and the aside on one line: the aside takes
-   the second line, without a separator at its start. */
-@container fd-stations (max-width: 479px) {
+/* A very wide card: the bars of Resources grow with their column, so that a row reads as one
+   meter up to the next column, not a short bar before a long gap. The rows share the columns
+   (subgrid): every bar has one length, and a value never wraps. (From 1280px the Resources column
+   has the room of a value next to a 96px bar.) */
+@container fd-stations (min-width: 1280px) {
+  .fd-station-res {
+    grid-template-columns: 56px minmax(96px, 1fr) max-content;
+    column-gap: var(--sp-2);
+  }
+
   .fd-station-res li {
-    padding: 2px 0;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
   }
+}
 
+/* A medium card (two columns under 790px, and a phone) has no room for the aside after a long
+   value: a wrapped aside started its line with the separator. The row tooltip keeps it. */
+@container fd-stations (max-width: 789px) {
   .fd-station-res-aside {
-    display: block;
+    display: none;
+  }
+}
+
+/* A narrow card (a phone) shows a resource as one line (the 24px row of the provider rows): the
+   label, a bar that takes the room, the used amount of the total. The aside (what is free, the
+   cores) has no room: the row tooltip keeps it (StationResources). Two lines per meter made one
+   card fill the phone. */
+@container fd-stations (max-width: 639px) {
+  /* The rows share the columns (subgrid), so that every bar has one length. */
+  .fd-station-res {
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+    column-gap: var(--sp-2);
   }
 
-  .fd-station-res-sep {
-    display: none;
+  .fd-station-res li {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+
+  .fd-station-res-value {
+    white-space: nowrap;
   }
 }
 
@@ -590,10 +625,35 @@
   color: var(--act);
 }
 
-/* The busiest sessions: a row is one link to its session. The title in --text (a session link
-   names the session as the sidebar does) with the callsign after it in --dim, then the CPU and
-   the memory with their units in two right-aligned columns (§2.3) at the right edge of the
+/* Session load: a load table. The head is the label and the units (CPU, Memory, in --faint over
+   their columns: written once, not on every row). A row is one link to its session: the title in
+   --text (a session link names the session as the sidebar does) with the callsign after it in
+   --dim, then the CPU and the memory in two right-aligned columns (§2.3) at the right edge of the
    property. The title underlines on hover and focus, as a link in a row. */
+.fd-station-busy-head,
+.fd-station-busy a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 64px;
+  gap: var(--sp-2);
+}
+
+.fd-station-busy-head {
+  align-items: center;
+  margin-bottom: var(--sp-1);
+}
+
+.fd-station-busy-head > .fd-station-prop-label {
+  margin: 0;
+}
+
+.fd-station-busy-unit {
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  line-height: 20px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .fd-station-busy {
   display: grid;
   margin: 0;
@@ -602,20 +662,24 @@
 }
 
 .fd-station-busy a {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px 64px;
   align-items: center;
-  gap: var(--sp-2);
   min-height: 24px;
   color: var(--text);
   text-decoration: none;
 }
 
+/* The title and the callsign on one line. The callsign gives way first, and as a whole: without
+   the room of both, it wraps to a second line that the one-line box hides (the link tooltip keeps
+   it), and the title keeps the row. */
 .fd-station-busy-who {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--sp-2);
+  column-gap: var(--sp-2);
   min-width: 0;
+  height: 20px;
+  overflow: hidden;
+  line-height: 20px;
 }
 
 .fd-station-busy-name {
@@ -649,6 +713,35 @@
   font-size: var(--fs-meta);
   text-align: right;
   white-space: nowrap;
+}
+
+/* A phone card folds Session load (StationBusiest `folded`): the summary is the property label
+   with the count and the toggle chevron; it starts closed. */
+.fd-station-busy-fold {
+  display: block;
+}
+
+.fd-station-busy-fold > summary.fd-station-prop-label {
+  margin: 0;
+}
+
+.fd-station-busy-fold[open] > summary.fd-station-prop-label {
+  margin-bottom: var(--sp-1);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .fd-station-busy-fold > summary.fd-station-prop-label:hover {
+    color: var(--text);
+  }
+}
+
+/* A narrow card: the title has the room of the row. The callsign (in the link tooltip) gives way,
+   so the part that names the session is the last to be cut. */
+@container fd-stations (max-width: 639px) {
+  .fd-station-busy-cs {
+    display: none;
+  }
 }
 
 .fd-station-prop .fd-res-warn {
@@ -713,9 +806,14 @@
   font-weight: 500;
 }
 
-.fd-station-folds > details > summary:hover,
 .fd-station-folds > details[open] > summary {
   color: var(--text);
+}
+
+@media (hover: hover) {
+  .fd-station-folds > details > summary:hover {
+    color: var(--text);
+  }
 }
 
 .fd-station-folds > details[open] {
@@ -760,12 +858,16 @@
       color var(--t-fast);
   }
 
-  .fd-station-folds > details > summary:hover {
-    background: var(--raised);
+  /* On the card (a .fd-panel: light, a white --raised) the hover and the open fold step up to
+     --badge-bg (§3 .fd-panel): a --raised hover was white on white. */
+  @media (hover: hover) {
+    .fd-station-folds > details > summary:hover {
+      background: var(--badge-bg);
+    }
   }
 
   .fd-station-folds > details[open] > summary {
-    background: var(--raised-hi);
+    background: var(--badge-bg);
   }
 
   .fd-station-folds > details > summary:focus-visible {
@@ -1025,8 +1127,10 @@
   text-decoration: none;
 }
 
-.fd-wt-session:hover {
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-wt-session:hover {
+    text-decoration: underline;
+  }
 }
 
 .fd-wt-body .fd-wt-evidence {
@@ -1128,6 +1232,25 @@
 @media (pointer: coarse) {
   .fd-station-folds > details > summary {
     min-height: var(--tap-min);
+  }
+
+  /* The name is not a control: a 28px line (--ctl-h is 44px here). The 44px menu button stays
+     centered on it and reaches into the head padding, so the head is not taller than its text. */
+  .fd-station h3.fd-station-name {
+    min-height: 28px;
+  }
+
+  .fd-station-menu {
+    margin-block: -8px;
+  }
+
+  /* The Session load toggle of a phone card keeps its 44px target in the room of a 28px line. */
+  .fd-station-busy-fold > summary.fd-station-prop-label {
+    margin-block: -8px;
+  }
+
+  .fd-station-busy-fold[open] > summary.fd-station-prop-label {
+    margin-bottom: calc(var(--sp-1) - 8px);
   }
 
   /* A busiest session row is one link: a 44 px row on a touch screen. */

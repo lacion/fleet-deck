@@ -133,9 +133,13 @@
 }
 /* A plain button on the page --bg keeps the light hairline, the same as Browse… in a settings
    folder row (settings.css .fd-set-grid .fd-folder-row > button). */
-.fd-tailnet > button.fd-tailnet-indent,
-.fd-tailnet > button.fd-tailnet-indent:hover:not(:disabled) {
+.fd-tailnet > button.fd-tailnet-indent {
   border-color: var(--btn-edge);
+}
+@media (hover: hover) {
+  .fd-tailnet > button.fd-tailnet-indent:hover:not(:disabled) {
+    border-color: var(--btn-edge);
+  }
 }
 /* The state of the certificate: --dim words; a valid one starts with the ok glyph. */
 .fd-tailnet-cert > .fd-tailnet-certline {
@@ -292,9 +296,6 @@
 .fd-add-dialog > :where(*) {
   min-width: 0;
 }
-.fd-add-dialog :where(button:not([class])):hover:not(:disabled) {
-  background: var(--raised-hi);
-}
 .fd-add-back {
   display: flex;
   margin: calc(-1 * var(--sp-2)) 0 0 -8px;
@@ -360,11 +361,6 @@
   color: var(--focus);
   font-weight: 500;
 }
-.fd-add-text-btn:hover:not(:disabled) {
-  background: transparent;
-  border-color: transparent;
-  text-decoration: underline;
-}
 /* On touch the text button keeps the 44px target of every control (§6). */
 @media (pointer: coarse) {
   .fd-add-text-btn {
@@ -387,25 +383,18 @@
   height: auto;
   min-height: 56px;
   padding: 10px var(--sp-3);
-  /* A neutral fill: the light --raised-hi is near the --focus-bg tint and read as selected. */
-  background: var(--badge-bg);
+  /* A plain control on the --raised dialog (§3 Edges): the fill of the dialog and the
+     --btn-edge-raised edge. A --badge-bg slab read as a greyed-out field in the light theme. */
+  background: var(--raised);
+  border-color: var(--btn-edge-raised);
   border-radius: var(--r-card);
   color: var(--text);
   text-align: left;
   line-height: 1.35;
 }
-/* Hover: the --ctl-edge edge of the other filled answers on a --raised layer (§4.1). */
-.fd-add-choice:hover:not(:disabled) {
-  background: var(--badge-bg);
-  box-shadow: inset 0 0 0 1px var(--ctl-edge);
-}
 .fd-add-choice > .fd-icon {
   color: var(--faint);
   transition: transform var(--t-fast);
-}
-.fd-add-choice:hover:not(:disabled) > .fd-icon {
-  color: var(--text);
-  transform: translateX(2px);
 }
 /* The icon alone, no tile (no box in the choice box). */
 .fd-add-choice-icon {
@@ -427,21 +416,11 @@
   font-size: var(--fs-meta);
   font-weight: 400;
 }
-/* No computer to add: a quiet choice without a fill or a chevron (it still opens the tailnet
-   view, which says why). */
+/* A quiet choice without a fill, an edge or a chevron: no computer to add (it still opens the
+   tailnet view, which says why), and a station that listens (the rare way). */
 .fd-add-choice[data-dim="true"] {
   background: transparent;
-}
-.fd-add-choice[data-dim="true"]:hover:not(:disabled) {
-  background: var(--badge-bg);
-  box-shadow: inset 0 0 0 1px var(--ctl-edge);
-}
-/* Forced colors drop the box-shadow edge of the hover: give it an outline (the focus ring wins). */
-@media (forced-colors: active) {
-  .fd-add-choice:hover:not(:disabled):not(:focus-visible) {
-    outline: 1px solid ButtonText;
-    outline-offset: -1px;
-  }
+  border-color: transparent;
 }
 .fd-add-choice[data-dim="true"] .fd-add-choice-title {
   color: var(--dim);
@@ -468,7 +447,6 @@
   font-size: var(--fs-meta);
   font-weight: 600;
 }
-.fd-add-fold > summary:hover,
 .fd-add-fold[open] > summary {
   color: var(--text);
 }
@@ -478,6 +456,38 @@
 }
 .fd-add-fold > .fd-note {
   margin: 0 0 var(--sp-1) 20px;
+}
+
+/* The hover of the dialog (§3: only where a pointer hovers; a touch screen kept the hover of a
+   tap). A choice steps up to --badge-bg with the --ctl-edge edge of the other filled answers on
+   a --raised layer (§4.1), and its chevron moves toward the next step. */
+@media (hover: hover) {
+  .fd-add-dialog :where(button:not([class])):hover:not(:disabled) {
+    background: var(--raised-hi);
+  }
+  .fd-add-text-btn:hover:not(:disabled) {
+    background: transparent;
+    border-color: transparent;
+    text-decoration: underline;
+  }
+  .fd-add-choice:hover:not(:disabled) {
+    background: var(--badge-bg);
+    border-color: var(--ctl-edge);
+  }
+  .fd-add-choice:hover:not(:disabled) > .fd-icon {
+    color: var(--text);
+    transform: translateX(2px);
+  }
+  .fd-add-fold > summary:hover {
+    color: var(--text);
+  }
+}
+/* Forced colors draw every edge in one color: the hover adds an outline (the focus ring wins). */
+@media (forced-colors: active) and (hover: hover) {
+  .fd-add-choice:hover:not(:disabled):not(:focus-visible) {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
 }
 
 /* ── the steps: numbered marks joined by a rule ──────────────────── */

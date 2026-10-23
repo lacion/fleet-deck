@@ -170,16 +170,15 @@ test('3: the text buttons of Add station and the folder crumbs are 44px high on 
   await setUp(page);
   expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
 
-  // Add station: the start screen ("Other ways" → listen), then the Run step (Stop, the way back).
+  // Add station: the start screen (the listening station is a choice), then the Run step (Stop,
+  // the way back).
   await goTo(page, '#/stations');
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
   await expect(dialog).toContainText('Where is the new station?');
-  await dialog.locator('details.fd-add-fold > summary').click();
-  await expect(
-    dialog.getByRole('button', { name: 'Connect to a station that listens' }),
-  ).toBeVisible();
-  await expectTall(dialog.locator('.fd-add-text-btn'), 'Add station start');
+  const listen = dialog.getByRole('button', { name: /A station that listens for this deck/ });
+  await expect(listen).toBeVisible();
+  await expectTall(listen, 'Add station start');
   await dialog.getByRole('button', { name: /A computer on my tailnet/ }).click();
   await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
   await dialog

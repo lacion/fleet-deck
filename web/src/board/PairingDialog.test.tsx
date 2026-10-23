@@ -20,7 +20,7 @@ describe('Add station start view', () => {
   test('a tailnet without a free computer is a quiet choice after the invitation', () => {
     const html = renderToStaticMarkup(<Start env={env} onPick={() => {}} initialCount={0} />);
     const list = choices(html);
-    expect(list).toHaveLength(2);
+    expect(list).toHaveLength(3);
     expect(list[0]?.html).toContain('Any computer, with a one-time invitation');
     expect(list[0]?.dim).toBe(false);
     expect(list[1]?.html).toContain('A computer on my tailnet');
@@ -37,6 +37,26 @@ describe('Add station start view', () => {
     expect(list[0]?.html).toContain('2 computers can be added');
     expect(list[0]?.dim).toBe(false);
     expect(list[1]?.html).toContain('Any computer, with a one-time invitation');
+  });
+
+  test('a station that listens is the last choice, quiet, with no fold to open first', () => {
+    for (const initialCount of [0, 2] as const) {
+      const html = renderToStaticMarkup(
+        <Start env={env} onPick={() => {}} initialCount={initialCount} />,
+      );
+      const list = choices(html);
+      expect(list).toHaveLength(3);
+      expect(list[2]?.html).toContain('A station that listens for this deck');
+      expect(list[2]?.html).toContain(
+        'This deck connects to the station. Paste the invitation that the station prints.',
+      );
+      expect(list[2]?.dim).toBe(true);
+      expect(html).not.toContain('Other ways');
+      expect(html).not.toContain('<details');
+    }
+    // Without the owner's tailnet part, the invitation and the listening station stay.
+    const list = choices(renderToStaticMarkup(<Start env={undefined} onPick={() => {}} />));
+    expect(list.map((c) => c.dim)).toEqual([false, true]);
   });
 
   test('while the count loads, the tailnet choice comes first', () => {

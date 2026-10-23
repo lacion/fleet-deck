@@ -7,7 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
-import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Send } from '../ui/icons';
+import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Plug, Send } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -76,24 +76,25 @@ export function Start({
       />
     );
   return (
-    <>
-      <div className="fd-add-choices" ref={choices}>
-        {dim ? null : tailnetChoice}
-        <Choice
-          icon={Send}
-          title="Any computer, with a one-time invitation"
-          note="The new station connects to this deck. It works behind a router or a firewall."
-          onClick={() => onPick('invite')}
-        />
-        {dim ? tailnetChoice : null}
-      </div>
-      <details className="fd-add-fold">
-        <summary>Other ways</summary>
-        <button type="button" className="fd-add-text-btn" onClick={() => onPick('listen')}>
-          Connect to a station that listens
-        </button>
-      </details>
-    </>
+    <div className="fd-add-choices" ref={choices}>
+      {dim ? null : tailnetChoice}
+      <Choice
+        icon={Send}
+        title="Any computer, with a one-time invitation"
+        note="The new station connects to this deck. It works behind a router or a firewall."
+        onClick={() => onPick('invite')}
+      />
+      {dim ? tailnetChoice : null}
+      {/* The third way is a choice too, in the quiet look (a station that listens is the rare
+          case): no fold, so that every way shows at once. */}
+      <Choice
+        icon={Plug}
+        title="A station that listens for this deck"
+        note="This deck connects to the station. Paste the invitation that the station prints."
+        dim
+        onClick={() => onPick('listen')}
+      />
+    </div>
   );
 }
 

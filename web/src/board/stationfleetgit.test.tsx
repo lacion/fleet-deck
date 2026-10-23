@@ -44,13 +44,24 @@ describe('the traits line', () => {
     // One separator for every part: each label reads as its own value, as a word.
     expect(
       traitsText({ os: 'macos', arch: 'aarch64', on_battery: true, labels: ['gpu', 'big-ram'] }),
-    ).toBe('macOS · aarch64 · on battery · GPU · Big ram');
+    ).toBe('macOS · arm64 · on battery · GPU · Big ram');
     expect(traitsText({ os: 'linux', arch: 'x86_64', on_battery: false, labels: ['gpu'] })).toBe(
       'Linux · x86_64 · GPU',
     );
     // The display name of the OS; an id without one stays as it is.
     expect(traitsText({ os: 'omarchy', arch: 'x86_64', labels: [] })).toBe('Omarchy · x86_64');
     expect(traitsText({ os: 'freebsd', arch: 'amd64', labels: [] })).toBe('freebsd · amd64');
+  });
+
+  test('the arch reads as its owner names it; the raw arch is the tooltip', () => {
+    expect(traitsText({ os: 'linux', arch: 'aarch64', labels: [] })).toBe('Linux · arm64');
+    expect(
+      renderToStaticMarkup(<StationTraits traits={{ os: 'macos', arch: 'aarch64', labels: [] }} />),
+    ).toBe('<p class="fd-note fd-station-traits" title="aarch64">macOS · arm64</p>');
+    // A shown arch that is the raw one needs no tooltip.
+    expect(
+      renderToStaticMarkup(<StationTraits traits={{ os: 'linux', arch: 'x86_64', labels: [] }} />),
+    ).toBe('<p class="fd-note fd-station-traits">Linux · x86_64</p>');
   });
 
   test('an older station sends no traits: no line', () => {
