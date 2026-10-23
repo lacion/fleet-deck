@@ -5,7 +5,10 @@ import type { DeckSession, StationView } from '../gen';
 import { compactCount } from '../ui/format';
 import { Fuel, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
+import { isLiveSession } from './fleet';
 import {
+  API_PRICES,
+  apiPricesTitle,
   dollars,
   fleetUsage,
   inputLabel,
@@ -20,6 +23,28 @@ import {
 const SHOWN = 3;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * What the totals count, in the words of the header sentence: "7 live and 2 ended sessions" (the
+ * header says "7 live sessions"; the ended ones are the Ended folds). A part of zero is left out;
+ * the noun agrees with the last number ("1 live session", "6 live and 1 ended session").
+ */
+export function sessionsText(sessions: readonly DeckSession[]): string {
+  const live = sessions.filter(isLiveSession).length;
+  const away = sessions.filter((s) => s.status === 'unreachable').length;
+  const ended = sessions.length - live - away;
+  const parts = [
+    { n: live, word: 'live' },
+    { n: away, word: 'unreachable' },
+    { n: ended, word: 'ended' },
+  ].filter((p) => p.n > 0);
+  const last = parts.at(-1);
+  if (last === undefined) return '0 sessions';
+  const words = parts.map((p) => `${p.n} ${p.word}`);
+  const head = words.slice(0, -1).join(', ');
+  const noun = last.n === 1 ? 'session' : 'sessions';
+  return `${head === '' ? '' : `${head} and `}${words.at(-1)} ${noun}`;
+}
 
 export function UsageGlance({
   sessions,
@@ -37,15 +62,18 @@ export function UsageGlance({
   const manyStations = new Set(known.map((m) => m.stationId)).size > 1;
   const usage = fleetUsage(sessions);
   const approx = usage.costInferred ? '≈ ' : '';
-  // Each total has its exact value as its title: the row shows a count short ("1.5M").
+  // Each total has its exact value as its title: the row shows a count short ("1.5M"). The cost is
+  // the price at the provider's API rates (cached input included), named and explained as such.
+  const priced = apiPricesTitle(sessions.length);
   const totals = [
     { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
     { label: 'output', value: usage.output.known, text: compactCount, exact: tokens },
     {
-      label: 'cost',
+      label: API_PRICES,
       value: usage.cost.known,
       text: (n: number) => `${approx}${dollars(n)}`,
-      exact: (n: number) => `${approx}${dollars(n)}`,
+      exact: (n: number) => `${approx}${dollars(n)}\n${priced}`,
+      about: priced,
     },
   ].filter((t) => t.value !== null);
   if (meters.length === 0 && totals.length === 0) return null;
@@ -83,14 +111,12 @@ export function UsageGlance({
       {totals.length === 0 ? null : (
         <>
           {/* The scope of the totals: the sessions on the board (the archived ones only while
-              Filters shows them), each since it started. */}
-          <p className="fd-glance-span">
-            {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} on the board
-          </p>
+              Filters shows them), each since it started, in the live words of the header. */}
+          <p className="fd-glance-span">{sessionsText(sessions)}</p>
           <dl className="fd-glance-totals">
             {totals.map((t) => (
               <div key={t.label}>
-                <dt>{t.label}</dt>
+                <dt title={'about' in t ? t.about : undefined}>{t.label}</dt>
                 <dd title={t.value === null ? undefined : t.exact(t.value)}>
                   {t.value === null ? null : t.text(t.value)}
                 </dd>

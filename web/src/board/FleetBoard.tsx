@@ -12,14 +12,31 @@ import type { Freshness } from '../runtime/state';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { batchCountOf, batchCounts } from '../compare/compare';
-import { Archive, ArchiveRestore, Icon, Plus, RotateCcw, TriangleAlert } from '../ui/icons';
+import { isRiskyMode, modeLabel } from '../ui/format';
+import {
+  Archive,
+  ArchiveRestore,
+  Icon,
+  Plus,
+  RotateCcw,
+  ShieldAlert,
+  TriangleAlert,
+} from '../ui/icons';
 import { archived } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
 import { projectGroups } from '../integrations/projectGroups';
 import { useNow } from '../ui/useNow';
-import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
-import { FleetStrip } from './FleetStrip';
+import {
+  archLabel,
+  type Contested,
+  cardKey,
+  NO_REPO,
+  repoName,
+  stationName,
+  statusGroups,
+} from './fleet';
+import { FleetStrip, useChangesColumn } from './FleetStrip';
 import { resourceWarnings } from './resources';
 
 /** How the lanes of the board are made (DL-141, DL-176). */
@@ -120,13 +137,75 @@ export const STRIP_ORDER: readonly CardStatus[] = [
   'ended',
 ];
 
-/** The strips of one lane: starred first, then by `STRIP_ORDER`, then newest first. */
+/**
+ * When each strip came into its status: a rising number, for one card (by `cardKey`). A strip keeps
+ * its place in its status group while its session works (each tool call changes its `updated_at`),
+ * and moves only when its status changes; a new session goes to the top of its group. Linear never
+ * moves a row under the pointer: a click lands on the strip that the eye chose.
+ */
+export type Arrivals = {
+  last: number;
+  readonly of: Map<string, { readonly status: CardStatus; readonly seq: number }>;
+};
+
+export const newArrivals = (): Arrivals => ({ last: 0, of: new Map() });
+
+/** The arrivals of the board for the page life: a strip keeps its place also when the owner opens
+ * a session and comes back. FleetBoard writes them after a render (`rememberArrivals`). */
+const BOARD_ARRIVALS = newArrivals();
+
+/** The status groups of a lane: newest arrival first; a strip with no arrival yet (it just came
+ * into its status) before the others, newest first. Without arrivals: newest first. */
+function arrivalGroups(
+  cards: readonly DeckSession[],
+  arrivals: Arrivals | undefined,
+): Record<CardStatus, DeckSession[]> {
+  const groups = statusGroups([...cards]);
+  if (arrivals === undefined) return groups;
+  const seq = (card: DeckSession): number | null => {
+    const seen = arrivals.of.get(cardKey(card));
+    return seen !== undefined && seen.status === card.status ? seen.seq : null;
+  };
+  for (const status of STRIP_ORDER) {
+    // A stable sort: the strips with no arrival keep their newest-first order.
+    groups[status].sort((a, b) => {
+      const x = seq(a);
+      const y = seq(b);
+      if (x === y) return 0;
+      if (x === null) return -1;
+      if (y === null) return 1;
+      return y - x;
+    });
+  }
+  return groups;
+}
+
+/**
+ * Gives every strip that has no arrival in its status one: in the order that `stripCards` shows,
+ * so the next render keeps the places (the top strip gets the highest number).
+ */
+export function rememberArrivals(cards: readonly DeckSession[], arrivals: Arrivals): void {
+  const groups = arrivalGroups(cards, arrivals);
+  for (const status of STRIP_ORDER) {
+    for (const card of [...groups[status]].reverse()) {
+      const key = cardKey(card);
+      if (arrivals.of.get(key)?.status === card.status) continue;
+      arrivals.last += 1;
+      arrivals.of.set(key, { status: card.status, seq: arrivals.last });
+    }
+  }
+}
+
+/**
+ * The strips of one lane: starred first, then by `STRIP_ORDER`, then by arrival in the status
+ * (`arrivals`, the board) or newest first (no arrivals).
+ */
 export function stripCards(
   cards: readonly DeckSession[],
   starred?: ReadonlySet<string>,
+  arrivals?: Arrivals,
 ): DeckSession[] {
-  const groups = statusGroups([...cards]);
-  const ordered = columnCards(groups, STRIP_ORDER);
+  const ordered = columnCards(arrivalGroups(cards, arrivals), STRIP_ORDER);
   if (starred === undefined || starred.size === 0) return ordered;
   const star = (c: DeckSession) => starred.has(sessionRef(c.station_id, c.summary.session_id));
   return [...ordered.filter(star), ...ordered.filter((c) => !star(c))];
@@ -313,7 +392,22 @@ const OS_NAME: Readonly<Record<string, string>> = {
   windows: 'Windows',
 };
 
-/** The station facts of a lane head: platform, and the reach (dot and word). */
+/**
+ * The risky permission mode that every live strip of a lane shares, when the lane has two or more:
+ * the lane head names it once, and the strips drop their flag (§4.1). A hazard on every row stops
+ * saying "look here". One strip keeps its own flag: there is nothing to fold.
+ */
+export function laneMode(cards: readonly DeckSession[]): string | null {
+  const live = cards.filter((c) => !isDone(c));
+  const mode = live[0]?.summary.mode ?? null;
+  if (live.length < 2 || mode === null || !isRiskyMode(mode)) return null;
+  return live.every((c) => c.summary.mode === mode) ? mode : null;
+}
+
+/**
+ * The station facts of a lane head: the platform, and the reach. The dot says online (its word is
+ * for screen readers only, as the station head of Settings); an offline station says it in words.
+ */
 function StationFacts({
   station,
   freshness,
@@ -327,11 +421,11 @@ function StationFacts({
     <>
       {traits === undefined ? null : (
         <span className="fd-lane-platform">
-          {OS_NAME[traits.os.toLowerCase()] ?? traits.os} · {traits.arch}
+          {OS_NAME[traits.os.toLowerCase()] ?? traits.os} · {archLabel(traits.os, traits.arch)}
         </span>
       )}
       <span className="fd-lane-reach" data-up={up ? 'true' : 'false'}>
-        {up ? 'online' : 'offline'}
+        {up ? <span className="fd-vh">online</span> : 'offline'}
       </span>
     </>
   );
@@ -413,7 +507,12 @@ export function FleetBoard({
     ...(emptyLanes && group === 'station' ? emptyStationLanes(all, stations) : []),
   ];
   const offline = foldEnded ? boardEnded(lanes) : sessions.filter(isOffline);
-  const strip = (card: DeckSession) => (
+  // The changes column is a choice of the board, and it stays once a strip showed changes.
+  const changes = useChangesColumn();
+  useEffect(() => {
+    rememberArrivals(sessions, BOARD_ARRIVALS);
+  }, [sessions]);
+  const strip = (card: DeckSession, mode: string | null) => (
     <FleetStrip
       key={cardKey(card)}
       card={card}
@@ -424,10 +523,11 @@ export function FleetBoard({
       contested={contested?.get(sessionRef(card.station_id, card.summary.session_id))}
       extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
       batchCount={batchCountOf(card, batches)}
+      hideMode={mode !== null && card.summary.mode === mode}
     />
   );
   return (
-    <main className="fd-board" aria-label="Fleet board">
+    <main className="fd-board" data-changes={changes ? 'true' : undefined} aria-label="Fleet board">
       {lanes.map((lane) => {
         const contestedCount =
           contested === undefined
@@ -438,7 +538,8 @@ export function FleetBoard({
         const view =
           group === 'station' ? stations.find((s) => s.station_id === lane.id) : undefined;
         const warnings = group === 'station' ? resourceWarnings(view?.info?.resources) : [];
-        const ordered = stripCards(lane.cards, starred);
+        const ordered = stripCards(lane.cards, starred, BOARD_ARRIVALS);
+        const mode = laneMode(ordered);
         const live = foldEnded ? ordered.filter((c) => !isDone(c)) : ordered;
         const done = foldEnded ? ordered.filter(isDone) : [];
         // The count after the name is the shown strips (the sidebar's rule): a folded lane's
@@ -465,6 +566,15 @@ export function FleetBoard({
                 </span>
               )}
               {view === undefined ? null : <StationFacts station={view} freshness={freshness} />}
+              {mode === null ? null : (
+                <span
+                  className="fd-lane-warn"
+                  data-warn="mode"
+                  title={`Permission mode of every live session of ${lane.name}`}
+                >
+                  <Icon of={ShieldAlert} size={12} /> {modeLabel(mode)}
+                </span>
+              )}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
                   <Icon of={TriangleAlert} size={12} /> Low resources
@@ -477,7 +587,9 @@ export function FleetBoard({
               ) : null}
               {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
             </div>
-            {live.length === 0 ? null : <ul className="fd-strips">{live.map(strip)}</ul>}
+            {live.length === 0 ? null : (
+              <ul className="fd-strips">{live.map((card) => strip(card, mode))}</ul>
+            )}
             {lane.cards.length > 0 ? null : (
               <div className="fd-lane-none">
                 <p className="fd-note">No sessions.</p>
@@ -498,7 +610,7 @@ export function FleetBoard({
                 <summary>
                   Ended <span className="fd-count">{done.length}</span>
                 </summary>
-                <ul className="fd-strips">{done.map(strip)}</ul>
+                <ul className="fd-strips">{done.map((card) => strip(card, mode))}</ul>
                 <OfflineTools
                   cards={done}
                   freshness={freshness}

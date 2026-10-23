@@ -68,6 +68,19 @@ export function inputLabel(sessions: readonly DeckSession[]): string {
     : 'input';
 }
 
+/**
+ * The name of a session cost on every surface (the ops glance, Properties, the strip): the price
+ * that the provider reports at its API rates. It counts the cached input, which the token totals
+ * leave out, and an owner on a subscription never pays it: "cost" read as money spent.
+ */
+export const API_PRICES = 'at API prices';
+
+/** What a cost at API prices is, for the title of the number: of one session or of the shown ones. */
+export function apiPricesTitle(sessions: number): string {
+  const whose = sessions === 1 ? 'this session' : 'these sessions';
+  return `What the tokens of ${whose} cost at the provider's API prices, cached input included. A subscription does not bill it.`;
+}
+
 /** The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); `null` when unknown. */
 export function costText(usage: Usage, format: (n: number) => string = dollars): string | null {
   if (usage.cost_usd === null) return null;

@@ -121,6 +121,23 @@ const PROVIDER_NAME: Record<string, string> = {
   unknown: 'Other',
 };
 
+/** The order of the provider chips: Claude, Codex, then Other. */
+const PROVIDER_ORDER: readonly string[] = ['claude', 'codex', 'unknown'];
+
+/**
+ * The providers of the sessions, as the provider filter keys them (`unknown` for none), in the
+ * chip order: the Provider row offers only a provider that is on the board (as the Repository
+ * row), never a chip that filters to an empty board.
+ */
+export function providerKeys(sessions: readonly DeckSession[]): string[] {
+  const keys = [...new Set(sessions.map((s) => s.summary.provider ?? 'unknown'))];
+  const rank = (key: string) => {
+    const i = PROVIDER_ORDER.indexOf(key);
+    return i < 0 ? PROVIDER_ORDER.length : i;
+  };
+  return keys.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
 // The status filter and the summary sentence are the Watch header's too (views/): one control and
 // one sentence for one meaning.
 export { clearText } from '../views/FleetSentence';
@@ -288,6 +305,7 @@ export function FleetHome({
   const shown = showArchived ? sessions : sessions.filter((s) => !archivedHidden(s, cleared));
   const { scoped, visible } = scopeFleet(shown, stations, filter, phone ? 'all' : status);
   const repos = repoNames(shown);
+  const providers = providerKeys(shown);
   const contested = contestedBy(list ?? []);
   const conflictCount = list?.length ?? 0;
   // The station chips follow the order of the lanes (the deck's station order), not the ids.
@@ -304,9 +322,6 @@ export function FleetHome({
   // sessions have their own rows (the Ended folds, Filters).
   const live = sessions.filter(isLiveSession);
   const liveStations = new Set(live.map((s) => s.station_id)).size;
-  const unknownProvider = sessions.some(
-    (s) => s.summary.provider === null || s.summary.provider === 'unknown',
-  );
   const filtered =
     (!phone && status !== 'all') ||
     filter.station !== ALL ||
@@ -349,37 +364,29 @@ export function FleetHome({
             : null}
         </>,
       )}
-      {row(
-        'Provider',
-        <>
-          {chip(
-            'All',
-            filter.provider === ALL,
-            () => setFilter({ ...filter, provider: ALL }),
-            'p-all',
-          )}
-          {chip(
-            'Claude',
-            filter.provider === 'claude',
-            () => setFilter({ ...filter, provider: 'claude' }),
-            'claude',
-          )}
-          {chip(
-            'Codex',
-            filter.provider === 'codex',
-            () => setFilter({ ...filter, provider: 'codex' }),
-            'codex',
-          )}
-          {unknownProvider
-            ? chip(
-                'Other',
-                filter.provider === 'unknown',
-                () => setFilter({ ...filter, provider: 'unknown' }),
-                'unknown',
-              )
-            : null}
-        </>,
-      )}
+      {providers.length >= 2 || filter.provider !== ALL
+        ? row(
+            'Provider',
+            <>
+              {chip(
+                'All',
+                filter.provider === ALL,
+                () => setFilter({ ...filter, provider: ALL }),
+                'p-all',
+              )}
+              {[
+                ...new Set([...providers, ...(filter.provider === ALL ? [] : [filter.provider])]),
+              ].map((key) =>
+                chip(
+                  PROVIDER_NAME[key] ?? key,
+                  filter.provider === key,
+                  () => setFilter({ ...filter, provider: key }),
+                  key,
+                ),
+              )}
+            </>,
+          )
+        : null}
       {repos.length >= 2 || filter.repo !== ALL
         ? row(
             'Repository',
