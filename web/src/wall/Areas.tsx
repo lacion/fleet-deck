@@ -17,6 +17,7 @@ import { homeShortIn, plainLine } from '../ui/format';
 import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
 import { foldLines, refOf } from '../watch/tiles';
+import { markSelected } from './control';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
@@ -30,14 +31,25 @@ export function NeedsArea({
   stations,
   origin,
   now,
+  selected = null,
+  qr = true,
 }: {
   readonly needs: readonly Need[];
   readonly stations: readonly StationView[];
   readonly origin: string;
   readonly now: number;
+  /** The selected ref (`station/session`) of the remote (B17); its items get `data-selected`. */
+  readonly selected?: string | null;
+  /** False on the mirror of the Remote page (B17): it shows no QR code. */
+  readonly qr?: boolean;
 }) {
   return (
-    <section className="fd-wall-area" data-area="needs" aria-label="Needs you">
+    <section
+      className="fd-wall-area"
+      data-area="needs"
+      data-wall-scroll="needs"
+      aria-label="Needs you"
+    >
       <h2 className="fd-wall-h">
         Needs you
         {needs.length === 0 ? null : (
@@ -59,6 +71,7 @@ export function NeedsArea({
                 key={`${refOf(card)}/${request.request_id}`}
                 className="fd-wall-need fd-glow"
                 data-kind={request.request_kind}
+                data-selected={selected === refOf(card) ? 'true' : undefined}
               >
                 <span className="fd-holder" data-status="needs_you" aria-hidden="true" />
                 <div className="fd-wall-need-text">
@@ -83,12 +96,14 @@ export function NeedsArea({
                     </time>
                   </p>
                 </div>
-                <div className="fd-wall-need-qr">
-                  <QrCode
-                    url={answerUrl(origin, card.station_id, s.session_id, request.request_id)}
-                  />
-                  <p className="fd-wall-note">Scan to answer on your phone</p>
-                </div>
+                {qr ? (
+                  <div className="fd-wall-need-qr">
+                    <QrCode
+                      url={answerUrl(origin, card.station_id, s.session_id, request.request_id)}
+                    />
+                    <p className="fd-wall-note">Scan to answer on your phone</p>
+                  </div>
+                ) : null}
               </li>
             );
           })}
@@ -106,6 +121,7 @@ export function TilesArea({
   failed,
   areaRef,
   grid = null,
+  selected = null,
 }: {
   readonly cards: readonly DeckSession[];
   readonly stations: readonly StationView[];
@@ -116,7 +132,13 @@ export function TilesArea({
   /** The columns of the tiles (`tileGrid`); `null` before a measure. The growth of the type,
    * `--fd-wall-tile-k`, is set on the grid: the needs and the side areas grow with the tiles. */
   readonly grid?: { readonly columns: number; readonly k: number } | null;
+  /** The selected ref (`station/session`) of the remote (B17). */
+  readonly selected?: string | null;
 }) {
+  // A tile is drawn by `Tile` (watch/), which has no selection: the mark goes on its `data-ref`.
+  useEffect(() => {
+    if (areaRef.current !== null) markSelected(areaRef.current, selected);
+  });
   const style: CSSProperties | undefined =
     cards.length === 0
       ? { display: 'none' }
@@ -340,7 +362,7 @@ export function StreamArea({
       ) : rows.length === 0 ? (
         <p className="fd-wall-note">No activity yet.</p>
       ) : (
-        <ol className="fd-wall-stream">
+        <ol className="fd-wall-stream" data-wall-scroll="stream">
           {rows.map((item, n) => {
             const text = oneLine(item.text, 160);
             // A tool call reads as the Activity page reads it (watch/tooltext): the tool name in

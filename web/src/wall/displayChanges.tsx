@@ -16,6 +16,8 @@ export type DisplayEnv = {
   readonly fetcher?: (path: string, init: RequestInit) => Promise<Response>;
   /** The generation of the directive that the wall shows; a new one loads an artifact again. */
   readonly generation?: number;
+  /** B17: reads the directive at once (a `navigate` frame, or a frame for a newer generation). */
+  readonly reread?: () => void;
 };
 
 /** The wait between two reads of the changes (the deck allows one every 5 s). */
@@ -176,7 +178,7 @@ export function ChangesPane({
             <p className="fd-wall-note">Patches are off for this display.</p>
           ) : null}
           {patch !== '' ? (
-            <div className="fd-wall-scroll">
+            <div className="fd-wall-scroll" data-wall-scroll="changes">
               <Diff patch={patch} truncated={changes.truncated} id={`wall-${title}`} />
             </div>
           ) : null}

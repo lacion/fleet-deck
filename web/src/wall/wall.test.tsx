@@ -9,7 +9,19 @@ import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
 import { NeedsArea, SideArea, StreamArea } from './Areas';
-import { ChatPane } from './ChatPane';
+import { ChatPane, SCROLLED_BACK_TEXT } from './ChatPane';
+import { type Ask, initialAuto, nextAutoFocus } from './autofocus';
+import {
+  applyScroll,
+  atEnd,
+  holding,
+  listenKeys,
+  longFrameTop,
+  markSelected,
+  REMOTE_HOLD_MS,
+  type ScrollBox,
+} from './control';
+import { ArtifactBody } from './DisplayArtifactPane';
 import { stationStats } from './stationStats';
 import { WallPage } from './WallPage';
 import {
@@ -541,5 +553,187 @@ describe('the figures of a station row', () => {
     expect(
       stationStats({ cpu: { cores: 0, load1_x100: 0, load5_x100: 50 }, memory: null, disks: [] }),
     ).toEqual([]);
+  });
+});
+
+describe('the wall controls (B17)', () => {
+  type FakeBox = { -readonly [K in keyof ScrollBox]: ScrollBox[K] } & { calls: number };
+  const box = (clientHeight: number, scrollHeight: number): FakeBox => {
+    const b = {
+      scrollTop: 0,
+      clientHeight,
+      scrollHeight,
+      calls: 0,
+      scrollTo(options: { top: number; behavior: ScrollBehavior }) {
+        b.calls += 1;
+        b.scrollTop = options.top;
+      },
+    };
+    return b;
+  };
+  const rootOf = (areas: Record<string, ScrollBox>) => ({
+    querySelector: (selector: string) => {
+      const area = /^\[data-wall-scroll="(\w+)"\]$/.exec(selector)?.[1];
+      return area === undefined ? null : (areas[area] ?? null);
+    },
+  });
+
+  test('a_scroll_control_scrolls_the_named_area', () => {
+    const changes = box(500, 5000);
+    const chat = box(500, 5000);
+    const root = rootOf({ changes, chat });
+    const page = { kind: 'scroll', area: 'changes', step: 'page_down' } as const;
+    expect(applyScroll(root, page, 'auto')).toBe(true);
+    expect(changes.scrollTop).toBe(450);
+    expect(chat.scrollTop).toBe(0);
+    applyScroll(root, { ...page, step: 'line_down' }, 'auto');
+    expect(changes.scrollTop).toBe(500);
+    applyScroll(root, { ...page, step: 'page_up' }, 'auto');
+    expect(changes.scrollTop).toBe(50);
+    applyScroll(root, { ...page, step: 'line_up' }, 'auto');
+    applyScroll(root, { ...page, step: 'line_up' }, 'auto');
+    expect(changes.scrollTop).toBe(0);
+    applyScroll(root, { ...page, step: 'bottom' }, 'auto');
+    expect(changes.scrollTop).toBe(4500);
+    applyScroll(root, { ...page, step: 'top' }, 'auto');
+    expect(changes.scrollTop).toBe(0);
+    // An area that the wall does not show, and an effect with no scroll, do nothing.
+    expect(applyScroll(root, { ...page, area: 'needs' }, 'auto')).toBe(false);
+    expect(applyScroll(root, { kind: 'none' }, 'auto')).toBe(false);
+  });
+
+  test('the_chat_can_scroll_back_and_shows_the_note', () => {
+    const html = (back: boolean) =>
+      renderToStaticMarkup(<ChatPane events={[]} ready unavailable={false} initialBack={back} />);
+    expect(html(false)).toContain('data-wall-scroll="chat"');
+    expect(html(false)).not.toContain(SCROLLED_BACK_TEXT);
+    expect(html(true)).toContain('Scrolled back. New lines are below.');
+    // The chat is at its end within 2 px; above that it is scrolled back.
+    expect(atEnd({ scrollTop: 4500, clientHeight: 500, scrollHeight: 5000 })).toBe(true);
+    expect(atEnd({ scrollTop: 4499, clientHeight: 500, scrollHeight: 5000 })).toBe(true);
+    expect(atEnd({ scrollTop: 4400, clientHeight: 500, scrollHeight: 5000 })).toBe(false);
+  });
+
+  test('a_hold_stops_auto_focus_for_120_s', () => {
+    const ask: Ask = { ref: 'st/se', requestId: 'r1', at: 1 };
+    const start = initialAuto('mission', null);
+    const heldUntil = 10_000 + REMOTE_HOLD_MS;
+    expect(REMOTE_HOLD_MS).toBe(120_000);
+    // During the hold a new request does not take the wall to focus.
+    const during = nextAutoFocus([], [ask], 20_000, start, holding(heldUntil, 20_000));
+    expect(during.mode).toBe('mission');
+    expect(holding(heldUntil, heldUntil - 1)).toBe(true);
+    // After it, a request that is still open does (the queue was dropped by the pin; a new one
+    // takes the turn).
+    expect(holding(heldUntil, heldUntil)).toBe(false);
+    const after = nextAutoFocus([], [ask], heldUntil, start, holding(heldUntil, heldUntil));
+    expect(after.mode).toBe('focus');
+    expect(after.session).toBe('st/se');
+  });
+
+  test('the_selected_tile_has_data_selected', () => {
+    const remote = (selected: { station_id: string; session_id: string } | null) => ({
+      state: { selected, frame_tenths: 0 },
+      holdUntil: 0,
+      effects: [],
+    });
+    const html = (route: Partial<WallRoute>, selected: string | null) =>
+      renderToStaticMarkup(
+        <WallPage
+          route={{ ...wallDefaults, ...route }}
+          navigate={() => {}}
+          owner
+          sessions={sessions}
+          stations={[station()]}
+          freshness="live"
+          timelines={timelines}
+          initialSize={{ w: 3440, h: 1440 }}
+          now={1_000_000}
+          origin="https://deck.example"
+          mirror
+          remote={remote(
+            selected === null ? null : { station_id: 'station-a', session_id: selected },
+          )}
+        />,
+      );
+    // A needs item and a race column draw the mark (the tile gets it from `markSelected`).
+    const needs = html({}, 'early');
+    expect(needs.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(needs).toContain('data-ref="station-a/early"');
+    expect(html({}, null)).not.toContain('data-selected');
+    expect(html({}, 'gone')).not.toContain('data-selected');
+    const race = html({ mode: 'race', batch: 'B1' }, 'twin');
+    expect(race).toContain('data-ref="station-a/twin" data-selected="true"');
+    expect(race.match(/data-selected="true"/g)).toHaveLength(1);
+    // The mirror shows no QR code.
+    expect(needs).not.toContain('Scan to answer on your phone');
+    expect(wall({})).toContain('Scan to answer on your phone');
+    // A tile is drawn by `Tile`: `markSelected` sets and moves the mark on its `data-ref`.
+    const el = (ref: string) => {
+      const attrs = new Map<string, string>([['data-ref', ref]]);
+      return {
+        getAttribute: (n: string) => attrs.get(n) ?? null,
+        setAttribute: (n: string, v: string) => void attrs.set(n, v),
+        removeAttribute: (n: string) => void attrs.delete(n),
+      };
+    };
+    const tiles = [el('a/1'), el('a/2')];
+    const root = { querySelectorAll: () => tiles };
+    markSelected(root, 'a/2');
+    expect(tiles.map((t) => t.getAttribute('data-selected'))).toEqual([null, 'true']);
+    markSelected(root, 'a/1');
+    expect(tiles.map((t) => t.getAttribute('data-selected'))).toEqual(['true', null]);
+    markSelected(root, null);
+    expect(tiles.map((t) => t.getAttribute('data-selected'))).toEqual([null, null]);
+  });
+
+  test('mirror_has_no_key_listener', () => {
+    const added: string[] = [];
+    const removed: string[] = [];
+    const target = {
+      addEventListener: (type: string) => void added.push(type),
+      removeEventListener: (type: string) => void removed.push(type),
+    };
+    const mirror = listenKeys(target, true, () => {});
+    expect(added).toEqual([]);
+    mirror();
+    expect(removed).toEqual([]);
+    const wallOwn = listenKeys(target, false, () => {});
+    expect(added).toEqual(['keydown']);
+    wallOwn();
+    expect(removed).toEqual(['keydown']);
+    // The wall page of a mirror renders no key hint either: it has no key text at all.
+    expect(wall({})).not.toContain('keydown');
+  });
+
+  test('an_html_artifact_uses_the_long_fit_while_frame_tenths_is_above_0', () => {
+    const frame = { kind: 'frame', url: '/api/displays/self/artifact/st/ar/1/_' } as const;
+    const one = renderToStaticMarkup(<ArtifactBody state={frame} tenths={0} />);
+    expect(one).toContain('data-fit="one"');
+    expect(one).toContain('sandbox=""');
+    const long = renderToStaticMarkup(<ArtifactBody state={frame} tenths={3} />);
+    expect(long).toContain('data-fit="long"');
+    // Markdown scrolls in its own pane by the relative effect.
+    const md = renderToStaticMarkup(
+      <ArtifactBody state={{ kind: 'markdown', text: 'hi' }} tenths={0} />,
+    );
+    expect(md).toContain('data-wall-scroll="artifact"');
+    expect(md).not.toContain('data-fit');
+  });
+
+  test('a_long_frame_scrolls_to_the_absolute_position', () => {
+    expect(longFrameTop(0, 800)).toBe(0);
+    expect(longFrameTop(10, 800)).toBe(800);
+    expect(longFrameTop(25, 800)).toBe(2000);
+    expect(longFrameTop(70, 800)).toBe(5600);
+    // The limits: above 70 or below 0 is clamped.
+    expect(longFrameTop(99, 800)).toBe(5600);
+    expect(longFrameTop(-4, 800)).toBe(0);
+    // Two steps in a row land on the position of the count, whatever the smooth scroll reached.
+    const long = box(800, 6400);
+    long.scrollTop = 130;
+    long.scrollTo({ top: longFrameTop(20, long.clientHeight), behavior: 'smooth' });
+    long.scrollTo({ top: longFrameTop(21, long.clientHeight), behavior: 'smooth' });
+    expect(long.scrollTop).toBe(1680);
   });
 });

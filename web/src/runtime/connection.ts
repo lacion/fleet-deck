@@ -1,5 +1,5 @@
 import { VIDEO_FEATURES } from '../artifacts/video';
-import type { BoardClientMessage, SessionKey } from '../gen';
+import type { BoardClientMessage, SessionKey, WallControlFrame } from '../gen';
 import { ApiError, authView, type Fetch, request } from './api';
 import { clearAuthoringState } from './authoringState';
 import { boardMessage } from './decode';
@@ -37,18 +37,19 @@ const SIGN_IN_BLOCKED_FOR_INPUT = 'sign_in_blocked_for_input';
 export const IDLE_MS = 5 * 60_000;
 export const TIMEOUT_MS = 10_000;
 /** The live connection URL. A browser WebSocket sends no custom header: the declaration of the
- * board goes in the query (R13 P5b §14). */
-export function socketUrl(base: string): URL {
+ * board goes in the query (R13 P5b §14). `features` is a space separated token list (a wall
+ * display declares more than the board, B17). */
+export function socketUrl(base: string, features: string = VIDEO_FEATURES): URL {
   const url = new URL('/api/ws', base);
   url.protocol = 'wss:';
-  url.searchParams.set('features', VIDEO_FEATURES);
+  url.searchParams.set('features', features);
   return url;
 }
-export function browserEnvironment(): Environment {
+export function browserEnvironment(features: string = VIDEO_FEATURES): Environment {
   return {
     fetch: (path, init) => fetch(path, init),
     socket: () => {
-      const native = new WebSocket(socketUrl(window.location.href));
+      const native = new WebSocket(socketUrl(window.location.href, features));
       const port: Socket = {
         onopen: null,
         onmessage: null,
@@ -76,6 +77,7 @@ type Watch = { key: SessionKey; users: number; idle: Cancel | null; pending: Can
 export class Connection {
   private state: RuntimeState = emptyState();
   private listeners = new Set<() => void>();
+  private controlListeners = new Set<(frame: WallControlFrame) => void>();
   private watches = new Map<string, Watch>();
   private socket: Socket | null = null;
   private retry: Cancel | null = null;
@@ -93,6 +95,14 @@ export class Connection {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  };
+  /** The wall control frames (B17). A listener never changes the read model; one that throws does
+   * not end the connection. */
+  onControl = (listener: (frame: WallControlFrame) => void): Cancel => {
+    this.controlListeners.add(listener);
+    return () => {
+      this.controlListeners.delete(listener);
     };
   };
   private update(state: RuntimeState) {
@@ -273,6 +283,16 @@ export class Connection {
           if (this.hello) throw new Error('Duplicate protocol hello');
           this.hello = true;
         } else if (!this.hello) throw new Error('The deck did not send a protocol hello');
+        if (msg.type === 'wall_control') {
+          for (const listener of this.controlListeners) {
+            try {
+              listener(msg.frame);
+            } catch {
+              // A listener of the wall must not end the connection.
+            }
+          }
+          return;
+        }
         if (msg.type === 'snapshot' && this.state.freshness === 'live') return;
         this.update(reduceMessage(this.state, msg));
         if (msg.type === 'snapshot') {

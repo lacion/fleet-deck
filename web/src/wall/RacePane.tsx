@@ -36,11 +36,13 @@ function Column({
   stations,
   timeline,
   actions,
+  selected,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
   readonly timeline: Timeline | undefined;
   readonly actions: SessionActions | undefined;
+  readonly selected: boolean;
 }) {
   const s = card.summary;
   const state = useSessionDiff(actions?.files ?? null, refOf(card));
@@ -53,6 +55,7 @@ function Column({
       data-session={s.session_id}
       data-status={card.status}
       data-ref={refOf(card)}
+      data-selected={selected ? 'true' : undefined}
     >
       <h2 className="fd-wall-h">{sessionTitle(card)}</h2>
       <p className="fd-wall-note">
@@ -113,11 +116,13 @@ function DisplayColumn({
   stations,
   timeline,
   env,
+  selected,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
   readonly timeline: Timeline | undefined;
   readonly env: DisplayEnv;
+  readonly selected: boolean;
 }) {
   const s = card.summary;
   const state = useDisplayChanges(env, card.station_id, s.session_id);
@@ -129,6 +134,7 @@ function DisplayColumn({
       data-session={s.session_id}
       data-status={card.status}
       data-ref={refOf(card)}
+      data-selected={selected ? 'true' : undefined}
     >
       <h2 className="fd-wall-h">{sessionTitle(card)}</h2>
       <p className="fd-wall-note">
@@ -183,8 +189,11 @@ export function RacePane({
   watch,
   sessionActions,
   display,
+  selected = null,
 }: {
   readonly display?: DisplayEnv | undefined;
+  /** The selected ref (`station/session`) of the remote (B17). */
+  readonly selected?: string | null;
   readonly batch: string;
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
@@ -206,6 +215,7 @@ export function RacePane({
             stations={stations}
             timeline={timelineOf(timelines, keyOf(card))}
             actions={sessionActions?.(keyOf(card))}
+            selected={selected === refOf(card)}
           />
         ) : (
           <DisplayColumn
@@ -214,6 +224,7 @@ export function RacePane({
             stations={stations}
             timeline={timelineOf(timelines, keyOf(card))}
             env={display}
+            selected={selected === refOf(card)}
           />
         ),
       )}

@@ -144,7 +144,7 @@ export function DiffPane({
               </>
             ) : null}
           </p>
-          <div className="fd-wall-scroll">
+          <div className="fd-wall-scroll" data-wall-scroll="changes">
             {review === undefined ? (
               <WallDiff patch={diff.patch} truncated={diff.truncated} />
             ) : (

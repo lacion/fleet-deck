@@ -678,6 +678,19 @@
   outline-offset: 2px;
 }
 
+/* The item that the remote selected (B17): a tile, a needs item or a race column. The outline is
+   the selection color (`--focus`) and shows the item across a room. No new token. */
+.fd-wall-root :is(.fd-wtile, .fd-wall-need, .fd-wall-col)[data-selected="true"] {
+  outline: calc(var(--fd-wall-u) * 3) solid var(--focus);
+  outline-offset: calc(var(--fd-wall-u) * 2);
+}
+
+@media (forced-colors: active) {
+  .fd-wall-root :is(.fd-wtile, .fd-wall-need, .fd-wall-col)[data-selected="true"] {
+    outline-color: Highlight;
+  }
+}
+
 /* ── side: usage, stations, pull requests and the load map ────────────────────────────────── */
 .fd-wall-area[data-area="side"] {
   display: flex;
@@ -1124,17 +1137,34 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  justify-content: flex-end;
   min-height: 0;
   overflow: hidden;
   /* the oldest lines fade out under the title, as in the activity stream */
   mask-image: linear-gradient(to bottom, transparent, black calc(var(--fd-wall-u) * 24));
 }
 
+/* The chat sits at the bottom, and the older lines are reachable (B17: a remote scrolls it, the
+   section stays overflow hidden). With `justify-content: flex-end` the older lines were cut at
+   the top, out of reach; `margin-top: auto` aligns the same way and lets the content overflow
+   at the bottom. */
+.fd-wall-chat > .fd-wall-note:not(.fd-wall-chat-back) {
+  margin-top: auto;
+}
+
+/* The line at the foot of a chat that was scrolled back. */
+.fd-wall-chat-back {
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  padding: var(--sp-1) 0;
+  background: var(--panel-bg);
+}
+
 /* One column width for every line (the chat column of the board, in wall units): the prompt
    bubble at the right ends on the same edge as the prose, the code and the tables. */
 .fd-wall-chatlines {
   display: flex;
+  margin-top: auto;
   flex-direction: column;
   gap: var(--sp-2);
   width: 100%;
@@ -1420,6 +1450,19 @@
   height: 100%;
   border: 0;
   background: #fff; /* ds-exception: the sandboxed artifact page draws on white, as in a browser */
+}
+
+/* The frame of an HTML artifact sits in a box that a remote can scroll (B17): at the one-screen fit
+   the frame is the height of the pane, at the long fit it is 8 screens tall and the box shows the
+   part at `frame_tenths`. The opaque frame cannot be scrolled from outside (it has no origin). */
+.fd-wall-fit {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.fd-wall-fit[data-fit="long"] .fd-art-frame {
+  height: 800%;
 }
 
 /* ── ambient: dark in every theme, low motion ─────────────────────────────────────────────── */

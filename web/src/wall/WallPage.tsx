@@ -1,11 +1,17 @@
 // R13 P1 (design §4): `#/wall`, the read-only command center for a wide screen. One root fills the
 // viewport; a shape class picks the grid; the route holds the mode, the filter and the scale.
 // Nothing here writes to a session: the keys only navigate, and no control renders.
-import { type CSSProperties, useEffect, useMemo, useRef } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import type { ArtifactActions } from '../artifacts/actions';
 import type { Navigate, WallRoute } from '../app/routes';
 import { sessionTitle } from '../app/sessions';
-import type { DeckSession, SessionKey, StationView } from '../gen';
+import type {
+  DeckSession,
+  SessionKey,
+  StationView,
+  WallControlFrame,
+  WallRemoteState,
+} from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
 import type { SessionActions } from '../session/commands';
@@ -19,6 +25,18 @@ import { ArtifactPane } from './ArtifactPane';
 import { NeedsArea, SideArea, StreamArea, TilesArea } from './Areas';
 import { type AutoState, initialAuto, nextAutoFocus } from './autofocus';
 import { ChatPane } from './ChatPane';
+import {
+  applyFrame,
+  applyScroll,
+  type ControlEffect,
+  type ControlState,
+  holding,
+  initialControl,
+  listenKeys,
+  refOfSelected,
+  scrollBehavior,
+  shownRemote,
+} from './control';
 import { DisplayArtifactPane } from './DisplayArtifactPane';
 import { DisplayChangesPane, type DisplayEnv } from './displayChanges';
 import { DiffPane } from './DiffPane';
@@ -52,6 +70,18 @@ type Props = {
   readonly now?: number;
   /** The deck origin of the QR codes (tests); the page origin by default. */
   readonly origin?: string;
+  /** B17: the frames of the deck (a display socket). It returns the function that stops it. */
+  readonly controls?: ((on: (frame: WallControlFrame) => void) => () => void) | undefined;
+  /** B17: the remote state and hold that the Remote page computed (the mirror only). */
+  readonly remote?:
+    | {
+        readonly state: WallRemoteState;
+        readonly holdUntil: number;
+        readonly effects: readonly ControlEffect[];
+      }
+    | undefined;
+  /** B17: a mirror on the Remote page: no key listener, no QR codes, never a frame. */
+  readonly mirror?: boolean | undefined;
 };
 
 const sessionRefOf = (route: WallRoute): string | null =>
@@ -91,6 +121,9 @@ function Wall({
   initialSize,
   now: givenNow,
   origin,
+  controls,
+  remote,
+  mirror,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const tilesArea = useRef<HTMLElement>(null);
@@ -143,6 +176,50 @@ function Wall({
   const armed = useRef(false);
   const liveNow = freshness === 'live';
   const auto = useRef<AutoState>(initialAuto(route.mode, focusRef));
+
+  // B17: the controls. A wall display applies the frames of the deck; a mirror gets the state of the
+  // Remote page. The hold stops auto-focus and the ambient timer like a pin.
+  const shown = display?.generation ?? null;
+  const [control, setControl] = useState<ControlState>(initialControl);
+  const controlRef = useRef<ControlState>(initialControl);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const rereadRef = useRef(display?.reread);
+  rereadRef.current = display?.reread;
+  const remoteState: WallRemoteState =
+    remote === undefined ? shownRemote(control, shown) : remote.state;
+  const holdUntil = remote === undefined ? control.holdUntil : remote.holdUntil;
+  const holdRef = useRef(holdUntil);
+  holdRef.current = holdUntil;
+  const selectedRef = refOfSelected(remoteState);
+  const scrollIn = (effect: ControlEffect) =>
+    applyScroll(
+      { querySelector: (selector) => root.current?.querySelector<HTMLElement>(selector) ?? null },
+      effect,
+      scrollBehavior(),
+    );
+  useEffect(() => {
+    if (controls === undefined || mirror === true) return undefined;
+    return controls((frame) => {
+      const out = applyFrame(controlRef.current, frame, {
+        shown: shownRef.current,
+        now: Date.now(),
+      });
+      if (out.state !== controlRef.current) {
+        controlRef.current = out.state;
+        setControl(out.state);
+      }
+      scrollIn(out.effect);
+      if (out.reread) rereadRef.current?.();
+    });
+  }, [controls, mirror]);
+  const effectsDone = useRef<readonly ControlEffect[] | null>(null);
+  const remoteEffects = remote?.effects;
+  useEffect(() => {
+    if (remoteEffects === undefined || remoteEffects === effectsDone.current) return;
+    effectsDone.current = remoteEffects;
+    for (const effect of remoteEffects) scrollIn(effect);
+  }, [remoteEffects]);
   // `clock` ticks every second; `sig` changes with the fleet.
   useEffect(() => {
     let r = latest.current.route;
@@ -167,7 +244,13 @@ function Wall({
     }
     const before = initialAuto(r.mode, sessionRefOf(r));
     const state: AutoState = { ...before, hold: auto.current.hold, queue: auto.current.queue };
-    const next = nextAutoFocus(previousAsks.current, asks, t, state, r.pin);
+    const next = nextAutoFocus(
+      previousAsks.current,
+      asks,
+      t,
+      state,
+      r.pin || holding(holdRef.current, t),
+    );
     previousAsks.current = asks;
     auto.current = next;
     if (next.mode !== state.mode || next.session !== state.session) {
@@ -178,8 +261,13 @@ function Wall({
     if (r !== latest.current.route) navigate(r, { replace: true });
   }, [sig, clock]);
 
+  // A hold counts as activity for the ambient timer.
+  useEffect(() => {
+    if (holdUntil > 0) lastChange.current = Date.now();
+  }, [holdUntil]);
+
   // The keys of the wall only navigate. This listener runs first (capture) and stops the key, so
-  // the board hotkeys do not act on the wall.
+  // the board hotkeys do not act on the wall. A mirror (the Remote page) has no key listener.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       event.stopPropagation();
@@ -215,9 +303,8 @@ function Wall({
         }
       }
     };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [navigate]);
+    return listenKeys(document, mirror === true, onKey);
+  }, [navigate, mirror]);
 
   const live = freshness === 'live';
   const minute = Math.floor(clock / 60_000);
@@ -242,7 +329,14 @@ function Wall({
                 : ({ '--fd-wall-tile-k': grid.k.toFixed(3) } as CSSProperties)
             }
           >
-            <NeedsArea needs={needs} stations={stations} origin={pageOrigin} now={clock} />
+            <NeedsArea
+              needs={needs}
+              stations={stations}
+              origin={pageOrigin}
+              now={clock}
+              selected={selectedRef}
+              qr={mirror !== true}
+            />
             <TilesArea
               cards={tiles}
               stations={stations}
@@ -251,6 +345,7 @@ function Wall({
               failed={failed}
               areaRef={tilesArea}
               grid={grid}
+              selected={selectedRef}
             />
             {shape === 'portrait' ? null : (
               <SideArea sessions={filtered} stations={shownStations} now={clock} />
@@ -325,6 +420,7 @@ function Wall({
             watch={watch}
             sessionActions={sessionActions}
             display={display}
+            selected={selectedRef}
           />
         );
       case 'artifact':
@@ -340,6 +436,7 @@ function Wall({
               id={route.artifact.id}
               version={route.artifact.version}
               env={display}
+              frameTenths={remoteState.frame_tenths}
             />
           );
         }

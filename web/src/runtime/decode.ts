@@ -97,6 +97,19 @@ export function boardMessage(raw: string): BoardServerMessage {
     case 'drive_request':
       valid = key(v) && list(v['requests'], text);
       break;
+    // The wall control relay (B17): only a display socket that declared `wall_control.v1` gets it.
+    case 'wall_control': {
+      const f = v['frame'];
+      valid =
+        object(f) &&
+        text(f['incarnation']) &&
+        sequence(f['seq']) &&
+        sequence(f['generation']) &&
+        object(f['event']) &&
+        text(f['event']['kind']) &&
+        object(f['state']);
+      break;
+    }
     case 'error':
       valid = text(v['code']) && text(v['message']);
       break;

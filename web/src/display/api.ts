@@ -8,8 +8,13 @@ import type {
   PairingPoll,
   PairingStarted,
 } from '../gen';
+import { FEATURES_HEADER } from '../artifacts/video';
 import { type Environment, browserEnvironment } from '../runtime/connection';
 import { type Fetch, request } from '../runtime/api';
+
+/** The features that a wall display declares (B17): in `features=` of the socket and in the header
+ * of every request. The declaration grants no authority; the deck checks every use. */
+export const DISPLAY_FEATURES = 'artifacts_video.v1 wall_control.v1 wall_pages.v1';
 
 /** The header that makes the deck answer the display login when the browser holds both cookies. */
 export const DISPLAY_HEADER = 'X-Fleetdeck-Display';
@@ -17,18 +22,23 @@ export const DISPLAY_HEADER = 'X-Fleetdeck-Display';
 /** The path of the display document. */
 export const DISPLAY_PATH = '/display';
 
-/** `fetcher` with the display header on every request. */
+/** `fetcher` with the display header and the display features on every request. */
 export const withDisplayHeader =
   (fetcher: Fetch): Fetch =>
   (path, init) =>
     fetcher(path, {
       ...init,
-      headers: { ...(init.headers as Record<string, string> | undefined), [DISPLAY_HEADER]: '1' },
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        [DISPLAY_HEADER]: '1',
+        [FEATURES_HEADER]: DISPLAY_FEATURES,
+      },
     });
 
-/** The board environment, with the display header on every request. */
+/** The board environment, with the display header and the display features on every request, and
+ * the display features in the query of the socket. */
 export function displayEnvironment(): Environment {
-  const base = browserEnvironment();
+  const base = browserEnvironment(DISPLAY_FEATURES);
   return { ...base, fetch: withDisplayHeader(base.fetch) };
 }
 
