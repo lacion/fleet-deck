@@ -21,6 +21,27 @@ pub(super) const API_DISPLAY: &[ApiMethod] = &[
         true,
     ),
     m(
+        "displays.control",
+        Method::POST,
+        "/api/displays/{id}/control",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "displays.remote_navigate",
+        Method::POST,
+        "/api/displays/{id}/remote/navigate",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "displays.remote",
+        Method::GET,
+        "/api/displays/{id}/remote",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "displays.self_directive",
         Method::GET,
         "/api/displays/self/directive",

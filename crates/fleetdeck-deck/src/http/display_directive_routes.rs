@@ -43,7 +43,7 @@ fn unknown_display() -> ApiError {
 
 /// 413 for a body above the limit, else 400 `invalid_directive` with a fixed
 /// text (the parser text can repeat the input).
-fn rejection(e: &JsonRejection) -> ApiError {
+pub(super) fn rejection(e: &JsonRejection) -> ApiError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
         return body_error(e);
     }
@@ -123,29 +123,46 @@ async fn record<T>(
     board.store.audit_or_log(row.target(target)).await;
 }
 
-/// `POST /api/displays/{id}/directive`.
+/// The owner sets a directive: the owner check, the checks of
+/// `display_directive_set_counted`, and the `display.directive` audit row.
+/// A body that did not parse is refused before the store and writes no row.
+/// `POST /api/displays/{id}/directive` and the remote navigation share it.
 ///
 /// # Errors
 /// 400 `invalid_directive`, 403 `outside_ceiling`, 403 `not_granted`, 404
 /// `display_unknown`, 413 `too_large`.
+pub(super) async fn owner_set(
+    board: &Board,
+    principal: &Principal,
+    id: &str,
+    body: Result<DirectiveBody, ApiError>,
+) -> Result<DirectiveView, ApiError> {
+    owner(board, principal, ACTION, id, "sends a directive").await?;
+    let body = body?;
+    let outcome = board
+        .store
+        .display_directive_set_counted(id.to_owned(), DirectiveSender::Owner, body.clone())
+        .await;
+    let (result, text) = match outcome {
+        Ok((view, members)) => (Ok(view), Some(detail(&body, members))),
+        Err(e) => (Err(directive_error(e)), None),
+    };
+    record(board, id, text, &result).await;
+    result
+}
+
+/// `POST /api/displays/{id}/directive`.
+///
+/// # Errors
+/// See [`owner_set`].
 async fn set(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path(id): Path<String>,
     body: Result<Json<DirectiveBody>, JsonRejection>,
 ) -> Result<Json<DirectiveView>, ApiError> {
-    owner(&board, &principal, ACTION, &id, "sends a directive").await?;
-    let Json(body) = body.map_err(|e| rejection(&e))?;
-    let outcome = board
-        .store
-        .display_directive_set_counted(id.clone(), DirectiveSender::Owner, body.clone())
-        .await;
-    let (result, text) = match outcome {
-        Ok((view, members)) => (Ok(Json(view)), Some(detail(&body, members))),
-        Err(e) => (Err(directive_error(e)), None),
-    };
-    record(&board, &id, text, &result).await;
-    result
+    let body = body.map(|Json(b)| b).map_err(|e| rejection(&e));
+    owner_set(&board, &principal, &id, body).await.map(Json)
 }
 
 /// `GET /api/displays/self/directive`.

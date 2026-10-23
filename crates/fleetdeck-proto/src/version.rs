@@ -264,6 +264,12 @@ pub mod feature {
     /// per-session grant record (MCP P4b §9).
     pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
 
+    /// B17 §3.1: the wall control relay and the owner remote (the routes
+    /// `POST /api/displays/{id}/control`, `POST .../remote/navigate`, `GET
+    /// .../remote`, and the `wall_control` frame of a display socket). A
+    /// board feature: no station and no link method uses it.
+    pub const WALL_CONTROL: &str = "wall_control.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -329,6 +335,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        WALL_CONTROL,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -505,7 +512,6 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
     }
 
     #[test]

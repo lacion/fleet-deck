@@ -206,6 +206,9 @@ async fn serve_with(
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
                 ws_display_send: fleetdeck_deck::http::ws::DISPLAY_SEND,
+                wall_controls: Arc::new(
+                    fleetdeck_deck::wall_control::WallControlHub::new().unwrap(),
+                ),
                 stop_watch: extras
                     .as_ref()
                     .and_then(|e| e.stop_watch)

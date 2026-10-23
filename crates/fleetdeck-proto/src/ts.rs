@@ -108,6 +108,7 @@ use crate::share::{
 };
 use crate::subagent::{SubagentLog, SubagentQuery};
 use crate::version::{Negotiated, VersionOffer};
+use crate::wall_control as wc;
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
 /// and Unix ms stay below 2^53).
@@ -343,6 +344,17 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         DirectiveMode::export_all(&cfg),
         DirectiveBody::export_all(&cfg),
         DirectiveView::export_all(&cfg),
+        wc::WallArea::export_all(&cfg),
+        wc::ScrollStep::export_all(&cfg),
+        wc::WallControl::export_all(&cfg),
+        wc::WallControlBody::export_all(&cfg),
+        wc::RemoteNavigate::export_all(&cfg),
+        wc::WallRemoteState::export_all(&cfg),
+        wc::WallEvent::export_all(&cfg),
+        wc::WallControlFrame::export_all(&cfg),
+        wc::WallControlAck::export_all(&cfg),
+        wc::WallLink::export_all(&cfg),
+        wc::WallRemoteView::export_all(&cfg),
         DisplayChangesQuery::export_all(&cfg),
         DisplayFileChange::export_all(&cfg),
         DisplayChanges::export_all(&cfg),

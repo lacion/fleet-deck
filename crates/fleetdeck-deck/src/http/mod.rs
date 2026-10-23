@@ -81,6 +81,7 @@ pub mod tls;
 pub mod tls_tailscale;
 #[cfg(test)]
 pub(crate) mod tls_test_pki;
+pub mod wall_control_routes;
 pub mod workspace_routes;
 pub mod worktree_routes;
 pub mod ws;
@@ -127,6 +128,8 @@ pub struct Board {
     /// The longest time that one send to a display socket may take
     /// ([`ws::DISPLAY_SEND`]); a slower send ends the socket (R13 §5A).
     pub ws_display_send: std::time::Duration,
+    /// The relay of the wall controls (B17 §3.1.3); memory only.
+    pub wall_controls: Arc<crate::wall_control::WallControlHub>,
     /// How the deck watches for the outcome of an accepted stop (BG-4 §5.6).
     pub stop_watch: execution_routes::StopWatch,
     /// How the deck watches for the completion of a maintenance run (BG-1
@@ -651,6 +654,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(display_routes::routes())
         .merge(fleet_git_routes::routes())
         .merge(display_directive_routes::routes())
+        .merge(wall_control_routes::routes())
         .merge(display_changes::routes())
         .merge(display_artifact::routes())
         .merge(desktop_routes::routes())
