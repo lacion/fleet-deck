@@ -225,24 +225,26 @@ body {
 .fd-wordmark {
   font-family: var(--font-ui);
   font-stretch: 115%;
-  font-weight: 600;
+  font-weight: 620;
   font-size: var(--fs-title);
   letter-spacing: 0;
   white-space: nowrap;
 }
-/* The brand mark (ui/Mark.tsx): an ink rounded square with "FD" wide. */
+/* The brand mark (ui/Mark.tsx, DESIGN-SYSTEM §2.6): one path in the text color. Chromium keeps
+   an author `color` on an svg root in forced colors (`preserve-parent-color`), so the mark sets
+   CanvasText itself there. */
 .fd-mark {
   flex: none;
   display: block;
+  color: var(--text);
 }
-.fd-mark-tile {
-  fill: var(--ink-fill);
+.fd-mark path {
+  fill: currentColor;
 }
-.fd-mark-text {
-  fill: var(--ink-on);
-  font-family: var(--font-ui);
-  font-stretch: 115%;
-  font-weight: 800;
+@media (forced-colors: active) {
+  .fd-mark {
+    color: CanvasText;
+  }
 }
 .fd-page-title {
   margin: 0;
