@@ -29,7 +29,9 @@ fn claude_view(out: &[claude::Output]) -> Vec<String> {
         .filter_map(|o| match o {
             claude::Output::NativeIdentity { native_id } => Some(format!("identity:{native_id}")),
             claude::Output::Emit(Event::SessionStarted { .. }) => Some("session.started".into()),
-            claude::Output::Emit(_) | claude::Output::Write(_) => None,
+            claude::Output::Emit(_)
+            | claude::Output::Write(_)
+            | claude::Output::AppCandidate(_) => None,
         })
         .collect()
 }

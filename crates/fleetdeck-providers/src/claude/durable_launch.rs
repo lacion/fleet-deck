@@ -49,7 +49,10 @@ impl ClaudeAdapter {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+                env: super::apps::with_apps_host(env_with_extra(
+                    &self.config.env,
+                    spec.extra_env.as_deref(),
+                )),
                 launch: pinned,
             },
             core: DurableConfig::Claude(CoreConfig {

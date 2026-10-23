@@ -118,7 +118,7 @@ fn collect(out: Vec<Output>, report: &mut Report, queue: &mut VecDeque<Value>) {
         match o {
             Output::Emit(e) => report.events.push(e),
             Output::Write(v) => queue.push_back(v),
-            Output::NativeIdentity { .. } => {}
+            Output::NativeIdentity { .. } | Output::AppCandidate(_) => {}
         }
     }
 }
@@ -223,7 +223,7 @@ fn kinds(events: &[Event]) -> Vec<String> {
 #[test]
 fn every_recorded_fixture_replays_through_the_production_core() {
     let files = fixtures();
-    assert_eq!(files.len(), 19, "the recorded Rust fixtures");
+    assert_eq!(files.len(), 20, "the recorded Rust fixtures");
     let mut writes = 0;
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -245,8 +245,8 @@ fn every_recorded_fixture_replays_through_the_production_core() {
         writes += report.writes_checked;
         assert_eq!(report.unknown_frames, 0, "{name}: unknown frames");
     }
-    // 62 recorded writes and one `get_usage` after the first `init` of each of the 22 processes.
-    assert_eq!(writes, 84, "every recorded write is compared");
+    // 65 recorded writes and one `get_usage` after the first `init` of each of the 23 processes.
+    assert_eq!(writes, 88, "every recorded write is compared");
 }
 
 fn replay_named(scenario: &str) -> Vec<Event> {

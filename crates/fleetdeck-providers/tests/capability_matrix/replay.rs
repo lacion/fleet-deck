@@ -78,7 +78,7 @@ pub(crate) fn replay_claude(scenario: &str) -> Replay {
             match o {
                 Output::Emit(e) => events.push(e),
                 Output::Write(w) => writes.push(w),
-                Output::NativeIdentity { .. } => {}
+                Output::NativeIdentity { .. } | Output::AppCandidate(_) => {}
             }
         }
     };
