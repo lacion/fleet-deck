@@ -476,3 +476,12 @@ Cross-track note: the wall-control track (`docs/v2/design/wall-control.md` task 
 
 - Decision: `StationsPanel` shows "Last seen" when `station.reachable` is false, in live and stale status; a station last reported online shows "Last reported: online." and no "Last seen" while the status is stale.
 - Rejected: the stale case of today, which showed the link start of a station last reported online.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Within the first minute, should the text read 'Last seen just now' in place of 'Last seen now'? This is the shared relativeAge text, which the Linked fact also uses. — **The recommended default: Keep 'now'. Make no change in this track. A later copy pass can change all places at once.**
+2. Is a 30 s refresh good enough? After a deck crash or restart, last_seen can be up to 30 s old. — **The recommended default: 30 s**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

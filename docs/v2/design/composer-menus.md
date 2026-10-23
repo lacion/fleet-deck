@@ -434,3 +434,14 @@ T1 and T2 can run in parallel with T3 (no shared file). T4 follows T3. All heavy
 - Context: the bare `@` showed only "Type 2 or more letters to search files"; the station search needs 2 letters.
 - Choice: under 2 letters the `@` menu lists the changed paths of the session that the board already loaded (`useDiffPaths`), filtered by the 1-letter query (case-insensitive), at most 20, then the same status row. No change of the station.
 - Rejected: a `files.list` of the root; a 1-letter station search.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Should a / in the middle of the text open a menu? Claude runs commands only at the start; a mid-text skill name loads only when the model chooses to. — **The recommended default: No: menu only in the first word.**
+2. Show command descriptions in the / menu (needs a small station read of the rich list)? — **The recommended default: Names only now; a later item if wanted.**
+3. Map Codex terminal commands (/compact, /review) to app-server methods? This is a new command path. — **The recommended default: Not now; the Codex / menu says that they do not run here.**
+4. Add the same menus to the New session prompt box? — **The recommended default: Not in this track.**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

@@ -640,3 +640,16 @@ Every task runs the guards: `cargo nextest run -p fleetdeck-cli --no-fail-fast -
 
 - Choice: the extension offer follows the provider gates of DL-450 only; no station setting yet (owner question 2 of the design).
 - Rejected: a Settings → station switch in phase 1.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Show apps at once in the chat, or only after a click? — **The recommended default: At once, inline, when the row comes into view; at most 3 frames mounted per chat**
+2. Add a station switch 'MCP Apps' in Settings, station tab, in phase 1? — **The recommended default: No; add it in phase 2 only if a server behaves worse when the extension is offered**
+3. May members of a shared session open and use apps? — **The recommended default: No, owner only in phase 1**
+4. Phase 2 scope: full screen, ui/update-model-context, downloads? — **Not in this program: phase 1 only. Phase 2 stays a backlog item.**
+5. Apps on the wall (B17 item 4)? — **The recommended default: A separate design after phase 1 that reuses the host module with a read-only policy**
+6. Native result cards for the Fleet Deck coordinator tools instead of apps? — **The recommended default: No work now; note it in the backlog**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

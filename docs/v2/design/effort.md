@@ -440,3 +440,13 @@ The architect writes the full briefs of E5–E9 after the adversary DESIGN REVIE
 - **DL-486 (B18, chat):** The chat adds "Effort changed to x" only for a change after a first report. (§4.4 item 5)
 - **DL-487 (B18, wall):** The wall display allowlist stays without model and effort. (§6 decision 11)
 - **DL-488 (B18, Phase 2):** Choosing the effort is a separate high-risk build: `session.set_effort`, `SessionSpec.effort`, capability `set_effort`, station feature `session_effort.v1`; it needs an adversary DESIGN REVIEW first. (§9)
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Show the effort levels as the provider ids (low, medium, high, xhigh, max, ultra) or as words ('extra high')? — **The recommended default: The provider ids, lower case, as the CLIs name them.**
+2. Build Phase 2 (choose the effort in the spawn dialog and in the composer) after Phase 1, or not now? — **Yes (the owner asked for the whole backlog): build Phase 2 after Phase 1 merges, after its own adversary DESIGN REVIEW of §9.**
+3. Should a wall display show model and effort? This needs a change to the display allowlist. — **The recommended default: No; make it a separate item if wanted.**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

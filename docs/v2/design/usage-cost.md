@@ -634,3 +634,13 @@ Order: T1 → (T2 ∥ T3) → T4 → T5 ∥ T6 (T5 and T6 share no file).
 ## DL-448: The recount is an owner command per session, `session.usage_recount`, feature `usage_recount.v1` (B20) (design agent, 2026-10-23)
 
 - Generic command route, scope `admin`, owner login only, audited per session; the station refuses a session with a live process or a pending start. The board runs it from the Usage tab, four at a time, after a confirm. Design §4.2-§4.4.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Your Codex sessions run gpt-daybreak-blue-latest, which has no price, so they show tokens but no cost. Do you want to give rates for it, and are the gpt-5.6-luna placeholder rates (gpt-5 rates) correct? — **The recommended default: No row for gpt-daybreak-blue-latest (cost unknown); keep the gpt-5.6-luna placeholder per DL-161**
+2. When the recount finds no provider record for a session (transcript or rollout deleted), should its stored total become unknown or keep the old, too-high value? — **The recommended default: Unknown**
+3. Where should the Recount button sit: the Usage tab of the fleet home, or Settings for each station? — **The recommended default: The Usage tab (one fleet-wide action)**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

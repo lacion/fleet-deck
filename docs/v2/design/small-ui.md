@@ -513,3 +513,14 @@ Four tasks can run in parallel (no shared file); T5 follows. Every task: base `v
 ### DL-506: Every hover rule in a hover block (B23, 2026-10-23)
 
 - The 40 older rules outside `@media (hover: hover)` move into it (10 split, 1 duplicate removed); the budget of check 5e is 0. Nine guarded rules get the fill of the DS: `--hover-bg` for rows with a selected state, `--raised` for the chat folds, `--badge-bg` for folder rows on a panel or a dialog, the primary hover for the session header confirm; two dead rules go. The three hover fills over `--raised-hi` (`session.css:1093`, `1409`, `1948`) stay for a separate DS decision. List: `~/fleetdeck-briefs/backlog/small-ui/hover-verdicts.tsv`.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Keep the 'Restart needed' marker after a page reload or a settings tab switch? That needs a later backend fact in the settings view. — **The recommended default: No: same lifetime as today's restart notice**
+2. How many quiet turns in a row start a fold in the By turn list? — **The recommended default: 3**
+3. Show each version's age in the version list ('v2 · 1 h ago') and a 'Show the latest' action on an older version, on the board and the phone? — **The recommended default: No**
+4. Words of the marker: 'Restart needed' or 'Waits for a restart'? — **The recommended default: Restart needed**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

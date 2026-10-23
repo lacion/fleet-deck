@@ -591,3 +591,14 @@ Order: T1 → (T2 ∥ T3 ∥ T4); T1 → (T5 ∥ T6); T5b after T5 and T4. The a
 
 - Facts: Claude's interrupt kills running workflows; a resumed process reports an unfinished workflow `stopped` and does not continue it; a shim takeover keeps it running.
 - Decision: the adapter marks the running and queued agents `stopped` at a final non-completed status; the board stops running workflows at the end of the process and keeps the `local_workflow` kind over an `unknown` notification; agent chats stay readable from their binding rows.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Fleet total: should the header show sessions plus their running agents ('9 at work'), or agents only ('6 agents running')? — **The recommended default: Sessions plus agents, 'N at work', with the split in its title**
+2. Claude's interrupt (the Stop button) also ends every running workflow. Should Stop warn about it when a workflow runs? — **The recommended default: No change in this track; note it for a later per-workflow stop item**
+3. Should the wall show the 'at work' total? — **The recommended default: Not in this track; B17 decides (the count is already in the display card)**
+4. May members of a shared session see workflow agents' task/result previews (max 200 characters), as they see tool inputs today? — **The recommended default: Yes, as other session events; the agent chat ('Show its work') stays owner only**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

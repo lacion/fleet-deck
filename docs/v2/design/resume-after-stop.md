@@ -464,3 +464,13 @@ The sessions of the reproduction (`01M5MRC26K9K51A4MCJH6CY638`, `01M5MS2NS6E3DMR
 ## DL-434: Compatibility of B13 (architect, 2026-10-23)
 
 - Decision: no feature flag. The exit report wire does not change. `ExecutionReconciled` gets an optional `by` (`owner`, `station`, unknown values of newer peers). A station rollback ignores `station_proof` and refuses (fail closed). Shims that an older build launched are covered by DL-432.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. When the agent's process ends, should the shim stop every process that is still in the agent's session (MCP servers, background commands that did not detach), and not only the agent's process group as today? — **The recommended default: Yes, at every end of a run (Stop, Force stop, crash, hibernation).**
+2. How long may a leftover process end by itself before Fleet Deck asks it to stop? — **The recommended default: 2 s, then SIGTERM and 2 s more, then SIGKILL.**
+3. After the elevation, may 'Stop them and resume' also mark the run as ended in the same click? The confirmation shows the warning 'Fleet Deck cannot see a process that left its process group'. — **The recommended default: Yes, one action.**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

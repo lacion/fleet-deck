@@ -864,3 +864,16 @@ A task that changes a proto type runs `make ts-types` through `heavy.sh` and own
 ## DL-475: B17 backlog corrections (architect, 2026-10-23)
 
 - The directive is a tagged enum with typed references, not `{ mode, artifact_url, … }`. The station sender uses `desktop_shell.v1` and two intents. A display reads artifacts through the inert display artifact route, not `/a/{token}/`, so scripts never run on a wall. Desktop › Open a link already opens any web page in its own window on a desktop monitor. P7 refuses wall windows. The wall cannot scroll at all today. No owner route reads a display's current directive. Side finding for the MCP track: `desktop_info` refuses a grant station given by name and accepts its id.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. One list of wall pages for the whole deck, or one list per display? — **The recommended default: One list for the deck**
+2. Which hosts may use plain http for a wall page? — **The recommended default: Loopback, private networks, the tailnet range, .local and .ts.net only**
+3. May a coordinator (desktop class) show a wall page or send wall controls? — **The recommended default: No, not in this track**
+4. How long after a remote control may auto-focus or ambient take the screen again? — **The recommended default: 120 seconds**
+5. Add Omarchy hotkeys for the remote (items, open, back)? — **The recommended default: Not in this track**
+6. May the owner widen the feed of a wall app to the whole display scope? — **The recommended default: No, the author's lineage only**
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.

@@ -442,3 +442,15 @@ A and C use arcs (`A`): the path test of T1 allows `A`, and `PathSvg` reads arcs
 ## DL-468: The old icon `docs/v2/assets/fleet-deck-icon.png` is removed (B16) (design agent, 2026-10-23)
 
 - Nothing referred to it, and its orange is not a color of the design system. Design §3.4.
+
+## Architect decisions (2026-10-23)
+
+The architect answered the owner questions of §Owner questions. These answers override the draft where they differ.
+
+1. Which logo concept: A Strip deck, B Angled deck or C Formation (artifact 'Fleet Deck logo: 3 concepts')? — **C, "Formation" (OWNER DECISION 2026-10-23: the owner chose C). MARK_PATH is the path of /home/luismorales/fleetdeck-briefs/backlog/logo/concepts/c-mark.svg (copy it exactly). Every mention of concept B as the chosen mark (DL-460, §3, the build plan) now means C; the B and A paths are not shipped.**
+2. Should a phone open the board as an installed app (manifest display standalone, no browser bar)? On iOS this means a second login inside the app. — **The recommended default: No: display browser (today's behavior).**
+3. Should fleetdeck omarchy install also add a 'Fleet Deck' launcher to the Omarchy app menu and an icon for notifications? — **The recommended default: Not now. The operations guide names omarchy-webapp-install with the explicit icon URL.**
+
+Concept C note: keep the rest of the design (one MARK_PATH source, currentColor, no tile, the render tool, the files and their sizes) unchanged; only the path and the concept name change. DL-460 becomes "The Fleet Deck logo is concept C, Formation (B16, owner decision)".
+
+Migration numbers (architect, to avoid collisions between parallel tracks): station V43 is taken by the DL-402 fix (b0cdbf5f). Station: V44 resume-after-stop, V45 workflow-agents, V46 mcp-apps, V47 usage-cost. Deck: V48 wall-control, V49 the wake-key fix (G5), V50 usage-cost. A track uses only its own numbers; the merge order follows the numbers, else the architect renumbers at merge.
