@@ -1,5 +1,46 @@
 import { describe, expect, test } from 'bun:test';
-import { diffLineKind, diffLineKinds, fileHeads } from './diffLines';
+import { diffLineKind, diffLineKinds, fileHeads, oneSidedLines } from './diffLines';
+
+describe('oneSidedLines', () => {
+  const lines = [
+    'diff --git a/new.ts b/new.ts',
+    'new file mode 100644',
+    'index 0000000..e69de29',
+    '--- /dev/null',
+    '+++ b/new.ts',
+    '@@ -0,0 +1,2 @@',
+    '+one',
+    '+two',
+    'diff --git a/old.ts b/old.ts',
+    'deleted file mode 100644',
+    '@@ -1 +0,0 @@',
+    '-gone',
+    'diff --git a/a.ts b/a.ts',
+    '@@ -1 +1 @@',
+    '-a',
+    '+b',
+    'diff --git a/two.ts b/two.ts',
+    'new file mode 100644',
+    '@@ -0,0 +1 @@',
+    '+x',
+    '@@ -0,0 +5 @@',
+    '+y',
+  ];
+  const sides = oneSidedLines(lines, diffLineKinds(lines), fileHeads(lines));
+
+  test('the lines of a whole new file have the new side, of a deleted file the old side', () => {
+    for (const n of [1, 5, 6, 7]) expect(sides.get(n)).toBe('new');
+    for (const n of [9, 10, 11]) expect(sides.get(n)).toBe('old');
+    // The file header row is not a line of the section.
+    expect(sides.has(0)).toBe(false);
+    expect(sides.has(8)).toBe(false);
+  });
+
+  test('a changed file, or a new file of two hunks, keeps both sides', () => {
+    for (const n of [13, 14, 15]) expect(sides.has(n)).toBe(false);
+    for (const n of [17, 18, 19, 20, 21]) expect(sides.has(n)).toBe(false);
+  });
+});
 
 describe('diffLineKind', () => {
   test('a diff --git line starts a file', () => {

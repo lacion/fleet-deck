@@ -27,6 +27,14 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  /* The scrollbar keeps its room on both sides (as .fd-pane-body of the other tabs): the column
+     stays on the center of the pane, under the Agents bar and over the composer, and does not
+     move when the log grows a scrollbar. */
+  scrollbar-gutter: stable both-edges;
+}
+/* A phone draws its scrollbar over the content: no room is kept for it. */
+[data-layout="phone"] .fd-chat-scroll {
+  scrollbar-gutter: auto;
 }
 /* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 16px under the
    tab row, and with more below it fades out over 16px above the composer, so that a row never
@@ -653,13 +661,16 @@
 .fd-tok-c {
   color: var(--faint);
 }
-/* Tables: no outer border, a dim header, rows divided by a soft rule. */
+/* Tables: no outer border, a dim header, rows divided by a soft rule. A table takes the width of
+   its content (up to the column; a wider one scrolls in its box): a short table stretched over
+   the column left a wide empty last column. */
 .fd-md-table {
   margin: var(--sp-3) 0;
   overflow-x: auto;
 }
 .fd-md table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-ui);
   line-height: 1.45;
@@ -676,6 +687,10 @@
 .fd-md th:last-child,
 .fd-md td:last-child {
   padding-right: 0;
+}
+/* A column of numbers aligns right (§2.3; tableNumbers.ts marks it), its header too. */
+.fd-md :is(td, th)[data-num] {
+  text-align: right;
 }
 .fd-md th {
   padding-top: 0;
@@ -826,6 +841,15 @@
 [data-layout="phone"] .fd-dl-g[data-side="new"] {
   margin-left: 0;
 }
+/* A whole new or deleted file (Diff.tsx `data-sides`) has one gutter: the numbers of its side,
+   with the gap to the code (on a phone too, where a deleted file shows its old numbers). */
+.fd-dl[data-sides] > .fd-dl-g {
+  margin: 0 var(--sp-3) 0 0;
+}
+[data-layout="phone"] .fd-dl[data-sides="old"] > .fd-dl-g[data-side="old"] {
+  display: inline-block;
+  color: var(--faint);
+}
 
 /* DL-175: the Show menu. Alone (no Agents bar), it sits at the right end of the session tab row,
    which is empty there: it never covers the transcript, where every tool row shows its result at
@@ -971,17 +995,26 @@
 }
 
 /* B6: the agents switcher and the agent view. The bar spans the chat column, not the pane. */
+/* The text of its two ghost menus starts and ends on the edges of the prose: the padding of the
+   bar is the padding of the column less the inset of a ghost summary's text (its 8px padding and
+   its 1px edge). The bar keeps the room that the log's scrollbar takes at each side
+   (`--chat-sb-start`, `--chat-sb-end`, measured by ChatView), so that it is as wide as the
+   column and on the same center. */
 .fd-chat-bar {
+  --chat-bar-inset: 9px;
   position: relative;
   flex: none;
   align-self: center;
-  width: 100%;
+  width: calc(100% - var(--chat-sb-start, 0px) - var(--chat-sb-end, 0px));
   max-width: calc(var(--chat-w) + 2 * var(--sp-5));
+  margin-inline: var(--chat-sb-start, 0px) var(--chat-sb-end, 0px);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-5);
+  padding-block: var(--sp-1);
+  padding-inline: calc(var(--sp-5) + var(--chat-gutter) - var(--chat-bar-inset))
+    calc(var(--sp-5) - var(--chat-bar-inset));
 }
 .fd-chat-bar .fd-chat-filters {
   position: static;
@@ -992,7 +1025,20 @@
   display: flex;
   margin-right: auto;
 }
-.fd-chat-toolbar .fd-menu > summary .fd-badge {
+/* The summary of the Agents menu (AgentsMenu.tsx): after the subagent count, the background
+   commands in quiet words and what runs now, with the working glyph: the quiet counter of §4.1,
+   in the --dim 12px of the Properties panel, never a green badge (green is a state). */
+.fd-agents-more,
+.fd-agents-running {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.fd-agents-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   margin-left: var(--sp-1);
 }
 .fd-chat-toolbar .fd-menu-body {
@@ -1003,7 +1049,8 @@
 /* The phone: Agents (left) and Show (right) share one row (§4.5); on touch the 44px summaries
    are the height of the row. */
 [data-layout="phone"] .fd-chat-bar {
-  padding-inline: var(--sp-3);
+  padding-inline: calc(var(--sp-2) + var(--chat-gutter) - var(--chat-bar-inset))
+    calc(var(--sp-3) - var(--chat-bar-inset));
 }
 [data-layout="phone"] .fd-chat-toolbar {
   flex: 1 1 auto;
@@ -1022,22 +1069,39 @@
   left: var(--sp-3);
   width: auto;
 }
-.fd-agent-row {
+/* A row of the menu has two lines (the name and its status, then the summary): it grows from
+   the 28px menu row of base.css (`.fd-menu-body > button`, which this selector must outweigh). */
+.fd-menu-body > button.fd-agent-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  justify-content: center; /* a one-line row in the 44px touch row */
   gap: 2px;
   height: auto;
+  min-height: var(--ctl-h);
   padding: var(--sp-2);
   background: transparent;
   text-align: left;
 }
-.fd-agent-row:hover:not(:disabled) {
+@media (pointer: coarse) {
+  .fd-menu-body > button.fd-agent-row {
+    min-height: var(--tap-min);
+  }
+}
+.fd-menu-body > button.fd-agent-row:hover:not(:disabled) {
   background: var(--badge-bg);
 }
 /* The chosen agent: the selection fill and the blue marker at the left (.fd-selbar). */
-.fd-agent-row[aria-current="true"] {
+.fd-menu-body > button.fd-agent-row[aria-current="true"] {
   background: var(--raised-hi);
+}
+/* The two groups of the menu (Agents, Background commands): a 12px label with its count. */
+.fd-agent-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-1) var(--sp-2);
 }
 .fd-agent-line {
   display: flex;
@@ -1051,6 +1115,12 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A command named by itself (it has no description) reads as code. */
+.fd-agent-name[data-code] {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 500;
 }
 .fd-agent-dim {
   overflow: hidden;

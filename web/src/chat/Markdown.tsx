@@ -16,9 +16,11 @@ import { CommentChip } from '../review/CommentChip';
 import { remarkCommentChips } from '../review/tokens';
 import { Check, Copy, Icon } from '../ui/icons';
 import { highlight } from './highlight';
+import { remarkNumberColumns } from './tableNumbers';
 
 const COPIED_MS = 1500;
-const PLUGINS = [remarkGfm];
+// The number columns of a table align right (`data-num`, chat.css).
+const PLUGINS = [remarkGfm, remarkNumberColumns];
 
 /** The plain text of a rendered node tree (the code of a block). */
 function textOf(node: ReactNode): string {
