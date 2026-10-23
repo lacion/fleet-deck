@@ -80,13 +80,17 @@ function topValues(text: string): { readonly key: string; readonly value: string
 const NAME_KEYS = ['description', 'name', 'title'];
 
 /**
- * A value as the row shows it: a path in the folder of the agent CLI (`~/.claude/…`: a workflow
- * script, a transcript) is its file name; the folders there are ids, not words.
+ * The file name of a path in the folder of the agent CLI (`~/.claude/…`: a workflow script, a
+ * transcript), where the folders are ids, not words; `null` for any other value. The chat rows,
+ * the Activity rows and the wall tiles show such a path the same way.
  */
-function shownValue(value: string): string {
+export function agentFile(value: string): string | null {
   const path = homeShort(value);
-  return /^~\/\.claude\/\S+$/.test(path) ? pathParts(path).base : value;
+  return /^~\/\.claude\/\S+$/.test(path) ? pathParts(path).base : null;
 }
+
+/** A value as the row shows it. */
+const shownValue = (value: string): string => agentFile(value) ?? value;
 
 /**
  * The input of a tool call as one row. A JSON object (whole, or cut by the station) reads as its

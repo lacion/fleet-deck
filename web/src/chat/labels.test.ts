@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { argText, durationText, thinkingText, toolName } from './labels';
+import { agentFile, argText, durationText, thinkingText, toolName } from './labels';
+
+describe('agentFile', () => {
+  test('a path in the folder of the agent CLI is its file name; any other value is null', () => {
+    expect(agentFile('/home/me/.claude/projects/-home-me-x/0549/workflows/fix.js')).toBe('fix.js');
+    expect(agentFile('~/.claude/agents/review.md')).toBe('review.md');
+    expect(agentFile('/Users/ana/.claude/x')).toBe('x');
+    expect(agentFile('/home/me/app/src/a.ts')).toBeNull();
+    expect(agentFile('~/.claude/a b')).toBeNull();
+    expect(agentFile('wf_b7605b1a-452')).toBeNull();
+  });
+});
 
 describe('toolName', () => {
   test('an MCP tool reads as its tool in sentence case, with its server apart', () => {
