@@ -1,4 +1,4 @@
-import { homeShort, pathParts } from '../ui/format';
+import { countText, homeShort, pathParts } from '../ui/format';
 
 /** Who started a run; `continuation` is the station's restart input (ADR-007 §2.5). */
 export function runLabel(origin: string): string {
@@ -9,11 +9,30 @@ export function runLabel(origin: string): string {
 }
 
 /**
+ * The words of the built-in tools of an agent CLI whose id is not a word for the owner
+ * (`AskUserQuestion` → "Question"). The chat rows, the Watch tiles, the Activity rows and the wall
+ * use this one map (watch/tooltext.ts), so that one tool reads the same everywhere.
+ */
+export const BUILTIN_WORDS: Readonly<Record<string, string>> = {
+  AskUserQuestion: 'Question',
+  ExitPlanMode: 'Plan',
+  TodoWrite: 'To-do list',
+  WebFetch: 'Fetch',
+  WebSearch: 'Web search',
+  NotebookEdit: 'Notebook edit',
+  BashOutput: 'Command output',
+  KillShell: 'Stop command',
+};
+
+/**
  * The name of a tool row. An MCP tool (`mcp__<server>__<tool>`) reads as its tool in sentence
  * case, with its server apart (`mcp__fleetdeck__publish_artifact` → "Publish artifact",
- * "fleetdeck"); any other title stays as it is.
+ * "fleetdeck"); a built-in tool of `BUILTIN_WORDS` reads as its word ("Question"); any other title
+ * stays as it is. The row keeps the raw id in its `title`.
  */
 export function toolName(title: string): { name: string; server: string | null } {
+  const builtin = BUILTIN_WORDS[title];
+  if (builtin !== undefined) return { name: builtin, server: null };
   const mcp = /^mcp__(.+?)__(.+)$/.exec(title);
   const server = mcp?.[1];
   const words = mcp?.[2]?.replace(/[_-]+/g, ' ').trim();
@@ -21,6 +40,16 @@ export function toolName(title: string): { name: string; server: string | null }
     return { name: title, server: null };
   }
   return { name: words.charAt(0).toUpperCase() + words.slice(1), server };
+}
+
+/**
+ * The title of a request line ("Bash rm -rf dist", "AskUserQuestion"): a built-in tool id at its
+ * start reads as its word ("Question"); any other title stays as it is.
+ */
+export function requestTitle(title: string): string {
+  const cut = title.indexOf(' ');
+  const word = BUILTIN_WORDS[cut < 0 ? title : title.slice(0, cut)];
+  return word === undefined ? title : `${word}${cut < 0 ? '' : title.slice(cut)}`;
 }
 
 const firstLine = (text: string): string => text.split('\n')[0] ?? '';
@@ -37,43 +66,99 @@ function unescapeJson(body: string): string {
   return body;
 }
 
+type JsonEntry = {
+  /** The key of the value; in an array, the key of the array. */
+  readonly key: string;
+  readonly value: string;
+  /** 1 for a value of the outer object. */
+  readonly depth: number;
+  readonly inArray: boolean;
+  readonly isString: boolean;
+  /** The key of the outer object under which the value sits. */
+  readonly top: string;
+};
+
 /**
- * The plain values (strings, numbers, booleans) at the top level of a JSON object text, with
- * their keys, in their order. The station cuts a long input at 200 characters (`…`): such a text
- * gives the values before the cut, the last one with its `…`. Nested objects and arrays are left
- * out.
+ * The plain values (strings, numbers, booleans) of a JSON object text at every depth, with their
+ * keys, in their order. The station cuts a long input at 200 characters (`…`): such a text gives
+ * the values before the cut, the last one with its `…`.
  */
-function topValues(text: string): { readonly key: string; readonly value: string }[] {
-  const values: { key: string; value: string }[] = [];
-  let depth = 0;
-  let value = false; // after a `:` at the top level
-  let key = ''; // the last key at the top level
+function jsonEntries(text: string): JsonEntry[] {
+  const entries: JsonEntry[] = [];
+  const open: ('{' | '[')[] = [];
+  let value = false; // after a `:` in an object
+  let key = ''; // the last key
+  let top = ''; // the last key of the outer object
+  const push = (shown: string, isString: boolean) =>
+    entries.push({
+      key,
+      value: shown,
+      depth: open.length,
+      inArray: open.at(-1) === '[',
+      isString,
+      top,
+    });
   for (let i = 0; i < text.length; i++) {
     const c = text[i] ?? '';
+    const inArray = open.at(-1) === '[';
     if (c === '"') {
       let end = i + 1;
       while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
-      if (depth === 1 && value) values.push({ key, value: unescapeJson(text.slice(i + 1, end)) });
-      else if (depth === 1) key = text.slice(i + 1, end);
+      const body = text.slice(i + 1, end);
+      if (value || inArray) push(unescapeJson(body), true);
+      else {
+        key = body;
+        if (open.length === 1) top = body;
+      }
       value = false;
       i = end;
     } else if (c === '{' || c === '[') {
-      depth++;
+      open.push(c);
       value = false;
     } else if (c === '}' || c === ']') {
-      depth--;
+      open.pop();
     } else if (c === ':') {
-      value = depth === 1;
+      value = open.at(-1) === '{';
     } else if (c === ',') {
       value = false;
-    } else if (depth === 1 && value && /[-\w.]/.test(c)) {
+    } else if ((value || inArray) && /[-\w.]/.test(c)) {
       const token = /^[-\w.+]+/.exec(text.slice(i))?.[0] ?? c;
-      if (token !== 'null') values.push({ key, value: token });
+      if (token !== 'null') push(token, false);
       value = false;
       i += token.length - 1;
     }
   }
-  return values;
+  return entries;
+}
+
+/** The plain values at the top level of a JSON object text; nested objects and arrays are left out. */
+const topValues = (text: string): JsonEntry[] =>
+  jsonEntries(text).filter((e) => e.depth === 1 && !e.inArray);
+
+/** The keys of a question one level down (a Claude AskUserQuestion call), in the order of preference. */
+const QUESTION_KEYS = ['question', 'header'];
+
+/**
+ * A question one level down (`{"questions":[{"header":"Color","question":"Which color?"}]}` →
+ * "Which color?"; a text that the station cut before the question gives its header), with
+ * " · N questions" when the whole input asks more than one; '' when there is none.
+ */
+function nestedQuestion(text: string): string {
+  const entries = jsonEntries(text).filter((e) => e.depth > 1 && e.isString && !e.inArray);
+  for (const name of QUESTION_KEYS) {
+    const found = entries.find((e) => e.key === name && e.value.trim() !== '');
+    if (found === undefined) continue;
+    const shown = found.value.replace(/\s+/g, ' ').trim();
+    let count = 0;
+    try {
+      const list = (JSON.parse(text) as Record<string, unknown> | null)?.[found.top];
+      if (Array.isArray(list)) count = list.length;
+    } catch {
+      // A cut text: the number of questions is not known.
+    }
+    return count > 1 ? `${shown} · ${countText(count)} questions` : shown;
+  }
+  return '';
 }
 
 /** The keys whose value names a call for the owner, in the order of preference. */
@@ -95,8 +180,9 @@ const shownValue = (value: string): string => agentFile(value) ?? value;
 /**
  * The input of a tool call as one row. A JSON object (whole, or cut by the station) reads as its
  * name (a `description`, `name` or `title` value), else as its plain values
- * (`{"task_id":"bv93ogg6d"}` → "bv93ogg6d"); any other input is its first line. The expanded row
- * keeps the raw input.
+ * (`{"task_id":"bv93ogg6d"}` → "bv93ogg6d"), else as a question one level down (a Claude
+ * AskUserQuestion call), else as nothing: never as JSON text. Any other input is its first line.
+ * The expanded row keeps the raw input.
  */
 export function argText(input: string): string {
   if (!input.trimStart().startsWith('{')) return firstLine(input);
@@ -109,7 +195,7 @@ export function argText(input: string): string {
   }
   return values.length > 0
     ? values.map(({ value }) => shownValue(value)).join(' · ')
-    : firstLine(input);
+    : nestedQuestion(input);
 }
 
 /** A duration in the words of the board (DESIGN-SYSTEM §5): "12 s", "2 min", "3 h". */

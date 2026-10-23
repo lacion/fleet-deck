@@ -7,9 +7,20 @@ const bubble = (text: string, initialOpen = false) =>
   renderToStaticMarkup(<PromptBubble text={text} initialOpen={initialOpen} />);
 
 describe('PromptBubble (backlog B10)', () => {
-  test('a short prompt shows as it is, with no button', () => {
+  test('a short prompt shows as it is, with no button, after the sender glyph', () => {
     const html = bubble('one\n\ntwo');
-    expect(html).toBe('<div class="fd-chat-bubble">one\n\ntwo</div>');
+    // The owner's prompt starts with the person glyph of the account avatar (concept B).
+    expect(html).toMatch(
+      /^<div class="fd-chat-bubble"><span class="fd-avatar" data-size="sm" aria-hidden="true"><svg[^>]*class="lucide lucide-user fd-icon"[\s\S]*?<\/svg><\/span><div class="fd-chat-bubble-text">one\n\ntwo<\/div><\/div>$/,
+    );
+    expect(html).not.toContain('<button');
+  });
+
+  test('the prompt of a member starts with the initial of the member', () => {
+    const html = renderToStaticMarkup(<PromptBubble text="hi" author="ana" />);
+    expect(html).toBe(
+      '<div class="fd-chat-bubble"><span class="fd-avatar" data-size="sm" aria-hidden="true">A</span><div class="fd-chat-bubble-text">hi</div></div>',
+    );
   });
 
   test('a prompt of exactly 12 lines and 1200 characters is not folded', () => {

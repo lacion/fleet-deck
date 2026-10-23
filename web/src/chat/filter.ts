@@ -162,13 +162,14 @@ const CLASS_WORD: Readonly<Record<ToolClass, readonly [string, string]>> = {
   reads: ['read', 'reads'],
   edits: ['edit', 'edits'],
   commands: ['command', 'commands'],
-  mcp: ['MCP', 'MCP'],
-  other: ['other', 'other'],
+  // A noun with each word, so that the summary says what was folded ("1 other tool", not "1 other").
+  mcp: ['MCP call', 'MCP calls'],
+  other: ['other tool', 'other tools'],
 };
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
-/** "12 tool calls · 5 notes · 7 reads, 3 commands, 2 MCP" for the folded items. */
+/** "12 tool calls · 5 notes · 7 reads, 3 commands, 2 MCP calls" for the folded items. */
 export function foldSummary(items: readonly Item[], provider: ProviderKind | null = null): string {
   const per: Record<ToolClass, number> = { reads: 0, edits: 0, commands: 0, mcp: 0, other: 0 };
   let tools = 0;

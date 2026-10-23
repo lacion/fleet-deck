@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { agentFile, argText, durationText, thinkingText, toolName } from './labels';
+import {
+  agentFile,
+  argText,
+  BUILTIN_WORDS,
+  durationText,
+  requestTitle,
+  thinkingText,
+  toolName,
+} from './labels';
 
 describe('agentFile', () => {
   test('a path in the folder of the agent CLI is its file name; any other value is null', () => {
@@ -26,10 +34,27 @@ describe('toolName', () => {
     });
   });
 
+  test('a built-in tool whose id is not a word reads as its word', () => {
+    expect(toolName('AskUserQuestion')).toEqual({ name: 'Question', server: null });
+    expect(toolName('ExitPlanMode')).toEqual({ name: 'Plan', server: null });
+    expect(toolName('TodoWrite')).toEqual({ name: 'To-do list', server: null });
+    expect(toolName('KillShell')).toEqual({ name: 'Stop command', server: null });
+    expect(BUILTIN_WORDS['WebSearch']).toBe('Web search');
+  });
+
   test('any other title stays as it is', () => {
     expect(toolName('Bash')).toEqual({ name: 'Bash', server: null });
     expect(toolName('mcp__fleetdeck')).toEqual({ name: 'mcp__fleetdeck', server: null });
     expect(toolName('mcp__fleetdeck__')).toEqual({ name: 'mcp__fleetdeck__', server: null });
+  });
+});
+
+describe('requestTitle', () => {
+  test('a built-in tool id at the start of a request title reads as its word', () => {
+    expect(requestTitle('AskUserQuestion')).toBe('Question');
+    expect(requestTitle('ExitPlanMode the plan')).toBe('Plan the plan');
+    expect(requestTitle('Bash rm -rf dist')).toBe('Bash rm -rf dist');
+    expect(requestTitle('AskUserQuestionnaire')).toBe('AskUserQuestionnaire');
   });
 });
 
@@ -86,10 +111,29 @@ describe('argText', () => {
     expect(argText('{"path":"/home/me/app/src/a.ts"}')).toBe('/home/me/app/src/a.ts');
   });
 
+  test('a question one level down names an AskUserQuestion call; the count follows', () => {
+    const one =
+      '{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"The color red","label":"red"}],"question":"Which color?"}]}';
+    expect(argText(one)).toBe('Which color?');
+    // The station cut the input before the question: its header names it.
+    expect(argText('{"questions":[{"header":"Reset data","multiSelect":false,"options"…')).toBe(
+      'Reset data',
+    );
+    const two =
+      '{"questions":[{"header":"A","question":"First?"},{"header":"B","question":"Second?"}]}';
+    expect(argText(two)).toBe('First? · 2 questions');
+    // A label of an option is not a question.
+    expect(argText('{"questions":[{"options":[{"label":"red"}]}]}')).toBe('');
+  });
+
+  test('a JSON input without a value to show is empty, never JSON text', () => {
+    expect(argText('{not json')).toBe('');
+    expect(argText('{"nested":{"a":1}}')).toBe('');
+    expect(argText('{"list":["a","b"]}')).toBe('');
+  });
+
   test('any other input is its first line', () => {
     expect(argText('ls -la\ncd /tmp')).toBe('ls -la');
-    expect(argText('{not json')).toBe('{not json');
-    expect(argText('{"nested":{"a":1}}')).toBe('{"nested":{"a":1}}');
     expect(argText('')).toBe('');
   });
 });

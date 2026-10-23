@@ -4,9 +4,13 @@ import type { HistoryItem } from '../gen';
 import { Icon, SquareTerminal, Wrench } from '../ui/icons';
 import type { HistoryView } from './history';
 import { Markdown } from './Markdown';
+import { Bubble } from './PromptBubble';
 
-/** One history item in the chat shapes (DL-189); the subagent log of DL-191 uses it too. */
-export function HistoryItemView({ item }: { item: HistoryItem }) {
+/**
+ * One history item in the chat shapes (DL-189); the subagent log of DL-191 uses it too, where a
+ * prompt is the task of the main agent (`sender={false}`: no person glyph).
+ */
+export function HistoryItemView({ item, sender = true }: { item: HistoryItem; sender?: boolean }) {
   const title = item.at > 0 ? new Date(item.at).toLocaleString() : undefined;
   if (item.kind === 'tool') {
     // A `!` command of the CLI and its output (B8).
@@ -40,7 +44,7 @@ export function HistoryItemView({ item }: { item: HistoryItem }) {
   if (item.kind === 'user') {
     return (
       <div className="fd-chat-run" data-history="true" title={title}>
-        <div className="fd-chat-bubble">{item.text}</div>
+        <Bubble sender={sender}>{item.text}</Bubble>
       </div>
     );
   }
