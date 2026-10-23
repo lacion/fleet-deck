@@ -160,6 +160,59 @@ describe('the station card', () => {
     expect(html).toContain(
       '<span class="fd-station-load-count">2 of 12<span class="fd-vh"> sessions</span></span>',
     );
+    expect(html).toContain('<span data-slot="used"></span>');
+  });
+  test('a station that runs no session shows its free slots as words, as its fleet lane', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a', { info: info() })]}
+        sessions={[card('s1', 'ended', 'station-a', { state: 'exited' })]}
+        freshness="live"
+      />,
+    );
+    expect(html).toContain(
+      '<span class="fd-station-load"><span class="fd-station-load-count" data-free="true">12 free<span class="fd-vh"> session slots</span></span></span>',
+    );
+    expect(html).not.toContain('fd-slots');
+    expect(html).not.toContain('0 of 12');
+  });
+  test('more than 24 slots draw a neutral bar, not ticks', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a', { info: info({ max_sessions: 40 }) })]}
+        sessions={[card('s1'), card('s2')]}
+        freshness="live"
+      />,
+    );
+    expect(html).toContain('<span class="fd-meter" data-tone="neutral" aria-hidden="true">');
+    expect(html).toContain('2 of 40<span class="fd-vh"> sessions</span>');
+    expect(html).not.toContain('fd-slots');
+  });
+  test('a login without the admin scope reads why in the page sentence, not a loose note', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a')]}
+        sessions={[]}
+        freshness="live"
+        actions={stationActions(async () => ({}), false)}
+      />,
+    );
+    expect(html).toContain(
+      '<p class="fd-page-desc">1 station, online. Pairing needs the admin scope.</p>',
+    );
+    expect(html).not.toContain('<p class="fd-note">Pairing needs the admin scope.</p>');
+    // No station: the scope sentence alone.
+    expect(
+      renderToStaticMarkup(
+        <StationsPanel
+          stations={[]}
+          sessions={[]}
+          freshness="live"
+          actions={stationActions(async () => ({}), false)}
+        />,
+      ),
+    ).toContain('<p class="fd-page-desc">Pairing needs the admin scope.</p>');
+    expect(panel([station('station-a')])).not.toContain('admin scope');
   });
   test('the station id is shortened like the key fingerprint, with its own copy button', () => {
     const id = 'f'.repeat(64);
@@ -229,7 +282,7 @@ describe('the desktop of a station card', () => {
 });
 
 describe('the config reference', () => {
-  test('a refused reference shows the deck error as an alert and keeps the old reference', () => {
+  test('a refused reference shows the deck error as a page error notice and keeps the old reference', () => {
     const html = renderToStaticMarkup(
       <StationsPanel
         stations={[station('st-alpha', { name: 'Alpha' }), station('st-bravo', { name: 'Bravo' })]}
@@ -243,7 +296,12 @@ describe('the config reference', () => {
         }}
       />,
     );
-    expect(html).toContain('<p role="alert">Unknown station.</p>');
+    // §4.7: an error of a page is ErrorNotice, never a bare alert paragraph.
+    expect(html).toContain(
+      '<div class="fd-notice fd-notice-row" data-tone="error" data-place="page">',
+    );
+    expect(html).toContain('<span class="fd-notice-text" role="alert">Unknown station.</span>');
+    expect(html).not.toContain('<p role="alert">');
     expect(html).toContain('Configs vs Alpha');
   });
   test('no alert while the deck has not answered', () => {

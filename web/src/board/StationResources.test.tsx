@@ -61,8 +61,10 @@ describe('station resources (DL-193)', () => {
     expect(out).toMatch(row('/work', '400 GB of 1 TB', '600 GB free'));
     expect(out).toMatch(row('Memory', '8 GB of 16 GB', '8 GB free'));
     expect(out).toMatch(row('CPU', 'Load 2.0', '4 cores'));
-    expect(out).toContain('<li title="Average load of the last 5 minutes">');
-    expect(out).toContain('title="/var/data"');
+    // The tooltip of a row keeps the aside, which a phone card hides.
+    expect(out).toContain('<li title="Average load of the last 5 minutes · 4 cores">');
+    expect(out).toContain('title="/var/data · 200 GB free"');
+    expect(out).toContain('<li title="8 GB free">');
     expect(out.indexOf('>Data<')).toBeLessThan(out.indexOf('>Memory<'));
     expect(out.indexOf('>Memory<')).toBeLessThan(out.indexOf('>CPU<'));
     expect(out).toContain('style="width:60%"');
@@ -94,7 +96,7 @@ describe('station resources (DL-193)', () => {
       ],
     });
     expect(out.match(/data-low/g)?.length).toBe(1);
-    expect(out).toMatch(/<li data-low="" title="\/var\/data">/);
+    expect(out).toMatch(/<li data-low="" title="\/var\/data · 3 GB free">/);
     expect(out.match(/data-level="high"/g)?.length).toBe(1);
   });
 
@@ -112,7 +114,7 @@ describe('station resources (DL-193)', () => {
     expect(html(undefined)).toBe('');
   });
 
-  describe('the busiest sessions (R13 §10)', () => {
+  describe('the session load (R13 §10)', () => {
     const load = (id: string, cpu: number | null, rss: number | null) => ({
       session_id: id,
       cpu_pct: cpu,
@@ -148,23 +150,27 @@ describe('station resources (DL-193)', () => {
 
     test('the section is a property of its own with 5 rows in the given order', () => {
       const out = render(busy);
+      // "Session load", not "Busiest sessions": an idle session at 0 % is a row of a load table.
+      // The units head their columns once.
       expect(out).toContain(
-        '<div class="fd-station-prop" data-prop="busiest"><h4 class="fd-station-prop-label">Busiest sessions</h4>',
+        '<div class="fd-station-prop" data-prop="busiest"><div class="fd-station-busy-head"><h4 class="fd-station-prop-label">Session load</h4><span class="fd-station-busy-unit" aria-hidden="true">CPU</span><span class="fd-station-busy-unit" aria-hidden="true">Memory</span></div>',
       );
-      expect(out).toContain('aria-label="Busiest sessions"');
+      expect(out).toContain('aria-label="Session load"');
+      expect(out).not.toContain('<details');
       expect(out.match(/<li/g)?.length).toBe(5);
       expect(out).not.toContain('s6');
       expect(out.indexOf('s-called')).toBeLessThan(out.indexOf('s-titled'));
       expect(out.indexOf('s-titled')).toBeLessThan(out.indexOf('abcdefgh'));
       // The resource rows are not part of it.
-      expect(html(busy)).not.toContain('Busiest sessions');
+      expect(html(busy)).not.toContain('Session load');
     });
 
     test('a row names the title with the callsign after it, else the callsign, else the id', () => {
       const out = render(busy);
-      // The title (the full title in the tooltip), then the callsign (condensed, quiet).
+      // The title, then the callsign (condensed, quiet); the tooltip has both (a phone hides the
+      // callsign).
       expect(out).toMatch(
-        /<a href="[^"]+" title="A title"><span class="fd-station-busy-who"><span class="fd-station-busy-name">A title<\/span> <span class="fd-callsign fd-station-busy-cs">Falcon<\/span><\/span>/,
+        /<a href="[^"]+" title="A title · Falcon"><span class="fd-station-busy-who"><span class="fd-station-busy-name">A title<\/span> <span class="fd-callsign fd-station-busy-cs">Falcon<\/span><\/span>/,
       );
       // No title: the callsign is the name, condensed, with no second callsign.
       expect(out).toMatch(
@@ -185,14 +191,29 @@ describe('station resources (DL-193)', () => {
       const out = render(busy);
       const cells = (cpu: string, mem: string) =>
         `<span class="fd-station-busy-num">${cpu}</span> <span class="fd-station-busy-num">${mem}</span></a>`;
-      expect(out).toContain(cells('340% CPU', '1.2 GB'));
-      expect(out).toContain(cells('120% CPU', '500 MB'));
+      // The column heads carry the units; the link names them for a screen reader.
+      const vh = (value: string, unit: string) => `${value}<span class="fd-vh"> ${unit}</span>`;
+      expect(out).toContain(cells(vh('340%', 'CPU'), vh('1.2 GB', 'memory')));
+      expect(out).toContain(cells(vh('120%', 'CPU'), vh('500 MB', 'memory')));
       expect(out).toContain(cells('—', '—'));
+      expect(out).not.toContain('% CPU<');
       expect(out.match(/<a /g)?.length).toBe(5);
     });
 
     test('a row links to the session', () => {
       expect(render(busy)).toContain('href="#/s/station-a/s-called"');
+    });
+
+    test('a phone card folds the load: a closed fold with the count, the units over the rows', () => {
+      const out = renderToStaticMarkup(
+        <StationBusiest resources={busy} station="station-a" sessions={cards} folded />,
+      );
+      expect(out).toContain(
+        '<details class="fd-station-prop fd-station-busy-fold" data-prop="busiest"><summary class="fd-station-prop-label" data-variant="toggle">Session load <span class="fd-count">5<span class="fd-vh"> sessions</span></span></summary><div class="fd-station-busy-head"><span></span><span class="fd-station-busy-unit" aria-hidden="true">CPU</span>',
+      );
+      expect(out).not.toContain('<details open');
+      expect(out).not.toContain('<h4');
+      expect(out.match(/<a /g)?.length).toBe(5);
     });
 
     test('an empty list or no report shows no section', () => {

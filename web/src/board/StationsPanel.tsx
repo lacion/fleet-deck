@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { DesktopPanel } from '../desktop/DesktopPanel';
 import { relativeAge } from '../app/sessions';
+import { useLayout } from '../app/viewport';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { Check, Copy, Ellipsis, Icon, Plus, Server } from '../ui/icons';
 import { Menu } from '../ui/Menu';
-import { EmptyState, Page } from '../ui/page';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
@@ -19,11 +20,12 @@ import {
 import { StationBusiest, StationResources } from './StationResources';
 import { stationsSummary } from './StationSummary';
 import { StationTaildrive, TaildriveFact } from './StationTaildrive';
-import { StationTraits } from './StationTraits';
+import { SlotMeter, StationTraits } from './StationTraits';
 import { Worktrees } from './StationWorktrees';
 import { authLabel, type StationActions } from './pairing';
 
 export { WorktreeRow } from './StationWorktrees';
+export { loadWidth } from './StationTraits';
 
 type Props = {
   readonly stations: readonly StationView[];
@@ -42,14 +44,7 @@ const connectionText = (direction: string): string | null =>
       ? 'This deck connects to the station'
       : null;
 
-/** The most slots that the load meter draws as ticks; a larger station gets a plain bar. */
-const MAX_TICKS = 24;
-
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-
-/** The fill of the load bar: the share of the session slots in use, 0 to 100 %. */
-export const loadWidth = (active: number, max: number): string =>
-  `${max > 0 ? Math.min(100, (active / max) * 100) : 0}%`;
 
 /** "8 h ago", or "now" within the minute. */
 const agoText = (at: number, now: number): string => {
@@ -99,6 +94,8 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
   const [confirm, setConfirm] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const now = useNow(undefined, 30000);
+  // A phone card folds its session load (StationBusiest): one card fills less than a screen.
+  const phone = useLayout() === 'phone';
   const canPair = actions?.canAdmin === true && freshness === 'live';
   const deckDrift = useDriftReference();
   const drift = given ?? deckDrift;
@@ -112,10 +109,24 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
         onSet={(id) => void drift.set(id)}
       />
     ) : null;
+  // A login without the admin scope reads why Add station is absent in the page sentence (§4.3).
+  const summary = stationsSummary(stations, freshness);
+  const scopeNote =
+    actions === undefined || actions.canAdmin ? null : 'Pairing needs the admin scope.';
   return (
     <Page
       title="Stations"
-      description={stationsSummary(stations, freshness)}
+      description={
+        scopeNote === null ? (
+          summary
+        ) : summary === null ? (
+          scopeNote
+        ) : (
+          <>
+            {summary} {scopeNote}
+          </>
+        )
+      }
       className="fd-stations"
       wide
       actions={
@@ -136,14 +147,11 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
         )
       }
     >
-      {actions === undefined || actions.canAdmin ? null : (
-        <p className="fd-note">Pairing needs the admin scope.</p>
-      )}
       {adding && actions !== undefined ? (
         <PairingDialog actions={actions} stations={stations} onClose={() => setAdding(false)} />
       ) : null}
-      {removeError === null ? null : <p role="alert">{removeError}</p>}
-      {drift.offered && drift.error !== null ? <p role="alert">{drift.error}</p> : null}
+      {removeError === null ? null : <ErrorNotice text={removeError} />}
+      {drift.offered && drift.error !== null ? <ErrorNotice text={drift.error} /> : null}
       {stations.length === 0 ? (
         <EmptyState
           icon={Server}
@@ -205,39 +213,18 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                         <span>Last reported: {station.reachable ? 'online' : 'offline'}.</span>
                       ) : null}
                     </div>
+                    {/* The notation of the fleet lane (§4.4): "3 of 12" with the ticks, or
+                        "12 free" while the station runs no session. */}
                     <span className="fd-station-load">
-                      {info?.max_sessions == null ? null : info.max_sessions > 0 &&
-                        info.max_sessions <= MAX_TICKS ? (
-                        <span className="fd-slots" aria-hidden="true">
-                          {Array.from({ length: info.max_sessions }, (_, i) => (
-                            <span key={i} data-slot={i < active ? 'used' : undefined} />
-                          ))}
-                        </span>
+                      {info?.max_sessions == null ? (
+                        <span className="fd-station-load-count">{`${active} sessions`}</span>
                       ) : (
-                        <span
-                          className="fd-meter"
-                          data-tone="neutral"
-                          data-level={
-                            info.max_sessions > 0 && active / info.max_sessions >= 0.9
-                              ? 'high'
-                              : undefined
-                          }
-                          aria-hidden="true"
-                        >
-                          <span style={{ width: loadWidth(active, info.max_sessions) }} />
-                        </span>
+                        <SlotMeter
+                          max={info.max_sessions}
+                          used={active}
+                          countClass="fd-station-load-count"
+                        />
                       )}
-                      {/* Counts read "3 of 12" (§5); "sessions" is for a screen reader only. */}
-                      <span className="fd-station-load-count">
-                        {info?.max_sessions == null ? (
-                          `${active} sessions`
-                        ) : (
-                          <>
-                            {`${active} of ${info.max_sessions}`}
-                            <span className="fd-vh"> sessions</span>
-                          </>
-                        )}
-                      </span>
                     </span>
                   </div>
                 </div>
@@ -342,6 +329,7 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                   resources={info?.resources}
                   station={station.station_id}
                   sessions={cards}
+                  folded={phone}
                 />
                 <StationTaildrive taildrive={info?.taildrive} />
               </div>

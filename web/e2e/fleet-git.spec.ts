@@ -405,7 +405,8 @@ test('the Stations page shows traits, the config drift and the Taildrive shares'
   const old = page.locator('[data-station="st-old"]');
   await expect(page.getByText('Configs vs Alpha')).toBeVisible();
   await expect(alpha.getByText('Linux · x86_64 · GPU · Always on')).toBeVisible();
-  await expect(bravo.getByText('macOS · aarch64 · on battery')).toBeVisible();
+  // The arch as a Mac owner names it; the raw arch is the tooltip.
+  await expect(bravo.getByText('macOS · arm64 · on battery')).toBeVisible();
   await expect(alpha.getByText('Config: Reference')).toBeVisible();
   await expect(bravo.getByText('Config: Differs: agents, skills')).toBeVisible();
   await expect(old.getByText(/^Config:/)).toHaveCount(0);
