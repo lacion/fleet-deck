@@ -164,16 +164,19 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      'Deck dials station',
-      'Station dials deck',
-      '127.0.0.1:443',
+      '<dt>Connection</dt><dd class="fd-facts-text">This deck connects to the station</dd>',
+      '<dt>Connection</dt><dd class="fd-facts-text">The station connects to this deck</dd>',
+      '<dt>Link address</dt><dd>127.0.0.1:443</dd>',
       'fingerprint',
       '1970-01-01T00:00:00.000Z',
       'offline',
-      'Not stored, the station dials this deck',
       '0 sessions',
     ])
       expect(html).toContain(text);
+    // A station that connects to the deck has no stored address: no Link address row
+    // (principle 7), only the one of the station that the deck dials.
+    expect(html.match(/<dt>Link address<\/dt>/g)?.length).toBe(1);
+    expect(html).not.toContain('Not stored');
     // An online station shows no "Last seen": `last_seen` is the time its link came up, so it is
     // the Linked fact in Details (the ISO time above is its tooltip). A station that was never
     // seen shows neither (principle 7).
@@ -199,16 +202,29 @@ describe('station projections', () => {
     expect(html).toContain('<h3 class="fd-station-name">Alpha</h3>');
     expect(html).not.toContain('fd-badge');
   });
-  test('the Details fold holds the id, the key, the direction and the link address', () => {
+  test('the Details fold holds the id, the key, the connection and the link address', () => {
     const html = renderToStaticMarkup(
-      <StationsPanel stations={[station()]} sessions={[]} freshness="live" />,
+      <StationsPanel
+        stations={[station('station-a', { direction: 'deck_dials', dial_url: '10.0.0.2:7443' })]}
+        sessions={[]}
+        freshness="live"
+      />,
     );
     const details = /<details class="fd-station-details">([\s\S]*?)<\/details>/.exec(html)?.[1];
     expect(details).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
-    for (const text of ['Station ID', 'Key fingerprint', 'Direction', 'Link address'])
+    for (const text of ['Station ID', 'Key fingerprint', 'Connection', 'Link address'])
       expect(details).toContain(`<dt>${text}</dt>`);
     // The ids are not in the head or in the live facts.
     expect(html.replace(details ?? '', '')).not.toContain('Station ID');
+    // A direction that the board does not know has no Connection fact (principle 7).
+    const odd = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a', { direction: 'sideways' })]}
+        sessions={[]}
+        freshness="live"
+      />,
+    );
+    expect(odd).not.toContain('<dt>Connection</dt>');
   });
   test('the load shows a bar, 90 percent and more in the act color, and caps at 100 percent', () => {
     expect(loadWidth(0, 4)).toBe('0%');
@@ -332,7 +348,7 @@ describe('station projections', () => {
     for (const text of [
       '0 of 4<span class="fd-vh"> sessions</span>',
       '<dt>Version</dt><dd>0.2.0</dd>',
-      '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
+      '<li data-instance="personal" title="personal"><span>Claude <span class="fd-station-ver">2.1.5</span></span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
       '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
     ])
       expect(html).toContain(text);
@@ -348,7 +364,9 @@ describe('station projections', () => {
         freshness="live"
       />,
     );
-    expect(html).toContain('<span title="abcdef0123456789abcdef">abcdef012345…</span>');
+    // The first 8 and the last 4 characters: the station id is a prefix of the key, and the end
+    // tells the two apart.
+    expect(html).toContain('<span title="abcdef0123456789abcdef">abcdef01…cdef</span>');
     expect(html).toContain('aria-label="Copy the key fingerprint"');
   });
   test('a station without shells says so and offers no directory field', () => {
@@ -371,9 +389,11 @@ describe('station projections', () => {
         />,
       );
     const off = render(false);
+    // The way to turn them on is the station tab of Settings, not a file on the station.
     expect(off).toContain(
-      'Shells are off on this station. Set allow_shell = true in station.toml.',
+      'Shells are off on this station. <a class="fd-tap" href="#/settings/station/station-a">Turn them on in Settings</a>.',
     );
+    expect(off).not.toContain('station.toml');
     expect(off).not.toContain('Open shell');
     expect(off).toContain('No provider configured.');
     expect(render(null)).toContain('Open shell');

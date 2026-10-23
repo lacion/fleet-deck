@@ -273,23 +273,11 @@
 }
 
 /* ═══════════════════════ the guided Add station dialog ═══════════════════════ */
-/* The dialog frame (§4.7) comes from the shared .fd-dialog in shell.css. */
+/* The dialog frame (§4.7) comes from the shared .fd-dialog in shell.css, its head (the title,
+   the question of the start view and the Close X) from .fd-dialog-head in base.css. */
 .fd-overlay .fd-dialog:has(> .fd-add-dialog) {
-  position: relative;
   gap: var(--sp-4);
   width: min(560px, 100%);
-}
-/* The title keeps clear of the close button. */
-.fd-overlay .fd-dialog:has(> .fd-add-dialog) > h2 {
-  padding-right: var(--sp-6);
-}
-/* Close: an x icon button in the header row, centered on the title line (20px padding, the
-   15px title at line-height 1.15). Last in the tab order: the first choice gets the focus. */
-.fd-add-close {
-  position: absolute;
-  top: calc(20px + var(--fs-heading) * 0.575);
-  right: 14px;
-  transform: translateY(-50%);
 }
 .fd-int-dialog > :where(*) {
   min-width: 0;
@@ -383,13 +371,7 @@
   }
 }
 
-/* ── the start screen: the question and the ways to add a station ── */
-.fd-add-question {
-  margin: 0;
-  color: var(--dim);
-  font-size: var(--fs-ui);
-  font-weight: 500;
-}
+/* ── the start screen: the ways to add a station (the question is the head description) ── */
 .fd-add-choices {
   display: grid;
   gap: var(--sp-2);

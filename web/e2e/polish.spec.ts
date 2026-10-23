@@ -113,14 +113,14 @@ test('2: Revoke and Renew of a coordinator grant show their outcome note', async
     'Renewal sent; the grant is active when its station confirms.',
   );
   expect(grants.rows.find((g) => g.grant_id === 'g-idle')?.state).toBe('active');
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
 
   await live.first().getByRole('button', { name: 'Change…' }).click();
   await dialog.getByRole('button', { name: 'Revoke' }).click();
   await dialog.getByRole('button', { name: 'Revoke' }).click();
   await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
   // A revoked grant leaves the list.
   await expect(list.getByRole('listitem')).toHaveCount(1);
 });

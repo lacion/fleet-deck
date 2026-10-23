@@ -152,7 +152,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await expect(dialog.getByLabel('Station invitation')).toHaveValue('');
   await dialog.getByRole('button', { name: 'Close' }).click();
   const box = page.locator('[data-station="st-box"]');
-  await expect(box).toContainText('Deck dials station');
+  await expect(box).toContainText('This deck connects to the station');
   await expect(box).toContainText('192.168.1.20:7443');
   await expect(box).toContainText('Reported when the station links to this deck.');
 

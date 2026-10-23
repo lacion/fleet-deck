@@ -411,9 +411,13 @@
   }
 }
 
+/* A wide card: three columns capped at their content (concept B rows are dense), spread so
+   that the first starts at the left padding edge and the last ends at the right one, under the
+   slots and the menu of the header. */
 @container fd-stations (min-width: 1040px) {
   .fd-station-props {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 320px) minmax(0, 520px) minmax(0, 360px);
+    justify-content: space-between;
   }
 
   .fd-station-prop[data-prop="resources"] {
@@ -458,12 +462,13 @@
   grid-column: 1 / -1;
 }
 
-/* Providers: name and version, the sign-in state as a glyph and words. Two content-sized
-   columns at the left (not spread across the panel), so a state sits next to its provider;
-   the rows share the columns (subgrid), so the states line up. */
+/* Providers: the name and the quiet version, the sign-in state as a glyph and words, and for a
+   signed-out provider the next step (Sign in…). Content-sized columns at the left (not spread
+   across the panel), so a state sits next to its provider; the rows share the columns
+   (subgrid), so the states line up. */
 .fd-station-providers {
   display: grid;
-  grid-template-columns: minmax(0, max-content) max-content;
+  grid-template-columns: minmax(0, max-content) max-content max-content;
   justify-content: start;
   column-gap: var(--sp-5);
   margin: 0;
@@ -478,6 +483,18 @@
   align-items: center;
   min-height: 24px;
   font-weight: 500;
+}
+
+/* The version matters only where it differs between stations: it is quieter than the name. */
+.fd-station-ver {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+
+.fd-station-signin {
+  font-size: var(--fs-meta);
+  font-weight: 400;
 }
 
 .fd-station-auth {
@@ -573,39 +590,60 @@
   color: var(--act);
 }
 
-/* The busiest sessions: the callsign, then the CPU and the memory with their units, in two
-   right-aligned columns close to the name. */
+/* The busiest sessions: a row is one link to its session. The title in --text (a session link
+   names the session as the sidebar does) with the callsign after it in --dim, then the CPU and
+   the memory with their units in two right-aligned columns (§2.3) at the right edge of the
+   property. The title underlines on hover and focus, as a link in a row. */
 .fd-station-busy {
   display: grid;
-  max-width: 320px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.fd-station-busy li {
+.fd-station-busy a {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px 64px;
+  grid-template-columns: minmax(0, 1fr) 72px 64px;
   align-items: center;
   gap: var(--sp-2);
   min-height: 24px;
-  color: var(--dim);
-  font-size: var(--fs-meta);
+  color: var(--text);
+  text-decoration: none;
 }
 
-.fd-station-busy li > span {
-  text-align: right;
+.fd-station-busy-who {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 
-.fd-station-busy a {
+.fd-station-busy-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* A callsign is condensed (.fd-callsign, §2.3) at the row size of the interface. */
-.fd-station-busy a.fd-callsign {
-  font-size: var(--fs-ui);
+.fd-station-busy-name:not(.fd-callsign) {
+  font-weight: 500;
+}
+
+.fd-station-busy a:is(:hover, :focus-visible) .fd-station-busy-name {
+  text-decoration: underline;
+}
+
+.fd-station-busy-cs {
+  flex: none;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-busy-num {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  text-align: right;
+  white-space: nowrap;
 }
 
 .fd-station-prop .fd-res-warn {
@@ -1087,14 +1125,8 @@
     min-height: var(--tap-min);
   }
 
-  /* A busiest session row is a link: a 44 px target on a touch screen (a block keeps the
-     ellipsis of a long name). */
-  .fd-station-busy li {
-    min-height: var(--row-h-touch);
-  }
-
+  /* A busiest session row is one link: a 44 px row on a touch screen. */
   .fd-station-busy a {
-    display: block;
-    line-height: var(--row-h-touch);
+    min-height: var(--row-h-touch);
   }
 }

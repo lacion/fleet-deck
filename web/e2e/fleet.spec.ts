@@ -137,7 +137,7 @@ test('the owner revokes a coordinator grant from the phone', async ({ page }) =>
   await dialog.getByRole('button', { name: 'Revoke' }).click();
   await expect(dialog.getByRole('status')).toHaveText('Grant revoked.');
   expect(await fitsWidth(page)).toBe(true);
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await dialog.locator('.fd-dialog-head').getByRole('button', { name: 'Close' }).click();
   // A revoked grant leaves the list.
   await expect(grants).toHaveCount(0);
 });
