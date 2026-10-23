@@ -41,20 +41,25 @@ function words(id: string): string {
 }
 
 /**
- * The built-in tools whose id is not a word for the owner: the words of the board for them (a
- * question is "Question" on the fleet strips and the approval card too). The names that already
- * are words (Bash, Read, Edit, Workflow, …) stay as they are.
+ * The built-in tools of an agent CLI whose id is not a word for the owner: the words of the board
+ * for them (a question is "Question" on the fleet strips and the approval card too). The chat rows,
+ * the request lines, the Watch tiles, the Activity rows and the wall read this one map, so that one
+ * tool reads the same everywhere. The names that already are words (Bash, Read, Edit, Workflow, …)
+ * stay as they are.
  */
-const BUILT_IN: ReadonlyMap<string, string> = new Map([
+export const BUILTIN_WORDS: ReadonlyMap<string, string> = new Map([
   ['AskUserQuestion', 'Question'],
   ['ExitPlanMode', 'Plan'],
   ['TodoWrite', 'To-do list'],
+  ['WebFetch', 'Fetch'],
+  ['WebSearch', 'Web search'],
+  ['NotebookEdit', 'Notebook edit'],
   ['BashOutput', 'Command output'],
   ['KillShell', 'Stop command'],
 ]);
 
 /**
- * A tool name in its parts for the owner: a built-in id in words (`BUILT_IN`), an MCP tool
+ * A tool name in its parts for the owner: a built-in id in words (`BUILTIN_WORDS`), an MCP tool
  * (`mcp__<server>__<tool>`) as the tool in words and its server apart (a plugin server loses its
  * `plugin_` prefix; the deck's own server is no server: its tools are words of the board). Every
  * other name stays as it is. The one parser of tool names: `toolLabel`, `toolWords` and the chat
@@ -62,7 +67,7 @@ const BUILT_IN: ReadonlyMap<string, string> = new Map([
  */
 export function toolParts(name: string): { readonly name: string; readonly server: string | null } {
   const id = name.trim();
-  const own = BUILT_IN.get(id);
+  const own = BUILTIN_WORDS.get(id);
   if (own !== undefined) return { name: own, server: null };
   const m = MCP.exec(id);
   if (m === null) return { name: id, server: null };
@@ -241,7 +246,7 @@ const SPACE_CALL = /^([A-Za-z_][\w-]*) (\S.*)$/s;
 const NAME_ONLY = /^[A-Za-z_][\w-]*$/;
 
 const knownTool = (name: string): boolean =>
-  CODE_TOOLS.has(name) || MCP.test(name) || BUILT_IN.has(name);
+  CODE_TOOLS.has(name) || MCP.test(name) || BUILTIN_WORDS.has(name);
 
 /**
  * A tool or request row of the activity stream in its parts. The deck writes a finished call as

@@ -390,14 +390,18 @@ describe('a display row', () => {
     const html = row(display({ quiet_hours: '22:00-07:00' }));
     expect(html).toContain('Bound station');
     expect(html).not.toContain('Bound monitor');
-    expect(html).toContain('Bind a station and a monitor first.');
+    // A disabled switch says its stored value in words, and what to do first.
+    expect(html.match(/On after you bind a station and a monitor\./g)).toHaveLength(2);
     expect(html).not.toContain('Turn on the bound monitor');
+    expect(html).not.toContain('The screen stays dark in these hours');
+    const off = row(display({ wake_on_needs_you: false }));
+    expect(off.match(/Bind a station and a monitor first\./g)).toHaveLength(2);
     // The stored values stay: the switches keep their state, disabled.
     expect(html).toMatch(/aria-checked="true" disabled="" checked=""/);
     expect(html).toContain('<input type="time" step="60" disabled="" value="22:00"/>');
   });
 
-  test('a station that reports monitors gives a list, and a stored name not in it says so', () => {
+  test('a station that reports monitors suggests them; a name not in the list says so', () => {
     const monitor = (name: string) => ({
       name,
       description: name === 'DP-1' ? 'Main' : '',
@@ -413,12 +417,18 @@ describe('a display row', () => {
         info: { desktop: { monitors: names.map(monitor) } } as unknown as StationView['info'],
       });
     const listed = row(base, [withMonitors(['DP-1', 'HDMI-A-1'])]);
-    // The words first, the connector last; the title keeps the raw text.
-    expect(listed).toContain('title="DP-1 — Main" selected="">Main · DP-1</option>');
-    expect(listed).toContain('title="HDMI-A-1">HDMI-A-1</option>');
-    expect(listed).not.toContain('(not connected)');
+    // A name to type, so that a monitor that is off now can be bound; the reported monitors are
+    // suggestions: the words first, the connector last; the title keeps the raw text.
+    expect(listed).toMatch(/<input list="[^"]+"[^>]*value="DP-1"\/>/);
+    expect(listed).toContain('<option value="DP-1" label="Main · DP-1" title="DP-1 — Main">');
+    expect(listed).toContain('<option value="HDMI-A-1" label="HDMI-A-1" title="HDMI-A-1">');
+    // The one select is the Bound station.
+    expect(listed.match(/<select/g)).toHaveLength(1);
+    expect(listed).not.toContain('is not connected now.');
     const gone = row(base, [withMonitors(['HDMI-A-1'])]);
-    expect(gone).toContain('DP-1 (not connected)');
+    expect(gone).toContain('DP-1 is not connected now.');
+    // A station without monitors: a plain name field.
+    expect(row(base)).not.toContain('<datalist');
   });
 });
 

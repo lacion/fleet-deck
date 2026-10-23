@@ -158,7 +158,7 @@ describe('spawn form (P4-4)', () => {
     // The key is two chips: the modifier and Return (an icon: Mona Sans has no ↵).
     expect(html).toMatch(
       new RegExp(
-        `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+        `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
       ),
     );
     expect(html).toContain(
@@ -576,9 +576,9 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('aria-label="Recent directories"');
     expect(html).toContain('<span class="fd-label">Recent</span>');
     expect(html).toContain('title="/w/two"');
-    // A folder row: its name, then its parent from the root.
+    // A folder row: its name, then its parent from the root (a PathTail: it keeps its end).
     expect(html).toContain(
-      '<span class="fd-folder-base">two</span><span class="fd-folder-parent">/w/</span></button>',
+      '<span class="fd-folder-base">two</span><span class="fd-folder-parent"><bdi>/w/</bdi></span></button>',
     );
     expect(html).not.toContain('/w/other');
   });

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { ArtifactKind, DeckArtifact } from '../gen';
 import { Code, FileText, Icon, ImageIcon, type LucideIcon, Play } from '../ui/icons';
-import { artifactHref, KIND_LABEL } from './kinds';
+import { artifactHref, KIND_LABEL, kindOfPath } from './kinds';
 
 /** The icon of each artifact kind, before the title. */
 const KIND_ICON: Record<ArtifactKind, LucideIcon> = {
@@ -73,19 +73,25 @@ function RowLink({
   artifact,
   className,
   onOpen,
+  title,
   children,
 }: {
   readonly artifact: DeckArtifact;
   readonly className: string;
   readonly onOpen: Props['onOpen'];
+  readonly title?: string | undefined;
   readonly children: ReactNode;
 }) {
   return onOpen === undefined ? (
-    <a className={className} href={artifactHref(artifact.station_id, artifact.artifact_id)}>
+    <a
+      className={className}
+      href={artifactHref(artifact.station_id, artifact.artifact_id)}
+      title={title}
+    >
       {children}
     </a>
   ) : (
-    <button type="button" className={className} onClick={() => onOpen(artifact)}>
+    <button type="button" className={className} title={title} onClick={() => onOpen(artifact)}>
       {children}
     </button>
   );
@@ -96,57 +102,69 @@ function RowLink({
  * came from, the kind and the age. The older copies of a title fold under its row: the fold is
  * the one notation of the copies (a count after the title read as a version). The kind is a quiet
  * word that the icon says too: the icon carries its name for a screen reader, and a phone shows
- * only the icon (artifacts.css).
+ * only the icon (artifacts.css); a title that is a file name of its kind (fleet.html) has no word.
  */
 export function ArtifactList({ items, now, where, onOpen }: Props) {
   return (
     <ul className="fd-art-list" aria-label="Artifacts">
-      {groupCopies(items).map(({ newest: a, older }) => (
-        <li key={`${a.station_id}/${a.artifact_id}`} data-artifact={a.artifact_id}>
-          <RowLink artifact={a} className="fd-art-row" onOpen={onOpen}>
-            <span className="fd-art-kind">
-              <Icon of={KIND_ICON[a.kind]} size={14} />
-              <span className="fd-vh">{KIND_LABEL[a.kind]}: </span>
-            </span>
-            {/* The fold under the row says how many older copies there are: no count here. A
+      {groupCopies(items).map(({ newest: a, older }) => {
+        // A title that is a file name says its kind already (fleet.html): no kind word after it;
+        // the icon names it for a screen reader, the row title for the pointer.
+        const said = a.kind !== 'other' && kindOfPath(a.title) === a.kind;
+        return (
+          <li key={`${a.station_id}/${a.artifact_id}`} data-artifact={a.artifact_id}>
+            <RowLink
+              artifact={a}
+              className="fd-art-row"
+              onOpen={onOpen}
+              title={said ? KIND_LABEL[a.kind] : undefined}
+            >
+              <span className="fd-art-kind">
+                <Icon of={KIND_ICON[a.kind]} size={14} />
+                <span className="fd-vh">{KIND_LABEL[a.kind]}: </span>
+              </span>
+              {/* The fold under the row says how many older copies there are: no count here. A
                 version after the first is a neutral badge, apart from the words of the title. */}
-            <span className="fd-art-titlecell">
-              <span className="fd-art-title">{a.title}</span>
-              {a.latest_version > 1 ? (
-                <span className="fd-badge fd-art-ver">v{a.latest_version}</span>
-              ) : null}
-            </span>
-            <span className="fd-badge" data-kind={a.kind} data-tone="muted" aria-hidden="true">
-              {KIND_LABEL[a.kind]}
-            </span>
-            <span className="fd-art-age">{relativeAge(a.updated_at, now)}</span>
-            {where === undefined ? null : <span className="fd-art-where">{where(a)}</span>}
-          </RowLink>
-          {older.length === 0 ? null : (
-            <details className="fd-art-copies">
-              <summary>
-                {older.length === 1 ? '1 older copy' : `${older.length} older copies`}
-              </summary>
-              <ul aria-label={`Older copies of ${a.title}`}>
-                {older.map((o) => (
-                  <li key={`${o.station_id}/${o.artifact_id}`} data-artifact={o.artifact_id}>
-                    <RowLink artifact={o} className="fd-art-copy" onOpen={onOpen}>
-                      <span className="fd-vh">{o.title}, </span>
-                      <time dateTime={new Date(o.updated_at).toISOString()}>
-                        {exactTime(o.updated_at)}
-                      </time>
-                      {o.latest_version > 1 ? (
-                        <span className="fd-badge fd-art-ver">v{o.latest_version}</span>
-                      ) : null}
-                      <span className="fd-art-age">{relativeAge(o.updated_at, now)}</span>
-                    </RowLink>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </li>
-      ))}
+              <span className="fd-art-titlecell">
+                <span className="fd-art-title">{a.title}</span>
+                {a.latest_version > 1 ? (
+                  <span className="fd-badge fd-art-ver">v{a.latest_version}</span>
+                ) : null}
+              </span>
+              {said ? null : (
+                <span className="fd-badge" data-kind={a.kind} data-tone="muted" aria-hidden="true">
+                  {KIND_LABEL[a.kind]}
+                </span>
+              )}
+              <span className="fd-art-age">{relativeAge(a.updated_at, now)}</span>
+              {where === undefined ? null : <span className="fd-art-where">{where(a)}</span>}
+            </RowLink>
+            {older.length === 0 ? null : (
+              <details className="fd-art-copies">
+                <summary>
+                  {older.length === 1 ? '1 older copy' : `${older.length} older copies`}
+                </summary>
+                <ul aria-label={`Older copies of ${a.title}`}>
+                  {older.map((o) => (
+                    <li key={`${o.station_id}/${o.artifact_id}`} data-artifact={o.artifact_id}>
+                      <RowLink artifact={o} className="fd-art-copy" onOpen={onOpen}>
+                        <span className="fd-vh">{o.title}, </span>
+                        <time dateTime={new Date(o.updated_at).toISOString()}>
+                          {exactTime(o.updated_at)}
+                        </time>
+                        {o.latest_version > 1 ? (
+                          <span className="fd-badge fd-art-ver">v{o.latest_version}</span>
+                        ) : null}
+                        <span className="fd-art-age">{relativeAge(o.updated_at, now)}</span>
+                      </RowLink>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

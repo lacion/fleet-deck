@@ -8,7 +8,7 @@ import { AutomationsPage } from './automations/AutomationsPage';
 import type { AutomationActions } from './automations/automations';
 import type { FeedItem } from './board/feed';
 import type { ConflictLoader } from './board/conflicts';
-import { stationName } from './board/fleet';
+import { BOARD_ARRIVALS, rememberArrivals, stationName } from './board/fleet';
 import { markOnStart, type PlanActions } from './board/plans';
 import type { StationActions } from './board/pairing';
 import { PlanLibrary } from './board/PlanLibrary';
@@ -314,6 +314,11 @@ export function App({
 
   const open = (key: SessionKey) => navigate(sessionRoute(key));
   const toTerminals = () => navigate({ name: 'terminals' });
+  // The board record of arrivals (board/fleet.ts): the sidebar rows, the j/k keys and the lanes
+  // keep their places while a session works; a render reads it, this effect writes it.
+  useEffect(() => {
+    rememberArrivals(sessions, BOARD_ARRIVALS);
+  }, [sessions]);
   const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
   const step = (by: 1 | -1) => {
     if (order.length === 0) return;

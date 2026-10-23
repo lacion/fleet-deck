@@ -61,6 +61,10 @@ describe('FolderPicker (DL-171)', () => {
     // The folder name is sans, the same as the name of a recent folder.
     expect(html).toContain('<span class="fd-folder-base">app</span>');
     expect(html).toContain('git repository');
+    // A listing row opens its folder: it ends in a chevron (a Recent row takes the folder).
+    expect(html).toMatch(
+      /aria-label="Open notes">.*?<span class="fd-folder-base">notes<\/span><svg[^>]*lucide-chevron-right[^>]*>/,
+    );
     expect(html).toContain('aria-label="Open notes"');
     expect(html).toContain('Use this folder');
   });
@@ -77,18 +81,34 @@ describe('FolderPicker (DL-171)', () => {
   });
 
   test('the panel shows the first recent folders and "Show all" with the count', () => {
-    const sessions = [1, 2, 3, 4, 5, 6].map((n) =>
-      card(`s${n}`, 'idle', 'station-a', { cwd: `/w/f${n}`, updated_at: n }),
+    const recent = (pins: readonly string[]) => {
+      const real = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+      const stored = JSON.stringify({ 'station-a': pins });
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: { getItem: (k: string) => (k === 'fd-dir-pins' ? stored : null) },
+      });
+      try {
+        const sessions = Array.from({ length: QUICK_ROWS + 1 }, (_, i) =>
+          card(`s${i}`, 'idle', 'station-a', { cwd: `/w/f${i}`, updated_at: i + 1 }),
+        );
+        const html = render({ initialOpen: true, initialListing: listing, sessions });
+        return html.slice(html.indexOf('aria-label="Recent directories"'), html.indexOf('<nav'));
+      } finally {
+        if (real === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+        else Object.defineProperty(globalThis, 'localStorage', real);
+      }
+    };
+    // A pin and six recent folders: five rows, then "Show all" with the count.
+    const folded = recent(['/w/pin']);
+    expect(folded.match(/title="\/w\/[^"]+"/g)).toHaveLength(QUICK_ROWS);
+    expect(folded).toContain(
+      '<button type="button" class="fd-folder-more">Show all<span class="fd-count">7</span></button>',
     );
-    const html = render({ initialOpen: true, initialListing: listing, sessions });
-    const recent = html.slice(
-      html.indexOf('aria-label="Recent directories"'),
-      html.indexOf('<nav'),
-    );
-    expect(recent.match(/title="\/w\/f\d"/g)).toHaveLength(QUICK_ROWS);
-    expect(recent).toContain(
-      '<button type="button" class="fd-folder-more">Show all<span class="fd-count">6</span></button>',
-    );
+    // One hidden row is no reason for a toggle row: every row shows.
+    const all = recent([]);
+    expect(all.match(/title="\/w\/f\d"/g)).toHaveLength(QUICK_ROWS + 1);
+    expect(all).not.toContain('fd-folder-more');
   });
 
   test('an empty folder says that it has no subfolders', () => {

@@ -16,7 +16,7 @@ import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
 import { type ShellChip, ShellChips } from '../chat/ShellChips';
-import { submitKeyHint } from '../spawn/keyHint';
+import { ReturnKey, SubmitKeys } from '../spawn/keyHint';
 import { ModelMenu } from './SessionSettings';
 
 type Props = {
@@ -597,16 +597,12 @@ export function Composer(props: Props) {
                   onClick={() => send('steer')}
                 >
                   Steer now
-                  <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                    {submitKeyHint()}
-                  </span>
+                  <SubmitKeys className="fd-kbd fd-composer-kbd" />
                 </button>
               ) : null}
               <button type="submit" className="fd-primary" disabled={blocked}>
                 Queue follow-up
-                <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                  ↵
-                </span>
+                <ReturnKey className="fd-kbd fd-composer-kbd" />
               </button>
             </>
           ) : props.phone === true ? (
@@ -622,9 +618,7 @@ export function Composer(props: Props) {
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
               <Icon of={ArrowUp} size={14} /> Send
-              <span className="fd-kbd fd-composer-kbd" aria-hidden="true">
-                ↵
-              </span>
+              <ReturnKey className="fd-kbd fd-composer-kbd" />
             </button>
           )}
         </div>

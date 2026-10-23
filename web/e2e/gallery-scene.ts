@@ -6,18 +6,19 @@ import { project } from '../src/integrations/fixtures';
 import { FakeDeck } from './fake-deck';
 import {
   activity,
+  artifactDetail,
   artifacts,
   DAY,
-  DEV1,
   deckSession,
+  DEV1,
   FD,
   FD_REPO,
   HOUR,
+  id,
   LIGHTING,
   MAC,
   MIN,
   OTTER,
-  id,
   otterTimeline,
   plan,
   pr128,
@@ -27,8 +28,8 @@ import {
   rows,
   schedule,
   stationFields,
-  stationValues,
   stations,
+  stationValues,
   TOKENS,
   TREE,
   TURN,
@@ -171,6 +172,12 @@ export function galleryDeck(options: { needsYou?: boolean } = {}): FakeDeck {
     body: artifacts(now).filter((a) => (query.get('session') ?? a.session_id) === a.session_id),
   }));
   deck.on('/api/shares', ok([share]));
+  // The page of one artifact (gallery 27): its detail and the view link of its frame.
+  deck.on(`/api/artifacts/${LIGHTING}/art-docs`, ok(artifactDetail(now)));
+  deck.on(
+    `/api/artifacts/${LIGHTING}/art-docs/view`,
+    ok({ url: '/a/gallery-docs/', expires_at: now + HOUR }),
+  );
   const repo = (pid: string, name: string, st: string, path: string, origin: string) =>
     project({
       project_id: pid,
@@ -224,6 +231,14 @@ export function galleryDeck(options: { needsYou?: boolean } = {}): FakeDeck {
   };
   for (const suffix of [`turns/${TURN}/diff`, 'turn-diff', 'diff'])
     deck.on(`${session}/${suffix}`, ok(diff));
+  // Since the start, a second file with a long name (60 characters): a phone Files tab must not
+  // pan sideways (gallery 05 checks it).
+  const LONG = 'web/src/session/session-files-tab-overflow-check-with-a-sixty-char-names.tsx';
+  const longPatch = `${REAPER_PATCH}\ndiff --git a/${LONG} b/${LONG}\n--- a/${LONG}\n+++ b/${LONG}\n@@ -1 +1,2 @@\n x\n+y`;
+  deck.on(
+    `${session}/diff`,
+    ok({ ...diff, summary: { files_changed: 2, insertions: 10, deletions: 3 }, patch: longPatch }),
+  );
   deck.review(LIGHTING, OTTER, REAPER_PATCH);
   const noAnswers = {
     fleet_control: false,

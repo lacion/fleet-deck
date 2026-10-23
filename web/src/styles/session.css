@@ -772,6 +772,12 @@
 .fd-props-slots > .fd-props-aside {
   margin-left: 0;
 }
+/* The neutral bar of a station over 16 slots (`SlotMeter`): `.fd-meter` is a block with no width
+   of its own in the slots line. */
+.fd-props-slots > .fd-meter {
+  flex: none;
+  width: 72px;
+}
 /* The since text of the status is always a line of its own under the status, at the left: one
    layout for "Working in background" and "Idle". */
 .fd-props-row dd > .fd-sh-status + .fd-props-aside {

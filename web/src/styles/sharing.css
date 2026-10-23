@@ -14,14 +14,15 @@
   display: grid;
   gap: var(--sp-4);
 }
-/* A label over its select: 12px --dim, 6px above the control. */
+/* A label over its select: 12px --dim, 6px above the control. The weight of the legend of the
+   roles (the `.fd-label` look of a legend, base.css): one look for one kind of field label. */
 .fd-share-form > label:not(.fd-share-role),
 .fd-share-target {
   display: grid;
   gap: 6px;
   color: var(--dim);
   font-size: var(--fs-meta);
-  font-weight: 500;
+  font-weight: 600;
 }
 .fd-share-form select,
 .fd-share-target select {
@@ -39,13 +40,16 @@
 }
 
 /* The roles: no box around the group. Each choice is a row; the checked radio and a 600 name mark
-   the picked one. */
+   the picked one. The row reaches 10px into the dialog padding, as a menu row does: its hover
+   fill bleeds out, and the radio sits on the left edge of the legend, the selects and the
+   history checkbox (one left edge for the dialog). */
 .fd-share-roles {
   display: grid;
   gap: 2px;
 }
 .fd-share-roles .fd-share-role {
   min-height: 36px;
+  margin-inline: -10px;
   padding: 8px 10px;
   border-radius: var(--r-card);
   transition: background-color var(--t-fast);
@@ -85,6 +89,10 @@
 }
 .fd-share-role .fd-note {
   font-size: var(--fs-meta);
+}
+/* A choice that wraps leaves no orphan word on its last line ("…ran a session"). */
+.fd-share-role > span {
+  text-wrap: pretty;
 }
 .fd-share-form > .fd-note {
   margin-top: calc(var(--sp-3) * -1);

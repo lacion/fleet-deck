@@ -7,8 +7,8 @@ import { FleetHome, providerKeys } from '../app/FleetHome';
 import type { DeckSession, StationInfo } from '../gen';
 import { setDiffTotal } from '../session/workspace';
 import { card, station } from '../testing/fleet';
-import { archLabel } from './fleet';
-import { FleetBoard, laneMode, newArrivals, rememberArrivals, stripCards } from './FleetBoard';
+import { newArrivals, rememberArrivals } from './fleet';
+import { FleetBoard, laneMode, stripCards } from './FleetBoard';
 import { diffTexts, showChangesColumn } from './FleetStrip';
 
 const NOW = 1_760_000_040_000;
@@ -174,15 +174,10 @@ describe('the lane head facts', () => {
     );
   });
 
-  test('the platform says arm64, the word of Apple and of the Linux kernel', () => {
+  test('the platform says arm64 (archLabel of ui/format.ts); the raw arch is the title', () => {
     expect(board([card('a')], { stations: [mac] })).toContain(
-      '<span class="fd-lane-platform">macOS · arm64</span>',
+      '<span class="fd-lane-platform" title="aarch64">macOS · arm64</span>',
     );
-    expect(archLabel('macos', 'aarch64')).toBe('arm64');
-    expect(archLabel('linux', 'aarch64')).toBe('arm64');
-    expect(archLabel('Darwin', 'ARM64')).toBe('arm64');
-    expect(archLabel('linux', 'x86_64')).toBe('x86_64');
-    expect(archLabel('windows', 'aarch64')).toBe('aarch64');
   });
 });
 

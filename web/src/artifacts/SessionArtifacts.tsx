@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { SessionKey } from '../gen';
+import { Paperclip } from '../ui/icons';
 import { Loading } from '../ui/Loading';
-import { ErrorNotice } from '../ui/page';
+import { EmptyState, ErrorNotice } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
 import { ArtifactList, visible } from './ArtifactList';
@@ -24,10 +25,11 @@ export function SessionArtifactsList({
   if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   if (state.items.length === 0) {
     return (
-      <p className="fd-note">
-        This session has no artifacts yet. Publish a file from the Files tab, or ask the session to
-        publish one.
-      </p>
+      <EmptyState
+        icon={Paperclip}
+        title="No artifacts yet"
+        body="Publish a file from the Files tab, or ask the session to publish one."
+      />
     );
   }
   return (

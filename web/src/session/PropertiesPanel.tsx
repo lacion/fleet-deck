@@ -12,10 +12,17 @@ import {
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
-import { costText, inputLabel, rateMeters, SCOPE_TEXT, WARN_PERCENT } from '../board/usage';
+import { SlotMeter } from '../board/StationTraits';
+import {
+  apiPricesTitle,
+  costText,
+  inputLabel,
+  rateMeters,
+  SCOPE_TEXT,
+  WARN_PERCENT,
+} from '../board/usage';
 import type { DeckSession, DiffSummary, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
-import { commandsText } from '../chat/AgentsMenu';
 import {
   addedText,
   compactCount,
@@ -75,27 +82,20 @@ export function scopeLabel(scope: string, provider: string | null): string {
   return `${provider} ${words}`;
 }
 
-/** A slot meter draws one tick per slot up to this many; a bigger station shows the count only. */
-const MAX_TICKS = 16;
-
-/** The used slots of a station as ticks and "3 of 12"; absent when the station does not say. */
+/** The used slots of a station as ticks and "3 of 12", or "12 free" (`SlotMeter`, the notation of
+ * its fleet lane and its station card); absent when the station does not say. */
 function StationSlots({ station }: { readonly station: StationView }) {
   const max = station.info?.max_sessions ?? null;
   if (max === null || max <= 0) return null;
-  const live = station.info?.live_sessions ?? 0;
-  const used = Math.min(live, max);
   return (
     <span className="fd-props-slots">
-      {max <= MAX_TICKS ? (
-        <span className="fd-slots" aria-hidden="true">
-          {Array.from({ length: max }, (_, i) => (
-            <span key={i} data-slot={i < used ? 'used' : undefined} />
-          ))}
-        </span>
-      ) : null}
-      <span className="fd-props-aside">
-        {live} of {max}
-      </span>
+      {/* 16 ticks fill the 168px value column of the panel; more slots draw the neutral bar. */}
+      <SlotMeter
+        max={max}
+        used={station.info?.live_sessions ?? 0}
+        maxTicks={16}
+        countClass="fd-props-aside"
+      />
     </span>
   );
 }
@@ -552,8 +552,10 @@ export function PropertiesPanel({
           </Row>
         )}
         {cost === null ? null : (
-          <Row label="Cost">
-            <span className="fd-props-fuel">{cost}</span>
+          <Row label="At API prices">
+            <span className="fd-props-fuel" title={apiPricesTitle(1)}>
+              {cost}
+            </span>
           </Row>
         )}
         {meters.map((m) =>
@@ -573,26 +575,24 @@ export function PropertiesPanel({
             </div>
           ),
         )}
-        {agents === 0 && commands === 0 && runningAgents === 0 ? null : (
-          // One rule with the Agents bar: the subagents, then the commands in quiet words; a
-          // session with commands only names them.
-          <Row label={agents === 0 && commands > 0 ? 'Commands' : 'Agents'}>
-            {agents > 0 || commands > 0 ? (
-              <span>
-                {countText(agents > 0 ? agents : commands)}
-                {agents > 0 && commands > 0 ? (
-                  <>
-                    {' '}
-                    <span className="fd-props-aside">{`· ${commandsText(commands)}`}</span>
-                  </>
-                ) : null}
-              </span>
-            ) : null}
+        {/* One rule with the Agents bar: an Agents row and a Commands row, each with its count;
+            what runs now (both kinds) is the aside of the first row. */}
+        {agents > 0 || (commands === 0 && runningAgents > 0) ? (
+          <Row label="Agents">
+            {agents > 0 ? <span>{countText(agents)}</span> : null}
             {runningAgents > 0 ? (
-              <span className="fd-props-aside">{runningAgents} running</span>
+              <span className="fd-props-aside">{`${countText(runningAgents)} running`}</span>
             ) : null}
           </Row>
-        )}
+        ) : null}
+        {commands > 0 ? (
+          <Row label="Commands">
+            <span>{countText(commands)}</span>
+            {agents === 0 && runningAgents > 0 ? (
+              <span className="fd-props-aside">{`${countText(runningAgents)} running`}</span>
+            ) : null}
+          </Row>
+        ) : null}
         {fleet == null ? null : <Row label="Fleet control">{fleet}</Row>}
       </dl>
       {/* The facts that the session menu shows while this panel is closed. */}

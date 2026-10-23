@@ -476,9 +476,6 @@
   background: var(--code);
   border-radius: var(--r-card);
 }
-.fd-subagent-error {
-  color: var(--hazard);
-}
 .fd-chat-nested {
   --chat-gap: var(--sp-2);
   display: flex;

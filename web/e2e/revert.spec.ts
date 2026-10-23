@@ -133,7 +133,7 @@ test('the files of a session are browsed, read and searched; a symlink is not op
   await files.getByRole('button', { name: '..' }).click();
   await files.getByRole('button', { name: /^a\.txt\s*4 B$/ }).click();
   await expect(files.getByRole('alert')).toHaveText('no such file');
-  await files.getByLabel('Search', { exact: true }).fill('Guide');
+  await files.getByLabel('Search files', { exact: true }).fill('Guide');
   // Names | Content: two segments of one group (not a select).
   await files
     .getByRole('group', { name: 'Search in' })

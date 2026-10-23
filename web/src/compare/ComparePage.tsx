@@ -3,7 +3,7 @@ import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import { formatHash } from '../app/routes';
 import { sessionTitle } from '../app/sessions';
-import { costText, tokens } from '../board/usage';
+import { API_PRICES, apiPricesTitle, costText, tokens } from '../board/usage';
 import { stationName } from '../board/fleet';
 import { Diff } from '../chat/Diff';
 import type { DeckSession, SessionDiff, SessionKey, StationView } from '../gen';
@@ -189,6 +189,12 @@ function Column({
   const message = timeline?.ready === true ? lastAgentMessage(timeline.events) : null;
   const digest = digestOf(s);
   const cost = costText(s.usage);
+  // Only what the station reports (principle 7: no "unknown"); the cost is named as on every
+  // surface, "at API prices" (§5 Cost).
+  const usage = [
+    s.usage.input_tokens === null ? null : `${tokens(s.usage.input_tokens)} in`,
+    s.usage.output_tokens === null ? null : `${tokens(s.usage.output_tokens)} out`,
+  ].filter((part) => part !== null);
   return (
     <li
       className="fd-compare-col"
@@ -251,14 +257,18 @@ function Column({
           <p className="fd-compare-message">{message}</p>
         )}
       </section>
-      <section aria-label="Usage">
-        <h3 className="fd-label">Usage and cost</h3>
-        <p className="fd-compare-usage">
-          {s.usage.input_tokens === null ? 'unknown' : tokens(s.usage.input_tokens)} in ·{' '}
-          {s.usage.output_tokens === null ? 'unknown' : tokens(s.usage.output_tokens)} out ·{' '}
-          {cost ?? 'cost unknown'}
-        </p>
-      </section>
+      {usage.length === 0 && cost === null ? null : (
+        <section aria-label="Usage">
+          <h3 className="fd-label">Usage</h3>
+          <p className="fd-compare-usage">
+            {usage.join(' · ')}
+            {usage.length > 0 && cost !== null ? ' · ' : ''}
+            {cost === null ? null : (
+              <span title={apiPricesTitle(1)}>{`${cost} ${API_PRICES}`}</span>
+            )}
+          </p>
+        </section>
+      )}
       <footer>
         {progress === undefined ? null : (
           <p

@@ -7,7 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
-import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Plug, Send } from '../ui/icons';
+import { ChevronLeft, ChevronRight, Globe, Icon, type LucideIcon, Radio, Send } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -88,7 +88,7 @@ export function Start({
       {/* The third way is a choice too, in the quiet look (a station that listens is the rare
           case): no fold, so that every way shows at once. */}
       <Choice
-        icon={Plug}
+        icon={Radio}
         title="A station that listens for this deck"
         note="This deck connects to the station. Paste the invitation that the station prints."
         dim

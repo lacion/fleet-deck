@@ -81,6 +81,12 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-app[data-layout="phone"][data-route="terminals"] .fd-route {
   overflow: auto;
 }
+/* §4.8: a phone session never pans sideways: a row that is too wide clips, the pane scrolls down
+   only. */
+.fd-app[data-layout="phone"][data-route="session"] .fd-route {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 
 /* A page (`Page` of ui/page.tsx: Stations, Activity, Settings, the More pages) keeps the room of
    the 8px scrollbar with or without one: its header rule, its tab row and its right-hand

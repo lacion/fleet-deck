@@ -206,7 +206,7 @@ function trim(s) { gsub(/^[ \t\n]+|[ \t\n]+$/, "", s); gsub(/[ \t\n]+/, " ", s);
     }
 }
 '
-hover_budget='chat.css=9 displays.css=1 home.css=14 integrations.css=9 page.css=3 settings.css=9 spawn.css=6 stations.css=5 tailnet.css=8 terminal.css=5'
+hover_budget='displays.css=1 home.css=14 integrations.css=9 page.css=2 settings.css=9 terminal.css=5'
 hover_out=""
 for f in $(find "$styles" -name '*.css' ! -name 'tokens.css' | sort); do
     found=$(awk "$hover_awk" "$f")

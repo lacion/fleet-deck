@@ -2,7 +2,7 @@
 // It has no "Keep this one", no link and no button.
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { costText } from '../board/usage';
+import { API_PRICES, costText } from '../board/usage';
 import { digestOf, lastAgentMessage, patchFiles, siblings } from '../compare/compare';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Timeline } from '../runtime/state';
@@ -93,9 +93,10 @@ function Column({
       ) : (
         <p className="fd-wall-message">{message}</p>
       )}
-      <p className={cost === null ? 'fd-wall-note' : 'fd-wall-note fd-wall-cost'}>
-        {cost ?? 'Cost unknown'}
-      </p>
+      {/* The cost as on every surface (§5 Cost); absent when the station does not report it. */}
+      {cost === null ? null : (
+        <p className="fd-wall-note fd-wall-cost">{`${cost} ${API_PRICES}`}</p>
+      )}
     </li>
   );
 }
@@ -155,9 +156,10 @@ function DisplayColumn({
       ) : (
         <p className="fd-wall-message">{message}</p>
       )}
-      <p className={cost === null ? 'fd-wall-note' : 'fd-wall-note fd-wall-cost'}>
-        {cost ?? 'Cost unknown'}
-      </p>
+      {/* The cost as on every surface (§5 Cost); absent when the station does not report it. */}
+      {cost === null ? null : (
+        <p className="fd-wall-note fd-wall-cost">{`${cost} ${API_PRICES}`}</p>
+      )}
     </li>
   );
 }

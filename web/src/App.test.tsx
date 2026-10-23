@@ -49,13 +49,13 @@ describe('App', () => {
       'Opus 4.1',
       'title="Branch: fd/login"',
       'cargo test',
-      'title="Cost $0.00"',
+      'title="$0.00 at API prices"',
     ])
       expect(html).toContain(text);
     expect(html).not.toContain('Stale');
   });
 
-  test('filter chips name both stations and do not depend on provider inventory', () => {
+  test('filter chips name both stations; the Provider row lists only the providers on the board', () => {
     const html = renderToStaticMarkup(
       <App
         initialRoute={{ name: 'fleet' }}
@@ -64,8 +64,11 @@ describe('App', () => {
       />,
     );
     expect(html).toContain('aria-label="Fleet filters"');
-    for (const name of ['Alpha', 'Beta', 'Claude', 'Codex'])
+    for (const name of ['Alpha', 'Beta'])
       expect(html).toMatch(new RegExp(`<button[^>]*class="fd-chip"[^>]*>${name}</button>`));
+    // One provider on the board: no Provider row (a Codex chip filtered to an empty board).
+    expect(html).not.toContain('<span class="fd-label">Provider</span>');
+    expect(html).not.toContain('>Codex</button>');
     // no filter is set: there is no "N of M" output
     expect(html).not.toContain('<output');
     // The sentence counts the stations that run a live session (§4.3): one of the two.

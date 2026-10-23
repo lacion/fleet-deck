@@ -93,21 +93,6 @@ export function stationName(id: string, stations: readonly StationView[]): strin
   return stations.find((station) => station.station_id === id)?.name ?? id;
 }
 
-/** The systems whose 64-bit ARM machines the owner knows as "arm64": Apple says arm64, and so does
- * the Linux kernel (`arch/arm64`); only `uname -m` says aarch64. */
-const ARM64_SYSTEMS: ReadonlySet<string> = new Set(['macos', 'darwin', 'linux', 'omarchy']);
-
-/**
- * The CPU architecture of a station as the owner reads it: `aarch64` (the Rust target name) is
- * `arm64` on macOS and Linux; any other value stays as the station sends it (`x86_64`).
- */
-export function archLabel(os: string, arch: string): string {
-  const cpu = arch.toLowerCase();
-  return ARM64_SYSTEMS.has(os.toLowerCase()) && (cpu === 'aarch64' || cpu === 'arm64')
-    ? 'arm64'
-    : arch;
-}
-
 /** A live session runs or can run now: not ended, not lost, and its station is reachable (the
  * Watch rule, `watch/tiles.ts`). */
 export const isLiveSession = (card: DeckSession): boolean =>
@@ -168,6 +153,69 @@ export function statusGroups(sessions: readonly DeckSession[]): Record<CardStatu
     );
   }
   return groups;
+}
+
+/**
+ * When each session came into its status: a rising number, for one card (by `cardKey`). A session
+ * keeps its place in its status group while it works (each tool call changes its `updated_at`), and
+ * moves only when its status changes; a session that comes into a status goes to the top of its
+ * group. Linear never moves a row under the pointer: a click lands on the row that the eye chose.
+ */
+export type Arrivals = {
+  last: number;
+  readonly of: Map<string, { readonly status: CardStatus; readonly seq: number }>;
+};
+
+export const newArrivals = (): Arrivals => ({ last: 0, of: new Map() });
+
+/**
+ * The arrivals of the board for the page life: one record for the fleet lanes, the sidebar rows and
+ * the j/k keys, so they agree. A render only reads it; the app and the fleet board write it after a
+ * render (`rememberArrivals`).
+ */
+export const BOARD_ARRIVALS = newArrivals();
+
+/** Forgets the arrivals of the board (tests: every test starts as a fresh board). */
+export function resetBoardArrivals(): void {
+  BOARD_ARRIVALS.last = 0;
+  BOARD_ARRIVALS.of.clear();
+}
+
+/**
+ * The order of two sessions of one status: the newest arrival first; a session that has no arrival
+ * in its status yet (it just came into it) before the others. 0 when neither has one: a stable sort
+ * then keeps the newest-first order of `statusGroups`.
+ */
+export function byArrival(arrivals: Arrivals): (a: DeckSession, b: DeckSession) => number {
+  const seq = (card: DeckSession): number | null => {
+    const seen = arrivals.of.get(cardKey(card));
+    return seen !== undefined && seen.status === card.status ? seen.seq : null;
+  };
+  return (a, b) => {
+    const x = seq(a);
+    const y = seq(b);
+    if (x === y) return 0;
+    if (x === null) return -1;
+    if (y === null) return 1;
+    return y - x;
+  };
+}
+
+/**
+ * Gives every session that has no arrival in its status one, in the order that the board shows
+ * (`byArrival`), so the next render keeps the places: the top session of a group gets the highest
+ * number.
+ */
+export function rememberArrivals(cards: readonly DeckSession[], arrivals: Arrivals): void {
+  const order = byArrival(arrivals);
+  for (const group of Object.values(statusGroups(cards))) {
+    for (const card of [...group].sort(order).reverse()) {
+      const key = cardKey(card);
+      if (arrivals.of.get(key)?.status === card.status) continue;
+      arrivals.last += 1;
+      arrivals.of.set(key, { status: card.status, seq: arrivals.last });
+    }
+  }
 }
 
 /** Observed session data is not the configured provider inventory. */

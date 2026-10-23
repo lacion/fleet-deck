@@ -35,11 +35,6 @@ export type AgentsMenuProps = {
   readonly running?: number | undefined;
 };
 
-/** "1 command", "33 commands": the background commands in words (the Agents row of the Properties
-    panel; the summary of the Agents menu shows them as "Commands" with a count pill). */
-export const commandsText = (n: number): string =>
-  `${countText(n)} ${n === 1 ? 'command' : 'commands'}`;
-
 const Chip = ({ status }: { status: ShownStatus }) => (
   <span className="fd-badge" data-tone={status.tone}>
     {status.label}

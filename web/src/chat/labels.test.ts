@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  agentFile,
-  argText,
-  BUILTIN_WORDS,
-  durationText,
-  requestTitle,
-  thinkingText,
-  toolName,
-} from './labels';
+import { agentFile, argText, durationText, requestTitle, thinkingText, toolName } from './labels';
+import { BUILTIN_WORDS } from '../watch/tooltext';
 
 describe('agentFile', () => {
   test('a path in the folder of the agent CLI is its file name; any other value is null', () => {
@@ -22,16 +15,20 @@ describe('agentFile', () => {
 
 describe('toolName', () => {
   test('an MCP tool reads as its tool in sentence case, with its server apart', () => {
+    // The one parser of the board (watch/tooltext.ts `toolParts`): the deck's own server is no
+    // server (its tools are words of the board), a plugin server loses its `plugin_` prefix.
     expect(toolName('mcp__fleetdeck__publish_artifact')).toEqual({
       name: 'Publish artifact',
-      server: 'fleetdeck',
+      server: null,
     });
     expect(toolName('mcp__github__list-issues')).toEqual({ name: 'List issues', server: 'github' });
     // The server ends at the first `__`.
     expect(toolName('mcp__plugin_x__take_screenshot')).toEqual({
       name: 'Take screenshot',
-      server: 'plugin_x',
+      server: 'x',
     });
+    // A built-in id reads in the words of the board.
+    expect(toolName('AskUserQuestion')).toEqual({ name: 'Question', server: null });
   });
 
   test('a built-in tool whose id is not a word reads as its word', () => {
@@ -39,7 +36,7 @@ describe('toolName', () => {
     expect(toolName('ExitPlanMode')).toEqual({ name: 'Plan', server: null });
     expect(toolName('TodoWrite')).toEqual({ name: 'To-do list', server: null });
     expect(toolName('KillShell')).toEqual({ name: 'Stop command', server: null });
-    expect(BUILTIN_WORDS['WebSearch']).toBe('Web search');
+    expect(BUILTIN_WORDS.get('WebSearch')).toBe('Web search');
   });
 
   test('any other title stays as it is', () => {

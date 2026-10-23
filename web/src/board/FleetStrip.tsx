@@ -29,7 +29,7 @@ import {
   FolderGit2,
   GitBranch,
   Icon,
-  Layers,
+  ListTodo,
   type LucideIcon,
   Mail,
   Paperclip,
@@ -289,7 +289,7 @@ export function FleetStrip({
           {s.background_tasks.length > 0 ? (
             <Ico
               kind="background"
-              icon={Layers}
+              icon={ListTodo}
               title="Background tasks"
               n={s.background_tasks.length}
             />

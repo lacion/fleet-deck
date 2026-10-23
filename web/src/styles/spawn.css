@@ -651,11 +651,6 @@
   gap: var(--sp-2);
   margin-left: auto;
 }
-/* Start session shows its key as two chips (⌘ ↵ or Ctrl ↵): the chips of one key press sit 4px
-   apart, closer than the 8px between the label and the first chip. */
-:where(.fd-spawn-actions) .fd-kbd + .fd-kbd {
-  margin-left: -2px;
-}
 
 /* ── a phone: the sheet is the page; the actions stay above the bottom bar ── */
 @media (max-width: 640px) {
@@ -760,7 +755,7 @@
   /* The open folder panel stops above the sticky footer (60px) and the bottom bar (60px and the
      safe area), not under them. */
   .fd-spawn .fd-folder {
-    scroll-margin-top: calc(env(safe-area-inset-top) + var(--sp-3));
+    scroll-margin-top: var(--sp-3);
     scroll-margin-bottom: calc(60px + 60px + env(safe-area-inset-bottom) + var(--sp-3));
   }
   /* The sticky footer joins the --surface bottom bar as one docked layer, with a visible top rule.

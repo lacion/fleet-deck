@@ -3,12 +3,13 @@
 // show only while the draft differs; Save sends only the keys that changed. Turning `show_diffs`
 // on, a new station and a new binding need the owner's elevation (the deck says so;
 // `withElevation`). The fields are the settings field rows (§4.7, `Field layout="row"`).
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { DisplayView, MonitorInfo, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
 import type { ElevationAsk } from '../settings/elevation';
 import { describe } from '../settings/http';
+import { NoticeIcon } from '../settings/NoticeIcon';
 import { monitorLabel, monitorRaw } from '../ui/format';
 import { Ellipsis, Icon } from '../ui/icons';
 import { Menu } from '../ui/Menu';
@@ -88,6 +89,9 @@ const ago = (at: number, now: number): string => {
   return age === 'now' ? age : `${age} ago`;
 };
 
+/** The answer of the last action of a row: done, or nothing to do. */
+type Note = { readonly text: string; readonly tone: 'ok' | 'info' };
+
 /** A display seen within this time is online: it reads the deck every few seconds. */
 export const ONLINE_MS = 2 * 60_000;
 
@@ -97,7 +101,15 @@ export function seenText(lastSeen: number | null, now: number): string {
   return now - lastSeen < ONLINE_MS ? 'Online' : `Last seen ${ago(lastSeen, now)}`;
 }
 
-/** The binding: a station ("None" clears it and its monitor), then the monitor of the station. */
+/** The hint of a control that waits for a binding: the stored value in words, then what to do. */
+export const UNBOUND_ON = 'On after you bind a station and a monitor.';
+export const UNBOUND_OFF = 'Bind a station and a monitor first.';
+
+/**
+ * The binding: a station ("None" clears it and its monitor), then the monitor of the station: a
+ * name to type, with the monitors that the station reports as suggestions, so that a monitor that
+ * is off now (a wall screen) can be bound too.
+ */
 function Binding({
   draft,
   saved,
@@ -111,6 +123,7 @@ function Binding({
   readonly patch: (next: Partial<Draft>) => void;
 }) {
   const bound = draft.bindStation !== '';
+  const listId = useId();
   const monitorsOf = (id: string): readonly MonitorInfo[] =>
     stations.find((s) => s.station_id === id)?.info?.desktop?.monitors ?? [];
   const monitors = monitorsOf(draft.bindStation);
@@ -137,33 +150,33 @@ function Binding({
           ))}
         </select>
       </Field>
-      {/* No station, no monitor: the row is absent. A station that reports its monitors gives a
-          list of them; else the owner types the name. */}
+      {/* No station, no monitor: the row is absent. The owner types the name; a station that
+          reports its monitors suggests them, and a name that it does not report says so. */}
       {!bound ? null : (
-        <Field label="Bound monitor" layout="row">
-          {monitors.length === 0 ? (
-            <input
-              value={draft.bindMonitor}
-              onChange={(e) => patch({ bindMonitor: e.target.value })}
-            />
-          ) : (
-            <select
-              value={draft.bindMonitor}
-              onChange={(e) => patch({ bindMonitor: e.target.value })}
-            >
-              {draft.bindMonitor === '' ? (
-                <option value="" disabled>
-                  Choose a monitor
-                </option>
-              ) : monitors.some((m) => m.name === draft.bindMonitor) ? null : (
-                <option value={draft.bindMonitor}>{`${draft.bindMonitor} (not connected)`}</option>
-              )}
+        <Field
+          label="Bound monitor"
+          layout="row"
+          hint={
+            monitors.length === 0 || draft.bindMonitor.trim() === ''
+              ? undefined
+              : monitors.some((m) => m.name === draft.bindMonitor.trim())
+                ? undefined
+                : `${draft.bindMonitor.trim()} is not connected now.`
+          }
+        >
+          <input
+            value={draft.bindMonitor}
+            list={monitors.length === 0 ? undefined : listId}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => patch({ bindMonitor: e.target.value })}
+          />
+          {monitors.length === 0 ? null : (
+            <datalist id={listId}>
               {monitors.map((m) => (
-                <option key={m.name} value={m.name} title={monitorRaw(m)}>
-                  {monitorLabel(m)}
-                </option>
+                <option key={m.name} value={m.name} label={monitorLabel(m)} title={monitorRaw(m)} />
               ))}
-            </select>
+            </datalist>
           )}
         </Field>
       )}
@@ -178,14 +191,16 @@ function Binding({
  */
 function QuietHours({
   value,
-  disabled,
+  bound,
   onChange,
 }: {
   readonly value: string;
-  readonly disabled: boolean;
+  /** A monitor is bound: without one the control waits, and its hint says why. */
+  readonly bound: boolean;
   readonly onChange: (next: string) => void;
 }) {
   const on = value !== '';
+  const disabled = !bound;
   // The times of the last "on": a switch turned off and on again gives them back.
   const [last, setLast] = useState(on ? value : QUIET_DEFAULT);
   const [from = '', to = ''] = value.split('-');
@@ -232,7 +247,11 @@ function QuietHours({
         </span>
       ) : null}
       <span className="fd-fieldhint">
-        The screen stays dark in these hours, in the local time of the bound station.
+        {bound
+          ? 'The screen stays dark in these hours, in the local time of the bound station.'
+          : on
+            ? UNBOUND_ON
+            : UNBOUND_OFF}
       </span>
     </div>
   );
@@ -259,7 +278,7 @@ export function DisplayRow({
   const [base, setBase] = useState(display);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<Note | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -283,7 +302,7 @@ export function DisplayRow({
     what().then(
       () => {
         setBusy(false);
-        setNote(done);
+        setNote(done === null ? null : { text: done, tone: 'ok' });
         onDone();
       },
       (e: unknown) => {
@@ -304,7 +323,7 @@ export function DisplayRow({
       return;
     }
     if (Object.keys(out.change).length === 0) {
-      setNote('Nothing changed.');
+      setNote({ text: 'Nothing changed.', tone: 'info' });
       return;
     }
     setBusy(true);
@@ -320,7 +339,7 @@ export function DisplayRow({
         if (shown === null) return;
         setBase(shown);
         setDraft(draftOf(shown));
-        setNote('Saved.');
+        setNote({ text: 'Saved.', tone: 'ok' });
         onDone();
       },
       (e: unknown) => {
@@ -433,7 +452,9 @@ export function DisplayRow({
         hint={
           bound
             ? 'Turn on the bound monitor when a session needs you, except in quiet hours.'
-            : 'Bind a station and a monitor first.'
+            : draft.wake
+              ? UNBOUND_ON
+              : UNBOUND_OFF
         }
       >
         <input
@@ -446,13 +467,18 @@ export function DisplayRow({
           onChange={(e) => patch({ wake: e.target.checked })}
         />
       </Field>
-      <QuietHours value={draft.quiet} disabled={!bound} onChange={(quiet) => patch({ quiet })} />
+      <QuietHours value={draft.quiet} bound={bound} onChange={(quiet) => patch({ quiet })} />
       {error === null ? null : (
         <p className="fd-fielderror" role="alert">
           {error}
         </p>
       )}
-      {note === null ? null : <p role="status">{note}</p>}
+      {note === null ? null : (
+        <div className="fd-set-notice" data-tone={note.tone} role="status">
+          <NoticeIcon tone={note.tone} />
+          <span>{note.text}</span>
+        </div>
+      )}
       {/* One save look on the Settings page (§2.2): Save is the general primary, as in the save bar
           of the station tabs. Only the changed card shows the two answers. */}
       {dirty ? (

@@ -526,9 +526,13 @@ select.fd-ghost[data-active="true"] {
 select.fd-ghost[data-active="true"] {
   font-weight: 600;
 }
-/* A key hint inside a button sits on the button fill. */
+/* A key hint inside a button sits on the button fill. A key press of two keys (⌘ ↵, Ctrl ↵) is two
+   chips 4px apart, closer than the 8px between the label and the first chip. */
 :where(button, a.fd-btn) > .fd-kbd {
   margin-left: 2px;
+}
+:where(button, a.fd-btn) > .fd-kbd + .fd-kbd {
+  margin-left: -2px;
 }
 .fd-primary > .fd-kbd,
 .fd-decide > .fd-kbd {
@@ -991,6 +995,17 @@ details[open] > summary[data-variant="toggle"]::after {
   > .fd-kbd {
   box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
 }
+/* A key drawn as an icon (Return, the arrow keys of the palette foot): Mona Sans has no arrow
+   glyph, and the fallback drew about 5px tall above the chip center. A square chip around a 12px
+   icon. */
+.fd-kbd-icon {
+  padding: 0;
+  width: 18px;
+}
+.fd-kbd-icon > .fd-icon {
+  width: 12px;
+  height: 12px;
+}
 
 /* A field with a leading icon and an optional trailing key hint. */
 .fd-field {
@@ -1266,6 +1281,12 @@ details[open] > summary[data-variant="toggle"]::after {
   line-height: 1;
   letter-spacing: 0;
   user-select: none;
+}
+/* The sender of a chat prompt (chat/PromptBubble.tsx): the avatar at 20px, on the 21px first line
+   of the 14px chat prose (§3). */
+.fd-avatar[data-size="sm"] {
+  width: 20px;
+  height: 20px;
 }
 
 /* ── status glyph ───────────────────────────────────────────────── */

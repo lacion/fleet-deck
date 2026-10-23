@@ -675,18 +675,27 @@ test('a page with a back link keeps its filters level with the title row', async
   const deck = galleryDeck({});
   await deck.install(page);
   await logIn(page);
-  await goTo(page, '#/project/p-rannoch');
-  await expect(page.getByRole('heading', { level: 1, name: 'rannoch' })).toBeVisible();
-  // The back link is a row of its own above the title row (§4.3), so the filters stay level.
-  const centre = (sel: string) =>
-    page
-      .locator(sel)
-      .first()
-      .evaluate((e) => {
-        const r = e.getBoundingClientRect();
-        return r.top + r.height / 2;
-      });
-  expect(
-    Math.abs((await centre('.fd-page-titlerow')) - (await centre('.fd-page-filters'))),
-  ).toBeLessThan(1);
+  // The artifact page: a back link, and the kind and the version as filters (a project page
+  // has its forge badge on its place line, not as a filter).
+  await goTo(page, `#/artifact/${LIGHTING}/art-docs`);
+  await expect(
+    page.getByRole('heading', { level: 1, name: /^Omarchy docs preview/ }),
+  ).toBeVisible();
+  // The back link is a row of its own above the title row (§4.3), so the filters stay level
+  // with the first line of the title (a long title wraps in its own column).
+  const firstLine = await page
+    .locator('.fd-page-title')
+    .first()
+    .evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return r.top + Number.parseFloat(getComputedStyle(e).lineHeight) / 2;
+    });
+  const filters = await page
+    .locator('.fd-page-filters')
+    .first()
+    .evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return r.top + r.height / 2;
+    });
+  expect(Math.abs(firstLine - filters)).toBeLessThan(1.5);
 });

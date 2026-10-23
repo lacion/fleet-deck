@@ -1082,6 +1082,9 @@
   grid-template-rows: minmax(0, 1fr) minmax(0, 40%);
 }
 
+/* The focus panes are bays, as the mission areas: `--panel-bg` with `--shadow-lift` (light: the
+   white lifted panel; `--surface` was 1.04:1 on the canvas). The diff itself sits on `--code`
+   (§2.2: a diff never sits on a `--raised` fill, and the light `--panel-bg` is `--raised`). */
 .fd-wall-focus-chat,
 .fd-wall-diff,
 .fd-wall-single {
@@ -1091,13 +1094,15 @@
   min-height: 0;
   overflow: hidden;
   padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
+  background: var(--panel-bg);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-wall-single {
   padding: 0;
   background: transparent;
+  box-shadow: none;
 }
 
 .fd-wall-single > .fd-wall-h {
@@ -1254,12 +1259,14 @@
   font-size: var(--fs-meta);
 }
 
-/* The person's prompt is a bubble at the right. */
+/* The person's prompt is a bubble at the right, on the neutral fill a step above its pane
+   (`--badge-bg`): the panes and the tiles are --raised in light (a tile in dark too), where a
+   --raised bubble vanished. */
 .fd-wall-chatline[data-kind="prompt"] {
   align-self: flex-end;
   max-width: 75%;
   padding: var(--sp-2) var(--sp-3);
-  background: var(--raised);
+  background: var(--badge-bg);
   border-radius: var(--r-card);
   color: var(--text);
 }
@@ -1284,6 +1291,8 @@
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   font-size: var(--fs-data);
+  background: var(--code);
+  border-radius: var(--r-card);
 }
 
 .fd-wall-diff .fd-dl {
@@ -1344,8 +1353,9 @@
   min-height: 0;
   overflow: hidden;
   padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
+  background: var(--panel-bg);
   border-radius: var(--r-panel);
+  box-shadow: var(--shadow-lift);
 }
 
 .fd-wall-col > .fd-wall-note {

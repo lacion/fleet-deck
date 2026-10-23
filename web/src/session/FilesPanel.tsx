@@ -321,7 +321,7 @@ export function FilesPanel({
           }}
         >
           <label htmlFor="fd-file-query" className="fd-vh">
-            Search
+            Search files
           </label>
           {/* The search icon in the field is the submit button (Enter submits too). */}
           <div className="fd-field fd-files-query">

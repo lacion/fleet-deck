@@ -426,6 +426,8 @@ export function FieldEditor({
           type="checkbox"
           role="switch"
           className="fd-switch"
+          // Bypass is a hazard (DESIGN-SYSTEM §2.2): its on track is --hazard, not the --ok of "ok".
+          data-tone={meta.key === 'allow_bypass_permissions' ? 'hazard' : undefined}
           aria-checked={value === true}
           checked={value === true}
           disabled={disabled}

@@ -81,7 +81,7 @@ function PageLink({
  */
 export function TerminalsEmpty() {
   return (
-    <Page title="Terminals">
+    <Page title="Terminals" description="Shells that you open from a station or a session.">
       <EmptyState
         icon={SquareTerminal}
         title="No terminals open"

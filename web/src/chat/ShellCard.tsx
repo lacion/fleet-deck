@@ -8,6 +8,7 @@ import type { ProviderKind } from '../gen';
 import type { Outcome } from '../session/commands';
 import type { Item } from '../session/timeline';
 import { Icon, SquareTerminal } from '../ui/icons';
+import { ErrorNotice } from '../ui/page';
 import { type CompactRow, foldSummary } from './filter';
 
 type Tool = Extract<Item, { type: 'tool' }>;
@@ -138,11 +139,7 @@ export function ReleaseDialog({ command, onRelease, onClose }: DialogProps) {
           Only do this when you are sure that <code>!{command}</code> is no longer running (for
           example after a reboot or after you checked the processes).
         </p>
-        {refusal === null ? null : (
-          <p className="fd-note" role="alert">
-            {refusal}
-          </p>
-        )}
+        {refusal === null ? null : <ErrorNotice text={refusal} />}
         <div className="fd-chat-shell-actions">
           <button
             type="button"

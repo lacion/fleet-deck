@@ -42,6 +42,15 @@ describe('artifact list', () => {
     expect(html).toContain('href="#/artifact/station-a/a1"');
   });
 
+  test('a title that is a file name of its kind shows no kind word; the row title keeps it', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactList items={[deckArtifact('a1', { title: 'fleet.html' })]} now={NOW} />,
+    );
+    expect(html).not.toContain('data-tone="muted"');
+    expect(html).toContain('title="HTML"');
+    expect(html).toContain('<span class="fd-vh">HTML: </span>');
+  });
+
   test('v1 says nothing: the version shows only after the first', () => {
     const html = renderToStaticMarkup(
       <ArtifactList items={[deckArtifact('a1', { latest_version: 1 })]} now={NOW} />,
@@ -182,7 +191,9 @@ describe('artifacts page states', () => {
       );
     expect(list({ kind: 'loading' })).toContain('Loading the artifacts…');
     expect(list({ kind: 'error', text: 'nope' })).toContain('Try again');
-    expect(list({ kind: 'ok', items: [] })).toContain('This session has no artifacts yet.');
+    expect(list({ kind: 'ok', items: [] })).toContain(
+      '<p class="fd-emptystate-title">No artifacts yet</p>',
+    );
     expect(list({ kind: 'ok', items: [deckArtifact('a1')] })).toContain('Report a1');
   });
 });

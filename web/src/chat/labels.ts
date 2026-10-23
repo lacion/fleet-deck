@@ -1,4 +1,5 @@
 import { countText, homeShort, pathParts } from '../ui/format';
+import { BUILTIN_WORDS, toolParts } from '../watch/tooltext';
 
 /** Who started a run; `continuation` is the station's restart input (ADR-007 §2.5). */
 export function runLabel(origin: string): string {
@@ -9,37 +10,15 @@ export function runLabel(origin: string): string {
 }
 
 /**
- * The words of the built-in tools of an agent CLI whose id is not a word for the owner
- * (`AskUserQuestion` → "Question"). The chat rows, the Watch tiles, the Activity rows and the wall
- * use this one map (watch/tooltext.ts), so that one tool reads the same everywhere.
- */
-export const BUILTIN_WORDS: Readonly<Record<string, string>> = {
-  AskUserQuestion: 'Question',
-  ExitPlanMode: 'Plan',
-  TodoWrite: 'To-do list',
-  WebFetch: 'Fetch',
-  WebSearch: 'Web search',
-  NotebookEdit: 'Notebook edit',
-  BashOutput: 'Command output',
-  KillShell: 'Stop command',
-};
-
-/**
- * The name of a tool row. An MCP tool (`mcp__<server>__<tool>`) reads as its tool in sentence
- * case, with its server apart (`mcp__fleetdeck__publish_artifact` → "Publish artifact",
- * "fleetdeck"); a built-in tool of `BUILTIN_WORDS` reads as its word ("Question"); any other title
- * stays as it is. The row keeps the raw id in its `title`.
+ * The name of a tool row: the one parser of tool names (`toolParts` of watch/tooltext.ts). An MCP
+ * tool (`mcp__<server>__<tool>`) reads as its tool in sentence case, with its server apart
+ * (`mcp__chrome-devtools__take_screenshot` → "Take screenshot", "chrome-devtools"; the deck's own
+ * server is no server); a built-in id reads as its word (`AskUserQuestion` → "Question",
+ * `BUILTIN_WORDS`); any other title stays as it is. The row keeps the raw id in its `title`.
  */
 export function toolName(title: string): { name: string; server: string | null } {
-  const builtin = BUILTIN_WORDS[title];
-  if (builtin !== undefined) return { name: builtin, server: null };
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(title);
-  const server = mcp?.[1];
-  const words = mcp?.[2]?.replace(/[_-]+/g, ' ').trim();
-  if (server === undefined || words === undefined || words === '') {
-    return { name: title, server: null };
-  }
-  return { name: words.charAt(0).toUpperCase() + words.slice(1), server };
+  const { name, server } = toolParts(title);
+  return { name, server };
 }
 
 /**
@@ -48,7 +27,7 @@ export function toolName(title: string): { name: string; server: string | null }
  */
 export function requestTitle(title: string): string {
   const cut = title.indexOf(' ');
-  const word = BUILTIN_WORDS[cut < 0 ? title : title.slice(0, cut)];
+  const word = BUILTIN_WORDS.get(cut < 0 ? title : title.slice(0, cut));
   return word === undefined ? title : `${word}${cut < 0 ? '' : title.slice(cut)}`;
 }
 

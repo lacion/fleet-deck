@@ -95,11 +95,11 @@ describe('Files page (DL-141)', () => {
       '<button type="button" data-pinned="" title="/srv/pinned/app" aria-label="/srv/pinned/app">',
     );
     expect(html).toContain(
-      '<span class="fd-folder-base">app</span><span class="fd-folder-parent">/srv/pinned/</span>',
+      '<span class="fd-folder-base">app</span><span class="fd-folder-parent"><bdi>/srv/pinned/</bdi></span>',
     );
     expect(html).toContain('title="/home/me/new" aria-label="~/new"');
     expect(html).toContain(
-      '<span class="fd-folder-base">new</span><span class="fd-folder-parent">~/</span>',
+      '<span class="fd-folder-base">new</span><span class="fd-folder-parent"><bdi>~/</bdi></span>',
     );
     expect(html).not.toContain('elsewhere');
     expect(html.match(/title="\/srv\/pinned\/app"/g)?.length).toBe(1);

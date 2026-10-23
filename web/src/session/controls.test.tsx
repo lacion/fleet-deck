@@ -12,7 +12,7 @@ import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
 import { matchSlash } from './slash';
 import { matchHash } from '../review/hashMenu';
-import { submitKeyHint } from '../spawn/keyHint';
+import { submitKeyMod } from '../spawn/keyHint';
 
 const key = { station_id: 'station-a', session_id: 's1' };
 const drive = sessionActions(async () => ({}), key, ['read', 'drive', 'approve']);
@@ -584,9 +584,9 @@ describe('session header (DL-140)', () => {
     expect(shown).toContain(strip);
     // The words of the error; the raw code only in the title.
     expect(shown).toContain('title="usage_limit: The limit is reached"');
-    expect(shown).toMatch(/<\/svg> The limit is reached<\/p>/);
+    expect(shown).toMatch(/<\/svg> The limit is reached\.<\/p>/);
     expect(shown).not.toContain('</svg> usage_limit');
-    expect(shown).not.toContain('retry in');
+    expect(shown).not.toContain('Retry in');
     expect(header(session({ current_run: null, last_error: error }, 'idle'))).toContain(strip);
     // a running session with a run hides an old error
     expect(header(session({ last_error: error }))).not.toContain(strip);
@@ -595,9 +595,9 @@ describe('session header (DL-140)', () => {
   test('the last error tells when a retry is possible', () => {
     const at = (ms: number) => ({ code: 'rate', message: 'slow down', retry_at: Date.now() + ms });
     const text = (ms: number) => header(session({ current_run: null, last_error: at(ms) }, 'idle'));
-    expect(text(5 * 60_000 + 30_000)).toContain('slow down · retry in 6 min');
-    expect(text(40_000)).toMatch(/slow down · retry in \d+ s/);
-    expect(text(-1000)).not.toContain('retry in');
+    expect(text(5 * 60_000 + 30_000)).toContain('Slow down. Retry in 6 min.');
+    expect(text(40_000)).toMatch(/Slow down\. Retry in \d+ s\./);
+    expect(text(-1000)).not.toContain('Retry in');
   });
 });
 
@@ -633,8 +633,9 @@ describe('composer (DL-140)', () => {
   });
 
   test('the buttons keep their texts and the textarea keeps its label', () => {
+    // The Return key is an icon chip: Mona Sans has no ↵ glyph.
     expect(composer()).toMatch(
-      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
     expect(composer()).toContain('>Message</label>');
     expect(composer()).toContain('Add image');
@@ -642,9 +643,15 @@ describe('composer (DL-140)', () => {
     expect(working).toContain('Steer now');
     expect(working).toContain('Queue follow-up');
     expect(working).toContain('The station holds a follow-up until the turn ends.');
-    // §4.5: Steer now carries its ⌘↵ hint, the same as Queue follow-up carries ↵.
-    expect(working).toContain(
-      `aria-keyshortcuts="Meta+Enter Control+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
+    // §4.5: Steer now carries its ⌘ ↵ (Ctrl ↵) chips, and Queue follow-up its ↵ chip: one
+    // notation for the keys of one toolbar.
+    expect(working).toMatch(
+      new RegExp(
+        `aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Steer now<span class="fd-kbd fd-composer-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+      ),
+    );
+    expect(working).toMatch(
+      /Queue follow-up<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
   });
 });

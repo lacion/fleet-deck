@@ -390,9 +390,11 @@ describe('ChatView', () => {
         row(4, { input: 'cat /home/me/notes/a.md\nwc -l' }),
       ],
     });
+    // The deck's own tools are words of the board: no server after the name (watch/tooltext.ts).
     expect(html).toContain(
-      '<span class="fd-chat-tool-title" title="mcp__fleetdeck__publish_artifact">Publish artifact</span><span class="fd-chat-tool-server">fleetdeck</span>',
+      '<span class="fd-chat-tool-title" title="mcp__fleetdeck__publish_artifact">Publish artifact</span>',
     );
+    expect(html).not.toContain('fd-chat-tool-server">fleetdeck');
     expect(html).toContain('<bdi>~/project/a.html</bdi>');
     expect(html).toContain('<bdi>bv93ogg6d</bdi>');
     expect(html).toContain('<bdi>~/notes/a.md</bdi>');

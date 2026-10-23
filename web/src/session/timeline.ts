@@ -15,6 +15,14 @@ import type {
   ToolKind,
   TurnStatus,
 } from '../gen';
+import {
+  answeredText,
+  errorNotice,
+  expiredText,
+  modeNotice,
+  modelNotice,
+  terminalReturnNotice,
+} from '../chat/notices';
 import { fleetGitNotice, newFleetGitMemory } from './timeline_fleet_git';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed' | 'ended';
@@ -78,7 +86,16 @@ export type Item =
       answered_by?: string;
     }
   | { type: 'turn'; key: string; status: TurnStatus; turn_id: string; diff: DiffSummary | null }
-  | { type: 'notice'; key: string; text: string; tone: 'info' | 'error' }
+  | {
+      type: 'notice';
+      key: string;
+      text: string;
+      tone: 'info' | 'error';
+      /** The raw text of the station (an error code, a reason, a model id) for the tooltip. */
+      title?: string;
+      /** How many times the same notice came in a row (absent: once). */
+      repeat?: number;
+    }
   // R12 (DL-165): a published artifact, and a file that the station suggests to keep.
   | {
       type: 'artifact';
@@ -176,12 +193,23 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
     tasks = [];
   };
 
-  // Any item that joins a list after open reasoning ends that reasoning.
+  // Any item that joins a list after open reasoning ends that reasoning. The same notice right
+  // after itself (two lost inputs) is one row with a count.
   const add = (target: Item[], item: Item) => {
     const open = openReasoning.get(target);
     if (open) {
       open.done = true;
       openReasoning.delete(target);
+    }
+    const prev = target.at(-1);
+    if (
+      item.type === 'notice' &&
+      prev?.type === 'notice' &&
+      prev.text === item.text &&
+      prev.tone === item.tone
+    ) {
+      prev.repeat = (prev.repeat ?? 1) + 1;
+      return;
     }
     target.push(item);
   };
@@ -373,7 +401,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           const label = item.options.find((o) => o.option_id === e.option_id)?.label;
           Object.assign(item, {
             state: 'answered',
-            outcome: `${label ?? e.option_id} (by ${e.by})`,
+            outcome: answeredText(label ?? e.option_id, e.by),
             ...(e.answered_by === undefined ? {} : { answered_by: e.answered_by }),
           });
         }
@@ -382,7 +410,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       case 'approval.expired': {
         const e = event as Extract<Event, { kind: 'approval.expired' }>;
         const item = approvals.get(e.request_id);
-        if (item) Object.assign(item, { state: 'expired', outcome: `expired: ${e.reason}` });
+        if (item) Object.assign(item, { state: 'expired', outcome: expiredText(e.reason) });
         break;
       }
       case 'turn.completed': {
@@ -477,7 +505,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       }
       case 'model.changed': {
         const e = event as Extract<Event, { kind: 'model.changed' }>;
-        add(root, { type: 'notice', key, text: `Model changed to ${e.model}`, tone: 'info' });
+        add(root, { type: 'notice', key, ...modelNotice(e.model), tone: 'info' });
         break;
       }
       case 'session.output_gap': {
@@ -488,11 +516,9 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       }
       case 'session.terminal': {
         const e = event as Extract<Event, { kind: 'session.terminal' }>;
-        const text =
-          e.shell_id == null
-            ? `Returned to board control${e.reason ? `: ${e.reason}` : ''}`
-            : 'Opened in a terminal.';
-        add(root, { type: 'notice', key, text, tone: 'info' });
+        const notice =
+          e.shell_id == null ? terminalReturnNotice(e.reason) : { text: 'Opened in a terminal.' };
+        add(root, { type: 'notice', key, ...notice, tone: 'info' });
         break;
       }
       case 'session.notice': {
@@ -502,7 +528,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       }
       case 'mode.changed': {
         const e = event as Extract<Event, { kind: 'mode.changed' }>;
-        add(root, { type: 'notice', key, text: `Mode: ${e.mode}`, tone: 'info' });
+        add(root, { type: 'notice', key, ...modeNotice(e.mode), tone: 'info' });
         break;
       }
       case 'interrupt.result': {
@@ -515,7 +541,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
       }
       case 'error': {
         const e = event as Extract<Event, { kind: 'error' }>;
-        add(root, { type: 'notice', key, text: `${e.code}: ${e.message}`, tone: 'error' });
+        add(root, { type: 'notice', key, ...errorNotice(e.code, e.message), tone: 'error' });
         break;
       }
       case 'session.ended': {

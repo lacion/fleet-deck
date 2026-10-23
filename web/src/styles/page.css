@@ -66,9 +66,11 @@
   min-width: 0;
   min-height: var(--header-h);
 }
+/* A long word breaks only when it alone is wider than the column: the min-content width of the
+   title is its longest word, so a squeezed header never shows the title one letter per line. */
 .fd-page-titlerow > .fd-page-title {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .fd-page-actions {
   flex: none;
@@ -274,16 +276,20 @@
   margin-bottom: var(--sp-1);
   color: var(--faint);
 }
+/* The title and the sentence are balanced: a phone left a one-word last line ("… a review sweep on
+   a / schedule."). */
 .fd-emptystate-title {
   margin: 0;
   font-size: var(--fs-title);
   font-weight: 600;
+  text-wrap: balance;
 }
 .fd-emptystate-body {
   max-width: 60ch;
   margin: 0 0 var(--sp-2);
   color: var(--dim);
   font-size: var(--fs-ui);
+  text-wrap: balance;
 }
 
 /* ── the form: grid, field, actions (no boxed fieldsets) ────────── */
@@ -822,9 +828,13 @@
   font-size: var(--fs-ui);
   font-weight: 400;
 }
-.fd-folder-list button:hover:not(:disabled) {
-  background: var(--raised);
-  border-color: transparent;
+/* Hover only where a pointer hovers (§3): a touch screen kept the --raised fill on the last
+   tapped row, and it read as the chosen folder. A touch press is the --badge-bg of base.css. */
+@media (hover: hover) {
+  .fd-folder-list button:hover:not(:disabled) {
+    background: var(--raised);
+    border-color: transparent;
+  }
 }
 .fd-folder-list .fd-icon {
   flex: none;
@@ -848,11 +858,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The parent keeps its end (`PathTail` drops whole leading folders behind "…/": the last folder
+   tells the rows apart), so its box takes the rest of the row (PathTail measures it); its text
+   starts at the name (a button centers its text). */
 .fd-folder-list button > .fd-folder-parent {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  text-align: start;
   color: var(--faint);
   font-family: var(--font-data);
   font-size: var(--fs-data);
+}
+/* A row of the listing opens its folder (a Recent row takes it): a trailing --faint chevron at the
+   right edge says so. Its name stops 14px and a 6px gap earlier. */
+.fd-folder-panel > .fd-folder-list button > .fd-icon:last-child {
+  margin-left: auto;
+}
+.fd-folder-panel > .fd-folder-list button > .fd-folder-base {
+  max-width: calc(100% - 2 * 14px - 3 * 6px);
 }
 /* "Show all" and "Show fewer" after the pinned and recent folders. */
 .fd-folder-list button.fd-folder-more {
@@ -885,7 +907,9 @@
   fill: currentColor;
 }
 /* The foot: the folder that "Use this folder" takes (mono, it gives way at its start), then Close
-   and Use this folder at the right, as every action group of the sheet. */
+   and Use this folder at the right, as every action group of the sheet. The path ends right before
+   Close: `right`, not `end`, as the box is `direction: rtl` (a short `~` sat 400px away at the
+   left). */
 .fd-folder-foot {
   display: flex;
   flex-wrap: wrap;
@@ -903,7 +927,7 @@
   direction: rtl;
   font-family: var(--font-data);
   font-size: var(--fs-data);
-  text-align: left;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

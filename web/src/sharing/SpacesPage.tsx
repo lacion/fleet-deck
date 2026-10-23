@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, SpaceView, StationView } from '../gen';
-import { Icon, Layers, Plus } from '../ui/icons';
+import { Boxes, Icon, Plus } from '../ui/icons';
 import { Loading } from '../ui/Loading';
 import { EmptyState, ErrorNotice, Field, FormActions, FormGrid, Page } from '../ui/page';
 import { canShare, usePeople } from './context';
@@ -135,7 +135,7 @@ export function SpacesView({
   } else if (state.value.length === 0) {
     body = (
       <EmptyState
-        icon={Layers}
+        icon={Boxes}
         title="No spaces yet"
         body="Make a space, then add sessions to it."
         action={

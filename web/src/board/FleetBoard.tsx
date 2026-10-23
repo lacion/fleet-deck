@@ -12,7 +12,7 @@ import type { Freshness } from '../runtime/state';
 import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { batchCountOf, batchCounts } from '../compare/compare';
-import { isRiskyMode, modeLabel } from '../ui/format';
+import { archLabel, isRiskyMode, modeLabel } from '../ui/format';
 import {
   Archive,
   ArchiveRestore,
@@ -26,18 +26,23 @@ import { archived } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
 import { projectGroups } from '../integrations/projectGroups';
+import { osLabel } from '../tailnet/model';
 import { useNow } from '../ui/useNow';
 import {
-  archLabel,
+  type Arrivals,
+  BOARD_ARRIVALS,
+  byArrival,
   type Contested,
   cardKey,
   NO_REPO,
+  rememberArrivals,
   repoName,
   stationName,
   statusGroups,
 } from './fleet';
 import { FleetStrip, useChangesColumn } from './FleetStrip';
 import { resourceWarnings } from './resources';
+import { archTitle, SlotMeter } from './StationTraits';
 
 /** How the lanes of the board are made (DL-141, DL-176). */
 export type FleetGroup = 'station' | 'repo' | 'project';
@@ -137,63 +142,17 @@ export const STRIP_ORDER: readonly CardStatus[] = [
   'ended',
 ];
 
-/**
- * When each strip came into its status: a rising number, for one card (by `cardKey`). A strip keeps
- * its place in its status group while its session works (each tool call changes its `updated_at`),
- * and moves only when its status changes; a new session goes to the top of its group. Linear never
- * moves a row under the pointer: a click lands on the strip that the eye chose.
- */
-export type Arrivals = {
-  last: number;
-  readonly of: Map<string, { readonly status: CardStatus; readonly seq: number }>;
-};
-
-export const newArrivals = (): Arrivals => ({ last: 0, of: new Map() });
-
-/** The arrivals of the board for the page life: a strip keeps its place also when the owner opens
- * a session and comes back. FleetBoard writes them after a render (`rememberArrivals`). */
-const BOARD_ARRIVALS = newArrivals();
-
-/** The status groups of a lane: newest arrival first; a strip with no arrival yet (it just came
- * into its status) before the others, newest first. Without arrivals: newest first. */
+/** The status groups of a lane: newest arrival first (`byArrival`); a strip with no arrival yet
+ * (it just came into its status) before the others, newest first. Without arrivals: newest first. */
 function arrivalGroups(
   cards: readonly DeckSession[],
   arrivals: Arrivals | undefined,
 ): Record<CardStatus, DeckSession[]> {
   const groups = statusGroups([...cards]);
   if (arrivals === undefined) return groups;
-  const seq = (card: DeckSession): number | null => {
-    const seen = arrivals.of.get(cardKey(card));
-    return seen !== undefined && seen.status === card.status ? seen.seq : null;
-  };
-  for (const status of STRIP_ORDER) {
-    // A stable sort: the strips with no arrival keep their newest-first order.
-    groups[status].sort((a, b) => {
-      const x = seq(a);
-      const y = seq(b);
-      if (x === y) return 0;
-      if (x === null) return -1;
-      if (y === null) return 1;
-      return y - x;
-    });
-  }
+  // A stable sort: the strips with no arrival keep their newest-first order.
+  for (const status of STRIP_ORDER) groups[status].sort(byArrival(arrivals));
   return groups;
-}
-
-/**
- * Gives every strip that has no arrival in its status one: in the order that `stripCards` shows,
- * so the next render keeps the places (the top strip gets the highest number).
- */
-export function rememberArrivals(cards: readonly DeckSession[], arrivals: Arrivals): void {
-  const groups = arrivalGroups(cards, arrivals);
-  for (const status of STRIP_ORDER) {
-    for (const card of [...groups[status]].reverse()) {
-      const key = cardKey(card);
-      if (arrivals.of.get(key)?.status === card.status) continue;
-      arrivals.last += 1;
-      arrivals.of.set(key, { status: card.status, seq: arrivals.last });
-    }
-  }
 }
 
 /**
@@ -383,15 +342,6 @@ export function emptyStationLanes(
 const settled = (lane: Lane) =>
   lane.cards.every((c) => c.status === 'ended' || c.status === 'lost');
 
-/** The platform names of the station traits, as the owner reads them. */
-const OS_NAME: Readonly<Record<string, string>> = {
-  linux: 'Linux',
-  macos: 'macOS',
-  darwin: 'macOS',
-  omarchy: 'Omarchy',
-  windows: 'Windows',
-};
-
 /**
  * The risky permission mode that every live strip of a lane shares, when the lane has two or more:
  * the lane head names it once, and the strips drop their flag (§4.1). A hazard on every row stops
@@ -420,8 +370,8 @@ function StationFacts({
   return (
     <>
       {traits === undefined ? null : (
-        <span className="fd-lane-platform">
-          {OS_NAME[traits.os.toLowerCase()] ?? traits.os} · {archLabel(traits.os, traits.arch)}
+        <span className="fd-lane-platform" title={archTitle(traits.arch)}>
+          {osLabel(traits.os)} · {archLabel(traits.arch)}
         </span>
       )}
       <span className="fd-lane-reach" data-up={up ? 'true' : 'false'}>
@@ -431,13 +381,10 @@ function StationFacts({
   );
 }
 
-/** A slot meter shows one tick per slot up to this many; a bigger station shows the count only. */
-const MAX_TICKS = 16;
-
 /**
- * The slot meter of a station lane: "3 of 12", the needs-you slots first (DESIGN-SYSTEM §4.4). A
- * station that runs no session shows its free slots as words ("12 free", as the New session
- * station pills): a row of empty ticks says nothing more.
+ * The slot meter of a station lane (`SlotMeter`, the notation of the station card and Properties):
+ * the ticks, the needs-you slots first, and "3 of 12", or "12 free" while the station runs no
+ * session (DESIGN-SYSTEM §4.4).
  */
 function LaneSlots({
   station,
@@ -451,18 +398,10 @@ function LaneSlots({
   const max = info.max_sessions;
   const used = Math.min(info.live_sessions, max);
   const needs = Math.min(cards.filter((c) => c.status === 'needs_you').length, used);
-  if (max > 0 && info.live_sessions === 0)
-    return <span className="fd-lane-slots fd-lane-free">{max} free</span>;
+  const free = max > 0 && info.live_sessions === 0;
   return (
-    <span className="fd-lane-slots">
-      {max > 0 && max <= MAX_TICKS ? (
-        <span className="fd-slots" aria-hidden="true">
-          {Array.from({ length: max }, (_, i) => (
-            <span key={i} data-slot={i < needs ? 'needs_you' : i < used ? 'used' : undefined} />
-          ))}
-        </span>
-      ) : null}
-      {info.live_sessions} of {max}
+    <span className={free ? 'fd-lane-slots fd-lane-free' : 'fd-lane-slots'}>
+      <SlotMeter max={max} used={info.live_sessions} needs={needs} />
     </span>
   );
 }

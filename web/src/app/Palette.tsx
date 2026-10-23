@@ -3,6 +3,7 @@ import { STATUS_LANES, stationName } from '../board/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import { archived } from '../ui/archive';
 import { useDismiss } from '../ui/dismiss';
+import { ReturnKey } from '../spawn/keyHint';
 import { ArrowDown, ArrowUp, Icon, Plus } from '../ui/icons';
 import { isHibernated } from '../views/hibernate';
 import { trapTab, useFocusReturn } from './focus';
@@ -176,9 +177,9 @@ export function Palette({
         {matches.length === 0 && !canStart ? (
           <p className="fd-empty">No matching sessions.</p>
         ) : null}
-        {/* The arrow keys are icons: Mona Sans has no arrow glyph, and the fallback glyph drew
-            about 5px tall and above the center of its chip. Return is a word, as Esc is (the help
-            says Ctrl+Enter too). */}
+        {/* The arrow keys and Return are icons (`.fd-kbd-icon`, `ReturnKey`: the one key notation of
+            the board): Mona Sans has no arrow glyph, and the fallback glyph drew about 5px tall and
+            above the center of its chip. */}
         <div className="fd-palette-foot" aria-hidden="true">
           <span>
             <kbd className="fd-kbd fd-kbd-icon">
@@ -192,7 +193,7 @@ export function Palette({
             Move
           </span>
           <span>
-            <kbd className="fd-kbd">Enter</kbd> Open
+            <ReturnKey /> Open
           </span>
           <span>
             <kbd className="fd-kbd">Esc</kbd> Close

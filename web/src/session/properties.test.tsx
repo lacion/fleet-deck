@@ -147,9 +147,9 @@ describe('properties panel facts (§4.5)', () => {
       '<dt>Agents</dt><dd><span>2</span><span class="fd-props-aside">1 running</span>',
     );
     expect(html).not.toContain('Subagents');
-    // The commands follow the subagents in quiet words, as in the summary of the bar.
+    // The commands have a row of their own, as "Commands" and its pill in the summary of the bar.
     expect(panel('live', true, { agents: 3, commands: 33, runningAgents: 5 })).toContain(
-      '<dt>Agents</dt><dd><span>3 <span class="fd-props-aside">· 33 commands</span></span><span class="fd-props-aside">5 running</span></dd>',
+      '<dt>Agents</dt><dd><span>3</span><span class="fd-props-aside">5 running</span></dd></div><div class="fd-props-row"><dt>Commands</dt><dd><span>33</span></dd>',
     );
     // Commands only: the row names them ("Commands 34" in the bar).
     expect(panel('live', true, { agents: 0, commands: 34, runningAgents: 0 })).toContain(

@@ -8,21 +8,15 @@
    (§4.5: never yellow). The tab labels have no side padding: they line up with the left edge of
    the page (the title, the section headings). The row scrolls sideways, so it clips an outward
    focus ring: the ring goes inside the tab, and the focused tab grows by --sp-1 at each side (a
-   negative margin keeps the row still) so that the ring does not touch the label. The row keeps
-   --sp-1 of room at each side for that ring (a negative margin keeps the labels on the page
-   edge); its rule is drawn inside that room, so that it starts and ends on the page edges. */
+   negative margin keeps the row still) so that the ring does not touch the label. page.css runs
+   the row the full column with its labels on the page gutter and draws its one rule. */
 .fd-set-tabs {
   display: flex;
   gap: var(--sp-5);
   height: 36px;
-  margin-inline: calc(-1 * var(--sp-1));
-  padding: 0 var(--sp-1);
+  padding-block: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid transparent;
-  background:
-    linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
-    no-repeat border-box;
   scrollbar-width: none;
   /* A row that scrolls rests on a tab start, one gap in from the edge: the tab before it ends at
      the edge, so the row never stops on a fragment of a word (SettingsTabs snaps the same way). */
@@ -99,15 +93,12 @@
   outline-offset: -2px;
   border-radius: var(--r-chip);
 }
-/* Forced colors: the transparent underline of a tab and the gradient rule of the row are not
-   drawn as they are. An unselected tab hides its underline (Canvas), the selected tab draws it in
-   Highlight, and the row draws its rule as a real edge (without the room at its sides). The tabs
-   get --sp-1 of side padding, so that the Highlight ring of the selected tab (base.css) and the
-   focus ring do not touch the label. */
+/* Forced colors: the transparent underline of a tab is not drawn as it is. An unselected tab hides
+   its underline (Canvas), the selected tab draws it in Highlight, and the row rule is CanvasText.
+   The tabs get --sp-1 of side padding, so that the Highlight ring of the selected tab (base.css)
+   and the focus ring do not touch the label. */
 @media (forced-colors: active) {
   .fd-set-tabs {
-    margin-inline: 0;
-    padding: 0;
     border-bottom-color: CanvasText;
   }
   .fd-set-tabs [role="tab"],
@@ -131,26 +122,14 @@
     height: var(--tap-min);
   }
 }
-/* A phone: the row runs to the edges of the screen, so that a tab scrolls out at the screen edge
-   and not at the 16px gutter; its padding keeps the first and the last tab on the gutter, and its
-   rule starts and ends on the gutter like the rules of the page. The selected tab scrolls into
-   view, clear of the fades (SettingsTabs). */
+/* A phone: the row runs to the edges of the screen (page.css), so that a tab scrolls out at the
+   screen edge and not at the 16px gutter. The selected tab scrolls into view, clear of the fades
+   (SettingsTabs). */
 @media (max-width: 640px) {
   .fd-set-tabs {
     gap: var(--sp-4);
-    margin-inline: calc(-1 * var(--sp-4));
-    padding-inline: var(--sp-4);
     scroll-padding-inline: var(--sp-4);
-    background:
-      linear-gradient(var(--border-soft) 0 0) var(--sp-4) 100% / calc(100% - 2 * var(--sp-4)) 1px
-      no-repeat border-box;
   }
-}
-/* The tab row closes the page header: the header has no rule of its own, so that one rule (the
-   tab row's) separates the head of the page from its panel. */
-.fd-settings > .fd-page-head {
-  padding-bottom: 0;
-  border-bottom: 0;
 }
 /* The height of the tab row: the sticky parts of a tab (the section index, a section that an index
    link scrolls to) start under it. */
@@ -169,10 +148,7 @@
     position: sticky;
     top: 0;
     z-index: 4;
-    background:
-      linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
-      no-repeat border-box,
-      var(--bg);
+    background: var(--bg);
   }
 }
 /* A phone: a shorter head. The description sits 8px nearer to the tab row, and each of its two

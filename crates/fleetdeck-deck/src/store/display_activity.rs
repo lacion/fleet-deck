@@ -43,8 +43,9 @@ fn describe(event: &Event) -> Option<(ActivityKind, String)> {
             ActivityKind::Approval,
             format!("Needs you: {}", request_label(*request_kind)),
         ),
-        Event::ApprovalResolved { .. } => (ActivityKind::Approval, "Approval answered".to_owned()),
-        Event::ApprovalExpired { .. } => (ActivityKind::Approval, "Approval expired".to_owned()),
+        // The words of the board (`super::describe`), without the approval detail.
+        Event::ApprovalResolved { .. } => (ActivityKind::Approval, "Answered".to_owned()),
+        Event::ApprovalExpired { .. } => (ActivityKind::Approval, "Request expired".to_owned()),
         Event::SessionStarted { .. } => (ActivityKind::Lifecycle, "Session started".to_owned()),
         Event::SessionEnded { .. } => (ActivityKind::Lifecycle, "Session ended".to_owned()),
         Event::SessionHibernated { after_min } => (

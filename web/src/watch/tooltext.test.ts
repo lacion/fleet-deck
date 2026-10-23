@@ -83,6 +83,13 @@ describe('toolLabel', () => {
     expect(toolWords('Bash')).toBe('Bash');
   });
 
+  test('a built-in tool whose id is not a word reads as the word of the chat rows', () => {
+    expect(toolLabel('AskUserQuestion')).toBe('Question');
+    expect(toolLabel('TodoWrite')).toBe('To-do list');
+    expect(toolWords(' ExitPlanMode ')).toBe('Plan');
+    expect(toolText('AskUserQuestion', '{"questions":[{"header":"Color"}]}').name).toBe('Question');
+  });
+
   test('every other name stays as it is', () => {
     expect(toolLabel('Read')).toBe('Read');
     expect(toolLabel('TaskStop')).toBe('TaskStop');

@@ -6,7 +6,7 @@
 // Properties Station row draw the same ticks and words.
 import type { StationTraits as Traits } from '../gen';
 import { osLabel } from '../tailnet/model';
-import { countText } from '../ui/format';
+import { archLabel, countText } from '../ui/format';
 
 /** The labels that are short names: they read in capitals. */
 const ACRONYMS: readonly string[] = ['gpu', 'cpu', 'tpu', 'npu', 'nas', 'wsl', 'ssd', 'ram', 'vm'];
@@ -22,15 +22,16 @@ export function labelText(label: string): string {
 }
 
 /**
- * The arch of a station as its owner names it: the Rust target arch `aarch64` is `arm64` (the
- * word of macOS and of the concept pictures). The raw arch stays in the `title` of the line and in
- * a placement need (`arch:aarch64`).
+ * The raw architecture for the `title` of a line that shows `archLabel` of `ui/format.ts`
+ * (`aarch64` where the line says `arm64`), or none when the two are the same. The raw arch also
+ * stays in a placement need (`arch:aarch64`).
  */
-export const archText = (arch: string): string => (arch === 'aarch64' ? 'arm64' : arch);
+export const archTitle = (arch: string): string | undefined =>
+  archLabel(arch) === arch ? undefined : arch;
 
 /** The text of the line: one separator for every part, so that each label reads as its own value. */
 export function traitsText(t: Traits): string {
-  const parts = [osLabel(t.os), archText(t.arch)];
+  const parts = [osLabel(t.os), archLabel(t.arch)];
   if (t.on_battery === true) parts.push('on battery');
   parts.push(...t.labels.map(labelText));
   return parts.join(' · ');
@@ -38,10 +39,8 @@ export function traitsText(t: Traits): string {
 
 export function StationTraits({ traits }: { readonly traits: Traits | undefined }) {
   if (traits === undefined || !Array.isArray(traits.labels)) return null;
-  // The raw arch, where the line shows another word for it.
-  const raw = archText(traits.arch) === traits.arch ? undefined : traits.arch;
   return (
-    <p className="fd-note fd-station-traits" title={raw}>
+    <p className="fd-note fd-station-traits" title={archTitle(traits.arch)}>
       {traitsText(traits)}
     </p>
   );

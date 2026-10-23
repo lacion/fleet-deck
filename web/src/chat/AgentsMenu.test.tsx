@@ -4,14 +4,7 @@ import type { Event, EventEnvelope } from '../gen';
 import { hasAgents, taskStates, toolTitles } from '../session/tasks';
 import { buildTimeline } from '../session/timeline';
 import { envelopes, recorded } from '../testing/timeline';
-import {
-  AgentHead,
-  AgentsMenu,
-  commandName,
-  commandsText,
-  subagentName,
-  summaryNote,
-} from './AgentsMenu';
+import { AgentHead, AgentsMenu, commandName, subagentName, summaryNote } from './AgentsMenu';
 
 function task(
   task_id: string,
@@ -210,10 +203,7 @@ describe('the agents menu', () => {
     expect(rowIds(menu(events).html)).toEqual(['a3', 'a2', 'a1', 't2', 't5', 't3', 't1', 't4']);
   });
 
-  test('the words of the counts', () => {
-    expect(commandsText(1)).toBe('1 command');
-    expect(commandsText(33)).toBe('33 commands');
-    expect(commandsText(1286)).toBe('1,286 commands');
+  test('the name of a subagent', () => {
     expect(subagentName({ input: '\n  Fix the shim\nmore', title: 'Agent' })).toBe('Fix the shim');
     expect(subagentName({ input: '', title: 'Agent' })).toBe('Agent');
   });

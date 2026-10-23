@@ -134,6 +134,13 @@ test('05 session files', async ({ page }) => {
   await setUp(page);
   const pane = await toOtter(page, 'files');
   await expect(pane.getByRole('tabpanel')).toBeVisible();
+  // A long changed file name never makes the pane pan sideways (§4.8).
+  expect(
+    await page.evaluate(() => {
+      const r = document.querySelector('.fd-route');
+      return r === null || r.scrollWidth <= r.clientWidth;
+    }),
+  ).toBe(true);
   await themed(page, '05', 'session-files');
 });
 
@@ -259,7 +266,7 @@ test('19 files', async ({ page }) => {
   const folder = page.getByRole('form', { name: 'Open a folder' });
   await folder.getByLabel('Folder').fill('/home/me/projects/fleet-deck');
   await folder.getByRole('button', { name: 'Open' }).click();
-  await expect(page.getByText('crates/')).toBeVisible();
+  await expect(page.getByText('crates', { exact: true }).first()).toBeVisible();
   await themed(page, '19', 'files');
 });
 
@@ -321,6 +328,37 @@ test('25 home all clear', async ({ page }) => {
   // (a narrow desktop header drops the calm words next to a conflict, so: attached, not visible)
   await expect(page.locator('.fd-home-needs[data-clear="true"]')).toHaveCount(1);
   await themed(page, '25', 'home-all-clear');
+});
+
+/** The page of one artifact; its frame shows a small page of the scene. */
+async function toArtifact(page: Page) {
+  await page.route('**/a/gallery-docs/**', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Docs</title><h1>Omarchy docs preview</h1><p>The station setup.</p>',
+    }),
+  );
+  await goTo(page, `#/artifact/${LIGHTING}/art-docs`);
+  await expect(page.locator('.fd-art-pageview .fd-page-desc')).toBeVisible();
+}
+
+// The page of one artifact: the header keeps a long title in its own column next to the kind,
+// the version and the actions, and nothing leaves the window (at 1440px the title was one letter
+// wide and the actions were off the screen).
+test('27 artifact', async ({ page }) => {
+  await setUp(page);
+  await toArtifact(page);
+  if (test.info().project.name === 'desktop') {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const title = page.locator('.fd-art-pageview .fd-page-title');
+    expect((await title.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(240);
+    const actions = await page.locator('.fd-art-pageview .fd-page-actions').boundingBox();
+    expect(actions).not.toBeNull();
+    expect((actions?.x ?? 0) + (actions?.width ?? 0)).toBeLessThanOrEqual(1440);
+    const route = page.locator('.fd-route');
+    expect(await route.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+  }
+  await themed(page, '27', 'artifact');
 });
 
 // A project page: the sessions of the fleet-deck repository are strips with the columns of the

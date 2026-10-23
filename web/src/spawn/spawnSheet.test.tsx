@@ -90,7 +90,7 @@ describe('the New session sheet (DESIGN-SYSTEM §4.6)', () => {
     // The key: two chips, the modifier and Return (an icon: Mona Sans has no ↵ glyph).
     expect(foot([])).toMatch(
       new RegExp(
-        `Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+        `Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
       ),
     );
     expect(foot(['fix the base'])).toContain(

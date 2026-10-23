@@ -57,6 +57,7 @@ import { RenameForm } from './RenameForm';
 import { SendToWall } from '../wall/SendToWall';
 import { KillConfirm, menuGroups, OpenConfirm, ShellsOffNote } from './MenuParts';
 import { AutoContinueSwitch, ModeLadder, ModelPicker } from './SessionSettings';
+import { errorNotice } from '../chat/notices';
 
 export { CopyButton } from './CopyButton';
 
@@ -189,6 +190,7 @@ export function SessionHeader({
   const retry = retryText(s.last_error?.retry_at ?? null, now);
   const showError =
     s.last_error != null && (s.state === 'exited' || s.state === 'lost' || s.current_run === null);
+  const errorWords = s.last_error ? errorNotice(s.last_error.code, s.last_error.message) : null;
 
   /** The confirm of "Open in terminal", inside a menu. */
   const openConfirm = (
@@ -737,16 +739,12 @@ export function SessionHeader({
           Ending the terminal, then resuming the session…
         </p>
       ) : null}
-      {/* The words of the error; its code stays in the title (never raw text on the strip). */}
-      {showError && s.last_error ? (
-        <p
-          className="fd-sh-strip"
-          data-tone="hazard"
-          role="status"
-          title={`${s.last_error.code}: ${s.last_error.message}`}
-        >
-          <Icon of={TriangleAlert} size={14} /> {s.last_error.message}
-          {retry ? ` · ${retry}` : ''}
+      {/* The words of the error (`errorNotice`, the words of the chat); its code stays in the
+          title (never raw text on the strip). The retry is a sentence of its own. */}
+      {showError && errorWords ? (
+        <p className="fd-sh-strip" data-tone="hazard" role="status" title={errorWords.title}>
+          <Icon of={TriangleAlert} size={14} /> {errorWords.text}
+          {retry ? ` ${retry.charAt(0).toUpperCase()}${retry.slice(1)}.` : ''}
         </p>
       ) : null}
       {outcome ? (

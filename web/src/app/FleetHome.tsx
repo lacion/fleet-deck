@@ -481,8 +481,10 @@ export function FleetHome({
         <Icon of={Search} />
         <input
           type="search"
-          aria-label="Filter sessions"
-          placeholder="Filter sessions"
+          id="fd-home-search"
+          aria-label="Search sessions"
+          aria-keyshortcuts="/"
+          placeholder="Search sessions"
           value={filter.search}
           onChange={(event) => setFilter({ ...filter, search: event.target.value })}
         />

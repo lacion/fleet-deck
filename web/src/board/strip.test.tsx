@@ -543,7 +543,9 @@ describe('flight deck fixes', () => {
     const beta = html.slice(html.indexOf('aria-label="Station Beta"'));
     expect(beta).toContain('<h2 class="fd-lane-name fd-wide">Beta</h2>');
     expect(beta.slice(0, beta.indexOf('No sessions.'))).not.toContain('fd-count');
-    expect(beta).toContain('<span class="fd-lane-slots fd-lane-free">12 free</span>');
+    expect(beta).toContain(
+      '<span class="fd-lane-slots fd-lane-free"><span data-free="true">12 free<span class="fd-vh"> session slots</span></span></span>',
+    );
     expect(beta).not.toContain('data-slot');
     // A folded lane of ended sessions only: its count is on the Ended row.
     const ended = board([card('a'), card('e', 'ended', 'station-b')], { foldEnded: true });

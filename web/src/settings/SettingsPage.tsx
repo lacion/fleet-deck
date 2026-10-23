@@ -6,7 +6,7 @@ import type { DeckSession, StationView } from '../gen';
 import type { Navigate, Route } from '../app/routes';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Page } from '../ui/page';
-import { traitsText } from '../board/StationTraits';
+import { archTitle, traitsText } from '../board/StationTraits';
 import { TailnetCard } from '../tailnet/TailnetCard';
 import { CARD_KEYS } from './model';
 import { SettingsTab } from './SettingsTab';
@@ -220,7 +220,7 @@ export function StationIdent({ station }: { readonly station: StationView }) {
           <span className="fd-set-ident-off">offline</span>
         )}
         {traits === undefined || !Array.isArray(traits.labels) ? null : (
-          <span className="fd-set-ident-facts">
+          <span className="fd-set-ident-facts" title={archTitle(traits.arch)}>
             {traitsText(traits).replaceAll(' · ', '\u00a0· ')}
           </span>
         )}

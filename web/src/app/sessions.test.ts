@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { BOARD_ARRIVALS, rememberArrivals, resetBoardArrivals } from '../board/fleet';
 import { card, station } from '../testing/fleet';
 import {
   basename,
   matchesQuery,
   paletteMatches,
   relativeAge,
-  resetStatusOrder,
   sessionTitle,
   sidebarModel,
   sidebarOrder,
@@ -15,8 +15,8 @@ import {
 const ids = (cards: readonly { summary: { session_id: string } }[]) =>
   cards.map((c) => c.summary.session_id);
 
-// Every test starts as a fresh board: no status order is known yet.
-beforeEach(() => resetStatusOrder());
+// Every test starts as a fresh board: no arrival is known yet.
+beforeEach(() => resetBoardArrivals());
 
 describe('relativeAge', () => {
   test('now, minutes, hours and days', () => {
@@ -145,8 +145,12 @@ describe('the status order of the live rows', () => {
   const stations = [station('station-a')];
   const at = (id: string, status: 'working' | 'idle', updated_at: number) =>
     card(id, status, 'station-a', { updated_at });
-  const rows = (list: ReturnType<typeof card>[]) =>
-    ids(sidebarModel(list, stations, '').groups[0]?.live ?? []);
+  // A render reads the board record of arrivals; the app writes it after the render.
+  const rows = (list: ReturnType<typeof card>[]) => {
+    const out = ids(sidebarModel(list, stations, '').groups[0]?.live ?? []);
+    rememberArrivals(list, BOARD_ARRIVALS);
+    return out;
+  };
 
   test('a fresh board lists each status the last activity first', () => {
     expect(rows([at('w1', 'working', 1), at('w2', 'working', 5), at('i1', 'idle', 9)])).toEqual([
@@ -156,7 +160,7 @@ describe('the status order of the live rows', () => {
     ]);
   });
 
-  test('an event keeps every row in place; a new status puts the row after that status', () => {
+  test('an event keeps every row in place; a new status puts the row first in that status', () => {
     expect(rows([at('a', 'working', 3), at('b', 'working', 2), at('c', 'idle', 9)])).toEqual([
       'a',
       'b',
@@ -168,28 +172,29 @@ describe('the status order of the live rows', () => {
       'b',
       'c',
     ]);
-    // c starts to work: after a and b, which were working before it.
+    // c starts to work: it arrives first in the working rows, as on the fleet lanes.
     expect(rows([at('a', 'working', 3), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
+      'c',
       'a',
       'b',
-      'c',
     ]);
-    // a waits, then works again: each time after the rows already in its status.
+    // a waits, then works again: each time first in its new status.
     expect(rows([at('a', 'idle', 11), at('b', 'working', 8), at('c', 'working', 10)])).toEqual([
-      'b',
       'c',
+      'b',
       'a',
     ]);
     expect(rows([at('a', 'working', 12), at('b', 'working', 13), at('c', 'working', 14)])).toEqual([
-      'b',
-      'c',
       'a',
+      'c',
+      'b',
     ]);
   });
 
   test('the j/k keys follow the rows; a session hidden by the query keeps its place', () => {
     const list = [at('a', 'working', 1), at('b', 'working', 2)];
     expect(ids(sidebarOrder(sidebarModel(list, stations, 'a')))).toEqual(['a']);
+    rememberArrivals(list, BOARD_ARRIVALS);
     const later = [at('a', 'working', 9), at('b', 'working', 2)];
     expect(ids(sidebarOrder(sidebarModel(later, stations, '')))).toEqual(['b', 'a']);
   });

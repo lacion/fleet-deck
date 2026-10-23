@@ -383,7 +383,7 @@ describe('session pane (DL-140)', () => {
     const idle = view(session({ current_run: null }), timeline());
     expect(idle).not.toContain('Steer now');
     expect(idle).toMatch(
-      /<\/svg> Send<span class="fd-kbd fd-composer-kbd" aria-hidden="true">↵<\/span><\/button>/,
+      /<\/svg> Send<span class="fd-kbd fd-composer-kbd fd-kbd-icon" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?<\/svg><\/span><\/button>/,
     );
 
     const none = view(session({ capabilities: null }), timeline());

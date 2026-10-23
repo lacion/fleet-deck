@@ -48,9 +48,10 @@ describe('the traits line', () => {
     expect(traitsText({ os: 'linux', arch: 'x86_64', on_battery: false, labels: ['gpu'] })).toBe(
       'Linux · x86_64 · GPU',
     );
-    // The display name of the OS; an id without one stays as it is.
+    // The display name of the OS; an id without one stays as it is. The architecture is the
+    // name that owners know (archLabel): amd64 is x86_64, aarch64 is arm64.
     expect(traitsText({ os: 'omarchy', arch: 'x86_64', labels: [] })).toBe('Omarchy · x86_64');
-    expect(traitsText({ os: 'freebsd', arch: 'amd64', labels: [] })).toBe('freebsd · amd64');
+    expect(traitsText({ os: 'freebsd', arch: 'amd64', labels: [] })).toBe('freebsd · x86_64');
   });
 
   test('the arch reads as its owner names it; the raw arch is the tooltip', () => {

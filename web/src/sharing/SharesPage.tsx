@@ -6,15 +6,7 @@ import type { DeckSession, ShareInfo, ShareKind, ShareRole, SpaceView, StationVi
 import { useSettings } from '../settings/context';
 import type { ElevationAsk } from '../settings/elevation';
 import { useFleetElevation } from '../spawn/useFleetElevation';
-import {
-  Icon,
-  Layers,
-  LayoutGrid,
-  type LucideIcon,
-  MessageSquare,
-  Plus,
-  Share2,
-} from '../ui/icons';
+import { Boxes, Icon, LayoutGrid, type LucideIcon, MessageSquare, Plus, Share2 } from '../ui/icons';
 import { Loading } from '../ui/Loading';
 import { EmptyState, ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
@@ -58,7 +50,7 @@ export function shareState(share: ShareInfo, now: number): 'revoked' | 'expired'
 /** The kind of a share in sentence case, with its icon (§5: no raw enum values). */
 const KIND: Readonly<Record<ShareKind, { readonly label: string; readonly icon: LucideIcon }>> = {
   session: { label: 'Session', icon: MessageSquare },
-  space: { label: 'Space', icon: Layers },
+  space: { label: 'Space', icon: Boxes },
   board: { label: 'Board', icon: LayoutGrid },
 };
 
@@ -349,7 +341,7 @@ export function SharesView({
   }
   const spacesLink = (
     <a className="fd-btn fd-ghost" href="#/spaces">
-      <Icon of={Layers} /> Spaces
+      <Icon of={Boxes} /> Spaces
     </a>
   );
   // One primary per screen (§2.2): while the list is empty, the empty state holds New share.

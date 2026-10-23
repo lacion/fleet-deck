@@ -2,7 +2,7 @@
 // strips of the fleet board (DESIGN-SYSTEM §4.1), and "New session in this project".
 import { isLive } from '../app/sessions';
 import { stationName } from '../board/fleet';
-import { FleetStrip } from '../board/FleetStrip';
+import { FleetStrip, useChangesColumn } from '../board/FleetStrip';
 import type { DeckSession, Project, StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { homeShort } from '../ui/format';
@@ -57,6 +57,8 @@ export function ProjectSessions({
   canDrive,
 }: Props) {
   const own = sessions.filter((s) => s.project_id === project.project_id);
+  // The changes column: one choice for the live list and the Ended fold, as on the board (§4.1).
+  const changes = useChangesColumn();
   const live = own.filter(isLive).sort(byNewest);
   const ended = own.filter((s) => !isLive(s)).sort(byNewest);
   // The one general primary of the tab (§2.2): at the right of the Live row, or in the empty
@@ -86,7 +88,7 @@ export function ProjectSessions({
   const where = `${homeShort(project.path)} on ${stationName(project.station_id, stations)}`;
   return (
     <OwnProject id={project.project_id}>
-      <div className="fd-int-tab" data-tab="sessions">
+      <div className="fd-int-tab" data-tab="sessions" data-changes={changes ? 'true' : undefined}>
         {live.length === 0 ? (
           // No session runs: the empty state says what to do and holds the button; the ended
           // sessions fold under it.

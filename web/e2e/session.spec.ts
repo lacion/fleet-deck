@@ -154,7 +154,9 @@ test('the subagent tree shows each child timeline and status, and the card count
   await expect(chip(tests)).toHaveText('failed');
   await expect(task(explore)).toHaveText('Explore the code');
   await expect(chip(explore)).toHaveText('done');
-  await expect(docs).toContainText('Bash · Allow (by board)');
+  // The board is the owner: the outcome names no one.
+  await expect(docs).toContainText('Bash · Allow');
+  await expect(docs).not.toContainText('(by board)');
   await expect(view).toContainText('All subagents reported.');
 });
 
@@ -550,7 +552,9 @@ test('the last error shows under the header of an ended session, with the retry 
   const strip = page
     .getByRole('region', { name: 'Session' })
     .locator('.fd-sh-strip[data-tone="hazard"]');
-  await expect(strip).toContainText('usage_limit: The limit is reached · retry in');
+  // The words of the error (the code only in the title); the retry is a sentence of its own.
+  await expect(strip).toContainText('The limit is reached. Retry in');
+  await expect(strip).toHaveAttribute('title', 'usage_limit: The limit is reached');
   expect(await fitsWidth(page)).toBe(true);
 });
 

@@ -87,6 +87,8 @@ describe('the board copy of the fields', () => {
     });
     expect(on).toContain('<p class="fd-set-hazard"><svg');
     expect(on).toContain('Sessions on this station can run every tool without asking.');
+    // Bypass is a hazard (DESIGN-SYSTEM §2.2): its switch has the --hazard on track, not --ok.
+    expect(on).toContain('class="fd-switch" data-tone="hazard"');
     // Every switch says what it lets happen (one verb form on the page).
     expect(on).toContain(
       'Lets sessions on this station use the Bypass mode, which skips every permission check.',

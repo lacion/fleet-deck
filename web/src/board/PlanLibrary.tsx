@@ -66,14 +66,28 @@ export function PlanLibrary({
   const [plans, setPlans] = useState<readonly DeckPlan[] | null>(initial);
   const now = useNow(undefined, 30_000);
   const [archived, setArchived] = useState(false);
+  // The archive holds plans: Show archived stays while the list without them is empty.
+  const [anyArchived, setAnyArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const load = useCallback(() => {
     if (actions === undefined) return;
     setError(null);
-    actions.list(archived).then(setPlans, (e: unknown) => {
-      setError(e instanceof Error ? e.message : 'The deck did not answer.');
-    });
+    actions.list(archived).then(
+      (rows) => {
+        setPlans(rows);
+        // An empty list: ask once whether the archive holds plans (else no filter shows).
+        if (!archived && rows.length === 0) {
+          actions.list(true).then(
+            (all) => setAnyArchived(all.length > 0),
+            () => setAnyArchived(false),
+          );
+        }
+      },
+      (e: unknown) => {
+        setError(e instanceof Error ? e.message : 'The deck did not answer.');
+      },
+    );
   }, [actions, archived]);
   useEffect(load, [load]);
   const [assigning, setAssigning] = useState<{
@@ -127,6 +141,7 @@ export function PlanLibrary({
       .mark(plan.id, status)
       .then(
         (row) => {
+          if (row.status === 'archived') setAnyArchived(true);
           setPlans((list) =>
             (list ?? [])
               .map((p) => (p.id === row.id ? row : p))
@@ -145,14 +160,17 @@ export function PlanLibrary({
       count={plans === null || plans.length === 0 ? undefined : plans.length}
       description="Plans that sessions proposed. Start one as a new session."
       filters={
-        <button
-          type="button"
-          className="fd-ghost fd-sm"
-          aria-pressed={archived}
-          onClick={() => setArchived(!archived)}
-        >
-          <Icon of={Archive} size={14} /> Show archived
-        </button>
+        // A filter over nothing is no filter: it shows while there are plans to filter.
+        plans !== null && (plans.length > 0 || archived || anyArchived) ? (
+          <button
+            type="button"
+            className="fd-ghost fd-sm"
+            aria-pressed={archived}
+            onClick={() => setArchived(!archived)}
+          >
+            <Icon of={Archive} size={14} /> Show archived
+          </button>
+        ) : null
       }
       actions={
         <button
@@ -173,16 +191,24 @@ export function PlanLibrary({
       {plans === null ? (
         <Loading text="Loading plans…" />
       ) : plans.length === 0 ? (
-        <EmptyState
-          icon={FileText}
-          title="No plans yet"
-          body="A session in plan mode adds its plan here."
-          action={
-            <a className="fd-btn fd-primary" href="#/new">
-              <Icon of={Plus} /> New session
-            </a>
-          }
-        />
+        archived ? (
+          <EmptyState
+            icon={FileText}
+            title="No archived plans"
+            body="A plan that you archive shows here."
+          />
+        ) : (
+          <EmptyState
+            icon={FileText}
+            title="No plans yet"
+            body="Start a session in plan mode: its plan shows here, ready to run again."
+            action={
+              <a className="fd-btn fd-primary" href="#/new">
+                <Icon of={Plus} /> New session
+              </a>
+            }
+          />
+        )
       ) : (
         <ol className="fd-plan-list">
           {plans.map((p) => {

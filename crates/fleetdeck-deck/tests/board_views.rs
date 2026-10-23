@@ -355,3 +355,105 @@ async fn an_approval_requested_row_carries_its_request_kind() {
         );
     }
 }
+
+/// An answer, an expiry and an end read in the words of the board: the
+/// words of the approval card for the kind of the chosen option, never a
+/// raw option id or end reason.
+#[tokio::test]
+async fn answers_expiries_and_ends_read_in_the_words_of_the_board() {
+    use fleetdeck_proto::event::{ApprovalOption, ExpiredReason, OptionKind, ResolvedBy};
+    let f = fixture().await;
+    let c = board(std::sync::Arc::clone(&f.ctx)).await;
+    seed(&f).await;
+    let option = |id: &str, kind: OptionKind| ApprovalOption {
+        option_id: id.to_owned(),
+        label: id.to_owned(),
+        kind: Some(kind),
+    };
+    let ask = |seq: u64, id: &str, kind: RequestKind| {
+        let mut e = request(seq, i64::try_from(seq).unwrap() * 1_000, id, kind, "Bash");
+        if let EventBody::Known(Event::ApprovalRequested { options, .. }) = &mut e.event {
+            *options = vec![
+                option("yes", OptionKind::AllowOnce),
+                option("session", OptionKind::AllowSession),
+                option("no", OptionKind::Deny),
+            ];
+        }
+        e
+    };
+    let answer = |seq: u64, id: &str, option_id: &str| {
+        env(
+            seq,
+            "s1",
+            i64::try_from(seq).unwrap() * 1_000,
+            Event::ApprovalResolved {
+                request_id: id.into(),
+                option_id: option_id.to_owned(),
+                by: ResolvedBy::Board,
+                answered_by: None,
+            },
+        )
+    };
+    f.store
+        .apply_events(
+            f.station.clone(),
+            f.inc.clone(),
+            vec![
+                ask(7, "a1", RequestKind::Command),
+                answer(8, "a1", "yes"),
+                ask(9, "a2", RequestKind::Command),
+                answer(10, "a2", "session"),
+                ask(11, "a3", RequestKind::Command),
+                answer(12, "a3", "no"),
+                ask(13, "a4", RequestKind::Question),
+                answer(14, "a4", "yes"),
+                ask(15, "a5", RequestKind::Command),
+                env(
+                    16,
+                    "s1",
+                    16_000,
+                    Event::ApprovalExpired {
+                        request_id: "a5".into(),
+                        reason: ExpiredReason::TurnEnded,
+                    },
+                ),
+                env(
+                    17,
+                    "s1",
+                    17_000,
+                    Event::SessionEnded {
+                        reason: "process_exit".to_owned(),
+                        exit_code: Some(0),
+                    },
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+    let (cookie, _) = c.login().await;
+    let h = [("Cookie", cookie.as_str())];
+    let r = c.get("/api/activity?session=s1", &h).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let texts: Vec<&str> = r.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["text"].as_str())
+        .collect();
+    for want in [
+        "Allowed",
+        "Allowed for this session",
+        "Denied",
+        "Answered",
+        "Request expired",
+        "Session ended",
+    ] {
+        assert!(texts.contains(&want), "{want} in {texts:?}");
+    }
+    assert!(
+        !texts
+            .iter()
+            .any(|t| t.contains("process_exit") || t.starts_with("Approval")),
+        "{texts:?}"
+    );
+}

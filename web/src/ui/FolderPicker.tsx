@@ -2,10 +2,11 @@
 // breadcrumbs of the folder, its sub-folders, the pinned and recent folders, and "Use this folder".
 // The spawn form, the Projects form and the Automations form use it.
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { PathTail } from '../chat/PathTail';
 import type { DeckSession, WorkspaceListing } from '../gen';
 import { readPins, recentDirs, togglePin, writePins } from '../spawn/spawn';
 import { homeOf, homeShort, pathParts } from './format';
-import { Folder, FolderGit2, House, Icon, Pin, PinOff } from './icons';
+import { ChevronRight, Folder, FolderGit2, House, Icon, Pin, PinOff } from './icons';
 
 /** Reads one folder of a station; `null` is the list of the allowed roots. */
 export type ListWorkspaces = (station: string, path: string | null) => Promise<WorkspaceListing>;
@@ -100,7 +101,13 @@ export function FolderRow({
       >
         <Icon of={pin ? Pin : home ? House : Folder} size={14} />
         <span className="fd-folder-base">{base}</span>
-        {parent === '' ? null : <span className="fd-folder-parent">{parent}</span>}
+        {/* The parent keeps its end: whole leading folders give way to "…/" (the last folder tells
+            the rows apart); the title keeps the full path. */}
+        {parent === '' ? null : (
+          <span className="fd-folder-parent">
+            <PathTail path={parent} />
+          </span>
+        )}
       </button>
     </li>
   );
@@ -108,7 +115,10 @@ export function FolderRow({
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The station did not answer.');
 
-/** The most pinned and recent folders that the panel shows before "Show all". */
+/**
+ * The most pinned and recent folders that the panel shows before "Show all". One more row shows
+ * with no toggle: a toggle row that reveals one row is a row of chrome for no gain.
+ */
 export const QUICK_ROWS = 5;
 
 /** The board preference or the OS asks for less motion (DESIGN-SYSTEM.md §2.5). */
@@ -155,6 +165,9 @@ export function FolderPicker({
     ...pinned.map((p) => ({ p, pin: true })),
     ...recent.map((p) => ({ p, pin: false })),
   ];
+  // "Show all" only when it hides two or more rows.
+  const quickFolds = quick.length > QUICK_ROWS + 1;
+  const quickShown = quickFolds && !allQuick ? quick.slice(0, QUICK_ROWS) : quick;
 
   // The fade of the listing follows its scroll and each new folder.
   useEffect(() => {
@@ -300,13 +313,13 @@ export function FolderPicker({
             <div className="fd-folder-quick fd-recent" aria-label="Recent directories">
               <span className="fd-label">{pinned.length > 0 ? 'Pinned and recent' : 'Recent'}</span>
               {/* A folder row: its name, then its parent from the root (§5 paths); the full path
-                  is its title. At most QUICK_ROWS rows and "Show all": the page is the only
-                  scroller on a phone. */}
+                  is its title. At most QUICK_ROWS rows and "Show all" while two or more rows
+                  hide: the page is the only scroller on a phone. */}
               <ul className="fd-folder-list">
-                {(allQuick ? quick : quick.slice(0, QUICK_ROWS)).map(({ p, pin }) => (
+                {quickShown.map(({ p, pin }) => (
                   <FolderRow key={pin ? `pin:${p}` : p} path={p} pin={pin} onPick={pick} />
                 ))}
-                {quick.length > QUICK_ROWS ? (
+                {quickFolds ? (
                   <li>
                     <button
                       type="button"
@@ -382,6 +395,9 @@ export function FolderPicker({
                         <Icon of={entry.repository ? FolderGit2 : Folder} size={14} />
                         <span className="fd-folder-base">{entry.name}</span>
                         {entry.repository ? <span className="fd-vh">git repository</span> : null}
+                        {/* A listing row opens the folder; a Recent row takes it: the chevron
+                            tells them apart. */}
+                        <Icon of={ChevronRight} size={14} />
                       </button>
                     </li>
                   ))}

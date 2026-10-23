@@ -276,10 +276,9 @@
   font-size: var(--fs-title);
 }
 /* The project tabs have the tab row of a page (the Settings tabs, settings.css .fd-set-tabs): the
-   text on the page gutter, 24px apart, the underline as wide as the text. */
+   text on the page gutter (page.css), 24px apart, the underline as wide as the text. */
 .fd-int-project > .fd-pane-tabs {
   gap: var(--sp-5);
-  padding: 0;
 }
 .fd-int-project > .fd-pane-tabs [role="tab"] {
   padding: 0;
