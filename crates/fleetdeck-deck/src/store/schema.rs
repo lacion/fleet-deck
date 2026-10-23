@@ -787,6 +787,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::grants::owner_grant_schema::SQL),
         // V47 (Fleet Sync FS-3): secret_files.
         M::up(super::secret_files::SQL),
+        M::up(super::wake_seen::schema::SQL), // V49 (G5): the wake key has the session; list position 48 until wall-control V48.
     ])
 }
 
