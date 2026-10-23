@@ -13,10 +13,11 @@
   margin: 0;
 }
 
-/* The projects table: the cells share one baseline (the 12px mono folder sits on the line of
-   the 13px name and station). */
+/* The projects table: every cell sits in the middle of its 36px row, the row menu too (a baseline
+   put the texts 4px above the middle and the menu under them). The 12px mono folder and the 13px
+   names still read as one line. */
 .fd-int-projects td {
-  vertical-align: baseline;
+  vertical-align: middle;
 }
 
 /* The whole row opens the project: the name link covers it (::after); the row menu sits above the
@@ -130,7 +131,12 @@
     min-width: 0;
     order: 5;
   }
-  .fd-int-projects .fd-int-path {
+  /* The path box takes the width of its cell, whatever its text: `PathTail` measures this box, and
+     a box as wide as its text shrank to a cut path and never grew back ("…/Fleet-Deck" where
+     "~/Projects/Fleet-Deck" fits). */
+  .fd-int-projects td[data-label="Folder"] > .fd-int-path {
+    flex: 1 1 auto;
+    min-width: 0;
     max-width: none;
   }
   .fd-int-projects td[data-label="Station"] + td[data-label="Folder"]::before {
@@ -240,7 +246,13 @@
   color: var(--text);
   font-size: var(--fs-title);
 }
+/* The project tabs have the tab row of a page (the Settings tabs, settings.css .fd-set-tabs): the
+   text on the page gutter, 24px apart, the underline as wide as the text. */
 .fd-int-project > .fd-pane-tabs {
+  gap: var(--sp-5);
+  padding: 0;
+}
+.fd-int-project > .fd-pane-tabs [role="tab"] {
   padding: 0;
 }
 
@@ -674,8 +686,12 @@ a.fd-int-projectchip:hover {
   text-decoration: none;
 }
 /* The sessions of a project are strips: one column, 6px apart (§4.1). The list is the `fleet`
-   container of the strip rules (home.css): a narrow list gives two-line strips, as on the board. */
+   container of the strip rules (home.css): a narrow list gives two-line strips, as on the board.
+   The strip grid reads the where column from --fd-where-w, which the fleet board declares: the
+   list declares it too (168px, 16% of the list up to 260px on a wide one), or the strip grid has
+   no columns and every field stacks in one cell. */
 .fd-int-sessions {
+  --fd-where-w: 168px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
@@ -683,6 +699,21 @@ a.fd-int-projectchip:hover {
   padding: 0;
   list-style: none;
   container: fleet / inline-size;
+}
+@container fleet (min-width: 721px) {
+  .fd-int-sessions > * {
+    --fd-where-w: clamp(168px, 16cqi, 260px);
+  }
+}
+/* The page is the project: the meta line of a narrow strip does not repeat the project name (the
+   now text gets the room). */
+.fd-int-sessions .fd-strip-meta > .fd-strip-proj {
+  display: none;
+}
+/* No live session: one quiet sentence says so above the Ended fold (a fleet lane's "No
+   sessions."). */
+.fd-int-tab > .fd-int-none {
+  margin: 0;
 }
 /* The ended strips fold under the fleet lane's Ended row (home.css .fd-lane-ended). */
 .fd-int-ended {

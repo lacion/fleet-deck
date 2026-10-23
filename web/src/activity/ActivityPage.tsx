@@ -28,9 +28,10 @@ import {
   Workflow,
   Wrench,
 } from '../ui/icons';
-import { homeShortIn } from '../ui/format';
+import { homeShortIn, plainLine } from '../ui/format';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
+import { foldLines } from '../watch/tiles';
 import { type ActivityTool, activityTool, homePath } from '../watch/tooltext';
 import {
   ALL_CHANNEL,
@@ -79,6 +80,9 @@ const TOOL_ICON: Readonly<Record<string, LucideIcon>> = {
   Shell: SquareTerminal,
   shell: SquareTerminal,
   exec_command: SquareTerminal,
+  Monitor: SquareTerminal,
+  BashOutput: SquareTerminal,
+  KillShell: SquareTerminal,
   Edit: Pencil,
   MultiEdit: Pencil,
   Write: Pencil,
@@ -142,30 +146,52 @@ function Target({ tool }: { readonly tool: ActivityTool }) {
 /**
  * The text of a row. A tool or request row of a tool ("Read: src/a.ts (ok)", "Permission: Bash
  * cargo test") shows the tool name in weight 600 and its target (the look of a Watch tile and the
- * chat, §4.5): no colon, no "(ok)"; a failed or denied call ends in a hazard badge. Every other
- * text stays one string.
+ * chat, §4.5): no colon, no "(ok)". Every other text is one plain line: chat text loses its
+ * Markdown marks (`plainLine`), so a message reads the same here as on a Watch tile and the wall.
  */
 export function RowText({ item }: { readonly item: ActivityItem }) {
   const tool = activityTool(item.kind, item.text);
-  if (tool === null) return <span className="fd-arow-text">{item.text}</span>;
+  if (tool === null) return <span className="fd-arow-text">{plainLine(item.text)}</span>;
   return (
     <span className="fd-arow-text" data-tool="">
       {tool.lead === '' ? null : <span className="fd-arow-lead">{tool.lead}</span>}
       <b className="fd-arow-tool">{tool.name}</b>
       {tool.target === '' ? null : <Target tool={tool} />}
-      {tool.outcome === null ? null : (
-        <span className="fd-badge" data-tone="hazard">
-          {tool.outcome === 'failed' ? 'Failed' : 'Denied'}
-        </span>
-      )}
     </span>
   );
 }
 
+/** The whole text of a row in one line, for its hover title (the row cuts it at its width). */
+function fullText(item: ActivityItem): string {
+  const tool = activityTool(item.kind, item.text);
+  if (tool === null) return plainLine(item.text);
+  const target = tool.form === 'path' ? homePath(tool.target) : homeShortIn(tool.target);
+  return [tool.lead, tool.name, target].filter((part) => part !== '').join(' ');
+}
+
+/** A row of the stream: one event, or the same event that came several times in a row. */
+type Shown = ActivityItem & { readonly repeat?: number };
+
 /**
- * One event. The first row of a run of one session (`first`) names the session and its repository;
- * the rows after it leave the name to it (a phone shows the name as the head of the run). The whole
- * row opens the session: the session link covers it.
+ * The same event of one session several times in a row is one row with its count (`foldLines`),
+ * the newest kept: four "Bash cargo test" rows are one row and a "4".
+ */
+function foldRows(items: readonly ActivityItem[]): Shown[] {
+  const same = (a: Shown, b: Shown) =>
+    a.station_id === b.station_id &&
+    a.session_id === b.session_id &&
+    a.kind === b.kind &&
+    a.text === b.text;
+  // `foldLines` keeps the last line of a run: the stream is newest first, so it folds reversed.
+  return foldLines<Shown>([...items].reverse(), same).reverse();
+}
+
+/**
+ * One event. The first row of a run of one session (`first`) names the session and, after it, its
+ * repository; the rows after it leave the name to it (a phone shows the name as the head of the
+ * run). The whole row opens the session: the session link covers it, and its title names the
+ * session, the repository and the station, then the whole text. A failed or denied call ends in
+ * its result at the right, the chat's result column (§4.5).
  */
 function Row({
   item,
@@ -173,7 +199,7 @@ function Row({
   now,
   stations,
 }: {
-  readonly item: ActivityItem;
+  readonly item: Shown;
   readonly first: boolean;
   readonly now: number;
   readonly stations: readonly StationView[];
@@ -186,6 +212,12 @@ function Row({
   });
   const title = item.session_title ?? item.session_id;
   const outcome = activityTool(item.kind, item.text)?.outcome ?? null;
+  const station = stationName(item.station_id, stations);
+  const place =
+    item.repo === null
+      ? `${title} on ${station}`
+      : `${title} · ${repoLabel(item.repo)} on ${station}`;
+  const repeat = item.repeat ?? 1;
   return (
     <li
       className="fd-arow"
@@ -198,19 +230,21 @@ function Row({
         <span className="fd-vh">{item.kind}</span>
       </span>
       <span className="fd-arow-head">
-        <a className="fd-arow-session" href={href}>
+        <a className="fd-arow-session" href={href} title={`${place}\n${fullText(item)}`}>
           {first ? title : <span className="fd-vh">{title}</span>}
         </a>
         {first && item.repo !== null ? (
-          <span
-            className="fd-arow-repo"
-            title={`${item.repo} on ${stationName(item.station_id, stations)}`}
-          >
-            {repoLabel(item.repo)}
-          </span>
+          <span className="fd-arow-repo">{` · ${repoLabel(item.repo)}`}</span>
         ) : null}
       </span>
       <RowText item={item} />
+      {repeat < 2 ? null : (
+        <span className="fd-count fd-arow-repeat">
+          {repeat}
+          <span className="fd-vh"> times</span>
+        </span>
+      )}
+      {outcome === null ? null : <span className="fd-arow-result">{outcome}</span>}
       <time className="fd-arow-age" dateTime={new Date(item.at).toISOString()}>
         {relativeAge(item.at, now)}
       </time>
@@ -371,7 +405,7 @@ export function ActivityPage({
   const latest = useRef(sessions);
   latest.current = sessions;
   const id = channelId(channel);
-  const shown = inChannel(items ?? [], sessions, channel);
+  const shown = foldRows(inChannel(items ?? [], sessions, channel));
   // The Ended group stays open while its channel is the chosen one (the sidebar's rule).
   const endedShown = endedOpen || list.ended.some((e) => channelId(e.channel) === id);
   const more = useMoreBelow(nav, `${list.repos.length}/${list.live.length}/${endedShown}`);

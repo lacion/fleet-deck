@@ -171,6 +171,8 @@ export function ProjectsPage({
   return (
     <Page
       title="Projects"
+      // The title row says how many projects there are (§4.3), only while there are some.
+      count={list === null || list.length === 0 ? undefined : list.length}
       description="Repositories with their forge and trackers. Forge tokens stay on the station."
       wide
       actions={

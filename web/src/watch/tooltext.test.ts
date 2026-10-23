@@ -1,12 +1,25 @@
 // The words of a tool call: no raw MCP id, no JSON payload, no "(ok)".
 import { describe, expect, test } from 'bun:test';
-import { activityTool, homePath, toolLabel, toolTarget, toolText } from './tooltext';
+import { activityTool, homePath, toolLabel, toolTarget, toolText, toolWords } from './tooltext';
 
 describe('toolLabel', () => {
   test('an MCP id gives the tool in words and the server after a dot', () => {
-    expect(toolLabel('mcp__fleetdeck__publish_artifact')).toBe('Publish artifact · fleetdeck');
     expect(toolLabel('mcp__github__getIssue')).toBe('Get issue · github');
     expect(toolLabel('mcp__plugin_linear_linear__list_issues')).toBe('List issues · linear_linear');
+    expect(toolLabel('mcp__chrome-devtools__take_screenshot')).toBe(
+      'Take screenshot · chrome-devtools',
+    );
+  });
+
+  test("a tool of the deck's own server needs no server name", () => {
+    expect(toolLabel('mcp__fleetdeck__publish_artifact')).toBe('Publish artifact');
+    expect(toolLabel('mcp__fleetdeck__fleet_view')).toBe('Fleet view');
+  });
+
+  test('the short name of a tile line has no server', () => {
+    expect(toolWords('mcp__chrome-devtools__take_screenshot')).toBe('Take screenshot');
+    expect(toolWords('mcp__fleetdeck__publish_artifact')).toBe('Publish artifact');
+    expect(toolWords('Bash')).toBe('Bash');
   });
 
   test('every other name stays as it is', () => {
@@ -76,9 +89,15 @@ describe('toolText', () => {
     expect(toolText('Agent', 'Review the diff', { kind: 'subagent' }).form).toBe('words');
   });
 
+  test('the shell tools that watch or stop a command read as code', () => {
+    expect(toolText('Monitor', 'sleep 1700; echo tick').form).toBe('code');
+    expect(toolText('BashOutput', 'bash_3').form).toBe('code');
+    expect(toolText('KillShell', 'bash_3').form).toBe('code');
+  });
+
   test('an MCP call with a JSON input', () => {
     expect(toolText('mcp__fleetdeck__fleet_view', '{"view":"sessions"}')).toEqual({
-      name: 'Fleet view · fleetdeck',
+      name: 'Fleet view',
       target: '',
       form: 'words',
     });
@@ -118,8 +137,16 @@ describe('activityTool', () => {
       form: 'code',
     });
     expect(activityTool('tool', 'mcp__fleetdeck__publish_artifact (ok)')).toMatchObject({
-      name: 'Publish artifact · fleetdeck',
+      name: 'Publish artifact',
       target: '',
+    });
+  });
+
+  test('a Monitor command is code, the same as a Bash command', () => {
+    expect(activityTool('tool', 'Monitor: sleep 1700; echo tick (ok)')).toMatchObject({
+      name: 'Monitor',
+      target: 'sleep 1700; echo tick',
+      form: 'code',
     });
   });
 

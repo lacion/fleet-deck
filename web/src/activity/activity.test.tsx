@@ -196,13 +196,14 @@ describe('the activity page', () => {
     expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
   });
 
-  test('a finished call loses its "(ok)" and its JSON; a failed call ends in a hazard badge', () => {
+  test('a finished call loses its "(ok)" and its JSON; a failed call ends in its result', () => {
     const html = page({
       initialItems: [
         item({ kind: 'tool', text: 'Read: /home/ana/briefs/a.png (ok)', station_seq: 1 }),
         item({ kind: 'tool', text: 'TaskStop: {"task_id":"bv93ogg6d"} (ok)', station_seq: 2 }),
         item({ kind: 'tool', text: 'Bash: head -40 (failed)', station_seq: 3 }),
         item({ kind: 'tool', text: 'mcp__fleetdeck__publish_artifact (ok)', station_seq: 4 }),
+        item({ kind: 'tool', text: 'Monitor: sleep 1700; echo tick (ok)', station_seq: 5 }),
       ],
     });
     expect(html).not.toContain('(ok)');
@@ -211,9 +212,60 @@ describe('the activity page', () => {
     expect(html).toContain(
       '<b class="fd-arow-tool">TaskStop</b><code class="fd-arow-target">bv93ogg6d</code>',
     );
-    expect(html).toContain('<span class="fd-badge" data-tone="hazard">Failed</span>');
+    // The result column of the chat (§4.5): a hazard word at the right, not a badge in the text.
+    expect(html).toContain('<span class="fd-arow-result">failed</span>');
+    expect(html).not.toContain('data-tone="hazard"');
     expect(html).toContain('data-outcome="failed"');
-    expect(html).toContain('<b class="fd-arow-tool">Publish artifact · fleetdeck</b>');
+    // The deck's own tools need no server name.
+    expect(html).toContain('<b class="fd-arow-tool">Publish artifact</b>');
+    // A Monitor command is mono, the same as a Bash command (principle 5).
+    expect(html).toContain(
+      '<b class="fd-arow-tool">Monitor</b><code class="fd-arow-target">sleep 1700; echo tick</code>',
+    );
+  });
+
+  test('a message is one plain line: no code ticks, emphasis or link marks', () => {
+    const html = page({
+      initialItems: [
+        item({
+          text: 'The fix workflow (`wnzrhrv6c`) is **running**, see [the log](https://x.test/l).',
+        }),
+      ],
+    });
+    expect(html).toContain(
+      '<span class="fd-arow-text">The fix workflow (wnzrhrv6c) is running, see the log.</span>',
+    );
+    expect(html).not.toContain('`');
+    expect(html).not.toContain('**');
+    expect(html).not.toContain('](');
+  });
+
+  test('the same event several times in a row is one row with its count', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 4, at: NOW - 60_000 }),
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 3 }),
+        item({ kind: 'tool', text: 'Bash: cargo test (ok)', station_seq: 2 }),
+        item({ kind: 'tool', text: 'Bash: cargo build (ok)', station_seq: 1 }),
+      ],
+    });
+    expect(html.match(/<li class="fd-arow"/g)).toHaveLength(2);
+    expect(html).toContain(
+      '<span class="fd-count fd-arow-repeat">3<span class="fd-vh"> times</span></span>',
+    );
+    // The row keeps the newest of its copies.
+    expect(html).toContain('>1 min</time>');
+  });
+
+  test('every row names its session, repository and station in its title', () => {
+    const html = page({
+      initialItems: [
+        item({ text: 'One', station_seq: 2 }),
+        item({ session_id: 'n', session_title: 'Loose', repo: null, text: 'Two', station_seq: 1 }),
+      ],
+    });
+    expect(html).toContain('title="Login · acme/web on Alpha\nOne"');
+    expect(html).toContain('title="Loose on Alpha\nTwo"');
   });
 
   test('a run of one session names it on its first row only; every row opens the session', () => {
@@ -225,10 +277,13 @@ describe('the activity page', () => {
       ],
     });
     expect(html.match(/data-run="start"/g)).toHaveLength(2);
-    expect(html).toContain('<a class="fd-arow-session" href="#/s/station-a/a">Login</a>');
-    expect(html).toContain(
-      '<a class="fd-arow-session" href="#/s/station-a/a"><span class="fd-vh">Login</span></a>',
+    expect(html).toMatch(
+      /<a class="fd-arow-session" href="#\/s\/station-a\/a" title="[^"]*">Login<\/a><span class="fd-arow-repo"> · acme\/web<\/span>/,
     );
+    expect(html).toMatch(
+      /<a class="fd-arow-session" href="#\/s\/station-a\/a" title="[^"]*"><span class="fd-vh">Login<\/span><\/a>/,
+    );
+    // The repository follows the name in the session cell, on the first row of a run only.
     expect(html.match(/class="fd-arow-repo"/g)).toHaveLength(2);
   });
 

@@ -8,6 +8,10 @@ import { useProjects } from './context';
 /** The project of the page around the strips: its own chip says nothing there. */
 const Own = createContext<string | null>(null);
 
+/** The project of the page around a strip (`OwnProject`); `null` outside a project page. A strip
+ * names no project that is this one. */
+export const useOwnProject = (): string | null => useContext(Own);
+
 /** Inside it, the chip of project `id` is absent (the project page does not repeat its name). */
 export function OwnProject({
   id,
@@ -21,7 +25,7 @@ export function OwnProject({
 
 export function ProjectChip({ card }: { readonly card: DeckSession }) {
   const projects = useProjects();
-  const own = useContext(Own);
+  const own = useOwnProject();
   const project = projects.find((p) => p.project_id === card.project_id);
   if (project === undefined || project.project_id === own) return null;
   return (

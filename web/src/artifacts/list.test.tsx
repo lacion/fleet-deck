@@ -29,8 +29,8 @@ describe('artifact list', () => {
       />,
     );
     expect(html).toContain('Plan');
-    expect(html).toContain('>HTML<');
-    expect(html).toContain('data-kind="html"');
+    // The kind is a quiet word (the icon says it too): a muted badge, no fill.
+    expect(html).toContain('<span class="fd-badge" data-kind="html" data-tone="muted">HTML</span>');
     expect(html).toContain('<span class="fd-art-ver">v2</span>');
     expect(html).toContain('5 min');
     expect(html).toContain('Alpha · Review');
@@ -58,9 +58,9 @@ describe('artifact list', () => {
       ['other', 0],
     ]);
     const html = renderToStaticMarkup(<ArtifactList items={items} now={NOW} />);
-    expect(html).toContain(
-      '<span class="fd-count" title="3 copies">3<span class="fd-vh"> copies</span></span>',
-    );
+    // The fold is the one notation of the copies: no count pill after the title.
+    expect(html).not.toContain('fd-count');
+    expect(html).not.toContain(' copies</span>');
     expect(html).toContain('<summary>2 older copies</summary>');
     expect(html).toContain('href="#/artifact/station-a/old"');
     expect(html).toContain(`>${exactTime(NOW - 3_600_000)}</time>`);
@@ -131,6 +131,36 @@ describe('artifacts page states', () => {
     expect(html).toContain('All sessions');
     expect(html).toContain('>Review<');
     expect(html).toContain('Plan');
+    // The title row counts the rows of the list (§4.3: title + count).
+    expect(html).toContain(
+      '<h1 class="fd-page-title">Artifacts</h1><span class="fd-count">1</span>',
+    );
+  });
+
+  test('an empty list has no count; a session listed on two stations keeps both options', () => {
+    const empty = renderToStaticMarkup(
+      <ArtifactsPage
+        actions={fakeActions()}
+        stations={[station()]}
+        sessions={[]}
+        now={NOW}
+        initial={{ kind: 'ok', items: [] }}
+      />,
+    );
+    expect(empty).toContain('<h1 class="fd-page-title">Artifacts</h1></div>');
+    const twice = renderToStaticMarkup(
+      <ArtifactsPage
+        actions={fakeActions()}
+        stations={[station(), station('station-b', { name: 'Beta' })]}
+        sessions={[
+          card('s1', 'working', 'station-a', { title: 'Moved' }),
+          card('s1', 'ended', 'station-b', { title: 'Moved' }),
+        ]}
+        now={NOW}
+        initial={{ kind: 'ok', items: [] }}
+      />,
+    );
+    expect(twice.match(/<option value="s1">Moved<\/option>/g)).toHaveLength(2);
   });
 
   test('the page without a deck says so', () => {

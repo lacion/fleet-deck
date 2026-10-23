@@ -8,7 +8,7 @@ import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
-import { ArtifactList, visible } from './ArtifactList';
+import { ArtifactList, groupCopies, visible } from './ArtifactList';
 import { KIND_LABEL, KINDS } from './kinds';
 import { type ListState, useArtifactList } from './useArtifactList';
 
@@ -190,12 +190,13 @@ function Loaded({
           },
         ]),
   ];
-  // A select of the header (§4.3): a quiet ghost select, marked while it filters.
+  // A select of the header (§4.3): a quiet ghost select, marked while it filters. An option has a
+  // key of its own when its value is not unique (a session id listed on two stations).
   const select = (
     label: string,
     value: string,
     set: (v: string) => void,
-    options: readonly { value: string; label: string }[],
+    options: readonly { key?: string; value: string; label: string }[],
   ) => (
     <label key={label} className="fd-art-filter">
       <span className={phone ? 'fd-label' : 'fd-vh'}>{label}</span>
@@ -206,7 +207,7 @@ function Loaded({
         onChange={(e) => set(e.target.value)}
       >
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.key ?? o.value} value={o.value}>
             {o.label}
           </option>
         ))}
@@ -234,7 +235,11 @@ function Loaded({
     ),
     select('Session', filters.session, (s) => setFilters({ ...filters, session: s }), [
       { value: '', label: 'All sessions' },
-      ...stationSessions.map((s) => ({ value: s.summary.session_id, label: sessionTitle(s) })),
+      ...stationSessions.map((s) => ({
+        key: `${s.station_id}/${s.summary.session_id}`,
+        value: s.summary.session_id,
+        label: sessionTitle(s),
+      })),
     ]),
   ];
   const filterForm = (
@@ -263,7 +268,14 @@ function Loaded({
             summary={
               <>
                 <Icon of={ListFilter} size={14} />
-                {chosen.length > 0 ? `Filters (${chosen.length})` : 'Filters'}
+                Filters
+                {/* A count after a label is a pill (§5), never "Filters (2)". */}
+                {chosen.length > 0 ? (
+                  <>
+                    {' '}
+                    <span className="fd-count">{chosen.length}</span>
+                  </>
+                ) : null}
               </>
             }
             summaryClass="fd-ghost"
@@ -304,9 +316,13 @@ function Loaded({
       ) : null}
     </form>
   );
+  // The title row says how many rows the list has (§4.3: title + count), only while it has some.
+  const count =
+    state.kind === 'ok' && state.items.length > 0 ? groupCopies(state.items).length : undefined;
   return (
     <Page
       title="Artifacts"
+      count={count}
       description={ARTIFACTS_DESC}
       className="fd-art-page"
       filters={filterForm}
