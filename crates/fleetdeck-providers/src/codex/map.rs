@@ -28,7 +28,6 @@ const MODEL_LIST_MORE_PAGES: u8 = 4;
 /// shows up in replay.
 pub const IGNORED_NOTIFICATIONS: &[&str] = &[
     "thread/status/changed",
-    "thread/settings/updated",
     "thread/name/updated",
     "thread/archived",
     "thread/unarchived",
@@ -66,6 +65,7 @@ pub const IGNORED_NOTIFICATIONS: &[&str] = &[
 /// app-server schema.
 pub const HANDLED_NOTIFICATIONS: &[&str] = &[
     "thread/started",
+    "thread/settings/updated",
     "turn/started",
     "turn/completed",
     "item/started",
@@ -255,6 +255,7 @@ impl CodexCore {
         });
         let mut out = vec![started];
         out.extend(identity);
+        out.extend(self.effort_of_thread_answer(r));
         if self.config.request_models {
             out.push(self.model_list(0, Vec::new(), None));
         }
@@ -366,6 +367,8 @@ impl CodexCore {
                 })]
             }
             "thread/tokenUsage/updated" => Vec::new(),
+            "thread/settings/updated" if self.own_thread(p) => self.on_settings_updated(p),
+            "thread/settings/updated" => Vec::new(),
             "account/rateLimits/updated" => match super::limits::rate_limits(p) {
                 limits if limits.is_empty() => Vec::new(),
                 rate_limits => vec![Output::Emit(Event::UsageUpdated {

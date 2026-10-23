@@ -18,6 +18,7 @@ mod checkpoint;
 mod core;
 mod core_types;
 mod driver;
+mod effort;
 mod host_cmd;
 mod limits;
 mod map;
@@ -32,6 +33,8 @@ mod shell;
 mod tests;
 #[cfg(test)]
 mod tests_checkpoint;
+#[cfg(test)]
+mod tests_effort;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]

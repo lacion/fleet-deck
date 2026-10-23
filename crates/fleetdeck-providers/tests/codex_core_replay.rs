@@ -467,6 +467,34 @@ fn resume_and_fork_start_sessions_on_the_recorded_threads() {
     }
 }
 
+#[test]
+fn multi_turn_reports_the_effort_of_the_thread_then_of_the_turn() {
+    let events = replay_named("multi_turn");
+    let efforts: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EffortChanged { effort } => Some(effort.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        efforts,
+        vec![Some("high".to_owned()), Some("low".to_owned())]
+    );
+    let started = events
+        .iter()
+        .position(|e| matches!(e, Event::SessionStarted { .. }))
+        .unwrap();
+    let first = events
+        .iter()
+        .position(|e| matches!(e, Event::EffortChanged { .. }))
+        .unwrap();
+    assert!(
+        started < first,
+        "effort.changed comes after session.started"
+    );
+}
+
 /// The board's test fixtures (M2 P5-3): the canonical events of a recorded
 /// Codex approval and subagent as the deck sends them on a timeline, in
 /// `web/src/testing/fixtures/codex-<scenario>.events.json`. The web tests

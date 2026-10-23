@@ -53,6 +53,10 @@ pub struct CodexCore {
     pub(super) thread_id: Option<String>,
     /// Model that the thread reports, or the last accepted model change.
     pub(super) thread_model: Option<String>,
+    /// The last reasoning effort that this core emitted (B18); an older
+    /// checkpoint has none.
+    #[serde(default)]
+    pub(super) thread_effort: Option<String>,
     /// Collaboration mode for the next turns (`plan` or `default`); `None`
     /// sends no `collaborationMode` (experimental API, DL-013).
     pub(super) collaboration: Option<String>,
@@ -121,6 +125,7 @@ impl CodexCore {
             ended: false,
             thread_id: None,
             thread_model: None,
+            thread_effort: None,
             collaboration: None,
             run: None,
             turn: None,
