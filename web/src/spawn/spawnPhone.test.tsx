@@ -29,7 +29,7 @@ const info: StationInfo = {
 const reported = () => station('station-a', { info, info_at: 1 });
 
 describe('the New session sheet on a phone', () => {
-  test('a phone shows the board and scope reasons in the sticky footer; the folder note at its field', () => {
+  test('a phone shows the board, scope and folder reasons in the sticky footer', () => {
     // A narrow screen: the sheet has its phone layout (useNarrow), the form scrolls under the footer.
     const g = globalThis as { window?: unknown };
     const saved = g.window;
@@ -54,17 +54,18 @@ describe('the New session sheet on a phone', () => {
         />,
       );
       const foot = html.slice(html.indexOf('class="fd-spawn-foot"'));
+      // "Choose a folder to start." sits right above the disabled Start session: under the folder
+      // field it sat in the fade over the sticky footer.
       expect(foot).toContain(
-        '<div class="fd-spawn-status"><p class="fd-note" id="fd-spawn-scope">Starting sessions needs the drive scope.</p><p class="fd-note" id="fd-spawn-live">The form is off until the board is live.</p></div>',
+        '<div class="fd-spawn-status"><p class="fd-note" id="fd-spawn-scope">Starting sessions needs the drive scope.</p><p class="fd-note" id="fd-spawn-live">The form is off until the board is live.</p><p class="fd-note" id="fd-spawn-need">Choose a folder to start.</p></div>',
       );
-      // The folder note says what the Where row needs: it stays under the folder field.
       const where = html.slice(
         html.indexOf('aria-label="Directory"'),
         html.indexOf('fd-spawn-options'),
       );
-      expect(where).toContain(
-        '<p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p>',
-      );
+      // The folder field still points to the note (now in the footer).
+      expect(where).not.toContain('class="fd-note fd-spawn-need"');
+      expect(where).toContain('aria-label="Directory path" aria-describedby="fd-spawn-need"');
       expect(html.match(/id="fd-spawn-need"/g)).toHaveLength(1);
       // The Batch switch is the first row of "More options", not a footer row: the footer is one
       // row of buttons.

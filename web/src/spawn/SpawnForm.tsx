@@ -310,22 +310,26 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
+  // A phone shows the board and scope notes in the sticky footer, where the disabled button is in
+  // view (the form scrolls under the footer). Without providers there is no form and no footer:
+  // the notes stay at the top.
+  const notesInFoot = narrow && targets.length > 0;
+  // A phone also says "Choose a folder to start." in the footer, right above Start session (under
+  // the field it sat in the fade over the footer). A path that is not absolute stays at its field.
+  const needInFoot = notesInFoot && cwd === null && dirNote !== null;
   // Right under the folder input: the folder picker's hint, or after the typed directory of Auto.
   const needNote =
-    dirNote === null ? null : (
+    dirNote === null || needInFoot ? null : (
       <p className="fd-note fd-spawn-need" id={NEED_ID}>
         {dirNote}
       </p>
     );
-  // A phone shows the board and scope notes in the sticky footer, where the disabled button is in
-  // view (the form scrolls under the footer); the directory note stays under its field.
   const scopeNote = actions !== undefined && !canDrive;
   const topNotes = [
     scopeNote ? { id: 'fd-spawn-scope', text: 'Starting sessions needs the drive scope.' } : null,
     live ? null : { id: 'fd-spawn-live', text: 'The form is off until the board is live.' },
   ].filter((note) => note !== null);
-  // Without providers there is no form and no footer: the notes stay at the top.
-  const notesInFoot = narrow && targets.length > 0;
+  const footNotes = needInFoot ? [...topNotes, { id: NEED_ID, text: dirNote }] : topNotes;
   const missing = (
     busy
       ? []
@@ -742,7 +746,7 @@ export function SpawnForm({
             batch={batch}
             onBatch={setBatch}
             missing={missing}
-            notes={notesInFoot ? topNotes : []}
+            notes={notesInFoot ? footNotes : []}
             grantProblem={fleetBad ? fleetProblem(fleet) : null}
             describedBy={describedBy}
             outcome={outcome}

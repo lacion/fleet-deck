@@ -4,7 +4,7 @@
 import { type ReactNode, useEffect, useId, useState } from 'react';
 import type { StationView } from '../gen';
 import { ChevronRight, Icon, Server, Sparkles } from '../ui/icons';
-import { submitKeyHint } from './keyHint';
+import { SubmitKeys } from './keyHint';
 import { AUTO, type SpawnOutcome } from './spawn';
 
 /**
@@ -97,10 +97,10 @@ function freeSlots(station: StationView): number | null {
 }
 
 /**
- * The stations as radio pills (name, reach, "9 free"), and "Auto (best station)" first when the
- * deck places (FG-6): a sparkles icon and a title say that it is no station of its own, and it
- * never wraps alone onto a new line after the stations. The chosen pill has the pressed `.fd-seg`
- * look.
+ * The stations as the radio segments of one `.fd-seg` track (name, reach, "9 free"), the same
+ * single-choice look as the Agent and Where rows, and "Auto (best station)" first when the deck
+ * places (FG-6): a sparkles icon and a title say that it is no station of its own, and it never
+ * wraps alone onto a new line after the stations.
  */
 export function StationPills({
   targets,
@@ -127,7 +127,7 @@ export function StationPills({
     </label>
   );
   return (
-    <div className="fd-spawn-stations" role="radiogroup" aria-label="Station">
+    <div className="fd-seg fd-spawn-stations" role="radiogroup" aria-label="Station">
       {auto
         ? pill(
             AUTO,
@@ -324,9 +324,10 @@ export function BatchSwitch({
 /**
  * The footer of the sheet, one line: the Batch switch at the left (a desktop); the outcome, and the
  * missing steps that have no field of their own to show them; Cancel and the primary start button
- * (kbd ⌘↵ or Ctrl+Enter). The directory note stays under its field, also on a phone: there the footer
- * is one row of buttons above the bottom bar, and grows only for a reason that the sheet shows
- * nowhere else (the board or the scope, a missing step, the outcome).
+ * (the key chips ⌘ ↵ or Ctrl ↵). The status slot is there only while it holds a text: an empty slot
+ * took the room of the actions, and they wrapped to a second row. On a phone the footer is one row
+ * of buttons above the bottom bar, and grows only for a reason that the form gives it (the board or
+ * the scope, "Choose a folder to start.", a missing step, the outcome).
  */
 export function SpawnFoot({
   batchShown,
@@ -348,8 +349,9 @@ export function SpawnFoot({
   /** The missing steps without a note at their field (empty while a start runs). */
   readonly missing: readonly string[];
   /**
-   * The board and scope notes (`fd-spawn-live`, `fd-spawn-scope`) when the form shows them in the
-   * footer (a phone), where the disabled button is in view.
+   * The board and scope notes (`fd-spawn-live`, `fd-spawn-scope`) and "Choose a folder to start."
+   * (`fd-spawn-need`) when the form shows them in the footer (a phone), where the disabled button
+   * is in view.
    */
   readonly notes?: readonly { readonly id: string; readonly text: string }[];
   /** The first problem of the fleet grant fields: a hidden copy that the button description reads. */
@@ -363,6 +365,7 @@ export function SpawnFoot({
   readonly label: string;
 }) {
   const more = usePageMoreBelow();
+  const status = notes.length > 0 || missing.length > 0 || outcome !== null;
   return (
     <div className="fd-spawn-foot" data-more={more ? 'true' : undefined}>
       {batchShown ? <BatchSwitch on={batch} onChange={onBatch} /> : null}
@@ -371,28 +374,30 @@ export function SpawnFoot({
           {grantProblem}
         </span>
       )}
-      <div className="fd-spawn-status">
-        {notes.map((note) => (
-          <p key={note.id} className="fd-note" id={note.id}>
-            {note.text}
-          </p>
-        ))}
-        {missing.length === 0 ? null : (
-          <p className="fd-note" id="fd-spawn-missing" data-missing>
-            To start: {missing.join('; ')}.
-          </p>
-        )}
-        {outcome === null ? null : (
-          <div className="fd-outcome">
-            <p role={outcome.ok ? 'status' : 'alert'}>{outcome.text}</p>
-            {onOpenNew === null ? null : (
-              <button type="button" className="fd-sm" onClick={onOpenNew}>
-                Open the new session
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      {status ? (
+        <div className="fd-spawn-status">
+          {notes.map((note) => (
+            <p key={note.id} className="fd-note" id={note.id}>
+              {note.text}
+            </p>
+          ))}
+          {missing.length === 0 ? null : (
+            <p className="fd-note" id="fd-spawn-missing" data-missing>
+              To start: {missing.join('; ')}.
+            </p>
+          )}
+          {outcome === null ? null : (
+            <div className="fd-outcome">
+              <p role={outcome.ok ? 'status' : 'alert'}>{outcome.text}</p>
+              {onOpenNew === null ? null : (
+                <button type="button" className="fd-sm" onClick={onOpenNew}>
+                  Open the new session
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
       <div className="fd-spawn-actions">
         <a className="fd-btn fd-ghost" href="#/">
           Cancel
@@ -405,9 +410,7 @@ export function SpawnFoot({
           aria-keyshortcuts="Meta+Enter Control+Enter"
         >
           {label}
-          <span className="fd-kbd" aria-hidden="true">
-            {submitKeyHint()}
-          </span>
+          <SubmitKeys />
         </button>
       </div>
     </div>
