@@ -1,6 +1,5 @@
 // DL-140: the facts, the place chips and the details of a session header ("Flight Deck" §4.5).
 import type { ReactNode } from 'react';
-import { relativeAge } from '../app/sessions';
 import { providerLabel } from '../board/lanes';
 import { limitChip, rateMeters } from '../board/usage';
 import type { DeckSession } from '../gen';
@@ -8,8 +7,15 @@ import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
 import { digestLines } from '../ui/generated';
-import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
-import { countText, isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
+import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert, Sparkles } from '../ui/icons';
+import {
+  countText,
+  homeShort,
+  isRiskyMode,
+  modeLabel,
+  modelFamily,
+  shortModel,
+} from '../ui/format';
 import { isHibernated } from '../views/hibernate';
 import { CopyButton } from './CopyButton';
 import { FolderChip } from './PathFit';
@@ -173,20 +179,43 @@ export function Place({
 }
 
 /**
- * The facts of a session: its id (with a copy button), callsign, worktree, age and event count;
- * `fleet` is the fleet-control fact of a coordinator (when the Properties panel does not show it).
+ * The mark after the label of a text that model help wrote: the 12px sparkles of `GeneratedMark`
+ * (§7), named for a summary ("Generated"; the title mark of `ui/generated` says "Named by").
+ */
+export function GeneratedText() {
+  return (
+    <span className="fd-generated" role="img" aria-label="Generated" title="Written by model help">
+      <Icon of={Sparkles} size={12} />
+    </span>
+  );
+}
+
+/** The generated summary of a session as a list, or `null` without one. */
+export function DigestList({ digest }: { readonly digest: string | null | undefined }) {
+  const lines = digestLines(digest);
+  if (lines.length === 0) return null;
+  return (
+    <ul className="fd-sh-digest">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The facts of a session that the header does not show: its id (with a copy button), worktree,
+ * generated summary and event count; `fleet` is the fleet-control fact of a coordinator. The
+ * session menu shows them while the Properties panel is closed.
  */
 export function Details({
   session,
-  now,
   fleet,
 }: {
   readonly session: DeckSession;
-  readonly now: number;
   readonly fleet?: ReactNode;
 }) {
   const s = session.summary;
-  const digest = digestLines(s.digest);
   return (
     <dl className="fd-sh-details">
       <div>
@@ -198,34 +227,24 @@ export function Details({
           <CopyButton text={s.session_id} label="Copy the session id" />
         </dd>
       </div>
-      {s.callsign ? (
-        <div>
-          <dt>Callsign</dt>
-          <dd>{s.callsign}</dd>
-        </div>
-      ) : null}
       {s.worktree ? (
         <div>
           <dt>Worktree</dt>
-          <dd>{s.worktree}</dd>
-        </div>
-      ) : null}
-      {digest.length > 0 ? (
-        <div data-field="digest">
-          <dt>Summary (generated)</dt>
           <dd>
-            <ul className="fd-sh-digest">
-              {digest.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
+            <span title={s.worktree}>{homeShort(s.worktree)}</span>
           </dd>
         </div>
       ) : null}
-      <div>
-        <dt>Updated</dt>
-        <dd>{relativeAge(s.updated_at, now)}</dd>
-      </div>
+      {digestLines(s.digest).length > 0 ? (
+        <div data-field="digest">
+          <dt>
+            Summary <GeneratedText />
+          </dt>
+          <dd>
+            <DigestList digest={s.digest} />
+          </dd>
+        </div>
+      ) : null}
       <div>
         <dt>Events</dt>
         <dd>{countText(s.session_seq)}</dd>

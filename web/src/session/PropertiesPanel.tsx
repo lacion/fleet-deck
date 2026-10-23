@@ -1,6 +1,6 @@
 // "Flight Deck" §4.5: the properties panel at the right of a session. It shows only what the
 // session summary (and the timeline that the pane already read) knows; a missing fact is absent.
-import { Fragment, type ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
@@ -11,18 +11,23 @@ import {
   addedText,
   compactCount,
   contextLabel,
+  countText,
   homeShort,
   isRiskyMode,
   modeLabel,
   removedText,
   shortModel,
 } from '../ui/format';
+import { digestLines } from '../ui/generated';
 import { ChevronRight, Icon, ShieldAlert } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { sessionRef } from '../ui/localSet';
 import { useNow } from '../ui/useNow';
 import { loadSessionChanges, turnForPath } from './changedFiles';
-import { StatusFact } from './HeaderBadges';
+import { CopyButton } from './CopyButton';
+import { DigestList, GeneratedText, StatusFact } from './HeaderBadges';
 import { FilePath } from './PathFit';
+import { ModeLadder } from './SessionSettings';
 import {
   type FileActions,
   type FinalizedTurn,
@@ -170,7 +175,74 @@ type Props = {
   readonly freshness?: Freshness | undefined;
   /** The fleet-control fact of a coordinator session (a link that opens its answers). */
   readonly fleet?: ReactNode;
+  /** The mode can be set: the Mode row is a menu with the mode ladder; absent: a plain fact. */
+  readonly mode?: ModeControl | undefined;
 };
+
+/** The modes of the session and the call that sets one (the ladder of the Mode row). */
+export type ModeControl = {
+  readonly modes: readonly string[];
+  readonly enabled: boolean;
+  readonly onSet: (mode: string) => void;
+};
+
+/** The title of the token count: the input that the station counts leaves the prompt cache out. */
+export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached context is not counted';
+
+/**
+ * The token fact: the input outside the prompt cache as "new in", and the output. The station does
+ * not count the cached context, so a bare "682 in" next to a large cost read as a bug.
+ */
+export function tokensText(input: number | null, output: number | null): string {
+  return [
+    input === null ? null : `${compactCount(input)} new in`,
+    output === null ? null : `${compactCount(output)} out`,
+  ]
+    .filter((part) => part !== null)
+    .join(' · ');
+}
+
+/** The mode of the session: a ghost menu summary that opens the mode ladder, or a plain fact. */
+function ModeValue({ mode, control }: { readonly mode: string; readonly control?: ModeControl }) {
+  const risky = isRiskyMode(mode);
+  const value = (
+    <>
+      {risky ? <Icon of={ShieldAlert} size={13} /> : null}
+      {modeLabel(mode)}
+    </>
+  );
+  if (control === undefined) {
+    return (
+      <span
+        className="fd-props-mode"
+        data-tone={risky ? 'hazard' : undefined}
+        title={`Permission mode: ${mode}`}
+      >
+        {value}
+      </span>
+    );
+  }
+  return (
+    <span className="fd-props-mode fd-props-modemenu" data-tone={risky ? 'hazard' : undefined}>
+      <Menu
+        summary={value}
+        summaryClass="fd-ghost fd-sm"
+        variant="toggle"
+        label={`Mode: ${modeLabel(mode)}`}
+        title="Change the permission mode"
+      >
+        {() => (
+          <ModeLadder
+            modes={control.modes}
+            current={mode}
+            enabled={control.enabled}
+            onSet={control.onSet}
+          />
+        )}
+      </Menu>
+    </span>
+  );
+}
 
 /** The changed files that the Changes row lists; the others are "+N more files". */
 export const PROPS_FILES_MAX = 5;
@@ -231,39 +303,55 @@ export function ChangedList({
   );
 }
 
-/** `2 min` → `since 2 min`; a change under a minute ago: `just now`. */
+/** `2 min` → `since 2 min`; a change under a minute ago: `just now` (one word on every surface). */
 export function sinceText(age: string): string {
   return age === 'now' ? 'just now' : `since ${age}`;
 }
+
+/** The read of the session diff: it runs, it gave the diff, or it failed (no diff will come). */
+export type ChangesRead = 'loading' | 'done' | 'failed';
 
 /**
  * Reads the session diff when the session opens, and again after each finalized turn: its size
  * (the Changes row and the Changes tab label) and its changed files (the list of the Changes row)
  * are there on every tab and every layout (the Files and Changes tabs read it too). No file
- * service, or no spawn base (the station has no session diff then): nothing.
+ * service, or no spawn base (the station has no session diff then): nothing. Returns the state of
+ * the read for this session: after a failed read the size falls back to the turn diffs.
  */
 export function useSessionChanges(
   ref: string,
   files: FileActions | null | undefined,
   hasBase: boolean,
   turns: number,
-): void {
+): ChangesRead {
   // The actions object changes on every render of the parent; the effect keys on "has files".
   const latest = useRef(files);
   latest.current = files;
   const has = files != null && hasBase;
+  const [read, setRead] = useState<{ readonly ref: string; readonly state: ChangesRead }>({
+    ref,
+    state: 'loading',
+  });
   useEffect(() => {
     const current = latest.current;
     if (!has || !current) return undefined;
     let live = true;
     // A read of the full session diff replaces the paths, an empty result too.
     void loadSessionChanges(current).then((found) => {
-      if (live && found !== null) setDiffTotal(ref, found.summary, found.all);
+      if (!live) return;
+      if (found === null) {
+        setRead({ ref, state: 'failed' });
+        return;
+      }
+      setDiffTotal(ref, found.summary, found.all);
+      setRead({ ref, state: 'done' });
     });
     return () => {
       live = false;
     };
   }, [has, ref, turns]);
+  // Another session starts with its own read.
+  return read.ref === ref ? read.state : 'loading';
 }
 
 /** The properties of one session: status, place, agent, changes, usage and agents. */
@@ -278,6 +366,7 @@ export function PropertiesPanel({
   onOpenAll,
   freshness = 'live',
   fleet,
+  mode,
 }: Props) {
   const s = session.summary;
   const now = useNow(undefined, 30000);
@@ -293,6 +382,7 @@ export function PropertiesPanel({
   const cost = costText(s.usage);
   const meters = rateMeters([session], stations);
   const provider = s.provider === null ? null : providerLabel(s.provider);
+  const context = contextLabel(s.model);
   return (
     <aside className="fd-props" aria-label="Properties">
       <h3 className="fd-props-title">Properties</h3>
@@ -327,23 +417,24 @@ export function PropertiesPanel({
             </code>
           </Row>
         ) : null}
+        {s.worktree && s.worktree !== s.cwd ? (
+          <Row label="Worktree">
+            <code className="fd-props-mono" data-path="" title={s.worktree}>
+              <Breakable path={homeShort(s.worktree)} />
+            </code>
+          </Row>
+        ) : null}
       </dl>
       <dl className="fd-props-list">
+        {/* The context window is a fact of the model: a --faint aside, not a row of its own. */}
         <Row label="Model">
           <span title={s.model ?? 'default model'}>{shortModel(s.model)}</span>
+          {context === null ? null : <span className="fd-props-aside">{context}</span>}
         </Row>
-        {contextLabel(s.model) === null ? null : <Row label="Context">{contextLabel(s.model)}</Row>}
         {s.provider === null ? null : <Row label="Provider">{providerLabel(s.provider)}</Row>}
         {s.mode ? (
           <Row label="Mode">
-            <span
-              className="fd-props-mode"
-              data-tone={isRiskyMode(s.mode) ? 'hazard' : undefined}
-              title={`Permission mode: ${s.mode}`}
-            >
-              {isRiskyMode(s.mode) ? <Icon of={ShieldAlert} size={13} /> : null}
-              {modeLabel(s.mode)}
-            </span>
+            <ModeValue mode={s.mode} {...(mode === undefined ? {} : { control: mode })} />
           </Row>
         ) : null}
       </dl>
@@ -382,13 +473,8 @@ export function PropertiesPanel({
         )}
         {input === null && output === null ? null : (
           <Row label="Tokens">
-            <span className="fd-props-fuel">
-              {[
-                input === null ? null : `${compactCount(input)} in`,
-                output === null ? null : `${compactCount(output)} out`,
-              ]
-                .filter((part) => part !== null)
-                .join(' · ')}
+            <span className="fd-props-fuel" title={input === null ? undefined : NEW_INPUT_TITLE}>
+              {tokensText(input, output)}
             </span>
           </Row>
         )}
@@ -423,6 +509,28 @@ export function PropertiesPanel({
           </Row>
         )}
         {fleet == null ? null : <Row label="Fleet control">{fleet}</Row>}
+      </dl>
+      {/* The facts that the session menu shows while this panel is closed. */}
+      <dl className="fd-props-list">
+        {digestLines(s.digest).length === 0 ? null : (
+          <Row
+            label="Summary"
+            extra={
+              <dd className="fd-props-filelist fd-props-digest">
+                <DigestList digest={s.digest} />
+              </dd>
+            }
+          >
+            <GeneratedText />
+          </Row>
+        )}
+        <Row label="Session">
+          <code className="fd-props-mono fd-props-sid" title={s.session_id}>
+            {s.session_id}
+          </code>
+          <CopyButton text={s.session_id} label="Copy the session id" />
+        </Row>
+        <Row label="Events">{countText(s.session_seq)}</Row>
       </dl>
     </aside>
   );

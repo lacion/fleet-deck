@@ -69,7 +69,7 @@ describe('the composer send button (§4.8)', () => {
   });
 });
 
-describe('one Resume primary on the phone (§2.2)', () => {
+describe('one Resume primary on a screen (§2.2)', () => {
   const header = (composerResume: boolean, layout: 'phone' | 'desktop' = 'phone') =>
     renderToStaticMarkup(
       <SessionHeader
@@ -89,11 +89,13 @@ describe('one Resume primary on the phone (§2.2)', () => {
       />,
     );
 
-  test('the phone header drops its Resume while the composer shows the Resume bar', () => {
+  test('the header drops its Resume while the composer shows the Resume bar', () => {
     expect(header(true)).not.toContain('aria-label="Resume"');
     expect(header(false)).toContain('aria-label="Resume"');
-    // The desktop header keeps its primary Resume.
-    expect(header(true, 'desktop')).toMatch(/class="fd-primary"[^>]*>.*Resume<\/button>/);
+    // The desktop too: one Resume on the screen, the primary of the bar.
+    expect(header(true, 'desktop')).not.toContain('Resume');
+    // On another tab (no bar) the desktop header has its primary Resume.
+    expect(header(false, 'desktop')).toMatch(/class="fd-primary"[^>]*>.*Resume<\/button>/);
   });
 
   test('a lost session says that its process stopped; the phone bar has the primary', () => {

@@ -4,6 +4,7 @@ import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
 import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
+import { PathTail } from '../chat/PathTail';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
 import { addedText, removedText, sizeText } from '../ui/format';
 import { FileText, Folder, FolderOpen, Icon, Search, Upload } from '../ui/icons';
@@ -155,9 +156,10 @@ export function ChangedFilesList({
               <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
                 <Icon of={FileText} size={14} />
                 <span className="fd-files-name">{path.split('/').pop()}</span>
+                {/* Whole folders give way ("…/e2e"): a cut never lands inside a name. */}
                 {dir === '' ? null : (
                   <span className="fd-files-dir">
-                    <bdi>{dir}</bdi>
+                    <PathTail path={dir} />
                   </span>
                 )}
                 {change === undefined ? null : <ChangeStat change={change} />}
@@ -306,20 +308,20 @@ export function FilesPanel({
               <span className="fd-vh">Search</span>
             </button>
           </div>
-          <select
-            className="fd-sm"
-            aria-label="Search in"
-            value={mode}
-            onChange={(event) => setMode(event.target.value === 'content' ? 'content' : 'name')}
-          >
-            <option value="name">Names</option>
-            <option value="content">Content</option>
-          </select>
+          {/* What the search reads: the file names or their content (a choice, not a filter). */}
+          <div className="fd-seg fd-files-mode" role="group" aria-label="Search in">
+            {(['name', 'content'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
+                {m === 'name' ? 'Names' : 'Content'}
+              </button>
+            ))}
+          </div>
         </form>
       </div>
       {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
-        {/* A path, not an entry: the open folder icon, and a "/" after each folder. */}
+        {/* A path, not an entry: the open folder icon, and a "/" between two crumbs (none after
+            the last one). */}
         <span className="fd-files-crumb-item">
           <button type="button" className="fd-files-crumb fd-files-root" onClick={() => open('')}>
             <Icon of={FolderOpen} size={14} />
@@ -332,25 +334,25 @@ export function FilesPanel({
               'Root folder'
             )}
           </button>
-          <span className="fd-files-sep" aria-hidden="true">
-            /
-          </span>
         </span>
         {segments.map((segment, n) => {
           const path = segments.slice(0, n + 1).join('/');
           return (
             <span key={path} className="fd-files-crumb-item">
-              <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
-                {segment}
-              </button>
               <span className="fd-files-sep" aria-hidden="true">
                 /
               </span>
+              <button type="button" className="fd-files-crumb" onClick={() => open(path)}>
+                {segment}
+              </button>
             </span>
           );
         })}
         {fileName !== null ? (
           <span className="fd-files-crumb-item">
+            <span className="fd-files-sep" aria-hidden="true">
+              /
+            </span>
             <span className="fd-files-file">{fileName}</span>
           </span>
         ) : null}
@@ -416,15 +418,15 @@ export function FilesPanel({
                   className={canPublish ? 'fd-files-item' : undefined}
                 >
                   {e.kind === 'dir' || e.kind === 'file' ? (
+                    // The folder icon marks a folder: its name has no trailing "/".
                     <button
                       type="button"
                       className="fd-files-row"
+                      title={root ? `${root}/${path}` : path}
                       onClick={() => (e.kind === 'dir' ? open(path) : read(path))}
                     >
                       <Icon of={e.kind === 'dir' ? Folder : FileText} size={14} />
-                      <span className="fd-files-name">
-                        {e.kind === 'dir' ? `${e.name}/` : e.name}
-                      </span>
+                      <span className="fd-files-name">{e.name}</span>
                       {size}
                     </button>
                   ) : (
