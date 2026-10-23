@@ -216,6 +216,7 @@ impl Rig {
 
     async fn start(&mut self) -> (SessionId, InputId) {
         let spec = SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: self.cwd.clone(),
             mode: Some("default".to_owned()),

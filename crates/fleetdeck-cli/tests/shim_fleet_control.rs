@@ -244,6 +244,7 @@ impl Rig {
     fn start_command(&self, prompt: &str) -> SessionCommand {
         SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: "codex".into(),
                 cwd: self.workspace(),
                 mode: None,

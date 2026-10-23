@@ -38,6 +38,12 @@ pub struct SessionSpec {
     /// restrictive mode (L8).
     pub mode: Option<String>,
     pub model: Option<String>,
+    /// The reasoning effort that the session starts with (B18 Phase 2): an
+    /// effort id that the station checks with `valid_effort`. Absent: the
+    /// provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<String>,
     pub title: Option<String>,
     /// The coordinator grant of the new session (M3 6-5, ADR-006 §4); only
     /// an owner start through the deck may carry one.

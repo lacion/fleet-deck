@@ -127,6 +127,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
         origin: CommandOrigin::Local,
         command: SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: "claude".into(),
                 cwd,
                 mode: Some("default".to_owned()),

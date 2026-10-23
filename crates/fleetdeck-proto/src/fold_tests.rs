@@ -614,10 +614,9 @@ fn session_models_set_the_models_of_the_summary_and_the_last_list_wins() {
     let mut f = Feed::new();
     f.push(started());
     assert_eq!(f.summary.models, None);
-    let choice = |value: &str| crate::event::ModelChoice {
-        value: value.to_owned(),
-        label: value.to_uppercase(),
-        description: None,
+    let choice = |value: &str| -> crate::event::ModelChoice {
+        serde_json::from_value(serde_json::json!({"value": value, "label": value.to_uppercase()}))
+            .unwrap()
     };
     f.push(Event::SessionModels {
         models: vec![choice("opus")],

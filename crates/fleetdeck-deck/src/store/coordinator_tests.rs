@@ -197,6 +197,7 @@ pub(super) fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> 
     CoordinatorOp::Spawn {
         station: station.clone(),
         spec: SessionSpec {
+            effort: None,
             provider_instance: instance.into(),
             cwd: "/w/app".to_owned(),
             mode: mode.map(str::to_owned),

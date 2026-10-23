@@ -47,4 +47,10 @@ display_resources?: DisplayResources,
  * so a grant can be given and changed live. Absent in an old answer:
  * false.
  */
-coordinator_live?: boolean, };
+coordinator_live?: boolean, 
+/**
+ * B18 Phase 2: the station's current link negotiated
+ * `session_effort.v1`, so a session can start with an effort and change
+ * it. Absent in an old answer: false.
+ */
+session_effort?: boolean, };

@@ -240,6 +240,7 @@ impl Rig {
             origin: CommandOrigin::Local,
             command: SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "claude".into(),
                     cwd: self.workspace(),
                     mode: Some("default".to_owned()),

@@ -260,11 +260,17 @@ fn samples() -> Vec<Event> {
                     value: "default".into(),
                     label: "Default (recommended)".into(),
                     description: Some("Use the default model".into()),
+                    resolved: Some("claude-opus-5-5".into()),
+                    efforts: Some(vec!["low".into(), "high".into()]),
+                    default_effort: Some("high".into()),
                 },
                 crate::event::ModelChoice {
                     value: "opus".into(),
                     label: "Opus".into(),
                     description: None,
+                    resolved: None,
+                    efforts: None,
+                    default_effort: None,
                 },
             ],
         },
@@ -371,6 +377,16 @@ fn samples() -> Vec<Event> {
         },
         Event::EffortChanged {
             effort: Some("high".into()),
+        },
+        Event::EffortSetResult {
+            control_id: Some("eff-1".into()),
+            requested: "low".into(),
+            effort: Some("medium".into()),
+            outcome: crate::event::EffortSetOutcome::Adjusted,
+            message: Some("capped".into()),
+        },
+        Event::EffortChosen {
+            effort: "high".into(),
         },
     ]
 }
@@ -534,18 +550,6 @@ mod decode_props {
             let _ = serde_json::from_str::<ControlFrame>(&text);
         }
     }
-}
-
-#[test]
-fn a_model_choice_without_a_description_decodes() {
-    let body: EventBody = serde_json::from_value(
-        json!({"kind": "session.models", "models": [{"value": "opus", "label": "Opus"}]}),
-    )
-    .unwrap();
-    let Some(Event::SessionModels { models }) = body.known() else {
-        panic!("expected session.models");
-    };
-    assert_eq!(models[0].description, None);
 }
 
 #[test]

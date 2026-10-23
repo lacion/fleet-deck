@@ -70,6 +70,7 @@ pub(super) fn grant(expires_at: i64) -> CoordinatorSpec {
 
 pub(super) fn session_spec(cwd: &str, coordinator: Option<CoordinatorSpec>) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: cwd.to_owned(),
         mode: Some("default".to_owned()),

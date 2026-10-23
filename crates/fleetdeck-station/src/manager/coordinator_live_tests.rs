@@ -233,6 +233,7 @@ async fn live_round(kind: ProviderKind) {
             .unwrap()
     };
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "live".into(),
         cwd: ws.to_string_lossy().into_owned(),
         mode: Some(mode.to_owned()),

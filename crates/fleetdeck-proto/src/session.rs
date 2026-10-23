@@ -92,6 +92,12 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub effort: Option<String>,
+    /// The owner's chosen effort (B18 Phase 2), from `effort.chosen` and
+    /// from `effort.set_result` with outcome `accepted`. A resume passes it
+    /// on; `session.started` does not clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort_choice: Option<String>,
     pub capabilities: Option<Capabilities>,
     pub current_run: Option<RunId>,
     pub current_turn: Option<TurnId>,
@@ -233,6 +239,7 @@ impl SessionSummary {
             mode: None,
             model: None,
             effort: None,
+            effort_choice: None,
             capabilities: None,
             current_run: None,
             current_turn: None,

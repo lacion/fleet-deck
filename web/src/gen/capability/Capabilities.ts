@@ -19,7 +19,12 @@ native_follow_up: boolean, terminal_status: TerminalStatusQuality, live_deltas: 
 /**
  * Native permission modes, the most restrictive first (L8). Empty: no modes.
  */
-modes: Array<string>, set_mode: boolean, set_model: boolean, plan_capture: boolean, subagents: boolean, background_work: BackgroundReporting, native_turn_ids: boolean, usage: UsageReporting, 
+modes: Array<string>, set_mode: boolean, set_model: boolean, 
+/**
+ * The provider changes the reasoning effort of a live session (B18
+ * Phase 2). Absent in older stored events: false.
+ */
+set_effort: boolean, plan_capture: boolean, subagents: boolean, background_work: BackgroundReporting, native_turn_ids: boolean, usage: UsageReporting, 
 /**
  * The provider rolls back its native conversation by whole turns
  * (Codex `thread/rollback`). Without it a revert is rejected before any

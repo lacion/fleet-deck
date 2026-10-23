@@ -64,6 +64,9 @@ fn model_list_pages_are_joined_into_one_event_without_hidden_models() {
         json!({"data": [{"id": "only-id"}, {"model": "b", "displayName": null}], "nextCursor": null}),
     );
     let choice = |value: &str, label: &str, description: Option<&str>| ModelChoice {
+        resolved: None,
+        efforts: None,
+        default_effort: None,
         value: value.to_owned(),
         label: label.to_owned(),
         description: description.map(str::to_owned),

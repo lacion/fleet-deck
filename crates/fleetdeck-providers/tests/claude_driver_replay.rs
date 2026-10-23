@@ -178,6 +178,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path) -> Play
         (Some(id), true) => Origin::Fork(id.clone()),
     };
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: workspace.to_string_lossy().into_owned(),
         mode: launch.mode.clone(),

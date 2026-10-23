@@ -70,6 +70,10 @@ pub struct Capabilities {
     pub modes: Vec<String>,
     pub set_mode: bool,
     pub set_model: bool,
+    /// The provider changes the reasoning effort of a live session (B18
+    /// Phase 2). Absent in older stored events: false.
+    #[serde(default)]
+    pub set_effort: bool,
     // planning, subagents, identity, usage
     pub plan_capture: bool,
     pub subagents: bool,
@@ -103,6 +107,7 @@ impl Capabilities {
             modes: Vec::new(),
             set_mode: false,
             set_model: false,
+            set_effort: false,
             plan_capture: false,
             subagents: false,
             background_work: BackgroundReporting::None,
@@ -130,6 +135,7 @@ impl Capabilities {
             Operation::EditInput => self.approvals && self.edit_input,
             Operation::SetMode => self.set_mode && !self.modes.is_empty(),
             Operation::SetModel => self.set_model,
+            Operation::SetEffort => self.set_effort,
             Operation::Revert => self.rollback,
         }
     }
@@ -173,6 +179,8 @@ pub enum Operation {
     EditInput,
     SetMode,
     SetModel,
+    /// Change the reasoning effort of a live session (B18 Phase 2).
+    SetEffort,
     Fork,
     Resume,
     Stop,
@@ -182,7 +190,7 @@ pub enum Operation {
 
 impl Operation {
     /// Every operation, for exhaustive tests.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Prompt,
         Self::Steer,
         Self::FollowUp,
@@ -191,6 +199,7 @@ impl Operation {
         Self::EditInput,
         Self::SetMode,
         Self::SetModel,
+        Self::SetEffort,
         Self::Fork,
         Self::Resume,
         Self::Stop,
@@ -209,7 +218,9 @@ impl Operation {
             Self::Answer => Degradation::NoApprovalControls,
             Self::EditInput => Degradation::AllowDenyOnly,
             Self::SetMode => Degradation::MostRestrictiveMode,
-            Self::SetModel | Self::Prompt | Self::Stop | Self::Revert => Degradation::Hide,
+            Self::SetModel | Self::SetEffort | Self::Prompt | Self::Stop | Self::Revert => {
+                Degradation::Hide
+            }
         }
     }
 }

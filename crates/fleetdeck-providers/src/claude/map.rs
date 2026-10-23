@@ -656,6 +656,9 @@ fn model_choices(response: &Value) -> Vec<ModelChoice> {
         .filter_map(|m| {
             let value = text(m, "value")?;
             Some(ModelChoice {
+                resolved: None,
+                efforts: None,
+                default_effort: None,
                 label: text(m, "displayName").unwrap_or_else(|| value.clone()),
                 description: text(m, "description"),
                 value,

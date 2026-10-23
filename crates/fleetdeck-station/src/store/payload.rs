@@ -405,6 +405,7 @@ mod tests {
         EffectPayload::Resume {
             native_session_id: "N".to_owned(),
             spec: SessionSpec {
+                effort: None,
                 provider_instance: "claude".into(),
                 cwd: "/w".to_owned(),
                 mode: None,

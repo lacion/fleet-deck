@@ -163,6 +163,7 @@ pub fn native_modes(allow_full_access: bool) -> Vec<String> {
 #[must_use]
 pub fn capabilities(allow_full_access: bool) -> Capabilities {
     Capabilities {
+        set_effort: false,
         resume: true,
         fork: true,
         requests_survive_restart: false,

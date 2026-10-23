@@ -507,6 +507,7 @@ fn decide_op(
                 return Ok(d);
             }
             let spec = SessionSpec {
+                effort: None,
                 provider_instance: instance,
                 cwd: repo,
                 mode: None,

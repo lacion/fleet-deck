@@ -498,6 +498,7 @@ pub(super) fn project_start(
         },
     };
     let spec = SessionSpec {
+        effort: None,
         provider_instance: instance,
         cwd: path,
         mode: None,

@@ -491,6 +491,7 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
 fn start_effect() -> EffectPayload {
     EffectPayload::Start {
         spec: fleetdeck_proto::command::SessionSpec {
+            effort: None,
             provider_instance: "codex".into(),
             cwd: "/w".to_owned(),
             mode: None,

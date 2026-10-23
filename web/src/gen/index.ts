@@ -222,6 +222,7 @@ export * from "./event/ApprovalOption";
 export * from "./event/BackgroundTask";
 export * from "./event/CheckpointSide";
 export * from "./event/DiffSummary";
+export * from "./event/EffortSetOutcome";
 export * from "./event/Event";
 export * from "./event/EventEnvelope";
 export * from "./event/ExpiredReason";

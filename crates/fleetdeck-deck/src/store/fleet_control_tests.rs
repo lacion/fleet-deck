@@ -578,6 +578,7 @@ async fn modes_above_the_ceiling_or_in_bypass_are_refused_by_every_op() {
     let spawn = |mode: &str| CoordinatorOp::Spawn {
         station: w.alpha.clone(),
         spec: SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: "/w/app".to_owned(),
             mode: Some(mode.to_owned()),

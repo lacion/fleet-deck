@@ -64,7 +64,13 @@ digest?: string, state: SessionState, activity: Activity, mode: string | null, m
  * `effort.changed` (B18). Absent: not reported (an older station, a
  * provider or model without effort, or no report since the start).
  */
-effort?: string, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+effort?: string, 
+/**
+ * The owner's chosen effort (B18 Phase 2), from `effort.chosen` and
+ * from `effort.set_result` with outcome `accepted`. A resume passes it
+ * on; `session.started` does not clear it.
+ */
+effort_choice?: string, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */

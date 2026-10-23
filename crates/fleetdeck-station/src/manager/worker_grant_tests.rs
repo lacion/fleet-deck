@@ -46,6 +46,7 @@ fn worker() -> CoordinatorSpec {
 
 fn session_spec(coordinator: Option<CoordinatorSpec>) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         mode: None,

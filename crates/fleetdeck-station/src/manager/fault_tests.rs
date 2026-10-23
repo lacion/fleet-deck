@@ -204,6 +204,7 @@ impl Rig {
         let d = self
             .accepted(SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "claude".into(),
                     cwd: cwd.to_string_lossy().into_owned(),
                     mode: Some("default".to_owned()),

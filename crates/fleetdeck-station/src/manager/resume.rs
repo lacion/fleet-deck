@@ -245,6 +245,7 @@ pub fn admit_resume(
         ));
     }
     let spec = SessionSpec {
+        effort: None,
         provider_instance: r.instance,
         cwd: r.cwd,
         mode: r.summary.mode.clone(),

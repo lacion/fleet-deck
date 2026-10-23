@@ -106,6 +106,7 @@ impl Rig {
 
     fn tools(&self) -> BridgeStart {
         let spec = SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: "/w".to_owned(),
             mode: None,

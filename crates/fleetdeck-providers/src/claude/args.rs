@@ -32,6 +32,7 @@ pub const SAFEST_MODE: &str = "default";
 #[must_use]
 pub fn capabilities(allow_bypass: bool) -> Capabilities {
     Capabilities {
+        set_effort: false,
         resume: true,
         fork: true,
         requests_survive_restart: false,

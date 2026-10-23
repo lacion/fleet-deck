@@ -172,6 +172,7 @@ impl Rig {
     fn edit_turn(&self) -> (SessionId, TurnId) {
         let receipt = self.accepted(SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: FakeAgent::Codex.instance_id().into(),
                 cwd: self.station.workspace.to_string_lossy().into_owned(),
                 mode: None,

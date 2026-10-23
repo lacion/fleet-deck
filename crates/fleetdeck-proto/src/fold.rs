@@ -13,7 +13,7 @@
 //!   background work runs, else `idle`.
 //! - An unknown event kind changes only the sequence and the time (L16).
 
-use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
+use crate::event::{EffortSetOutcome, Event, EventEnvelope, RateLimit, SessionState, Usage};
 use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
@@ -153,6 +153,14 @@ impl SessionSummary {
             Event::ModeChanged { mode } => self.mode = Some(mode.clone()),
             Event::ModelChanged { model } => self.model = Some(model.clone()),
             Event::EffortChanged { effort } => self.effort.clone_from(effort),
+            // The choice persists at the provider's acceptance, never at a
+            // verification result (effort.md §9.1, decision 22).
+            Event::EffortChosen { effort } => self.effort_choice = Some(effort.clone()),
+            Event::EffortSetResult {
+                requested,
+                outcome: EffortSetOutcome::Accepted,
+                ..
+            } => self.effort_choice = Some(requested.clone()),
             Event::UsageUpdated { usage, rate_limits } => {
                 add_usage(&mut self.usage, usage);
                 merge_rate_limits(&mut self.rate_limits, rate_limits);
@@ -335,7 +343,10 @@ impl SessionSummary {
             // The board reads the reason from the event (FG-12).
             | Event::ArtifactsUnavailable { .. }
             // A late checkpoint never changes the activity (L13).
-            | Event::TurnFinalized { .. } => {}
+            | Event::TurnFinalized { .. }
+            // A verification or refusal reports what the provider runs; it
+            // changes neither the choice nor the observed effort (B18).
+            | Event::EffortSetResult { .. } => {}
         }
     }
 

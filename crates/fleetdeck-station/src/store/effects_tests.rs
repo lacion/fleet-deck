@@ -214,6 +214,7 @@ async fn an_effect_needs_a_live_process_and_a_failed_enqueue_stores_nothing() {
     // A start needs no process.
     let start = EffectPayload::Start {
         spec: fleetdeck_proto::command::SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: "/w".to_owned(),
             mode: None,

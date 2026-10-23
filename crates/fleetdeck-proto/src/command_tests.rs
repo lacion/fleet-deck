@@ -105,6 +105,7 @@ fn an_import_carries_a_native_id_that_can_never_read_as_a_flag() {
 
 fn launched_spec() -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".into(),
         mode: None,

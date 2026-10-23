@@ -468,6 +468,29 @@ pub enum Event {
     /// `summary.effort`. Older peers decode this kind as unknown.
     #[serde(rename = "effort.changed")]
     EffortChanged { effort: Option<String> },
+    /// The provider's answer to a `session.set_effort` (B18 Phase 2): the
+    /// evidence that settles the station's effect. Older peers decode this
+    /// kind as unknown.
+    #[serde(rename = "effort.set_result")]
+    EffortSetResult {
+        /// The station's effect id (the host's control id); `None` without one.
+        control_id: Option<String>,
+        /// The level that the owner chose.
+        requested: String,
+        /// The effort that the provider reports after the change; `None`:
+        /// not reported.
+        effort: Option<String>,
+        outcome: EffortSetOutcome,
+        /// The provider's text of a refusal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        message: Option<String>,
+    },
+    /// The owner chose an effort for a new session; the station appends it
+    /// in the start decision (B18 Phase 2). Older peers decode this kind as
+    /// unknown.
+    #[serde(rename = "effort.chosen")]
+    EffortChosen { effort: String },
     /// The provider answered an interrupt request (ADR-001 §3.1): this is
     /// the evidence that confirms or refuses the station's interrupt. The
     /// turn ends later with its own `turn.completed` (trap 10).

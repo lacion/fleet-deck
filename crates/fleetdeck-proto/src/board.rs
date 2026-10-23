@@ -226,6 +226,12 @@ pub struct StationView {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub coordinator_live: bool,
+    /// B18 Phase 2: the station's current link negotiated
+    /// `session_effort.v1`, so a session can start with an effort and change
+    /// it. Absent in an old answer: false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub session_effort: bool,
 }
 
 /// `POST /api/stations/invite`: an invitation for a station that dials the

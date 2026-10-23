@@ -114,6 +114,7 @@ pub use fleetdeck_proto::board::StationView;
 pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
     let info = store.station_info(&st.station_id);
     StationView {
+        session_effort: false,
         station_id: st.station_id.clone(),
         name: st.name.clone(),
         key: st.key.fingerprint().short(),

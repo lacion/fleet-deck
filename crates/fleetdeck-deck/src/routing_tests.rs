@@ -22,6 +22,7 @@ fn card(id: &str, status: CardStatus, cwd: &str, updated_at: i64) -> DeckSession
 
 fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str) -> StationView {
     StationView {
+        session_effort: false,
         station_id: StationId::from(name.to_owned()),
         name: name.to_owned(),
         key: "k".to_owned(),

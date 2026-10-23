@@ -22,6 +22,9 @@ fn initialize_answer(id: &str, models: &Value) -> Value {
 
 fn model_choice(value: &str, label: &str, description: Option<&str>) -> ModelChoice {
     ModelChoice {
+        resolved: None,
+        efforts: None,
+        default_effort: None,
         value: value.to_owned(),
         label: label.to_owned(),
         description: description.map(str::to_owned),

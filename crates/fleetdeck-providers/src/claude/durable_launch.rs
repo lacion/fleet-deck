@@ -84,6 +84,7 @@ mod tests {
 
     fn spec(dir: &std::path::Path, mode: Option<&str>) -> SessionSpec {
         SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: dir.to_string_lossy().into_owned(),
             mode: mode.map(str::to_owned),

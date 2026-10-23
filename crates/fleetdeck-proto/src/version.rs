@@ -263,6 +263,10 @@ pub mod feature {
     /// `session.coordinator_set`: live changes of a session's grant and the
     /// per-session grant record (MCP P4b §9).
     pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
+    /// `session.set_effort`, `SessionSpec.effort` and the effort events
+    /// `effort.set_result` and `effort.chosen` (B18 Phase 2, design
+    /// `docs/v2/design/effort.md` §9).
+    pub const SESSION_EFFORT: &str = "session_effort.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -329,6 +333,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        SESSION_EFFORT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -505,7 +510,22 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
+        assert_eq!(
+            at(feature::DESKTOP_TOOL_INSTALL) + 1,
+            at(feature::SESSION_EFFORT)
+        );
+    }
+
+    #[test]
+    fn the_session_effort_feature_has_its_name_and_is_the_last_in_all() {
+        assert_eq!(feature::SESSION_EFFORT, "session_effort.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::SESSION_EFFORT));
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "session_effort.v1")
+        );
     }
 
     #[test]

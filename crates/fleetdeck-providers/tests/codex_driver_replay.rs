@@ -239,6 +239,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path, cwd: &P
         all
     });
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "codex".into(),
         cwd: cwd.to_string_lossy().into_owned(),
         mode,

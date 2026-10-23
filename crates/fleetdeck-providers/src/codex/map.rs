@@ -281,6 +281,9 @@ impl CodexCore {
                 .filter_map(|m| {
                     let value = str_at(m, "model").or_else(|| str_at(m, "id"))?;
                     Some(ModelChoice {
+                        resolved: None,
+                        efforts: None,
+                        default_effort: None,
                         value: value.to_owned(),
                         label: str_at(m, "displayName").unwrap_or(value).to_owned(),
                         description: str_at(m, "description").map(str::to_owned),

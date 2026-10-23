@@ -256,6 +256,7 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
             &first,
             SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "codex".into(),
                     cwd: rig.workspace(),
                     mode: None,
@@ -338,6 +339,7 @@ async fn start_session(rig: &mut Rig, station: &Station, prompt: &str) -> Sessio
             station,
             SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "codex".into(),
                     cwd: rig.workspace(),
                     mode: None,

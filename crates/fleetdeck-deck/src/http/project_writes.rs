@@ -386,6 +386,7 @@ fn start(
 ) -> SessionCommand {
     SessionCommand::Start {
         spec: SessionSpec {
+            effort: None,
             provider_instance: req.provider_instance.clone(),
             cwd: project.path.clone(),
             mode: req.mode.clone(),

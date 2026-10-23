@@ -227,6 +227,43 @@ pub struct ModelChoice {
     pub label: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// The model id that `value` selects (Claude `resolvedModel`); `None`
+    /// when `value` is the id itself (Codex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resolved: Option<String>,
+    /// The effort levels of the model. `None`: not advertised; empty: the
+    /// model has no effort setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub efforts: Option<Vec<String>>,
+    /// The provider's default level (Codex `defaultReasoningEffort`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_effort: Option<String>,
+}
+
+/// The outcome of a `session.set_effort` as the provider reports it (B18
+/// Phase 2, docs/v2/design/effort.md §9.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum EffortSetOutcome {
+    /// The provider accepted the change. No level is reported yet (`effort`
+    /// is `None`). Emitted exactly once per accepted change, before its
+    /// verification result.
+    Accepted,
+    /// The provider reports the requested level.
+    Applied,
+    /// The provider reports another level or none: a default, a cap or a
+    /// clamp.
+    Adjusted,
+    /// The provider accepted the change but reports no effort.
+    Unverified,
+    /// The provider refused the change.
+    Refused,
+    /// A newer choice replaced it before it was sent.
+    Superseded,
 }
 
 /// One side (start or completion) of a turn checkpoint (PLAN §6.6, L13).
