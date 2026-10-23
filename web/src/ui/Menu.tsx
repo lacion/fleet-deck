@@ -12,6 +12,12 @@ export function Menu(props: {
   /** `toggle`: the summary ends in the chevron of base.css that turns when the menu opens. */
   readonly variant?: 'toggle';
   readonly title?: string;
+  /**
+   * A dim layer under the open body (a bottom sheet, the phone account menu): a tap on it closes
+   * the menu. It sits inside the menu, so the press that closes it does not reach the page
+   * under it.
+   */
+  readonly scrim?: boolean;
   readonly onClosed?: () => void;
   readonly children: (close: () => void) => ReactNode;
 }) {
@@ -45,6 +51,9 @@ export function Menu(props: {
       >
         {props.summary}
       </summary>
+      {props.scrim === true ? (
+        <div className="fd-menu-scrim" aria-hidden="true" onClick={close} />
+      ) : null}
       <div className="fd-menu-body">{props.children(close)}</div>
     </details>
   );

@@ -275,7 +275,7 @@ describe('the sidebar navigation (S1)', () => {
     );
   });
 
-  test('Archived is a disclosure row like Ended: chevron, icon, name and count pill', () => {
+  test('Archived is a disclosure row like Ended: chevron, name and count pill', () => {
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: { getItem: () => null, setItem: () => {} },
@@ -293,6 +293,9 @@ describe('the sidebar navigation (S1)', () => {
       );
       expect(row).toContain('<span class="fd-sidebar-chev">');
       expect(row).toContain('Archived <span class="fd-count">2</span>');
+      // No icon between the chevron and the name: the label starts where "Ended" starts.
+      const button = row.slice(0, row.indexOf('</button>'));
+      expect(button.match(/<svg/g)?.length).toBe(1);
       expect(html).not.toContain('Archived (');
       // The fold opens while it holds the open session.
       const open = render(

@@ -37,7 +37,7 @@ import { HelpNotice, useHelpNotice } from './app/HelpNotice';
 import { HelpOverlay } from './app/HelpOverlay';
 import { useGlobalKeys } from './app/keys';
 import { noteNavigation, startBackNav } from './app/backNav';
-import { Layout } from './app/Layout';
+import { type FrameNotice, Layout } from './app/Layout';
 import { More, TerminalsEmpty } from './app/More';
 import { Palette } from './app/Palette';
 import { formatHash, type Navigate, parseHash, type Route, useRoute } from './app/routes';
@@ -127,7 +127,7 @@ type Props = {
 const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
 
 const NO_TERMINALS: Notice = {
-  text: 'No terminals open. Open one from a session with Terminal.',
+  text: 'No terminal is open. Open a session and select Terminal to start one.',
   tone: 'info',
 };
 
@@ -298,10 +298,13 @@ export function App({
   // A notice of this screen (a shell that did not open, the outcome of "Return …").
   const [local, setLocal] = useState<{ notice: Notice; at: string } | null>(null);
   const notify = (notice: Notice, at: Route) => setLocal({ notice, at: formatHash(at) });
-  const notices = [
+  // The terminals notice has a Dismiss X: it says why nothing opened, and then it may go.
+  const notices: readonly FrameNotice[] = [
     ...(chrome?.notices ?? []),
     ...(local !== null && local.at === routeKey ? [local.notice] : []),
-    ...(noTerminals && route.name === 'home' ? [NO_TERMINALS] : []),
+    ...(noTerminals && route.name === 'home'
+      ? [{ ...NO_TERMINALS, onDismiss: () => setNoTerminals(false) }]
+      : []),
   ];
 
   // R7.1: a session that ended before it started gets a banner until the owner dismisses it.
