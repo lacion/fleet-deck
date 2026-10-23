@@ -443,7 +443,11 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
     let det = Det::new();
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
     emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req.state, RequestState::Open);
     assert_eq!(req.process_incarnation, Some(P1.into()));
     assert_eq!(req.deny_at, None, "wait policy");
@@ -452,7 +456,8 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
     for (id, option) in [("c1", "allow"), ("c2", "deny"), ("c3", "maybe")] {
         let d = s
             .decide(envelope(&det, id), Caller::local(), move |d| {
-                let claim = d.claim_answer(&"req-1".into(), option, ResolvedBy::Board)?;
+                let claim =
+                    d.claim_answer(&S1.into(), &"req-1".into(), option, ResolvedBy::Board)?;
                 if claim == AnswerClaim::First {
                     d.enqueue(&S1.into(), answer("req-1", option))?;
                 }
@@ -463,7 +468,11 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
         claims.push(d.effects.len());
     }
     assert_eq!(claims, [1, 0, 0], "one answer effect for three answers");
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     let receipt = req.receipt.unwrap();
     assert_eq!(receipt.command_id, Some("c1".into()));
     assert_eq!(receipt.option_id, "allow");
@@ -495,55 +504,16 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
     )
     .await;
     assert_eq!(state(&s, &e).await, EffectState::Confirmed);
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req.state, RequestState::Resolved);
     assert_eq!(
         req.receipt.unwrap().command_id,
         Some("c1".into()),
         "first receipt stays"
-    );
-}
-
-#[tokio::test]
-async fn claim_answer_reports_unknown_closed_and_invalid_answers() {
-    let det = Det::new();
-    let s = running(&det, OfflineApprovalPolicy::Wait).await;
-    emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
-    emit(
-        &s,
-        Event::ApprovalExpired {
-            request_id: "req-1".into(),
-            reason: ExpiredReason::TurnEnded,
-        },
-    )
-    .await;
-    emit(&s, approval("req-2", "node-2", &["allow", "deny"])).await;
-    let mut seen = Vec::new();
-    for (n, (req, option)) in [("req-9", "allow"), ("req-1", "allow"), ("req-2", "maybe")]
-        .into_iter()
-        .enumerate()
-    {
-        let (tx, rx) = std::sync::mpsc::channel();
-        s.decide(
-            envelope(&det, &format!("c{n}")),
-            Caller::local(),
-            move |d| {
-                tx.send(d.claim_answer(&req.into(), option, ResolvedBy::Board)?)
-                    .unwrap();
-                Ok(accepted())
-            },
-        )
-        .await
-        .unwrap();
-        seen.push(rx.recv().unwrap());
-    }
-    assert_eq!(
-        seen,
-        [
-            AnswerClaim::UnknownRequest,
-            AnswerClaim::Closed(RequestState::Expired),
-            AnswerClaim::UnknownOption,
-        ]
     );
 }
 
@@ -561,7 +531,11 @@ async fn deny_after_denies_overdue_requests_with_the_provider_deny_option() {
         approval("req-2", "node-2", &["accept", "accept_for_session"]),
     )
     .await;
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req.deny_at, Some(req.requested_at + 1_000));
 
     det.advance(Duration::from_millis(999));
@@ -584,7 +558,7 @@ async fn deny_after_denies_overdue_requests_with_the_provider_deny_option() {
     assert_eq!(*by, ResolvedBy::Timeout);
     assert_eq!(sent[0].command_id, None);
     let receipt = s
-        .runtime_request("req-1".into())
+        .runtime_request(S1.into(), "req-1".into())
         .await
         .unwrap()
         .unwrap()
@@ -593,7 +567,11 @@ async fn deny_after_denies_overdue_requests_with_the_provider_deny_option() {
     assert_eq!(receipt.by, ResolvedBy::Timeout);
 
     // req-2 has no deny option: it stays open (fail closed), the owner is told.
-    let req2 = s.runtime_request("req-2".into()).await.unwrap().unwrap();
+    let req2 = s
+        .runtime_request(S1.into(), "req-2".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req2.state, RequestState::Open);
     assert_eq!(req2.deny_at, None);
     let ReadResult::Events { events, .. } = s.read_after(head, 10).await.unwrap() else {
@@ -718,7 +696,11 @@ async fn start_recovery_settles_everything_of_dead_processes_before_admission() 
     );
     assert_eq!(state(&s, &claimed).await, EffectState::OutcomeUnknown);
     assert_eq!(state(&s, &queued).await, EffectState::RetiredNotDispatched);
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req.state, RequestState::Expired);
     let ReadResult::Events { events, .. } = s.read_after(head, 100).await.unwrap() else {
         panic!("events expected")
@@ -776,7 +758,11 @@ async fn recovery_keeps_the_queue_and_requests_of_a_surviving_process() {
     assert_eq!(report.unknown, 1, "a claim of the old station is unknown");
     assert_eq!(state(&s, &claimed).await, EffectState::OutcomeUnknown);
     assert_eq!(state(&s, &queued).await, EffectState::Queued);
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(req.state, RequestState::Open);
     assert_eq!(
         s.summary(S1.into()).await.unwrap().unwrap().state,

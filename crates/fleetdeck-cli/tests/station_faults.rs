@@ -241,7 +241,7 @@ async fn a_station_kill_expires_the_open_approval_and_rejects_its_stale_reply() 
     assert_eq!(log.count("ask ls"), 1, "nothing was replayed");
     let store = open_store(&station.db()).await;
     let open = store
-        .runtime_request(request.clone().into())
+        .runtime_request(session.clone().into(), request.clone().into())
         .await
         .unwrap()
         .unwrap();

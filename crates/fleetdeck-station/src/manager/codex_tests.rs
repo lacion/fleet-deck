@@ -303,11 +303,16 @@ fn answered_blue(e: &Event) -> bool {
 }
 
 /// The request is open and unanswered, with its first deadline.
-async fn assert_unclaimed(st: &Station, request: &RequestId, deny_at: Option<i64>) {
+async fn assert_unclaimed(
+    st: &Station,
+    session: &SessionId,
+    request: &RequestId,
+    deny_at: Option<i64>,
+) {
     let req = st
         .manager
         .store()
-        .runtime_request(request.clone())
+        .runtime_request(session.clone(), request.clone())
         .await
         .unwrap()
         .unwrap();
@@ -327,7 +332,7 @@ async fn a_malformed_first_answer_is_refused_and_a_corrected_one_is_delivered_on
     let deny_at = st
         .manager
         .store()
-        .runtime_request(request.clone())
+        .runtime_request(s.clone(), request.clone())
         .await
         .unwrap()
         .unwrap()
@@ -349,7 +354,7 @@ async fn a_malformed_first_answer_is_refused_and_a_corrected_one_is_delivered_on
             "{id}"
         );
         assert!(d.effects.is_empty(), "{id}");
-        assert_unclaimed(&st, &request, deny_at).await;
+        assert_unclaimed(&st, &s, &request, deny_at).await;
         // The same command id gets its stored rejection again.
         let again = submit_as(&st, &id, command).await;
         assert!(again.duplicate);
@@ -461,7 +466,7 @@ async fn an_empty_free_answer_to_a_message_question_is_refused_before_the_claim(
     for message in [None, Some("")] {
         let command = with(answer(&s, &q1, "answer"), None, message);
         assert_eq!(st.rejected(command).await, RejectCode::InvalidCommand);
-        assert_unclaimed(&st, &q1, None).await;
+        assert_unclaimed(&st, &s, &q1, None).await;
     }
     let d = st
         .accepted(with(answer(&s, &q1, "answer"), None, Some("Blue")))
@@ -485,7 +490,7 @@ async fn an_empty_free_answer_to_a_message_question_is_refused_before_the_claim(
             ("answer", EffectState::RetiredNotDispatched),
         ]
     );
-    assert_unclaimed(&st, &q1, None).await;
-    assert_unclaimed(&st, &q2, None).await;
+    assert_unclaimed(&st, &s, &q1, None).await;
+    assert_unclaimed(&st, &s, &q2, None).await;
     st.manager.shutdown(StopMode::Kill).await;
 }

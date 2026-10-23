@@ -257,8 +257,12 @@ impl Decision<'_> {
     ///
     /// # Errors
     /// A database or JSON error.
-    pub fn request(&self, request_id: &RequestId) -> Result<Option<RuntimeRequest>> {
-        requests::request(self.conn, request_id)
+    pub fn request(
+        &self,
+        session_id: &SessionId,
+        request_id: &RequestId,
+    ) -> Result<Option<RuntimeRequest>> {
+        requests::request(self.conn, session_id, request_id)
     }
 
     /// Records this command as the first answer of a request (L3).
@@ -267,12 +271,14 @@ impl Decision<'_> {
     /// A database or JSON error.
     pub fn claim_answer(
         &mut self,
+        session_id: &SessionId,
         request_id: &RequestId,
         option_id: &str,
         by: ResolvedBy,
     ) -> Result<AnswerClaim> {
         requests::claim_answer(
             self.conn,
+            session_id,
             request_id,
             option_id,
             by,

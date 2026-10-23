@@ -430,7 +430,7 @@ async fn a_provider_crash_settles_its_effects_expires_its_request_and_rejects_a_
         .await;
     let open = rig
         .store
-        .runtime_request(request.clone())
+        .runtime_request(session.clone(), request.clone())
         .await
         .unwrap()
         .unwrap();

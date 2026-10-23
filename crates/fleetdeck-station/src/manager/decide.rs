@@ -208,9 +208,7 @@ pub fn decide(
             request_id,
             mut decision,
         } => {
-            let request = d
-                .request(&request_id)?
-                .filter(|r| r.session_id == session_id);
+            let request = d.request(&session_id, &request_id)?;
             // The answers to a question travel in `updated_input` (Claude
             // `AskUserQuestion`, Codex `requestUserInput`); that is an
             // answer, not an edit of a tool input (DL-068).
@@ -247,7 +245,7 @@ pub fn decide(
                 )?;
             }
             let by = resolved_by(origin);
-            match d.claim_answer(&request.request_id, &decision.option_id, by)? {
+            match d.claim_answer(&session_id, &request.request_id, &decision.option_id, by)? {
                 AnswerClaim::First => {
                     let payload = EffectPayload::Answer {
                         request_id,

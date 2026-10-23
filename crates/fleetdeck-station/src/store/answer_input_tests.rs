@@ -35,7 +35,7 @@ fn input_event(request: &str, state: InputState) -> Event {
 async fn sent_answer(s: &Store, det: &Det) -> Effect {
     let d = s
         .decide(envelope(det, "c1"), Caller::local(), |d| {
-            let claim = d.claim_answer(&"req-1".into(), "blue", ResolvedBy::Board)?;
+            let claim = d.claim_answer(&S1.into(), &"req-1".into(), "blue", ResolvedBy::Board)?;
             assert_eq!(claim, AnswerClaim::First);
             d.enqueue(&S1.into(), answer("req-1", "blue"))?;
             Ok(accepted())
@@ -76,7 +76,7 @@ async fn an_outcome_unknown_message_answer_is_confirmed_by_a_late_start() {
     emit(&s, question("req-1")).await;
     let d = s
         .decide(envelope(&det, "c1"), Caller::local(), |d| {
-            d.claim_answer(&"req-1".into(), "blue", ResolvedBy::Board)?;
+            d.claim_answer(&S1.into(), &"req-1".into(), "blue", ResolvedBy::Board)?;
             d.enqueue(&S1.into(), answer("req-1", "blue"))?;
             Ok(accepted())
         })

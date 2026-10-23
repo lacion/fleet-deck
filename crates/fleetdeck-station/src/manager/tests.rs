@@ -759,6 +759,8 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+#[path = "request_key_tests.rs"]
+mod request_key;
 #[path = "shell_wired_tests.rs"]
 mod shell_wired;
 #[path = "trash_wired_tests.rs"]

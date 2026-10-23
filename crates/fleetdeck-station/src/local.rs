@@ -32,6 +32,7 @@ use tokio::sync::watch;
 use crate::link::StationNode;
 use crate::manager::SessionManager;
 use crate::store::Caller;
+use crate::store::requests::{self, LocalPick};
 
 /// The longest request or response line.
 pub const MAX_LINE_BYTES: usize = localsock::MAX_LINE_BYTES;
@@ -570,16 +571,29 @@ async fn handle(
             command_id,
             request_id,
             decision,
-        } => match manager.store().runtime_request(request_id.clone()).await {
-            Ok(Some(request)) => (
-                command_id,
-                SessionCommand::Answer {
-                    session_id: request.session_id,
-                    request_id,
-                    decision,
-                },
-            ),
-            Ok(None) => return error(format!("no request `{request_id}` on this station")),
+        } => match manager
+            .store()
+            .runtime_requests_with_id(request_id.clone())
+            .await
+        {
+            Ok(rows) => match requests::pick_local_request(&rows) {
+                Ok(request) => (
+                    command_id,
+                    SessionCommand::Answer {
+                        session_id: request.session_id.clone(),
+                        request_id,
+                        decision,
+                    },
+                ),
+                Err(LocalPick::None) => {
+                    return error(format!("no request `{request_id}` on this station"));
+                }
+                Err(LocalPick::Ambiguous) => {
+                    return error(format!(
+                        "request `{request_id}` exists in more than one session on this station; answer it from the board"
+                    ));
+                }
+            },
             Err(e) => return error(e.to_string()),
         },
     };

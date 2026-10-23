@@ -83,7 +83,7 @@ async fn claim(s: &Store, det: &Det, id: &str, req: &str, option: &str) -> Answe
     let (tx, rx) = std::sync::mpsc::channel();
     let (req, option) = (req.to_owned(), option.to_owned());
     s.decide(envelope(det, id), Caller::local(), move |d| {
-        let claim = d.claim_answer(&req.as_str().into(), &option, ResolvedBy::Board)?;
+        let claim = d.claim_answer(&S1.into(), &req.as_str().into(), &option, ResolvedBy::Board)?;
         if claim == AnswerClaim::First {
             d.enqueue(&S1.into(), answer(&req, &option))?;
         }
@@ -124,7 +124,11 @@ async fn a_replayed_request_keeps_its_proven_read_time_and_its_deadline_does_not
     )
     .await;
     assert!(matches!(commit, OutputCommit::Committed(_)));
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         req.requested_at, read_at,
         "replay time is never the request time"
@@ -149,7 +153,11 @@ async fn a_request_without_a_proven_time_expires_with_the_deny_and_an_allow_is_r
         RequestTime::Unprovable,
     )
     .await;
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!req.time_proven);
     assert_eq!(req.deny_at, Some(req.requested_at), "due at once");
     // An allow arriving before the sweep is refused as expired.
@@ -174,7 +182,11 @@ async fn a_queued_allow_after_the_deadline_is_never_dispatched_and_the_deny_foll
     // after the deadline with the same live process (a reattached shim).
     det.advance(Duration::from_secs(2));
     s.recover(vec![P1.into()]).await.unwrap();
-    let req = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let req = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         req.state,
         RequestState::Open,
@@ -202,10 +214,18 @@ async fn an_open_request_keeps_requested_at_and_deny_at_across_a_restart() {
     let det = Det::new();
     let s = running(&det, OfflineApprovalPolicy::DenyAfter { after_ms: 10_000 }).await;
     emit(&s, approval("req-1", "n1", &["allow", "deny"])).await;
-    let before = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let before = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     det.advance(Duration::from_secs(3));
     s.recover(vec![P1.into()]).await.unwrap();
-    let after = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let after = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(after.requested_at, before.requested_at);
     assert_eq!(after.deny_at, before.deny_at);
     assert!(s.deny_overdue().await.unwrap().is_empty());
@@ -282,13 +302,21 @@ async fn a_proven_unwritten_shim_answer_reopens_the_request_with_its_original_de
     let s = running(&det, OfflineApprovalPolicy::DenyAfter { after_ms: 10_000 }).await;
     shim(&s).await;
     emit(&s, approval("req-1", "n1", &["allow", "deny"])).await;
-    let before = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let before = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     det.advance(Duration::from_secs(2));
     assert_eq!(
         claim(&s, &det, "c1", "req-1", "allow").await,
         AnswerClaim::First
     );
-    let claimed = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let claimed = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(claimed.receipt.is_some());
     assert_eq!(claimed.deny_at, None, "an answered request has no deadline");
     let fence = s.register_worker().await.unwrap();
@@ -309,7 +337,11 @@ async fn a_proven_unwritten_shim_answer_reopens_the_request_with_its_original_de
     );
     let e = s.effect(effect.effect_id.clone()).await.unwrap().unwrap();
     assert_eq!(e.state, EffectState::RetiredNotDispatched);
-    let after = s.runtime_request("req-1".into()).await.unwrap().unwrap();
+    let after = s
+        .runtime_request(S1.into(), "req-1".into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(after.state, RequestState::Open);
     assert!(after.receipt.is_none(), "the answer slot is open again");
     assert_eq!(after.deny_at, before.deny_at, "the original deadline");

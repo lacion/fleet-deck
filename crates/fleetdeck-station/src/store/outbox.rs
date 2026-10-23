@@ -248,9 +248,28 @@ impl Store {
     ///
     /// # Errors
     /// A database or JSON error.
-    pub async fn runtime_request(&self, request_id: RequestId) -> Result<Option<RuntimeRequest>> {
+    pub async fn runtime_request(
+        &self,
+        session_id: SessionId,
+        request_id: RequestId,
+    ) -> Result<Option<RuntimeRequest>> {
         call(&self.inner.db, move |conn| {
-            requests::request(conn, &request_id)
+            requests::request(conn, &session_id, &request_id)
+        })
+        .await
+    }
+
+    /// Every runtime request with this id, in insert order (one id can exist
+    /// in more than one session of the station).
+    ///
+    /// # Errors
+    /// A database or JSON error.
+    pub async fn runtime_requests_with_id(
+        &self,
+        request_id: RequestId,
+    ) -> Result<Vec<RuntimeRequest>> {
+        call(&self.inner.db, move |conn| {
+            requests::requests_with_id(conn, &request_id)
         })
         .await
     }

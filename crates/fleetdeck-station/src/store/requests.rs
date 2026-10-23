@@ -170,8 +170,54 @@ fn select(
         .collect()
 }
 
-pub(super) fn request(conn: &Connection, id: &RequestId) -> Result<Option<RuntimeRequest>> {
-    Ok(select(conn, "request_id = ?1", [id.as_str()])?.pop())
+pub(super) fn request(
+    conn: &Connection,
+    session: &SessionId,
+    id: &RequestId,
+) -> Result<Option<RuntimeRequest>> {
+    Ok(select(
+        conn,
+        "session_id = ?1 AND request_id = ?2",
+        [session.as_str(), id.as_str()],
+    )?
+    .pop())
+}
+
+/// Every row with this request id, in insert order: the providers number
+/// request ids per session, so one id can exist in more than one session.
+pub(super) fn requests_with_id(conn: &Connection, id: &RequestId) -> Result<Vec<RuntimeRequest>> {
+    select(conn, "request_id = ?1", [id.as_str()])
+}
+
+/// Why [`pick_local_request`] chose no request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalPick {
+    /// No session of the station has the request id.
+    None,
+    /// More than one session has it, and not exactly one of them is open.
+    Ambiguous,
+}
+
+/// The request that a local `Approve` (it names no session) answers: the
+/// only row; or, among several rows, the only open one.
+///
+/// # Errors
+/// [`LocalPick::None`] without a row; [`LocalPick::Ambiguous`] when several
+/// rows exist and not exactly one of them is open.
+pub fn pick_local_request(
+    rows: &[RuntimeRequest],
+) -> std::result::Result<&RuntimeRequest, LocalPick> {
+    match rows {
+        [] => Err(LocalPick::None),
+        [one] => Ok(one),
+        many => {
+            let mut open = many.iter().filter(|r| r.state == RequestState::Open);
+            match (open.next(), open.next()) {
+                (Some(one), None) => Ok(one),
+                _ => Err(LocalPick::Ambiguous),
+            }
+        }
+    }
 }
 
 fn policy(conn: &Connection, session: &SessionId) -> Result<OfflineApprovalPolicy> {
@@ -265,7 +311,7 @@ pub(super) fn observe(
                      node_id, kind, options, response_channel, state, deny_at, requested_at,
                      time_proven, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?9, ?10, ?11)
-                 ON CONFLICT (request_id) DO NOTHING",
+                 ON CONFLICT (session_id, request_id) DO NOTHING",
                 params![
                     request_id.as_str(),
                     session.as_str(),
@@ -296,15 +342,15 @@ pub(super) fn observe(
             conn.execute(
                 "UPDATE runtime_requests
                  SET state = 'resolved', receipt = COALESCE(receipt, ?2), updated_at = ?3
-                 WHERE request_id = ?1 AND state = 'open'",
-                params![request_id.as_str(), receipt, now],
+                 WHERE request_id = ?1 AND session_id = ?4 AND state = 'open'",
+                params![request_id.as_str(), receipt, now, session.as_str()],
             )?;
         }
         Event::ApprovalExpired { request_id, .. } => {
             conn.execute(
                 "UPDATE runtime_requests SET state = 'expired', updated_at = ?2
-                 WHERE request_id = ?1 AND state = 'open'",
-                params![request_id.as_str(), now],
+                 WHERE request_id = ?1 AND session_id = ?3 AND state = 'open'",
+                params![request_id.as_str(), now, session.as_str()],
             )?;
         }
         _ => {}
@@ -315,13 +361,14 @@ pub(super) fn observe(
 /// Records the first answer of a request (see [`AnswerClaim`]).
 pub(super) fn claim_answer(
     conn: &Connection,
+    session: &SessionId,
     request_id: &RequestId,
     option_id: &str,
     by: ResolvedBy,
     command_id: Option<&CommandId>,
     now: i64,
 ) -> Result<AnswerClaim> {
-    let Some(req) = request(conn, request_id)? else {
+    let Some(req) = request(conn, session, request_id)? else {
         return Ok(AnswerClaim::UnknownRequest);
     };
     if let Some(receipt) = req.receipt {
@@ -345,8 +392,8 @@ pub(super) fn claim_answer(
     };
     conn.execute(
         "UPDATE runtime_requests SET receipt = ?2, deny_at = NULL, updated_at = ?3
-         WHERE request_id = ?1",
-        params![request_id.as_str(), json(&receipt)?, now],
+         WHERE request_id = ?1 AND session_id = ?4",
+        params![request_id.as_str(), json(&receipt)?, now, session.as_str()],
     )?;
     Ok(AnswerClaim::First)
 }
@@ -383,7 +430,7 @@ pub(super) fn release_unsent_answer(
     by: ResolvedBy,
     now: i64,
 ) -> Result<bool> {
-    let Some(req) = request(conn, request_id)? else {
+    let Some(req) = request(conn, &effect.session_id, request_id)? else {
         return Ok(false);
     };
     let ours = req.receipt.as_ref().is_some_and(|r| {
@@ -403,8 +450,13 @@ pub(super) fn release_unsent_answer(
     )?;
     conn.execute(
         "UPDATE runtime_requests SET receipt = NULL, deny_at = ?2, updated_at = ?3
-         WHERE request_id = ?1 AND state = 'open'",
-        params![request_id.as_str(), deny_at, now],
+         WHERE request_id = ?1 AND session_id = ?4 AND state = 'open'",
+        params![
+            request_id.as_str(),
+            deny_at,
+            now,
+            effect.session_id.as_str()
+        ],
     )?;
     Ok(true)
 }
@@ -448,8 +500,9 @@ pub(super) fn deny_overdue(
             && req.process_incarnation == effects::live_process(conn, &req.session_id)?;
         let Some(deny) = req.deny_option().filter(|_| live).cloned() else {
             conn.execute(
-                "UPDATE runtime_requests SET deny_at = NULL, updated_at = ?2 WHERE request_id = ?1",
-                params![req.request_id.as_str(), now],
+                "UPDATE runtime_requests SET deny_at = NULL, updated_at = ?2
+                 WHERE request_id = ?1 AND session_id = ?3",
+                params![req.request_id.as_str(), now, req.session_id.as_str()],
             )?;
             if live {
                 let event = Event::Error {
@@ -466,6 +519,7 @@ pub(super) fn deny_overdue(
         };
         claim_answer(
             conn,
+            &req.session_id,
             &req.request_id,
             &deny.option_id,
             ResolvedBy::Timeout,
@@ -516,7 +570,7 @@ pub(super) fn retire_expired_allow(
     if is_deny(&decision.option_id) {
         return Ok(false);
     }
-    let Some(req) = request(conn, request_id)? else {
+    let Some(req) = request(conn, &effect.session_id, request_id)? else {
         return Ok(false);
     };
     if req.state != RequestState::Open || !past_deadline(conn, &req, now)? {

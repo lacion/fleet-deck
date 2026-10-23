@@ -11,7 +11,12 @@ use super::*;
 async fn answer_with(s: &Store, det: &Det, id: &str, request: &str, option: &str) -> Decided {
     let (request, option) = (request.to_owned(), option.to_owned());
     s.decide(envelope(det, id), Caller::local(), move |d| {
-        let claim = d.claim_answer(&request.as_str().into(), &option, ResolvedBy::Board)?;
+        let claim = d.claim_answer(
+            &S1.into(),
+            &request.as_str().into(),
+            &option,
+            ResolvedBy::Board,
+        )?;
         if claim == AnswerClaim::First {
             d.enqueue(&S1.into(), answer(&request, &option))?;
         }
@@ -22,7 +27,10 @@ async fn answer_with(s: &Store, det: &Det, id: &str, request: &str, option: &str
 }
 
 async fn request(s: &Store, id: &str) -> RuntimeRequest {
-    s.runtime_request(id.into()).await.unwrap().unwrap()
+    s.runtime_request(S1.into(), id.into())
+        .await
+        .unwrap()
+        .unwrap()
 }
 
 /// `c1` answers `req-1`, the live worker claims the effect and gets `how`.
@@ -212,7 +220,7 @@ async fn an_effect_that_does_not_own_the_receipt_releases_nothing() {
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
     emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
     s.decide(envelope(&det, "c1"), Caller::local(), |d| {
-        d.claim_answer(&"req-1".into(), "allow", ResolvedBy::Board)?;
+        d.claim_answer(&S1.into(), &"req-1".into(), "allow", ResolvedBy::Board)?;
         d.enqueue(&S1.into(), answer("req-1", "deny"))?;
         Ok(accepted())
     })
@@ -315,4 +323,123 @@ async fn a_lost_session_reports_the_loss_before_it_empties_the_background_list()
     assert_eq!(summary.state, SessionState::Lost);
     assert!(summary.background_tasks.is_empty());
     assert_eq!(summary.current_run, None);
+}
+
+#[tokio::test]
+async fn claim_answer_reports_unknown_closed_and_invalid_answers() {
+    let det = Det::new();
+    let s = running(&det, OfflineApprovalPolicy::Wait).await;
+    emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
+    emit(
+        &s,
+        Event::ApprovalExpired {
+            request_id: "req-1".into(),
+            reason: ExpiredReason::TurnEnded,
+        },
+    )
+    .await;
+    emit(&s, approval("req-2", "node-2", &["allow", "deny"])).await;
+    let mut seen = Vec::new();
+    for (n, (req, option)) in [("req-9", "allow"), ("req-1", "allow"), ("req-2", "maybe")]
+        .into_iter()
+        .enumerate()
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        s.decide(
+            envelope(&det, &format!("c{n}")),
+            Caller::local(),
+            move |d| {
+                tx.send(d.claim_answer(&S1.into(), &req.into(), option, ResolvedBy::Board)?)
+                    .unwrap();
+                Ok(accepted())
+            },
+        )
+        .await
+        .unwrap();
+        seen.push(rx.recv().unwrap());
+    }
+    assert_eq!(
+        seen,
+        [
+            AnswerClaim::UnknownRequest,
+            AnswerClaim::Closed(RequestState::Expired),
+            AnswerClaim::UnknownOption,
+        ]
+    );
+}
+
+// --- request key (DL-402 follow-up) ------------------------------------------------
+
+/// A second session `s2` of the same store.
+async fn second_session(s: &Store) {
+    let mut new = session(OfflineApprovalPolicy::Wait);
+    new.session_id = "s2".into();
+    s.create_session(new).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_resolved_event_closes_only_the_request_of_its_session() {
+    let det = Det::new();
+    let s = running(&det, OfflineApprovalPolicy::Wait).await;
+    second_session(&s).await;
+    emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
+    s.append(
+        "s2".into(),
+        vec![approval("req-1", "node-1", &["allow", "deny"]).into()],
+    )
+    .await
+    .unwrap();
+    let get = |session: &str| s.runtime_request(session.into(), "req-1".into());
+    assert_eq!(get(S1).await.unwrap().unwrap().state, RequestState::Open);
+    assert_eq!(get("s2").await.unwrap().unwrap().state, RequestState::Open);
+
+    emit(
+        &s,
+        Event::ApprovalResolved {
+            request_id: "req-1".into(),
+            option_id: "allow".to_owned(),
+            by: ResolvedBy::Board,
+            answered_by: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        get(S1).await.unwrap().unwrap().state,
+        RequestState::Resolved
+    );
+    assert_eq!(get("s2").await.unwrap().unwrap().state, RequestState::Open);
+    let all = s.runtime_requests_with_id("req-1".into()).await.unwrap();
+    assert_eq!(all.len(), 2);
+}
+
+fn picked(session: &str, state: RequestState) -> RuntimeRequest {
+    RuntimeRequest {
+        request_id: "req-3".into(),
+        session_id: session.into(),
+        process_incarnation: None,
+        node_id: None,
+        kind: RequestKind::Command,
+        options: Vec::new(),
+        response: ResponseChannel::RpcReply,
+        state,
+        receipt: None,
+        deny_at: None,
+        requested_at: 1,
+        time_proven: true,
+    }
+}
+
+#[test]
+fn pick_local_request_cases() {
+    use crate::store::requests::{LocalPick, pick_local_request};
+    let (open, closed) = (RequestState::Open, RequestState::Resolved);
+    assert_eq!(pick_local_request(&[]), Err(LocalPick::None));
+    let one = [picked("a", closed)];
+    assert_eq!(pick_local_request(&one).unwrap().session_id.as_str(), "a");
+    let mixed = [picked("a", closed), picked("b", open)];
+    assert_eq!(pick_local_request(&mixed).unwrap().session_id.as_str(), "b");
+    let both_open = [picked("a", open), picked("b", open)];
+    assert_eq!(pick_local_request(&both_open), Err(LocalPick::Ambiguous));
+    let both_closed = [picked("a", closed), picked("b", RequestState::Expired)];
+    assert_eq!(pick_local_request(&both_closed), Err(LocalPick::Ambiguous));
 }
