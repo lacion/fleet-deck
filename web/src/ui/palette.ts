@@ -131,6 +131,27 @@ export const PALETTE_VARS = [
 ] as const;
 
 /**
+ * The color tokens that a palette moves through `PALETTE_VARS`: in both theme blocks of tokens.css
+ * each one is a `var()` alias (or a `color-mix()` of aliases) of the palette tokens, never a raw
+ * color, so it follows a palette with no value of its own here (palette.test.ts reads tokens.css
+ * and checks it). `--seg-track` (the segmented control track) and `--panel-bg` (the panel fill)
+ * are the surface steps of the light theme that a panel and a track need on the canvas;
+ * `--hover-bg` is the hover of a nav row, a step apart from `--selected-bg`.
+ */
+export const PALETTE_ALIASES = [
+  '--code-chat',
+  '--badge-bg',
+  '--badge-on-selected',
+  '--btn-edge-raised',
+  '--pressed-bg',
+  '--switch-knob',
+  '--selected-bg',
+  '--hover-bg',
+  '--seg-track',
+  '--panel-bg',
+] as const;
+
+/**
  * The fuel color (usage, tokens, cost) of each mode. A palette has no purple: fuel keeps the
  * design system color, so that it never takes the meaning of another color.
  */

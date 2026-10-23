@@ -192,9 +192,21 @@ export const removedText = (n: number): string => `−${countText(n)}`;
 
 // ── paths (DESIGN-SYSTEM §5): a shown path starts at `~/` under a home folder, else at `/` ──
 
+/** A home folder of Linux or macOS at the start of a path: `/home/me`, `/Users/me`. */
+const HOME = /^\/(?:home|Users)\/[^/]+(?=\/|$)/;
+
 /** `/home/me/projects/x` → `~/projects/x` (a home folder of Linux or macOS); other paths stay. */
 export function homeShort(path: string): string {
-  return path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~');
+  return path.replace(HOME, '~');
+}
+
+/**
+ * The home folder that a path starts with (`/home/me` for `/home/me/x` and `/home/me`), or `null`:
+ * the part that `homeShort` writes as `~`. A folder picker shows it as one `~` crumb, not as a
+ * root-less `home / me`.
+ */
+export function homeOf(path: string): string | null {
+  return HOME.exec(path)?.[0] ?? null;
 }
 
 /**

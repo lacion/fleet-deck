@@ -5,6 +5,7 @@ import {
   contextLabel,
   countText,
   errorSentence,
+  homeOf,
   homeShort,
   homeShortIn,
   isRiskyMode,
@@ -173,6 +174,15 @@ describe('paths (DESIGN-SYSTEM §5)', () => {
     expect(homeShort('/home/me2x/a')).toBe('~/a');
     expect(homeShort('/srv/data')).toBe('/srv/data');
     expect(homeShort('/home')).toBe('/home');
+  });
+
+  test('homeOf is the home folder that homeShort writes as ~', () => {
+    expect(homeOf('/home/me/projects/x')).toBe('/home/me');
+    expect(homeOf('/home/me')).toBe('/home/me');
+    expect(homeOf('/Users/me/x')).toBe('/Users/me');
+    expect(homeOf('/srv/data')).toBeNull();
+    expect(homeOf('/home')).toBeNull();
+    expect(homeOf('/srv/home/me')).toBeNull();
   });
 
   test('homeShortIn shortens every home folder that starts a word of a text', () => {
