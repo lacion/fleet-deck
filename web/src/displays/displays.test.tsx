@@ -17,9 +17,10 @@ import {
   type DisplayActions,
 } from './actions';
 import { AddDisplay, COST_TEXT } from './AddDisplay';
-import { DisplayRow, changeOf, isDirty } from './DisplayRow';
+import { DisplayRow, changeOf, isDirty, QUIET_PROBLEM, seenText } from './DisplayRow';
 import { ADD_TEXT, DisplaysTab, DisplaysView } from './DisplaysTab';
 import { ELEVATION_LABELS, withElevation } from './elevate';
+import { monitorLabel } from './monitorLabel';
 import { PendingPairings } from './PendingPairings';
 
 type Call = { method: 'GET' | 'POST'; path: string; body?: unknown };
@@ -299,9 +300,9 @@ describe('a display row', () => {
     expect(changeOf(base, draft({ ceiling: [] }))).toEqual({
       problem: 'Choose at least one station.',
     });
-    expect(changeOf(base, draft({ quiet: '10pm' }))).toEqual({
-      problem: 'Quiet hours look like 22:00-07:00.',
-    });
+    // A time field that the owner cleared leaves one side of the quiet hours empty.
+    expect(changeOf(base, draft({ quiet: '-07:00' }))).toEqual({ problem: QUIET_PROBLEM });
+    expect(changeOf(base, draft({ quiet: '10pm' }))).toEqual({ problem: QUIET_PROBLEM });
     expect(changeOf(base, draft({ bindMonitor: 'bad name' }))).toEqual({
       problem: 'Give a monitor name.',
     });
@@ -338,33 +339,63 @@ describe('a display row', () => {
       'The wall shows the changed lines of a session, not only its changed files.',
       'Wake the screen',
       'Turn on the bound monitor when a session needs you, except in quiet hours.',
-      'Hours when the screen stays dark, for example 22:00-07:00, in the local time of the bound station.',
-      'placeholder="Off"',
-      'aria-label="Clear binding"',
+      'The screen stays dark in these hours, in the local time of the bound station.',
       'Bound monitor',
       'aria-label="Display actions"',
       'Switch to Mission view',
       'Revoke…',
-      'Added 3 d ago · never used',
+      'Never connected',
+      'title="Added 3 d ago"',
+      'Stations it shows',
     ]) {
       expect(html).toContain(text);
     }
+    // Every field is a settings field row (§4.7), the station names are wide type (§2.3).
+    expect(html.match(/class="fd-fieldwrap" data-layout="row"/g)?.length).toBe(7);
+    expect(html).toContain('<span class="fd-wide">Alpha</span>');
+    expect(html).not.toContain('<fieldset');
+    // One control clears the binding: the "None" station.
+    expect(html).not.toContain('Clear binding');
+    expect(html).not.toContain('placeholder="Off"');
     expect(html).not.toContain('(patches)');
     expect(html).not.toContain('Discard');
     expect(html).not.toContain('>Save<');
     expect(html).not.toContain('Revoke this display?');
   });
 
-  test('the last use says ago, and "now" stays "now"', () => {
-    expect(row(display({ last_seen: 2 * 86_400_000 }))).toContain('last seen 1 d ago');
-    expect(row(display({ last_seen: 3 * 86_400_000 }))).toContain('last seen now');
+  test('quiet hours are a switch and two times that read the stored text', () => {
+    const html = row(base);
+    expect(html).toContain('role="group" aria-label="Quiet hours"');
+    expect(html).toContain('From<input type="time" step="60" value="22:00"/>');
+    expect(html).toContain('to<input type="time" step="60" value="07:00"/>');
+    const off = row(display({ binding: base.binding }));
+    expect(off).toContain('Quiet hours');
+    expect(off).not.toContain('type="time"');
   });
 
-  test('an unbound display has no monitor row and no clear button', () => {
-    const html = row(display());
+  test('the link state is a glyph and words: online, the last time, or never', () => {
+    const now = 3 * 86_400_000 + 1_000;
+    expect(seenText(null, now)).toBe('Never connected');
+    expect(seenText(now - 60_000, now)).toBe('Online');
+    expect(seenText(now - 5 * 60_000, now)).toBe('Last seen 5 min ago');
+    expect(seenText(2 * 86_400_000, now)).toBe('Last seen 1 d ago');
+    expect(row(display({ last_seen: 3 * 86_400_000 }))).toContain(
+      '<span class="fd-dot" data-status="online" aria-hidden="true"></span>Online',
+    );
+    expect(row(display({ last_seen: 2 * 86_400_000 }))).toContain(
+      '<span class="fd-dot" data-status="idle" aria-hidden="true"></span>Last seen 1 d ago',
+    );
+  });
+
+  test('an unbound display has no monitor row, and waking and quiet hours wait for a binding', () => {
+    const html = row(display({ quiet_hours: '22:00-07:00' }));
     expect(html).toContain('Bound station');
     expect(html).not.toContain('Bound monitor');
-    expect(html).not.toContain('Clear binding');
+    expect(html).toContain('Bind a station and a monitor first.');
+    expect(html).not.toContain('Turn on the bound monitor');
+    // The stored values stay: the switches keep their state, disabled.
+    expect(html).toMatch(/aria-checked="true" disabled="" checked=""/);
+    expect(html).toContain('<input type="time" step="60" disabled="" value="22:00"/>');
   });
 
   test('a station that reports monitors gives a list, and a stored name not in it says so', () => {
@@ -383,11 +414,31 @@ describe('a display row', () => {
         info: { desktop: { monitors: names.map(monitor) } } as unknown as StationView['info'],
       });
     const listed = row(base, [withMonitors(['DP-1', 'HDMI-A-1'])]);
-    expect(listed).toContain('DP-1 — Main');
-    expect(listed).toContain('HDMI-A-1');
+    // The words first, the connector last; the title keeps the raw text.
+    expect(listed).toContain('title="DP-1 — Main" selected="">Main · DP-1</option>');
+    expect(listed).toContain('title="HDMI-A-1">HDMI-A-1</option>');
     expect(listed).not.toContain('(not connected)');
     const gone = row(base, [withMonitors(['HDMI-A-1'])]);
     expect(gone).toContain('DP-1 (not connected)');
+  });
+});
+
+describe('the words of a monitor', () => {
+  const m = (name: string, description: string) => ({ name, description });
+
+  test('a description loses its hex product code and comes before the connector', () => {
+    expect(monitorLabel(m('DP-1', 'Dell Inc. DELL U2720Q 0x1A2B'))).toBe(
+      'Dell Inc. DELL U2720Q · DP-1',
+    );
+    expect(monitorLabel(m('HDMI-A-1', ''))).toBe('HDMI-A-1');
+    expect(monitorLabel(m('DP-2', '0x41AA'))).toBe('DP-2');
+  });
+
+  test('a laptop panel is the built-in display', () => {
+    expect(monitorLabel(m('eDP-1', 'Samsung Display Corp. 0x41AA'))).toBe(
+      'Built-in display · eDP-1',
+    );
+    expect(monitorLabel(m('LVDS-1', ''))).toBe('Built-in display · LVDS-1');
   });
 });
 
@@ -448,7 +499,8 @@ describe('the Displays page', () => {
       />,
     );
     expect(html).toContain(COST_TEXT);
-    expect(html).toContain('Stations that it may show');
+    expect(html).toContain('Stations it shows');
+    expect(html).toContain('class="fd-primary"');
     expect(html).toContain('Alpha');
     expect(html).toContain('Beta');
     expect(html).toContain('Cancel');

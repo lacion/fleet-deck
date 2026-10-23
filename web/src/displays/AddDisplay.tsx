@@ -87,7 +87,7 @@ export function AddDisplay({
         <>
           <p className="fd-note">{COST_TEXT}</p>
           <form className="fd-set-dialogform" onSubmit={submit} aria-label="Add a wall display">
-            <Field label="Name">
+            <Field label="Name" layout="row">
               <input
                 ref={nameRef}
                 value={name}
@@ -99,7 +99,7 @@ export function AddDisplay({
               stations={stations}
               value={ceiling}
               onChange={setCeiling}
-              label="Stations that it may show"
+              label="Stations it shows"
             />
             {error === null ? null : (
               <p className="fd-fielderror" role="alert">
@@ -110,7 +110,7 @@ export function AddDisplay({
               <button type="button" className="fd-ghost" disabled={busy} onClick={onClose}>
                 Cancel
               </button>
-              <button type="submit" disabled={busy}>
+              <button type="submit" className="fd-primary" disabled={busy}>
                 {busy ? 'Making the link…' : 'Make a pairing link'}
               </button>
             </div>

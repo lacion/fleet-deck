@@ -2,18 +2,19 @@
 // binding, with "Switch to Mission view" and "Revoke…" in the menu of its heading. Discard and Save
 // show only while the draft differs; Save sends only the keys that changed. Turning `show_diffs`
 // on, a new station and a new binding need the owner's elevation (the deck says so;
-// `withElevation`).
-import { useEffect, useId, useRef, useState } from 'react';
+// `withElevation`). The fields are the settings field rows (§4.7, `Field layout="row"`).
+import { useEffect, useRef, useState } from 'react';
 import { relativeAge } from '../app/sessions';
 import type { DisplayView, MonitorInfo, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
 import type { ElevationAsk } from '../settings/elevation';
 import { describe } from '../settings/http';
-import { Ellipsis, Icon, X } from '../ui/icons';
+import { Ellipsis, Icon } from '../ui/icons';
 import { Menu } from '../ui/Menu';
 import { Field } from '../ui/page';
 import type { DisplayActions, DisplayChange } from './actions';
 import { withElevation } from './elevate';
+import { monitorLabel, monitorRaw } from './monitorLabel';
 import { StationChoices } from './StationChoices';
 
 type Draft = {
@@ -21,6 +22,7 @@ type Draft = {
   readonly ceiling: readonly string[];
   readonly showDiffs: boolean;
   readonly wake: boolean;
+  /** `HH:MM-HH:MM`, or `''`: no quiet hours. */
   readonly quiet: string;
   readonly bindStation: string;
   readonly bindMonitor: string;
@@ -39,6 +41,12 @@ const draftOf = (d: DisplayView): Draft => ({
 const sameSet = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((x) => b.includes(x));
 
+/** The quiet hours that the switch turns on when the display has none yet. */
+export const QUIET_DEFAULT = '22:00-07:00';
+
+/** The text of a draft whose quiet hours lack a start or an end. */
+export const QUIET_PROBLEM = 'Give the quiet hours a start and an end.';
+
 /** The keys that differ, or the problem with the draft. */
 export function changeOf(
   d: DisplayView,
@@ -54,9 +62,7 @@ export function changeOf(
   if (draft.showDiffs !== d.show_diffs) change.show_diffs = draft.showDiffs;
   if (draft.wake !== d.wake_on_needs_you) change.wake_on_needs_you = draft.wake;
   const quiet = draft.quiet.trim();
-  if (quiet !== '' && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quiet)) {
-    return { problem: 'Quiet hours look like 22:00-07:00.' };
-  }
+  if (quiet !== '' && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quiet)) return { problem: QUIET_PROBLEM };
   if (quiet !== (d.quiet_hours ?? '')) change.quiet_hours = quiet === '' ? null : quiet;
   if (draft.bindStation === '') {
     if (d.binding !== null) change.binding = null;
@@ -82,31 +88,33 @@ const ago = (at: number, now: number): string => {
   return age === 'now' ? age : `${age} ago`;
 };
 
-/** One option text of a monitor: `<name> — <description>`, or only the name. */
-const monitorText = (m: MonitorInfo): string =>
-  m.description === '' ? m.name : `${m.name} — ${m.description}`;
+/** A display seen within this time is online: it reads the deck every few seconds. */
+export const ONLINE_MS = 2 * 60_000;
 
-/** The binding: a station, then its monitor; the X clears both. */
+/** The link of a display: online, the last time the deck saw it, or never. */
+export function seenText(lastSeen: number | null, now: number): string {
+  if (lastSeen === null) return 'Never connected';
+  return now - lastSeen < ONLINE_MS ? 'Online' : `Last seen ${ago(lastSeen, now)}`;
+}
+
+/** The binding: a station ("None" clears it and its monitor), then the monitor of the station. */
 function Binding({
   draft,
   saved,
   stations,
-  busy,
   patch,
 }: {
   readonly draft: Draft;
   /** The saved binding: a return to its station gives its monitor back. */
   readonly saved: DisplayView['binding'];
   readonly stations: readonly StationView[];
-  readonly busy: boolean;
   readonly patch: (next: Partial<Draft>) => void;
 }) {
-  const stationId = useId();
   const bound = draft.bindStation !== '';
   const monitorsOf = (id: string): readonly MonitorInfo[] =>
     stations.find((s) => s.station_id === id)?.info?.desktop?.monitors ?? [];
   const monitors = monitorsOf(draft.bindStation);
-  // A new station: its saved monitor, its only monitor, or none yet.
+  // A new station: its saved monitor, its only monitor, or none yet. "None" has no monitor.
   const monitorFor = (id: string): string => {
     if (saved !== null && saved.station_id === id) return saved.monitor;
     const list = monitorsOf(id);
@@ -114,45 +122,25 @@ function Binding({
   };
   return (
     <>
-      <div className="fd-fieldwrap fd-disp-bindrow">
-        <div className="fd-fieldcontrol">
-          <label className="fd-fieldlabel" htmlFor={stationId}>
-            Bound station
-          </label>
-          <span className="fd-disp-bindctl">
-            <select
-              id={stationId}
-              value={draft.bindStation}
-              onChange={(e) =>
-                patch({ bindStation: e.target.value, bindMonitor: monitorFor(e.target.value) })
-              }
-            >
-              <option value="">None</option>
-              {stations.map((s) => (
-                <option key={s.station_id} value={s.station_id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            {bound ? (
-              <button
-                type="button"
-                className="fd-iconbtn fd-sm"
-                aria-label="Clear binding"
-                title="Clear binding"
-                disabled={busy}
-                onClick={() => patch({ bindStation: '', bindMonitor: '' })}
-              >
-                <Icon of={X} size={14} />
-              </button>
-            ) : null}
-          </span>
-        </div>
-      </div>
+      <Field label="Bound station" layout="row">
+        <select
+          value={draft.bindStation}
+          onChange={(e) =>
+            patch({ bindStation: e.target.value, bindMonitor: monitorFor(e.target.value) })
+          }
+        >
+          <option value="">None</option>
+          {stations.map((s) => (
+            <option key={s.station_id} value={s.station_id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </Field>
       {/* No station, no monitor: the row is absent. A station that reports its monitors gives a
           list of them; else the owner types the name. */}
       {!bound ? null : (
-        <Field label="Bound monitor">
+        <Field label="Bound monitor" layout="row">
           {monitors.length === 0 ? (
             <input
               value={draft.bindMonitor}
@@ -171,8 +159,8 @@ function Binding({
                 <option value={draft.bindMonitor}>{`${draft.bindMonitor} (not connected)`}</option>
               )}
               {monitors.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {monitorText(m)}
+                <option key={m.name} value={m.name} title={monitorRaw(m)}>
+                  {monitorLabel(m)}
                 </option>
               ))}
             </select>
@@ -180,6 +168,73 @@ function Binding({
         </Field>
       )}
     </>
+  );
+}
+
+/**
+ * Quiet hours: a switch, and while it is on the two times (From, to). Both times write one
+ * `HH:MM-HH:MM` text; off writes none. The markup of a `Field layout="row"` with one more row
+ * (the times) between the switch and the hint.
+ */
+function QuietHours({
+  value,
+  disabled,
+  onChange,
+}: {
+  readonly value: string;
+  readonly disabled: boolean;
+  readonly onChange: (next: string) => void;
+}) {
+  const on = value !== '';
+  // The times of the last "on": a switch turned off and on again gives them back.
+  const [last, setLast] = useState(on ? value : QUIET_DEFAULT);
+  const [from = '', to = ''] = value.split('-');
+  const set = (next: string) => {
+    setLast(next);
+    onChange(next);
+  };
+  return (
+    <div className="fd-fieldwrap" data-layout="row">
+      <label className="fd-fieldcontrol">
+        <span className="fd-fieldlabel">Quiet hours</span>
+        <input
+          type="checkbox"
+          role="switch"
+          className="fd-switch"
+          aria-checked={on}
+          checked={on}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked ? last : '')}
+        />
+      </label>
+      {on ? (
+        <span className="fd-set-inline fd-disp-quiet" role="group" aria-label="Quiet hours">
+          <label className="fd-disp-time">
+            From
+            <input
+              type="time"
+              step={60}
+              value={from}
+              disabled={disabled}
+              onChange={(e) => set(`${e.target.value}-${to}`)}
+            />
+          </label>
+          <label className="fd-disp-time">
+            to
+            <input
+              type="time"
+              step={60}
+              value={to}
+              disabled={disabled}
+              onChange={(e) => set(`${from}-${e.target.value}`)}
+            />
+          </label>
+        </span>
+      ) : null}
+      <span className="fd-fieldhint">
+        The screen stays dark in these hours, in the local time of the bound station.
+      </span>
+    </div>
   );
 }
 
@@ -217,6 +272,10 @@ export function DisplayRow({
     setNote(null);
   };
   const dirty = isDirty(base, draft);
+  // Without a bound monitor there is nothing to wake or to keep dark: the two controls wait for a
+  // binding, and their stored values stay.
+  const bound = draft.bindStation !== '';
+  const online = display.last_seen !== null && now - display.last_seen < ONLINE_MS;
   const run = (what: () => Promise<unknown>, done: string | null) => {
     setBusy(true);
     setError(null);
@@ -275,10 +334,10 @@ export function DisplayRow({
     <li className="fd-panel fd-disp-row" data-display={display.display_id}>
       <header className="fd-disp-head">
         <h3 className="fd-disp-name">{display.name}</h3>
-        <span className="fd-note fd-disp-seen">
-          {`Added ${ago(display.created_at, now)} · ${
-            display.last_seen === null ? 'never used' : `last seen ${ago(display.last_seen, now)}`
-          }`}
+        {/* The link state: the station glyph of a link (online) or a hollow ring, then words. */}
+        <span className="fd-note fd-disp-seen" title={`Added ${ago(display.created_at, now)}`}>
+          <span className="fd-dot" data-status={online ? 'online' : 'idle'} aria-hidden="true" />
+          {seenText(display.last_seen, now)}
         </span>
         <Menu summary={<Icon of={Ellipsis} />} summaryClass="fd-iconbtn" label="Display actions">
           {(close) => (
@@ -340,7 +399,7 @@ export function DisplayRow({
           </button>
         </div>
       ) : null}
-      <Field label="Name">
+      <Field label="Name" layout="row">
         <input
           value={draft.name}
           maxLength={80}
@@ -351,10 +410,11 @@ export function DisplayRow({
         stations={stations}
         value={draft.ceiling}
         onChange={(ceiling) => patch({ ceiling })}
-        label="Stations that it may show"
+        label="Stations it shows"
       />
       <Field
         label="Show code changes"
+        layout="row"
         hint="The wall shows the changed lines of a session, not only its changed files."
       >
         <input
@@ -366,10 +426,15 @@ export function DisplayRow({
           onChange={(e) => patch({ showDiffs: e.target.checked })}
         />
       </Field>
-      <Binding draft={draft} saved={base.binding} stations={stations} busy={busy} patch={patch} />
+      <Binding draft={draft} saved={base.binding} stations={stations} patch={patch} />
       <Field
         label="Wake the screen"
-        hint="Turn on the bound monitor when a session needs you, except in quiet hours."
+        layout="row"
+        hint={
+          bound
+            ? 'Turn on the bound monitor when a session needs you, except in quiet hours.'
+            : 'Bind a station and a monitor first.'
+        }
       >
         <input
           type="checkbox"
@@ -377,31 +442,25 @@ export function DisplayRow({
           className="fd-switch"
           aria-checked={draft.wake}
           checked={draft.wake}
+          disabled={!bound}
           onChange={(e) => patch({ wake: e.target.checked })}
         />
       </Field>
-      <Field
-        label="Quiet hours"
-        hint="Hours when the screen stays dark, for example 22:00-07:00, in the local time of the bound station."
-      >
-        <input
-          value={draft.quiet}
-          placeholder="Off"
-          onChange={(e) => patch({ quiet: e.target.value })}
-        />
-      </Field>
+      <QuietHours value={draft.quiet} disabled={!bound} onChange={(quiet) => patch({ quiet })} />
       {error === null ? null : (
         <p className="fd-fielderror" role="alert">
           {error}
         </p>
       )}
       {note === null ? null : <p role="status">{note}</p>}
+      {/* One save look on the Settings page (§2.2): Save is the general primary, as in the save bar
+          of the station tabs. Only the changed card shows the two answers. */}
       {dirty ? (
         <div className="fd-formactions">
-          <button type="button" className="fd-ghost" disabled={busy} onClick={discard}>
+          <button type="button" className="fd-ghost fd-sm" disabled={busy} onClick={discard}>
             Discard
           </button>
-          <button type="button" disabled={busy} onClick={save}>
+          <button type="button" className="fd-primary fd-sm" disabled={busy} onClick={save}>
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>

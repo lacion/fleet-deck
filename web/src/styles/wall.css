@@ -181,6 +181,12 @@
   font-size: var(--fs-meta);
 }
 
+/* Nothing waits: the calm words of the fleet and Watch headers, in their green (§4.4). */
+.fd-wall-clear {
+  color: var(--ok);
+  font-weight: 500;
+}
+
 .fd-wall-h {
   display: flex;
   align-items: center;
@@ -244,6 +250,18 @@
 .fd-wall-root[data-shape="wide"] .fd-wall-grid {
   grid-template-columns: 26% minmax(0, 1fr);
   grid-template-rows: minmax(0, auto) minmax(0, 1fr) minmax(0, 30%);
+  /* The side panel ends with the tiles; the Activity stream takes the whole width under both, so
+     a row has room for its command and the side has no empty foot. */
+  grid-template-areas:
+    "needs tiles"
+    "side tiles"
+    "stream stream";
+}
+
+/* While requests wait, the needs area takes the top of the left column: the side blocks keep the
+   column down to the screen foot (else they would be cut), and the stream sits under the tiles.
+   The tiles do not move. */
+.fd-wall-root[data-shape="wide"] .fd-wall-grid:has(> [data-area="needs"] .fd-wall-need) {
   grid-template-areas:
     "needs tiles"
     "side tiles"
@@ -549,7 +567,9 @@
 }
 
 /* The chat lines show whole lines only, the newest kept: the column runs from the bottom up (the
-   newest first by `order`, packed at the top), and a line that does not fit wraps into a second column, out of view. */
+   newest first by `order`, packed at the top), and a line that does not fit wraps into a second
+   column, out of view. The call that runs now is the newest line of the box (Tile `readOnly`), so
+   the room that no whole line fills falls at the tile foot, never between the chat and the call. */
 .fd-wall-root .fd-wtile-open > .fd-wtile-lines {
   flex: 0 1 auto;
   flex-flow: column-reverse wrap;
@@ -582,6 +602,14 @@
 
 .fd-wall-root .fd-wtile-head {
   min-height: calc(var(--fd-wall-u) * 20 * var(--fd-wall-tile-k));
+}
+
+/* The call that runs now, the newest chat line: the working glyph first (its shape tells it from
+   the past calls; a .fd-vh "Running now" says it). */
+.fd-wall-root .fd-wtile-line[data-running] > .fd-dot {
+  flex: none;
+  align-self: center;
+  margin-right: calc(var(--fd-wall-u) * 2);
 }
 
 .fd-wall-root .fd-wtile-ask {
@@ -781,7 +809,8 @@
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 96), 1fr));
+  /* A cell is wide enough for a title on one or two lines ("Deploy Latest Fairly"). */
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--fd-wall-u) * 128), 1fr));
   grid-auto-flow: dense;
   gap: var(--sp-1);
   margin: 0;
@@ -816,11 +845,6 @@
 /* --text 13.3:1 / 16.5:1 and --act 10.9:1 / 5.7:1 on --act-bg. */
 .fd-wall-load li[data-heat="high"] {
   background: var(--act-bg);
-}
-
-.fd-wall-load li[data-heat="unknown"] {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 /* A name is the session title, as on its tile: two lines, so that two titles that start alike
@@ -889,15 +913,30 @@
   white-space: nowrap;
 }
 
-/* An ultra wall gives the stream a whole column of height but only 22 % of the width: a row wraps
-   onto a second line (under the name, not under the time) rather than end in an ellipsis. */
+/* An ultra wall gives the stream a whole column of height but only 22 % of the width: the event
+   wraps onto a second line (a hanging indent: under the event, not under the time or the name)
+   rather than end in an ellipsis. The row is a grid of the three columns. */
 .fd-wall-root[data-shape="ultra"] .fd-wall-stream li {
+  display: grid;
+  grid-template-columns: 6ch 16ch minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--sp-2);
+  white-space: normal;
+}
+
+.fd-wall-root[data-shape="ultra"] .fd-wall-stream :is(time, strong) {
+  width: auto;
+  min-width: 0;
+  margin-right: 0;
+}
+
+.fd-wall-root[data-shape="ultra"] .fd-wall-event {
   display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  padding-left: calc(6ch + var(--sp-2));
-  text-indent: calc(-6ch - var(--sp-2));
-  white-space: normal;
+  line-clamp: 2;
   overflow-wrap: anywhere;
 }
 
@@ -909,16 +948,24 @@
 .fd-wall-stream time {
   display: inline-block;
   min-width: 6ch;
-  /* an inline block: it must not take the hanging indent of an ultra row */
-  text-indent: 0;
   margin-right: var(--sp-2);
   color: var(--faint);
   text-align: right;
 }
 
+/* The session is a column of its own (16ch, as the Activity page): every event starts at one x,
+   and the name, the subject of the row, steps back (--dim, 500) behind the event, whose tool name
+   keeps --text weight 600. A longer name ends in an ellipsis; its title keeps it whole. */
 .fd-wall-stream strong {
-  color: var(--text);
-  font-weight: 600;
+  display: inline-block;
+  width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  margin-right: var(--sp-2);
+  color: var(--dim);
+  font-weight: 500;
 }
 
 /* The target of a tool row: a command or a path. */
@@ -1374,5 +1421,19 @@
     flex: none;
     height: max-content;
     max-height: calc(var(--fd-wall-u) * 320);
+  }
+
+  /* A phone row is short: the session column is narrower, so the event keeps half of the row. */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-stream strong {
+    width: 12ch;
+  }
+
+  /* The scroll column has the same inset at both sides: it runs to the screen edges, the
+     scrollbar keeps a gutter of its own at the right and the left edge reserves the same (an
+     overlay scrollbar of a phone takes none), and the padding keeps the panels off both. */
+  .fd-wall-root[data-shape="portrait"] .fd-wall-grid {
+    margin-inline: calc(-1 * var(--sp-3));
+    padding-inline: var(--sp-3);
+    scrollbar-gutter: stable both-edges;
   }
 }

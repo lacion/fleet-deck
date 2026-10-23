@@ -81,6 +81,28 @@ describe('the lines of a display timeline', () => {
     expect(displayTileLines(events, 2)).toHaveLength(2);
   });
 
+  test('one tool call is one line: its end replaces its start', () => {
+    const call: DisplayEvent[] = [
+      ev(1, { item: 'tool', node_id: 'n1', name: 'Bash', status: null }),
+      ev(2, { item: 'tool', node_id: 'n1', name: 'Bash', status: 'failed' }),
+      ev(3, { item: 'tool', node_id: 'n2', name: 'Read', status: null }),
+    ];
+    expect(displayTileLines(call).map((l) => [l.key, l.text])).toEqual([
+      ['1', 'Bash (failed)'],
+      ['3', 'Read'],
+    ]);
+    expect(displayChatLines(call).map((l) => l.text)).toEqual(['Bash (failed)', 'Read']);
+  });
+
+  test('a message with only Markdown marks draws no blank tile row', () => {
+    const marks: DisplayEvent[] = [
+      ev(1, { item: 'message', turn_id: 't', text: 'First' }),
+      ev(2, { item: 'message', turn_id: 't', text: '``' }),
+      ev(3, { item: 'message', turn_id: 't', text: '**Second**' }),
+    ];
+    expect(displayTileLines(marks).map((l) => l.text)).toEqual(['First', 'Second']);
+  });
+
   test('the last message and an expired request', () => {
     expect(lastDisplayMessage(events)).toContain('I will read the file.');
     expect(lastDisplayMessage([])).toBeNull();

@@ -8,7 +8,7 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
-import { StreamArea } from './Areas';
+import { NeedsArea, StreamArea } from './Areas';
 import { ChatPane } from './ChatPane';
 import { stationStats } from './stationStats';
 import { WallPage } from './WallPage';
@@ -124,6 +124,16 @@ describe('the wall renders no write control', () => {
     expect(html).not.toContain('Allow');
     expect(html).toContain('Fleet Deck wall');
     expect(html).toContain('>Live<');
+  });
+
+  test('with no request the needs area says the calm words of the board, in green', () => {
+    const html = renderToStaticMarkup(
+      <NeedsArea needs={[]} stations={[station()]} origin="https://deck.example" now={1} />,
+    );
+    expect(html).toContain('<p class="fd-wall-note fd-wall-clear">All clear.</p>');
+    expect(html).not.toContain('Nothing needs you.');
+    const calm = wall({ mode: 'ambient' }, true, { w: 3440, h: 1440 });
+    expect(calm).not.toContain('Nothing needs you.');
   });
 
   test('the needs list is oldest first', () => {
@@ -331,6 +341,33 @@ describe('the stream follows the wall filter', () => {
   test('the list keeps the deck order: the newest row is the first in the DOM', () => {
     const html = stream([]);
     expect(html.indexOf('Alpha said hi')).toBeLessThan(html.indexOf('Beta said hi'));
+  });
+
+  test('the session is a column with its whole name in the title, then the event', () => {
+    const html = stream(['station-a']);
+    expect(html).toContain('<strong title="busy">busy</strong> <span class="fd-wall-event">');
+  });
+
+  test('prose is one plain line: no Markdown marks, the first line only', () => {
+    const html = renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={board}
+        filter={{ stations: [], repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={[
+          item(
+            'station-a',
+            'busy',
+            'The fix workflow (`wnzrhrv6c`) is **running**. It works in this order:\n1. Read',
+          ),
+        ]}
+      />,
+    );
+    expect(html).toContain('The fix workflow (wnzrhrv6c) is running. It works in this order:');
+    expect(html).not.toContain('`');
+    expect(html).not.toContain('1. Read');
   });
 });
 

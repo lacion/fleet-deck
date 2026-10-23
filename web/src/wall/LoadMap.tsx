@@ -1,10 +1,22 @@
-// R13 P9 (design §10): the heatmap of the CPU of each session. One cell for each session, named
-// as its tile (the title), sized by `cpu_pct`, with a tooltip for the memory. It has no control
-// and no focus stop. It is the last block of the side area and takes the height that the other
-// blocks leave: a cell whose bottom edge is below the grid is hidden, and the heading counts the
-// hidden cells. When no cell fits, the whole block is hidden.
+// R13 P9 (design §10): the heatmap of the CPU of each session. One cell for each busy session,
+// named as its tile (the title), sized by `cpu_pct`, with a tooltip for the memory. It has no
+// control and no focus stop. It is the last block of the side area and takes the height that the
+// other blocks leave: a cell whose bottom edge is below the grid is hidden. The heading counts
+// the sessions without a cell (idle, hidden or over the limit) in a `.fd-count` pill after its
+// name (§5: never "(+3 more)"). When no cell fits, the whole block is hidden.
 import { useLayoutEffect, useRef, useState } from 'react';
-import { LOAD_TITLE, loadHeading, type LoadMapData } from './loadCells';
+import { LOAD_TITLE, type LoadMapData } from './loadCells';
+
+/** The sessions that have no cell: a neutral pill after the heading; its name says "more". */
+export function LoadCount({ n }: { readonly n: number }) {
+  if (n <= 0) return null;
+  return (
+    <span className="fd-count">
+      {n}
+      <span className="fd-vh"> more</span>
+    </span>
+  );
+}
 
 export function LoadMap({ map }: { readonly map: LoadMapData }) {
   const block = useRef<HTMLDivElement>(null);
@@ -45,7 +57,10 @@ export function LoadMap({ map }: { readonly map: LoadMapData }) {
       data-fit={none ? 'none' : undefined}
       ref={block}
     >
-      <h2 className="fd-wall-h">{loadHeading(hidden + map.more)}</h2>
+      <h2 className="fd-wall-h">
+        {LOAD_TITLE}
+        <LoadCount n={hidden + map.more} />
+      </h2>
       <ul className="fd-wall-load" aria-label={LOAD_TITLE} ref={grid}>
         {map.cells.map((cell) => (
           <li
