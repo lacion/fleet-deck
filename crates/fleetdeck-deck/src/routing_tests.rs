@@ -29,6 +29,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
         dial_url: None,
         reachable,
         last_seen: None,
+        linked_at: None,
         cursor: 0,
         info: Some(StationInfo {
             name: name.to_owned(),

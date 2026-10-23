@@ -167,10 +167,12 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
           ).length;
           const info = station.info ?? null;
           const up = freshness !== 'stale' && station.reachable;
-          // `last_seen` is the time the last link came up: for a station that is up it is the
-          // age of the link (the Linked fact in Details), never a "Last seen" (principle 7).
-          const lastSeen = up ? null : station.last_seen;
-          const linkedAt = up ? station.last_seen : null;
+          // `last_seen` is the last time the deck heard the station: the end of its last link
+          // (B22). A station that the deck reports online shows no "Last seen": while the board
+          // status is stale, "Last reported: online." says what is known (principle 7).
+          const lastSeen = station.reachable ? null : station.last_seen;
+          // `linked_at` is the start of the current link; an older deck does not send it.
+          const linkedAt = up ? (station.linked_at ?? null) : null;
           const connection = connectionText(station.direction);
           return (
             <li

@@ -125,6 +125,7 @@ pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
         dial_url: st.dial_url.clone(),
         reachable: store.is_reachable(&st.station_id),
         last_seen: st.last_seen,
+        linked_at: store.linked_since(&st.station_id),
         cursor: st.cursor,
         info_at: info.as_ref().map(|(_, at)| *at),
         info: info.map(|(i, _)| i),

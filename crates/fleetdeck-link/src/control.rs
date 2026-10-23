@@ -390,6 +390,14 @@ impl Control {
         self.shared.pending().out.len()
     }
 
+    /// How long ago the last message came from the peer (a frame, a
+    /// WebSocket ping or pong). After the end of the link it keeps growing
+    /// from the last message.
+    #[must_use]
+    pub fn since_last_frame(&self) -> Duration {
+        self.shared.last_rx().elapsed()
+    }
+
     /// Inbound requests that wait for this node's answer.
     #[must_use]
     pub fn open_inbound(&self) -> usize {
@@ -645,7 +653,11 @@ where
     };
     loop {
         let msg = stream.next().await;
-        shared.touch();
+        // Only a message from the peer counts as heard; an EOF or a read
+        // error is the end of the link, not a frame (B22).
+        if matches!(msg, Some(Ok(_))) {
+            shared.touch();
+        }
         let text = match msg {
             None | Some(Ok(Message::Close(_))) => {
                 return left(end(reason::EOF, "the peer closed the control channel"));

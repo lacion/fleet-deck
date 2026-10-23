@@ -111,6 +111,7 @@ mod session_moves_ready;
 pub mod session_moves_steps;
 pub mod shares;
 pub mod slug_reservations;
+mod station_link;
 pub mod station_machines;
 pub mod station_palettes;
 pub mod stations;
@@ -254,8 +255,9 @@ struct Inner {
     board: watch::Sender<u64>,
     /// The events folded into the read model, after their commit.
     live: broadcast::Sender<Arc<LiveEvents>>,
-    /// The stations with a live link (§7.2 `unreachable`).
-    reachable: Mutex<BTreeSet<StationId>>,
+    /// The stations with a live link (§7.2 `unreachable`) and the Unix ms
+    /// since which each one is reachable without a gap (B22 `linked_at`).
+    reachable: Mutex<BTreeMap<StationId, i64>>,
     /// The last `station.info` of each station with its Unix ms, in this
     /// deck process (M2 P4-2: version, capacity, providers).
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
@@ -588,21 +590,6 @@ impl DeckStore {
         now_ms(&self.inner.clock)
     }
 
-    /// Records whether the link to `station` is up.
-    pub fn set_reachable(&self, station: &StationId, up: bool) {
-        let changed = {
-            let mut set = self.reachable_set();
-            if up {
-                set.insert(station.clone())
-            } else {
-                set.remove(station)
-            }
-        };
-        if changed {
-            self.board_changed();
-        }
-    }
-
     /// The board version: it grows after each change of the cards, the
     /// stations or their reachability.
     #[must_use]
@@ -695,19 +682,6 @@ impl DeckStore {
             .unwrap_or_else(PoisonError::into_inner)
             .get(station)
             .cloned()
-    }
-
-    /// True while the link to `station` is up.
-    #[must_use]
-    pub fn is_reachable(&self, station: &StationId) -> bool {
-        self.reachable_set().contains(station)
-    }
-
-    fn reachable_set(&self) -> std::sync::MutexGuard<'_, BTreeSet<StationId>> {
-        self.inner
-            .reachable
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The persistent revocation generation (G5).

@@ -1,5 +1,6 @@
 // The facts of the stations page header: the summary sentence (DESIGN-SYSTEM §4.3). A station
-// card shows "Last seen" only for a station that is not up (StationsPanel.tsx).
+// card shows "Last seen" (the end of its last link) only for a station that the deck reports
+// offline (StationsPanel.tsx).
 import type { ReactNode } from 'react';
 import type { StationView } from '../gen';
 import type { Freshness } from '../runtime/state';
