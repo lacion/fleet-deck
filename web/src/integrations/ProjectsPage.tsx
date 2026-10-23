@@ -215,7 +215,7 @@ export function ProjectsPage({
         ) : null
       ) : (
         // The table sits on the canvas, the same as the Artifacts and Activity lists (no box).
-        <div className="fd-tablewrap">
+        <div className="fd-tablewrap fd-int-projectswrap">
           <table className="fd-table fd-int-projects" aria-label="Projects">
             <thead>
               <tr>

@@ -5,7 +5,15 @@ import { expect, type Page, test } from '@playwright/test';
 import { logIn, quietShells } from './fake-deck';
 import { galleryDeck, LIGHTING, OTTER } from './gallery-scene';
 
-const PAGES = ['#/', '#/fleet', `#/s/${LIGHTING}/${OTTER}`, '#/stations', '#/settings', '#/more'];
+const PAGES = [
+  '#/',
+  '#/fleet',
+  `#/s/${LIGHTING}/${OTTER}`,
+  '#/stations',
+  '#/projects',
+  '#/settings',
+  '#/more',
+];
 
 /** True when the point is inside the open menu body, so nothing covers or clips it there. */
 async function onTop(page: Page, x: number, y: number): Promise<boolean> {

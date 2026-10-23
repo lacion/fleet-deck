@@ -1,6 +1,6 @@
 // R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
 // "Issues", "Pull requests" and "Setup" (the homes, the secret files and the lands of the project).
-import { type CSSProperties, useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 import { usePhoneTitle } from '../app/Layout';
 import type { DeckSession, StationView } from '../gen';
 import { stationName } from '../board/fleet';
@@ -13,7 +13,7 @@ import { useNow } from '../ui/useNow';
 import { useIntegrations } from './context';
 import { IssuesTab } from './IssuesTab';
 import { ProjectChips } from './ProjectBadges';
-import { ProjectHomes } from './ProjectHomes';
+import { HOMES_POLL_MS, homesCloning, ProjectHomes } from './ProjectHomes';
 import { ProjectLands } from './ProjectLands';
 import { SameRepository } from './SameRepository';
 import { SecretFiles } from './SecretFiles';
@@ -60,6 +60,15 @@ export function ProjectPage({
   const project = env?.projects?.find((p) => p.project_id === id);
   // §4.8: the phone top bar names the project ("Project" while it loads).
   usePhoneTitle(project?.name);
+  // A home that is cloning changes state on the station: read the list again while the page is
+  // open, whichever tab shows (the Setup tab alone would stop it when the owner leaves).
+  const cloning = homesCloning(project);
+  const reload = env?.reload;
+  useEffect(() => {
+    if (!cloning || reload === undefined) return undefined;
+    const timer = setInterval(reload, HOMES_POLL_MS);
+    return () => clearInterval(timer);
+  }, [cloning, reload]);
   if (env === undefined) {
     return (
       <Page title="Project" back={ALL_PROJECTS}>
