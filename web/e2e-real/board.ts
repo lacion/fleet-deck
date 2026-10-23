@@ -114,8 +114,10 @@ export class Phone {
     await (await this.bar()).getByRole('link', { name: 'More' }).click();
     await this.page
       .getByRole('navigation', { name: 'More pages' })
-      .getByRole('link', { name: `Stations ${count}` })
+      .getByRole('link', { name: /^Stations\b/ })
       .click();
+    // The link names no count any more: the page shows one card for each station.
+    await expect(this.page.locator('.fd-station')).toHaveCount(count);
   }
 
   /** Logs in with the deck's login link and pairs `listening` (the deck dials
@@ -138,8 +140,7 @@ export class Phone {
     await dialog.getByRole('button', { name: 'Close' }).click();
     // The deck dials the listening station.
     await page.getByRole('button', { name: 'Add station' }).click();
-    await dialog.getByText('Other ways').click();
-    await dialog.getByRole('button', { name: 'Connect to a station that listens' }).click();
+    await dialog.getByRole('button', { name: /^A station that listens for this deck/ }).click();
     await dialog
       .getByLabel('Station invitation')
       .fill(listening.cli(['station', 'invite', '--listen', '127.0.0.1:0']));
@@ -167,7 +168,7 @@ export class Phone {
       .locator('label', { hasText: provider })
       .click();
     await form.getByRole('button', { name: 'Browse…' }).click();
-    await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
+    // The station has one allowed root: Browse… opens it at once.
     await form.getByRole('button', { name: 'Open demo' }).click();
     await expect(form.getByRole('navigation', { name: 'Folder path' })).toContainText('demo');
     await form.getByRole('button', { name: 'Use this folder' }).click();

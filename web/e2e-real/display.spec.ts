@@ -71,7 +71,7 @@ async function displaysPage(): Promise<void> {
   await ownerPage.evaluate(() => {
     window.location.hash = '#/settings/displays';
   });
-  await expect(ownerPage.getByRole('heading', { name: 'Add a wall display' })).toBeVisible();
+  await expect(ownerPage.getByRole('heading', { name: 'Wall displays' })).toBeVisible();
 }
 
 /** Types the owner password into the "Confirm it is you" dialog. */
@@ -99,10 +99,12 @@ async function sendDirective(body: Record<string, unknown>): Promise<number> {
 
 test('a display link signs the wall in, and a reload at /display keeps it', async ({ browser }) => {
   await displaysPage();
+  // The add panel opens from its button (the heading row or the empty state).
+  await ownerPage.getByRole('button', { name: 'Add a wall display' }).first().click();
   const add = ownerPage.getByRole('region', { name: 'Add a wall display' });
   await add.getByLabel('Name').fill('Wall one');
   await add.getByLabel('alpha').check();
-  await add.getByRole('button', { name: 'Make a link' }).click();
+  await add.getByRole('button', { name: 'Make a pairing link' }).click();
   await confirmIt();
   const url = await add.locator('.fd-disp-url').innerText();
   expect(url).toContain('/display#display=');
@@ -128,10 +130,10 @@ test('a display link signs the wall in, and a reload at /display keeps it', asyn
 test('the wall follows the directive and its own keys', async () => {
   expect(await sendDirective({ mode: 'ambient', pin: false, filter: null })).toBe(200);
   await expect(wallOf(firstWall)).toHaveAttribute('data-mode', 'ambient', { timeout: 15_000 });
-  await ownerPage
-    .locator(`[data-display="${displayId}"]`)
-    .getByRole('button', { name: 'Show Mission' })
-    .click();
+  // The view switch is in the menu of the display's heading.
+  const displayRow = ownerPage.locator(`[data-display="${displayId}"]`);
+  await displayRow.locator('summary[aria-label="Display actions"]').click();
+  await displayRow.getByRole('button', { name: 'Switch to Mission view' }).click();
   await expect(wallOf(firstWall)).toHaveAttribute('data-mode', 'mission', { timeout: 15_000 });
   // The keys of the wall only navigate: the next mode with a target is ambient.
   await firstWall.keyboard.press('ArrowRight');
@@ -169,8 +171,13 @@ test('a pairing code that the owner types signs a second wall in', async ({ brow
 test('a revoked display loses its wall and asks for a new pairing', async () => {
   await displaysPage();
   const row = ownerPage.locator(`[data-display="${displayId}"]`);
-  await row.getByRole('button', { name: 'Revoke' }).click();
-  await row.getByRole('button', { name: 'Revoke' }).click();
+  // Revoke… is in the menu of the display's heading; the confirmation asks once more.
+  await row.locator('summary[aria-label="Display actions"]').click();
+  await row.getByRole('button', { name: 'Revoke…' }).click();
+  await row
+    .getByRole('alertdialog', { name: 'Revoke this display' })
+    .getByRole('button', { name: 'Revoke' })
+    .click();
   await expect(firstWall.getByLabel('Pairing code')).toBeVisible({ timeout: 30_000 });
   await expect(wallOf(firstWall)).toHaveCount(0);
 });

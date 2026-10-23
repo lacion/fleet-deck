@@ -19,7 +19,8 @@ import { BRANCH, CODEX, Deck, PROVIDER, Station } from './fleet';
 test.describe.configure({ mode: 'serial' });
 
 /** The spawn form's label of the Codex instance (`fake-codex --version`). */
-const CODEX_LABEL = `Codex 0.160.999 (${CODEX})`;
+// The provider choice names the provider and its instance; the version is in its title.
+const CODEX_LABEL = `Codex (${CODEX})`;
 
 let deck: Deck;
 let alpha: Station;
@@ -70,7 +71,11 @@ test('the spawn form offers the Codex modes that the station reports', async () 
     .getByRole('radiogroup', { name: 'Provider' })
     .locator('label', { hasText: CODEX_LABEL })
     .click();
-  const modes = await form.getByLabel('Permission mode').locator('option').allTextContents();
+  // The options show the modes in words; their values are the native modes.
+  const modes = await form
+    .getByLabel('Permission mode')
+    .locator('option')
+    .evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
   expect(modes).toContain('untrusted/read-only');
   expect(modes).toContain('untrusted/workspace-write');
   expect(modes).not.toContain('plan');
@@ -99,7 +104,7 @@ test('a Codex session on alpha asks for an approval that the needs-you rail answ
   const log = view.getByRole('log');
   await expect(log).toContainText('Shell');
   await expect(log).toContainText('ran: echo hi');
-  await expect(log).toContainText('echo hi · Allow once (by board)');
+  await expect(log).toContainText('echo hi · Allow once');
   await phone.fleet();
   await expect(rail).toHaveCount(0);
   expect(stationSessions(alpha).map((s) => [s.session_id, s.provider_instance])).toEqual([
@@ -129,7 +134,7 @@ test('a Codex turn on bravo takes a steer into the running turn, then an interru
   await expect(view).toContainText('Working');
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(phone.status('Done.')).toBeVisible();
-  await expect(view).toContainText('Turn interrupted');
+  await expect(view).toContainText('The turn was interrupted.');
   await expect(composer.getByRole('button', { name: 'Send' })).toBeVisible();
   expect(await phone.fitsWidth()).toBe(true);
   expect(stationSessions(bravo).map((s) => s.session_id)).toEqual([id]);
@@ -142,7 +147,8 @@ test('the board survives a deck restart and shows Codex work done meanwhile', as
   let view = await phone.open('Codex approval');
   await expect(view).toContainText('Controls are off until the board and the station are live.');
   await view.locator('summary[aria-label="Session menu"]').click();
-  const mode = view.getByRole('button', { name: 'untrusted/read-only', exact: true });
+  // The mode rows show the mode in words; the title keeps the native id.
+  const mode = view.locator('button.fd-mode-row[title="untrusted/read-only"]');
   await expect(mode).toBeDisabled();
   const away = alpha.run('while the deck is away', CODEX);
   await deck.start();
@@ -279,7 +285,7 @@ test('a Codex question gets its answer from the phone answer form', async () => 
   await expect(view).toContainText('answered: Blue');
   await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
   await expect(view).toContainText('Question');
-  await expect(view).toContainText('Which color do you prefer? · Answer (by board)');
+  await expect(view).toContainText('Which color do you prefer? · Answer');
   // A typed answer replaces the choice.
   await composer.getByLabel('Message').fill('question Which size?');
   await composer.getByRole('button', { name: 'Send' }).click();
