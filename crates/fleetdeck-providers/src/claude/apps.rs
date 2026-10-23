@@ -71,7 +71,7 @@ pub(in crate::claude) struct AppRequests {
 
 /// One app request to the CLI (the three control requests of §4.2).
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::claude) enum AppOp {
+pub enum AppOp {
     /// `mcp_status`: the servers and their tools.
     Tools,
     /// `mcp_read_resource`.
@@ -220,7 +220,7 @@ fn call_tool_result(raw: &Value) -> Option<Value> {
 
 /// The tools of an `mcp_status` answer, in the answer order.
 #[must_use]
-pub(in crate::claude) fn parse_tools(answer: &Value) -> Vec<AppTool> {
+pub fn parse_tools(answer: &Value) -> Vec<AppTool> {
     let str_at = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).map(str::to_owned);
     let mut tools = Vec::new();
     for server in answer
@@ -267,7 +267,7 @@ impl ClaudeCore {
     /// [`ProviderError::SessionEnded`] after the process ended;
     /// [`ProviderError::NotReady`] when the CLI did not state the three MCP
     /// Apps capabilities (nothing is written).
-    pub(in crate::claude) fn app_request(&mut self, op: &AppOp) -> Result<(String, Vec<Output>)> {
+    pub fn app_request(&mut self, op: &AppOp) -> Result<(String, Vec<Output>)> {
         if self.ended {
             return Err(ProviderError::SessionEnded);
         }
@@ -283,16 +283,13 @@ impl ClaudeCore {
 
     /// Takes the answer of an app request: the result, or the error text of the
     /// CLI. `None` while it waits.
-    pub(in crate::claude) fn take_app_answer(
-        &mut self,
-        id: &str,
-    ) -> Option<std::result::Result<Value, String>> {
+    pub fn take_app_answer(&mut self, id: &str) -> Option<std::result::Result<Value, String>> {
         self.app_requests.answers.remove(id)
     }
 
     /// Forgets an app request that nobody waits for any more (a timeout or a
     /// dropped wait). Its late answer is then dropped.
-    pub(in crate::claude) fn forget_app_request(&mut self, id: &str) {
+    pub fn forget_app_request(&mut self, id: &str) {
         self.app_requests.pending.remove(id);
         self.app_requests.answers.remove(id);
     }

@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use fleetdeck_providers::adapter::{HostInput, ProviderError};
+use fleetdeck_providers::apps::AppCandidate;
 use fleetdeck_providers::checkpoint::AdapterCheckpoint;
 use fleetdeck_providers::checkpoint::CheckpointError;
 use fleetdeck_providers::host::shim::host::{Attached, ShimProcess};
@@ -92,6 +93,8 @@ pub struct DurableDriver<C: DurableCore> {
     /// The held bindings of this shim, released when the driver caught up
     /// ([`Self::set_release`]).
     release: StdMutex<Option<release::Held>>,
+    /// The app sink and the candidates that wait for it (B15 §4.3 item 1).
+    pending_apps: StdMutex<apps::PendingApps>,
 }
 
 impl<C: DurableCore> std::fmt::Debug for DurableDriver<C> {
@@ -109,6 +112,9 @@ pub struct Steps {
     pub events: Vec<NewEvent>,
     pub frames: Vec<String>,
     pub identities: Vec<IdentitySignal>,
+    /// The completed MCP tool calls of the step (B15); handed to the app
+    /// sink after the output transaction commits.
+    pub apps: Vec<AppCandidate>,
 }
 
 /// A sans-IO adapter core that a [`DurableDriver`] can run.
@@ -190,6 +196,7 @@ impl<C: DurableCore> DurableDriver<C> {
             ),
             exit_committed: std::sync::atomic::AtomicBool::new(false),
             release: StdMutex::new(None),
+            pending_apps: StdMutex::new(apps::PendingApps::default()),
         })
     }
 
@@ -314,6 +321,7 @@ impl<C: DurableCore> DurableDriver<C> {
         checkpoint: AdapterCheckpoint,
         exited: bool,
     ) -> Result<bool, StoreError> {
+        let apps = steps.apps;
         let result = self
             .store
             .shim_commit_output_with(
@@ -336,6 +344,9 @@ impl<C: DurableCore> DurableDriver<C> {
         let committed = matches!(result, OutputCommit::Committed(_));
         if committed {
             self.note_committed(cursor, exited);
+            // After the commit: a candidate of an output that did not commit
+            // is never handed over (a newer owner handles it).
+            self.hand_apps(apps);
         }
         Ok(committed)
     }
@@ -677,6 +688,9 @@ impl<C: DurableCore> DurableDriver<C> {
     }
 }
 
+#[path = "durable_apps.rs"]
+mod apps;
+pub use apps::AppSink;
 #[path = "durable_gap.rs"]
 mod gap;
 #[path = "durable_output.rs"]

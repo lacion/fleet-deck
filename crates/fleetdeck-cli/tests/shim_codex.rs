@@ -156,7 +156,16 @@ impl Rig {
             cwd: Some(self.cwd()),
             ..SessionSpec::default()
         };
-        match DurableCodex::open(&self.store, attached, self.config(), &thread, skill_dir).await {
+        match DurableCodex::open(
+            &self.store,
+            attached,
+            self.config(),
+            &thread,
+            skill_dir,
+            false,
+        )
+        .await
+        {
             Ok(d) => d,
             Err(e) => panic!(
                 "open: {e}; log {:?}; events {:?}",

@@ -55,6 +55,7 @@ pub use driver::{
     CodexAdapter, CodexAdapterConfig, CodexSession, Origin, TOKEN_DELTAS, is_token_delta,
 };
 pub use host_cmd::HostCmd;
+pub use map::apps::{AppOp, TOOLS_PAGES, parse_tools_page, tool_answer};
 pub use map::{HANDLED_NOTIFICATIONS, IGNORED_NOTIFICATIONS};
 pub use probe::{parse_account, parse_version};
 pub use requests::{DECLINED_REQUESTS, HANDLED_REQUESTS, validate_question_answer};

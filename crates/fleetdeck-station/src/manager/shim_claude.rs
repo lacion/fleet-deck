@@ -9,11 +9,17 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use fleetdeck_providers::adapter::{Answer, ProviderError};
+use fleetdeck_providers::apps::{
+    AppBridge, AppError, AppTool, READ_TIMEOUT, TOOLS_TIMEOUT, ToolAnswer,
+};
 use fleetdeck_providers::checkpoint::{AdapterCheckpoint, CheckpointError};
+use fleetdeck_providers::claude::AppOp as ClaudeAppOp;
 use fleetdeck_providers::claude::frames::parse_line;
-use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, Output};
+use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, Output, parse_tools};
 use fleetdeck_providers::host::shim::host::Attached;
+use serde_json::Value;
 
 use super::durable::{DriverError, DurableCore, DurableDriver, Steps, host_input, not_a_command};
 use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
@@ -31,8 +37,7 @@ fn split(out: Vec<Output>) -> Steps {
                 native_id,
                 after: steps.events.len(),
             }),
-            // B15: the capture path of a shim session comes with mcp-apps T5a.
-            Output::AppCandidate(_) => {}
+            Output::AppCandidate(candidate) => steps.apps.push(candidate),
         }
     }
     steps
@@ -135,6 +140,73 @@ impl DurableDriver<ClaudeCore> {
         this.internal(|c| c.initialize().map(split)).await?;
         this.wait(|c| c.models().is_some(), "initialize").await?;
         Ok(this)
+    }
+}
+
+impl DurableDriver<ClaudeCore> {
+    /// One app request and its answer (see [`DurableDriver::app_exchange`]).
+    async fn claude_app(
+        &self,
+        op: ClaudeAppOp,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Result<Value, String>, AppError> {
+        self.app_exchange(
+            |c| c.app_request(&op).map(|(id, out)| (id, split(out))),
+            |c, id| c.take_app_answer(id),
+            |c, id| c.forget_app_request(id),
+            deadline,
+        )
+        .await
+    }
+}
+
+/// The app operations of a Claude session under a shim: the same operations
+/// as the direct driver (`claude/driver_apps.rs`) on top of the durable
+/// driver's app exchange. A CLI without the three capabilities gives
+/// [`AppError::Unsupported`] (the core refuses with `NotReady`).
+#[async_trait]
+impl AppBridge for DurableDriver<ClaudeCore> {
+    async fn tools(&self) -> Result<Vec<AppTool>, AppError> {
+        let deadline = tokio::time::Instant::now() + TOOLS_TIMEOUT;
+        let answer = self
+            .claude_app(ClaudeAppOp::Tools, Some(deadline))
+            .await?
+            .map_err(AppError::Answered)?;
+        Ok(parse_tools(&answer))
+    }
+
+    async fn read_resource(&self, server: &str, uri: &str) -> Result<Value, AppError> {
+        let op = ClaudeAppOp::Read {
+            server: server.to_owned(),
+            uri: uri.to_owned(),
+        };
+        let deadline = tokio::time::Instant::now() + READ_TIMEOUT;
+        self.claude_app(op, Some(deadline))
+            .await?
+            .map_err(AppError::Answered)
+    }
+
+    /// Claude's success answer relays the server's result, so it proves that
+    /// the tool handler returned; its timeouts, cancellations and lost
+    /// transports are error answers, which prove nothing (fact 21).
+    async fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+    ) -> Result<ToolAnswer, AppError> {
+        let op = ClaudeAppOp::Call {
+            server: server.to_owned(),
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let result = self.claude_app(op, None).await?;
+        result
+            .map(|result| ToolAnswer {
+                result,
+                proves_end: true,
+            })
+            .map_err(AppError::Answered)
     }
 }
 

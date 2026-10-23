@@ -28,6 +28,7 @@ pub use args::{
 };
 pub use driver::{ClaudeAdapter, ClaudeAdapterConfig, ClaudeSession, Origin, RawLogSettings};
 pub use host_cmd::HostCmd;
+pub use map::apps::{AppOp, parse_tools};
 pub use map::{input_summary, tool_kind};
 pub use requests::request_kind;
 

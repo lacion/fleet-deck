@@ -48,6 +48,10 @@ pub struct ToolAppEvent {
 
 /// The answer of [`Store::app_lookup`].
 #[derive(Debug, Clone, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one answer per lookup; it lives only until the caller matches it"
+)]
 pub enum AppLookup {
     Found(AppMeta),
     /// No row, and the session's log has a `tool.app` event with this app id:

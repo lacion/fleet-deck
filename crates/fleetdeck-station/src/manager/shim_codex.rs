@@ -7,14 +7,22 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use fleetdeck_providers::adapter::{Answer, ProviderError};
+use fleetdeck_providers::apps::{
+    AppBridge, AppError, AppTool, READ_TIMEOUT, TOOLS_TIMEOUT, ToolAnswer,
+};
 use fleetdeck_providers::checkpoint::{AdapterCheckpoint, CheckpointError};
-use fleetdeck_providers::codex::{CodexCore, CoreConfig, Output, SessionSpec, rpc};
+use fleetdeck_providers::codex::AppOp as CodexAppOp;
+use fleetdeck_providers::codex::{
+    CodexCore, CoreConfig, Output, SessionSpec, TOOLS_PAGES, parse_tools_page, rpc, tool_answer,
+};
 use fleetdeck_providers::host::shim::host::Attached;
 
 pub use super::durable::{DriverError, REASON_FRAME_UNKNOWN};
 use super::durable::{DurableCore, DurableDriver, OPEN_WAIT, Steps, host_input, not_a_command};
 use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
+use serde_json::Value;
 
 /// The durable Codex driver of one shim.
 pub type DurableCodex = DurableDriver<CodexCore>;
@@ -29,8 +37,7 @@ pub(super) fn split(out: Vec<Output>) -> Steps {
                 native_id,
                 after: steps.events.len(),
             }),
-            // B15: the capture path of a shim session comes with mcp-apps T5a.
-            Output::AppCandidate(_) => {}
+            Output::AppCandidate(candidate) => steps.apps.push(candidate),
         }
     }
     steps
@@ -154,7 +161,9 @@ impl DurableDriver<CodexCore> {
 
     /// Drives a newly launched shim: commits the first checkpoint, then the
     /// handshake and the thread (`initialize`, the fleet skill requests
-    /// when `skill_dir` is set, `thread/start`).
+    /// when `skill_dir` is set, `thread/start`). With `offer_apps`, the
+    /// `initialize` offers the MCP Apps extension (B15; the adapter's
+    /// `offers_mcp_apps` decides).
     ///
     /// # Errors
     /// A store error, or a handshake that does not finish.
@@ -164,8 +173,11 @@ impl DurableDriver<CodexCore> {
         config: CoreConfig,
         thread: &SessionSpec,
         skill_dir: Option<&Path>,
+        offer_apps: bool,
     ) -> Result<Arc<Self>, DriverError> {
-        let this = Self::new(store, &attached, config.clone(), CodexCore::new(config));
+        let mut core = CodexCore::new(config.clone());
+        core.set_offer_mcp_apps(offer_apps);
+        let this = Self::new(store, &attached, config, core);
         this.start_pump(attached);
         this.internal(|c| c.initialize().map(split)).await?;
         this.wait(CodexCore::is_initialized, "initialize").await?;
@@ -176,6 +188,21 @@ impl DurableDriver<CodexCore> {
         this.wait(|c| !c.is_opening() && c.thread_id().is_some(), "thread")
             .await?;
         Ok(this)
+    }
+
+    /// One app request and its answer (see [`DurableDriver::app_exchange`]).
+    async fn codex_app(
+        &self,
+        op: CodexAppOp,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Result<Value, String>, AppError> {
+        self.app_exchange(
+            |c| c.app_request(&op).map(|(id, out)| (id, split(out))),
+            |c, id| c.take_app_answer(id),
+            |c, id| c.forget_app_request(id),
+            deadline,
+        )
+        .await
     }
 
     /// The fleet skill requests before the thread open (MCP P3 §4.2), the
@@ -216,5 +243,59 @@ impl DurableDriver<CodexCore> {
             }
             other => other,
         }
+    }
+}
+
+/// The app operations of a Codex session under a shim: the same operations
+/// as the direct driver (`codex/driver_apps.rs`) on top of the durable
+/// driver's app exchange.
+#[async_trait]
+impl AppBridge for DurableDriver<CodexCore> {
+    async fn tools(&self) -> Result<Vec<AppTool>, AppError> {
+        let deadline = tokio::time::Instant::now() + TOOLS_TIMEOUT;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..TOOLS_PAGES {
+            let op = CodexAppOp::Tools {
+                cursor: cursor.take(),
+            };
+            let page = self
+                .codex_app(op, Some(deadline))
+                .await?
+                .map_err(AppError::Answered)?;
+            let (listed, next) = parse_tools_page(&page);
+            tools.extend(listed);
+            cursor = next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(tools)
+    }
+
+    async fn read_resource(&self, server: &str, uri: &str) -> Result<Value, AppError> {
+        let op = CodexAppOp::Read {
+            server: server.to_owned(),
+            uri: uri.to_owned(),
+        };
+        let deadline = tokio::time::Instant::now() + READ_TIMEOUT;
+        self.codex_app(op, Some(deadline))
+            .await?
+            .map_err(AppError::Answered)
+    }
+
+    async fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+    ) -> Result<ToolAnswer, AppError> {
+        let op = CodexAppOp::Call {
+            server: server.to_owned(),
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let result = self.codex_app(op, None).await?;
+        result.map(tool_answer).map_err(AppError::Answered)
     }
 }

@@ -46,7 +46,7 @@ impl CodexCore {
     /// # Errors
     /// [`crate::adapter::ProviderError::SessionEnded`] after the process ended;
     /// `NotReady` before the thread is open.
-    pub(in crate::codex) fn app_request(&mut self, op: &AppOp) -> Result<(String, Vec<Output>)> {
+    pub fn app_request(&mut self, op: &AppOp) -> Result<(String, Vec<Output>)> {
         let thread = self.thread()?;
         self.next_host_id += 1;
         let id = format!("{APP_ID_PREFIX}{}", self.next_host_id);
@@ -58,16 +58,13 @@ impl CodexCore {
 
     /// Takes the answer of an app request: the result, or the error message
     /// of the app-server. `None` while it waits.
-    pub(in crate::codex) fn take_app_answer(
-        &mut self,
-        id: &str,
-    ) -> Option<std::result::Result<Value, String>> {
+    pub fn take_app_answer(&mut self, id: &str) -> Option<std::result::Result<Value, String>> {
         self.app_requests.answers.remove(id)
     }
 
     /// Forgets an app request that nobody waits for any more (a timeout or a
     /// dropped wait). Its late answer is then dropped.
-    pub(in crate::codex) fn forget_app_request(&mut self, id: &str) {
+    pub fn forget_app_request(&mut self, id: &str) {
         self.app_requests.pending.remove(id);
         self.app_requests.answers.remove(id);
     }
@@ -85,7 +82,7 @@ impl CodexCore {
             return false;
         };
         if self.app_requests.pending.remove(id) {
-            let answer = answer.map(Value::clone).map_err(str::to_owned);
+            let answer = answer.cloned().map_err(str::to_owned);
             self.app_requests.answers.insert(id.to_owned(), answer);
         }
         true
