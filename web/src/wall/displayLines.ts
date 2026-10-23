@@ -3,6 +3,7 @@
 // fixed fields: the text of the run start, the assistant message, the tool name and status, and
 // the request state.
 import type { DisplayEvent, DisplayItem, RequestKind } from '../gen';
+import { agentLine } from '../chat/notices';
 import { plainLine } from '../ui/format';
 import { foldLines, TILE_LINES, type TileLine } from '../watch/tiles';
 
@@ -112,12 +113,15 @@ export function displayTileLines(
   const out: TileLine[] = [];
   for (const line of linesOf(events, false)) {
     if (line.kind !== 'message' && line.kind !== 'tool') continue;
-    const text = cut(line.text);
+    // A provider error reads as its cause; the provider's own words stay in the title.
+    const said = line.kind === 'message' ? agentLine(line.text) : line.text;
+    const text = cut(said);
     if (text === '') continue;
     out.push({
       key: line.key,
       kind: line.kind,
       text,
+      ...(said === line.text ? {} : { label: line.text.trim() }),
       ...(line.node === undefined ? {} : { node: line.node }),
     });
   }

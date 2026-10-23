@@ -2,6 +2,7 @@
 // A wall of compact live tiles: the model of one tile and of the page. The wall display reuses
 // the tiles, and the Activity stream folds its repeated rows with `foldLines`.
 import { isLiveSession as isLive, repoName, repoNames } from '../board/fleet';
+import { agentLine } from '../chat/notices';
 import { homeShortIn, plainLine } from '../ui/format';
 import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
@@ -114,8 +115,16 @@ const cut = (text: string, markdown = false, max = LINE_CHARS): string => {
 
 function lineOf(item: Item): TileLine | null {
   if (item.type === 'message') {
-    const text = cut(item.text, true);
-    return text === '' ? null : { key: item.key, kind: 'message', text };
+    // A provider error reads as its cause; the provider's own words stay in the title.
+    const said = agentLine(item.text);
+    const text = cut(said, true);
+    if (text === '') return null;
+    return {
+      key: item.key,
+      kind: 'message',
+      text,
+      ...(said === item.text ? {} : { label: item.text.trim() }),
+    };
   }
   if (item.type === 'tool') {
     // The owner's words: no MCP id, no JSON payload (`toolText`); a path keeps its file name. The

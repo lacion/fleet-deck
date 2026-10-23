@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Item } from '../session/timeline';
 import {
+  agentLine,
   answeredText,
   apiCause,
   errorNotice,
@@ -155,5 +156,28 @@ describe('a failed turn', () => {
     const pairs = pairTurnErrors(items);
     expect([...pairs.hidden]).toEqual(['m2']);
     expect([...pairs.detail]).toEqual([['t1', 'API Error: Request rejected (429)']]);
+  });
+});
+
+describe('agentLine', () => {
+  test('a provider error reads as its cause in words', () => {
+    expect(agentLine('API Error: Request rejected (429) · All credentials are cooling down')).toBe(
+      "The provider's rate limit stopped it. Try again later.",
+    );
+  });
+
+  test('a provider error with no known cause says that the provider refused the turn', () => {
+    expect(agentLine('API Error: something odd')).toBe('The provider refused the turn.');
+  });
+
+  test('another text stays', () => {
+    expect(agentLine('Working on it.')).toBe('Working on it.');
+    expect(agentLine('The API Error: is in the middle')).toBe('The API Error: is in the middle');
+  });
+
+  test('spaces before "API Error:" are an error too', () => {
+    expect(agentLine('  \nAPI Error: 529 overloaded')).toBe(
+      'The provider is overloaded. Try again later.',
+    );
   });
 });

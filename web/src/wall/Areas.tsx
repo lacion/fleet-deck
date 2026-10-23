@@ -11,6 +11,7 @@ import { usePrs, useProjects } from '../integrations/context';
 import { prOfSession } from '../integrations/model';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
+import { agentLine } from '../chat/notices';
 import { shortPath } from '../chat/PathTail';
 import { homeShortIn, plainLine } from '../ui/format';
 import { activityTool, homePath } from '../watch/tooltext';
@@ -347,6 +348,8 @@ export function StreamArea({
             // failed or denied call ends in a hazard word (one form for one outcome).
             const tool = activityTool(item.kind, text);
             const name = item.session_title ?? item.session_id;
+            // A provider error in a message reads as its cause; the raw words stay in the title.
+            const said = item.kind === 'message' ? agentLine(item.text) : item.text;
             return (
               <li
                 key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
@@ -357,10 +360,13 @@ export function StreamArea({
                 {/* The session is a column of its own (16ch, wall.css): every event starts at one x. */}
                 <strong title={name}>{name}</strong>{' '}
                 {/* The event: an ultra row wraps it under itself (wall.css). */}
-                <span className="fd-wall-event">
+                <span
+                  className="fd-wall-event"
+                  title={said === item.text ? undefined : item.text.trim()}
+                >
                   {tool === null ? (
                     // Prose is one plain line, as on the tile above it: no Markdown marks.
-                    proseLine(item.text)
+                    proseLine(said)
                   ) : (
                     <>
                       {tool.lead === '' ? null : `${tool.lead} `}

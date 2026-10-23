@@ -348,6 +348,30 @@ describe('the stream follows the wall filter', () => {
     expect(html).toContain('<strong title="busy">busy</strong> <span class="fd-wall-event">');
   });
 
+  test('a provider error in a message row reads as its cause, with the raw words in the title', () => {
+    const html = renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={board}
+        filter={{ stations: [], repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={[
+          item(
+            'station-a',
+            'busy',
+            'API Error: Request rejected (429) · All credentials are cooling down',
+          ),
+        ]}
+      />,
+    );
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).not.toContain('>API Error');
+    expect(html).toContain(
+      'title="API Error: Request rejected (429) · All credentials are cooling down"',
+    );
+  });
+
   test('prose is one plain line: no Markdown marks, the first line only', () => {
     const html = renderToStaticMarkup(
       <StreamArea
@@ -429,6 +453,22 @@ describe('the focus chat pane', () => {
     const html = renderToStaticMarkup(<ChatPane events={[]} ready={false} unavailable={false} />);
     expect(html).toContain('Loading…');
     expect(html).not.toContain('No chat yet.');
+  });
+
+  test('a provider error in an agent message reads as its cause, with the raw words in the title', () => {
+    const raw = 'API Error: Request rejected (429) · All credentials are cooling down';
+    const html = renderToStaticMarkup(
+      <ChatPane
+        events={envelopes('s', [
+          { kind: 'message.completed', turn_id: 't1', parent_node_id: null, text: raw },
+        ])}
+        ready
+        unavailable={false}
+      />,
+    );
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).not.toContain('>API Error');
+    expect(html).toContain(`title="${raw}"`);
   });
 
   test('a call that is not done says its state to a screen reader', () => {

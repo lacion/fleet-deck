@@ -70,6 +70,22 @@ describe('the lines of a display timeline', () => {
     ]);
   });
 
+  test('a provider error in a tile line reads as its cause, with the raw words in the label', () => {
+    const lines = displayTileLines([
+      ev(1, {
+        item: 'message',
+        turn_id: 't',
+        text: 'API Error: Request rejected (429) · All credentials are cooling down',
+      }),
+    ]);
+    expect(lines.map((l) => l.text)).toEqual([
+      "The provider's rate limit stopped it. Try again later.",
+    ]);
+    expect(lines[0]?.label).toBe(
+      'API Error: Request rejected (429) · All credentials are cooling down',
+    );
+  });
+
   test('a tile shows the last text and tool lines, one line each, without the run end', () => {
     const lines = displayTileLines(events);
     expect(lines.map((l) => l.text)).toEqual([

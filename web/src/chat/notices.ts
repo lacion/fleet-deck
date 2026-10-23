@@ -127,6 +127,14 @@ export function apiCause(raw: string): string {
   return API_CAUSE.find(([pattern]) => pattern.test(raw))?.[1] ?? '';
 }
 
+/** The text of an agent message for a one-line view (a tile, a stream row): a provider error
+ * ("API Error: …") becomes its cause in words; any other text stays. */
+export function agentLine(text: string): string {
+  if (!API_ERROR.test(text)) return text;
+  const cause = apiCause(text);
+  return cause === '' ? 'The provider refused the turn.' : cause;
+}
+
 export type TurnErrors = {
   /** The keys of the agent texts that a failed turn shows as its cause. */
   readonly hidden: ReadonlySet<string>;

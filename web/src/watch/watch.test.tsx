@@ -88,6 +88,24 @@ describe('tile lines', () => {
     expect(lines[0]?.name).toBeUndefined();
   });
 
+  test('a provider error reads as its cause, with the provider words in the title', () => {
+    const lines = tileLines(
+      envelopes('s1', [
+        said('API Error: Request rejected (429) · All credentials are cooling down'),
+        said('Plain text'),
+      ]),
+    );
+    expect(lines.map((l) => l.text)).toEqual([
+      "The provider's rate limit stopped it. Try again later.",
+      'Plain text',
+    ]);
+    expect(lines[0]?.text).not.toContain('API Error');
+    expect(lines[0]?.label).toBe(
+      'API Error: Request rejected (429) · All credentials are cooling down',
+    );
+    expect(lines[1]?.label).toBeUndefined();
+  });
+
   test('a long line is cut and a failed tool says so', () => {
     const lines = tileLines(
       envelopes('s1', [
