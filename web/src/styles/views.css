@@ -194,8 +194,10 @@
   white-space: nowrap;
 }
 
-/* Where the tile works: the station and the repository, then the branch (or the folder) after its
-   12px icon, the strip's rule: the icon tells a branch from a folder. */
+/* Where the tile works: the station, the repository, then the branch (or the folder) after its
+   12px icon, the strip's rule: the icon tells a branch from a folder. A short line never cuts the
+   station; the repository gives way first, and the branch keeps its first 18 characters
+   (`--fd-wtile-keep`, set by WatchPage: a shorter name keeps all of it). */
 .fd-wtile-where {
   display: flex;
   align-items: center;
@@ -206,6 +208,11 @@
   font-size: var(--fs-meta);
 }
 
+.fd-wtile-station {
+  flex: none;
+  white-space: nowrap;
+}
+
 .fd-wtile-place,
 .fd-wtile-branch > code {
   min-width: 0;
@@ -214,8 +221,10 @@
   white-space: nowrap;
 }
 
+/* The dot after the station is a word space away from it, not a field gap. */
 .fd-wtile-place {
-  flex: 0 1 auto;
+  flex: 0 3 auto;
+  margin-inline-start: calc(var(--sp-1) - var(--sp-2));
 }
 
 .fd-wtile-branch {
@@ -223,7 +232,6 @@
   flex: 0 1 auto;
   align-items: center;
   gap: var(--sp-1);
-  min-width: 0;
 }
 
 .fd-wtile-branch > .fd-icon {
@@ -232,6 +240,7 @@
 }
 
 .fd-wtile-branch > code {
+  min-width: var(--fd-wtile-keep, 0);
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
@@ -309,6 +318,21 @@
   flex: none;
   align-self: center;
   margin-right: 2px;
+}
+
+/* The Watch tiles hang their glyphs in a 20px column at the left (the status glyph of the head and
+   the working glyph of the call that runs now): the title, the place line and every chat line
+   start at one x. The glyph and its gap take the 20px. (The wall keeps its own tile, wall.css.) */
+.fd-wall > .fd-wtile {
+  padding-inline-start: calc(var(--sp-4) + 20px);
+}
+
+.fd-wall > .fd-wtile :is(.fd-wtile-head, .fd-wtile-tool) > .fd-dot {
+  margin-inline-start: -20px;
+}
+
+.fd-wall > .fd-wtile .fd-wtile-tool > .fd-dot {
+  margin-inline-end: calc(20px - 12px - var(--sp-1));
 }
 
 /* The tool name keeps its width up to half of the line, then it ends in an ellipsis: the file
@@ -602,13 +626,21 @@
   column-gap: var(--sp-3);
   min-height: var(--row-h);
   padding: 6px var(--sp-2);
-  border-bottom: 1px solid var(--border-soft);
   transition: background-color var(--t-fast);
 }
 
-/* Rules only between the rows, the same as the artifacts list and the tables. */
-.fd-arow:last-child {
-  border-bottom: 0;
+/* A run of one session reads as one block under its name (a thread): the rules fall between runs
+   only, and the rows after the first of a run are compact. A start, an end and a request always
+   start a run, so that they name their session (ActivityPage). */
+.fd-arow[data-run="start"]:not(:first-child) {
+  border-top: 1px solid var(--border-soft);
+}
+
+@media (min-width: 721px) {
+  .fd-arow:not([data-run="start"]) {
+    min-height: 30px;
+    padding-block: 3px;
+  }
 }
 
 @media (hover: hover) {
@@ -630,7 +662,9 @@
   color: var(--faint);
 }
 
-.fd-arow[data-kind="approval"] .fd-arow-kind {
+/* Yellow is "needs you" only (principle 2): the request that still waits for the owner, the
+   newest of a session that needs you now. Every other request row is history, --faint. */
+.fd-arow[data-kind="approval"][data-open="true"] .fd-arow-kind {
   color: var(--act);
 }
 
@@ -1007,22 +1041,28 @@
   }
 
   /* A run of one session: its head (the session and its repository) over the first row, then one
-     44px row per event: the icon, the event, its count and result, and the age. */
+     44px row per event: the icon, the event, its count and result, and the age. The texts share
+     the baseline of the first line of the event; the padding makes a one-line row 44px. */
   .fd-arow {
     grid-template-columns: 16px minmax(0, 1fr) auto auto auto;
     grid-template-areas: "icon text count result age";
-    align-items: center;
+    align-items: first baseline;
     column-gap: var(--sp-3);
     min-height: var(--row-h-touch);
-    padding: 0;
+    padding: calc((var(--row-h-touch) - 1lh) / 2) 0;
   }
 
   .fd-arow[data-run="start"] {
-    grid-template-rows: auto minmax(var(--row-h-touch), auto);
+    grid-template-rows: auto auto;
     grid-template-areas:
       "head head head head head"
       "icon text count result age";
+    row-gap: calc((var(--row-h-touch) - 1lh) / 2);
     padding-top: var(--sp-3);
+  }
+
+  .fd-arow-repeat {
+    align-self: start;
   }
 
   .fd-arow-head {
@@ -1052,6 +1092,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* The icon leads the first line of its event: a box of one line height centers it on that
+     line, also on a row of two lines (it sat between the two). */
+  .fd-arow-kind {
+    align-self: start;
+    align-items: center;
+    height: 1lh;
+  }
 }
 
 /* A phone: an event and a tool target take up to two lines. Commands that start alike ("cd
@@ -1070,23 +1118,47 @@
     line-clamp: 2;
   }
 
-  /* The Filters button starts on the gutter: its icon lines up with the summary sentence; the
-     menu keeps the gutter too. */
+  /* The Filters button ends the summary line, as a lone Refresh does (§4.3): the sentence wraps
+     in its column, and the first tile starts one row higher. Its label ends on the gutter (the
+     fill reaches into it), and the menu hangs from the right edge. */
+  .fd-watch > .fd-page-head > .fd-page-titles {
+    flex: 1 1 0;
+    align-self: center;
+    min-width: 0;
+  }
+
+  .fd-watch > .fd-page-head > .fd-page-filters {
+    flex: none;
+    align-self: center;
+    margin-left: auto;
+  }
+
   .fd-watch-filtermenu {
-    margin-left: calc(-1 * var(--sp-2));
+    margin-inline-end: -8px;
   }
 
   .fd-watch-filtermenu .fd-menu-body {
-    left: var(--sp-2);
+    right: 0;
+    left: auto;
   }
 }
 
 /* ── the Files page: the folder form ────────────────────────────── */
 /* The form of a settings page (§4.7): `Field layout="row"` (page.css), a 200px label column and
    the controls after it, on the canvas: Station, Folder with Open, then the pinned and recent
-   folders as the folder rows of the New session picker (§4.6, §5 paths). The fields keep the
-   360px of a row field, so the select, the path field and the rows share one left and one right
-   edge; Open sits right after the path field. */
+   folders as the folder rows of the New session picker (§4.6, §5 paths). The controls hold paths,
+   so they are wider than the 360px of a settings field (`--files-ctl-w`: a worktree row kept the
+   parent folder that tells it from its neighbour): the select, the path field and the rows share
+   one left and one right edge; Open sits right after the path field. */
+.fd-files-page {
+  --files-ctl-w: 560px;
+}
+
+.fd-files-page .fd-files-folder .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > select {
+  width: 100%;
+  max-width: var(--files-ctl-w);
+}
+
 .fd-files-page .fd-files-folder {
   display: grid;
   gap: var(--sp-3);
@@ -1102,7 +1174,7 @@
 }
 
 .fd-files-page .fd-files-folder-path > input {
-  flex: 0 1 360px;
+  flex: 0 1 var(--files-ctl-w);
   min-width: 0;
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -1127,7 +1199,7 @@
    rules between them; all of them show (no scroll box: at most six rows). */
 .fd-files-page .fd-files-folders {
   gap: 0;
-  max-width: 360px;
+  max-width: var(--files-ctl-w);
   max-height: none;
   overflow: visible;
 }
@@ -1154,15 +1226,6 @@
   .fd-files-page .fd-fieldwrap:has(> .fd-files-folders) > .fd-fieldlabel {
     min-height: var(--row-h-touch);
   }
-}
-
-/* The hint under the form starts on the control column, under the fields it explains (a centered
-   hint floated away from the form on a wide window). */
-.fd-files-page > .fd-emptystate {
-  align-items: flex-start;
-  margin: 0 0 0 calc(200px + var(--sp-5));
-  padding-top: var(--sp-5);
-  text-align: left;
 }
 
 .fd-files-page .fd-files-view {
@@ -1192,16 +1255,13 @@
     flex: 1 1 auto;
   }
 
-  .fd-files-page .fd-files-folders {
+  .fd-files-page .fd-files-folders,
+  .fd-files-page .fd-files-folder .fd-fieldwrap[data-layout="row"] .fd-fieldcontrol > select {
     max-width: none;
   }
 
   .fd-files-page .fd-fieldwrap:has(> .fd-files-folders) > .fd-fieldlabel {
     min-height: 0;
-  }
-
-  .fd-files-page > .fd-emptystate {
-    margin-left: 0;
   }
 }
 

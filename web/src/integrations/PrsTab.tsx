@@ -5,6 +5,8 @@ import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { ChecksState, DeckSession, PrGroups, PrSummary, Project, StationView } from '../gen';
 import { Icon } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import type { IntegrationActions } from './actions';
 import { CHECKS_LABEL, fixChecksPrompt, REVIEW_LABEL, sessionsOfPr } from './model';
 import { PrPreview } from './PrPreview';
@@ -121,25 +123,8 @@ export function PrGroupsView({
   readonly onFix: (pr: PrSummary) => void;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading the pull requests…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-int-state">
-        <p role="alert" className="fd-note fd-int-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text="Loading the pull requests…" />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   const total = GROUPS.reduce((n, g) => n + state.value[g.id].length, 0);
   if (total === 0) return <p className="fd-empty">No pull requests.</p>;
   return (

@@ -14,6 +14,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  container: fd-artlist / inline-size;
 }
 
 /* Rules only between the rows: the page header or the tab row draws the rule above the list. */
@@ -66,6 +67,14 @@
   grid-template-columns: 14px minmax(0, 1fr) 96px 48px;
   grid-template-areas: "icon title kind age";
 }
+/* A wide list gives the source room ("Lighting · Generate HTML explainer of journey architect…"
+   was cut at 320px while 600px of the row stayed empty). Every row keeps the one template, so the
+   columns stay aligned. */
+@container fd-artlist (min-width: 1280px) {
+  .fd-art-row:has(> .fd-art-where) {
+    grid-template-columns: 14px minmax(0, 1fr) minmax(0, 480px) 96px 48px;
+  }
+}
 
 /* The kind icon sits 8px before the title (the grid gap is 12px). */
 .fd-art-kind {
@@ -90,11 +99,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A version after v1: quiet text after the title (v1 is the rule, so it says nothing). */
+/* A version after v1: a neutral badge after the title, apart from its words (v1 is the rule, so it
+   says nothing). */
 .fd-art-ver {
   flex: none;
-  color: var(--faint);
-  font-size: var(--fs-meta);
+  align-self: center;
 }
 .fd-art-row > .fd-badge {
   grid-area: kind;
@@ -278,24 +287,23 @@
 }
 
 @media (max-width: 640px) {
-  /* Two lines: the icon, the title (with its version) and the age, then where it came from with
-     the quiet kind at the end of that line (the kind alone under the title in a session's tab). */
+  /* The icon, the title (with its version) and the age, then where it came from on the whole
+     second line. The kind is the icon only (its name is for a screen reader): a kind word at the
+     end of every line took the room of the source. */
   .fd-art-row,
   .fd-art-row:not(:has(> .fd-art-where)) {
     grid-template-columns: 14px minmax(0, 1fr) auto;
-    grid-template-areas:
-      "icon title age"
-      ". kind kind";
+    grid-template-areas: "icon title age";
     gap: 2px var(--sp-2);
     padding: var(--sp-2) 0;
   }
   .fd-art-row:has(> .fd-art-where) {
     grid-template-areas:
       "icon title age"
-      ". where kind";
+      ". where where";
   }
-  .fd-art-row:has(> .fd-art-where) > .fd-badge {
-    justify-self: end;
+  .fd-art-row > .fd-badge[data-kind] {
+    display: none;
   }
   .fd-art-kind {
     margin-right: 0;
@@ -419,10 +427,9 @@
   .fd-art-pageview .fd-page-filters > .fd-badge[data-kind] {
     display: none;
   }
-  /* The version select then starts the row: its text sits on the page gutter. */
-  .fd-art-pageview .fd-page-filters > .fd-art-version > select {
-    margin-left: calc(-1 * var(--sp-2));
-  }
+  /* The version select then starts the row. Its text sits on the page gutter: the phone rule of
+     page.css moves the label back by the padding of the ghost select (a second margin here put
+     the text 7px left of the gutter). */
   .fd-art-bar > .fd-art-name {
     display: -webkit-box;
     flex: 1 1 100%;
@@ -435,14 +442,17 @@
   }
 }
 
-/* The header of the page: the kind, the version and the actions stay level with the title row
-   (§4.3), and a long title wraps in its column (never an ellipsis). A narrow page (a phone, where
-   the top bar names the artifact, §4.8) has the summary, then one row: the kind and the version
-   at the left, Open in a new tab and the menu at the right. */
-.fd-page.fd-art-pageview > .fd-page-head {
-  flex-wrap: nowrap;
+/* The header of the page: the back link is a row of its own (page.css wraps the head), then the
+   title column, the kind and the version, and the actions, level with the title row (§4.3). The
+   title takes the room that the filters and the actions leave and wraps in its own column (never
+   an ellipsis); it never gets narrower than 32 characters (a `nowrap` head pushed the filters and
+   the actions off the screen and left the title one letter wide). A narrow page (a phone, where
+   the top bar names the artifact, §4.8) has the summary, then the actions at its end. */
+.fd-page.fd-art-pageview > .fd-page-head > .fd-page-titles {
+  flex: 1 1 0;
+  min-width: min(32ch, 100%);
 }
-.fd-page.fd-art-pageview > .fd-page-head > .fd-page-filters {
+.fd-page.fd-art-pageview > .fd-page-head > :is(.fd-page-filters, .fd-page-actions) {
   flex: none;
 }
 /* A title of two lines keeps its summary under it: the title row grows with the title (the 48px
@@ -478,6 +488,31 @@
     flex: 1 1 auto;
     justify-content: flex-end;
     margin-left: auto;
+  }
+}
+
+/* A phone page (§4.8) says the one version in its summary ("Lighting · Review · v1 · published
+   5 h ago"): the version has one look, the words of the summary, and no muted badge of a second
+   size. Open in a new tab and the menu then end the summary line, so the frame starts one row
+   higher. More versions keep the ghost select, which starts the row of the actions under the
+   summary. */
+.fd-art-metaver {
+  display: none;
+}
+@container fd-art (max-width: 640px) {
+  .fd-art-metaver {
+    display: inline;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-filters {
+    display: none;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-titles {
+    flex: 1 1 0;
+    align-self: center;
+    min-width: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head:not(:has(select)) > .fd-page-actions {
+    flex: none;
   }
 }
 

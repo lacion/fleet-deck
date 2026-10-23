@@ -208,7 +208,7 @@ describe('issues', () => {
         initialChecked={['PROJ-1']}
       />,
     );
-    expect(html).toContain('placeholder="Search the issues"');
+    expect(html).toContain('placeholder="Search issues"');
     expect(html).toContain('Mine');
     expect(html).toContain('Refresh');
     expect(html).toContain('Start sessions (1)');

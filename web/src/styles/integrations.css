@@ -13,11 +13,19 @@
   margin: 0;
 }
 
-/* The projects table: every cell sits in the middle of its 36px row, the row menu too (a baseline
-   put the texts 4px above the middle and the menu under them). The 12px mono folder and the 13px
-   names still read as one line. */
-.fd-int-projects td {
-  vertical-align: middle;
+/* The projects table: the texts of a row share one baseline (the 12px mono folder sat 2px above the
+   13px names when every cell was centered on its own line), and the padding puts that line in the
+   middle of the 36px row: a bare baseline put it at the top. The row menu centers on the row. */
+@media (min-width: 641px) {
+  .fd-int-projects td {
+    padding-block: calc((var(--row-h) - 1lh) / 2) 0;
+    vertical-align: baseline;
+  }
+  .fd-int-projects td.fd-cell-actions {
+    padding-block: 0;
+    line-height: 1;
+    vertical-align: middle;
+  }
 }
 
 /* The whole row opens the project: the name link covers it (::after); the row menu sits above the
@@ -41,12 +49,9 @@
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
-/* The row menu shares the baseline of the row too: a middle-aligned cell put the ⋯ 4.5px under the
-   row text (the text cells sit on the baseline at the top of the row). The menu itself is
-   `vertical-align: middle` on that line (base.css .fd-menu). */
+/* The row menu column is as narrow as its menu. */
 .fd-int-projects .fd-cell-actions {
   width: 1%;
-  vertical-align: baseline;
 }
 .fd-int-projects .fd-cell-actions > :is(.fd-menu, span, button) {
   position: relative;
@@ -70,15 +75,24 @@
 /* A phone: each project is a compact card without column labels (each value says what it is):
    the name with the row menu at its right, one meta line "Lighting · …/projects/fleet-deck" (the
    folder gives way), then the forge and tracker badges. An empty cell is absent (page.css hides a
-   td:empty). */
+   td:empty). The lines sit 4px and 8px apart (no row gap: the two zero-height line breaks added
+   one each). */
 @media (max-width: 640px) {
   .fd-int-projects tbody tr {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--sp-1) var(--sp-2);
+    gap: 0 var(--sp-2);
     /* No box around the table: the card text starts on the page gutter. */
     padding-inline: 0;
+  }
+  /* The whole card is the tap target (the name link covers the row, 80px and more): the name
+     itself needs no 44px line of its own, which pushed the meta line 36px down. */
+  .fd-int-projects .fd-cell-name a.fd-tap {
+    min-height: 0;
+  }
+  .fd-int-projects td:is([data-label="Station"], [data-label="Folder"]) {
+    margin-top: var(--sp-1);
   }
   .fd-int-projects td {
     padding: 0;
@@ -160,6 +174,7 @@
   .fd-int-projects td[data-label="Trackers"] {
     flex: none;
     max-width: 100%;
+    margin-top: var(--sp-2);
     order: 7;
   }
   .fd-int-projects td[colspan] {
@@ -204,25 +219,36 @@
 
 /* ---------- the project page: header line, panels, tabs ---------- */
 
-/* The summary under the title (§4.3): the station, a dot and the folder in mono. The folder keeps
+/* The summary under the title (§4.3): the place of the project (the station, a dot and the folder
+   in mono), then the badges of its forge and its trackers. A short line puts the badges on a line
+   of their own; the place stays one line (never a line that starts with a dot). The folder keeps
    its end (`PathTail` drops whole leading folders) and never breaks in a word. */
 .fd-int-where {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  min-width: 0;
+}
+.fd-int-place {
+  display: flex;
+  flex: 0 1 auto;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
 }
-.fd-int-where > span {
+.fd-int-where .fd-int-place > span {
   flex: none;
 }
 .fd-int-sep {
   color: var(--faint);
 }
-/* The folder takes the rest of the line (width 0 + grow: its full length never widens the header,
-   so `PathTail` sees the room it has); the start ellipsis is the fallback. */
-.fd-int-where > .fd-int-path {
-  flex: 1 1 0;
-  width: 0;
+/* The folder box is as wide as its whole path (`--fd-int-path-ch`, one `ch` per mono character),
+   not as its cut text: `PathTail` sees the room it has, and the box grows back with the window.
+   It gives way when the line is short; the start ellipsis is the fallback. */
+.fd-int-place > .fd-int-path {
+  flex: 0 1 auto;
+  width: var(--fd-int-path-ch, auto);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -398,13 +424,6 @@
   border-radius: var(--r-card);
   box-shadow: inset 3px 0 0 var(--focus);
 }
-.fd-int-state {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-  align-items: center;
-}
-
 .fd-int-split {
   display: grid;
   gap: var(--sp-4);
@@ -688,6 +707,16 @@ a.fd-int-projectchip:hover {
   color: var(--text);
   text-decoration: none;
 }
+/* A badge of the project header that opens the repository on the forge. */
+a.fd-int-badge {
+  text-decoration: none;
+}
+@media (hover: hover) {
+  a.fd-int-badge:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}
 /* The sessions of a project are strips: one column, 6px apart (§4.1). The list is the `fleet`
    container of the strip rules (home.css): a narrow list gives two-line strips, as on the board.
    The strip grid reads the where column from --fd-where-w, which the fleet board declares: the
@@ -708,10 +737,18 @@ a.fd-int-projectchip:hover {
     --fd-where-w: clamp(168px, 16cqi, 260px);
   }
 }
-/* No live session: one quiet sentence says so above the Ended fold (a fleet lane's "No
-   sessions."). */
-.fd-int-tab > .fd-int-none {
+/* The head of the live sessions: the Live label and its count at the left, the one primary of the
+   tab (New session in this project, small) at the right; the strips follow under it. */
+.fd-int-livehead {
+  justify-content: space-between;
+  min-height: var(--ctl-h);
+}
+.fd-int-tab .fd-int-livehead > .fd-label {
   margin: 0;
+}
+/* No live session: the empty state of the tab (§4.7) sits close above the Ended fold. */
+.fd-int-tab[data-tab="sessions"] > .fd-emptystate {
+  padding-bottom: var(--sp-5);
 }
 /* The ended strips fold under the fleet lane's Ended row (home.css .fd-lane-ended). */
 .fd-int-ended {

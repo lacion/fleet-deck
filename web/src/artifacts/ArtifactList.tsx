@@ -92,10 +92,11 @@ function RowLink({
 }
 
 /**
- * The artifact rows: the kind icon, the title (with a version after the first), where it came
- * from, the kind and the age. The older copies of a title fold under its row: the fold is the one
- * notation of the copies (a count after the title read as a version). The kind is a quiet word:
- * the icon says it too.
+ * The artifact rows: the kind icon, the title (with a version badge after the first), where it
+ * came from, the kind and the age. The older copies of a title fold under its row: the fold is
+ * the one notation of the copies (a count after the title read as a version). The kind is a quiet
+ * word that the icon says too: the icon carries its name for a screen reader, and a phone shows
+ * only the icon (artifacts.css).
  */
 export function ArtifactList({ items, now, where, onOpen }: Props) {
   return (
@@ -103,17 +104,19 @@ export function ArtifactList({ items, now, where, onOpen }: Props) {
       {groupCopies(items).map(({ newest: a, older }) => (
         <li key={`${a.station_id}/${a.artifact_id}`} data-artifact={a.artifact_id}>
           <RowLink artifact={a} className="fd-art-row" onOpen={onOpen}>
-            <span className="fd-art-kind" aria-hidden="true">
+            <span className="fd-art-kind">
               <Icon of={KIND_ICON[a.kind]} size={14} />
+              <span className="fd-vh">{KIND_LABEL[a.kind]}: </span>
             </span>
-            {/* The fold under the row says how many older copies there are: no count here. */}
+            {/* The fold under the row says how many older copies there are: no count here. A
+                version after the first is a neutral badge, apart from the words of the title. */}
             <span className="fd-art-titlecell">
               <span className="fd-art-title">{a.title}</span>
               {a.latest_version > 1 ? (
-                <span className="fd-art-ver">v{a.latest_version}</span>
+                <span className="fd-badge fd-art-ver">v{a.latest_version}</span>
               ) : null}
             </span>
-            <span className="fd-badge" data-kind={a.kind} data-tone="muted">
+            <span className="fd-badge" data-kind={a.kind} data-tone="muted" aria-hidden="true">
               {KIND_LABEL[a.kind]}
             </span>
             <span className="fd-art-age">{relativeAge(a.updated_at, now)}</span>
@@ -133,7 +136,7 @@ export function ArtifactList({ items, now, where, onOpen }: Props) {
                         {exactTime(o.updated_at)}
                       </time>
                       {o.latest_version > 1 ? (
-                        <span className="fd-art-ver">v{o.latest_version}</span>
+                        <span className="fd-badge fd-art-ver">v{o.latest_version}</span>
                       ) : null}
                       <span className="fd-art-age">{relativeAge(o.updated_at, now)}</span>
                     </RowLink>

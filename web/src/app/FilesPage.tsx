@@ -4,8 +4,7 @@ import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
 import { readPins } from '../spawn/spawn';
 import { FolderRow } from '../ui/FolderPicker';
-import { FolderOpen } from '../ui/icons';
-import { EmptyState, Field, Page } from '../ui/page';
+import { Field, Page } from '../ui/page';
 
 /** The most folder rows that the page offers: every pinned folder, then the recent session
  * folders up to this number. */
@@ -123,6 +122,11 @@ export function FilesPage({
   const here = stations.find((s) => s.station_id === station)?.name ?? 'the station';
   // "Pinned and recent" only when a folder is pinned (the folder picker's words).
   const rowsLabel = pinned.length > 0 ? 'Pinned and recent' : 'Recent';
+  // What to do comes as the hint of the Folder field (§4.7), under the field it explains.
+  const rows = pinned.length > 0 || recent.length > 0;
+  const hint = rows
+    ? 'Pick a recent folder, or type the path of a folder on this station.'
+    : 'Type the path of a folder on this station.';
   return (
     <Page title="Files" description={FILES_DESC} className="fd-files-page" wide>
       {/* The form of a settings page (§4.7): `Field layout="row"`, a 200px label column and the
@@ -154,6 +158,7 @@ export function FilesPage({
             <input
               id={`${ids}-folder`}
               placeholder={`Folder path on ${here}`}
+              aria-describedby={`${ids}-hint`}
               value={folder}
               onChange={(event) => setFolder(event.target.value)}
             />
@@ -165,13 +170,18 @@ export function FilesPage({
               Open
             </button>
           </div>
+          <span id={`${ids}-hint`} className="fd-fieldhint">
+            {hint}
+          </span>
         </div>
-        {pinned.length === 0 && recent.length === 0 ? null : (
+        {!rows ? null : (
           <Field label={rowsLabel} layout="row" group>
             <FolderRows pinned={pinned} recent={recent} onPick={(p) => open(station, p)} />
           </Field>
         )}
       </form>
+      {/* Before a folder is open, the form says what to do (the hint of the Folder field): no
+          second card under it repeats it. */}
       {opened ? (
         <div className="fd-panel fd-files-view">
           <FilesPanel
@@ -180,19 +190,7 @@ export function FilesPage({
             root={opened.folder}
           />
         </div>
-      ) : (
-        // What comes next (§4.7): Open is the action, so the empty state has no button. It starts
-        // on the control column, under the form it explains.
-        <EmptyState
-          icon={FolderOpen}
-          title="Open a folder"
-          body={
-            pinned.length === 0 && recent.length === 0
-              ? 'Type the path of a folder on this station, then press Open.'
-              : 'Pick a recent folder above, or type the path of a folder on this station.'
-          }
-        />
-      )}
+      ) : null}
     </Page>
   );
 }

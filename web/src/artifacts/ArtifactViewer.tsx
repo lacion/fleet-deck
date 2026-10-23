@@ -13,8 +13,9 @@ import {
   Share2,
   Trash2,
 } from '../ui/icons';
+import { Loading } from '../ui/Loading';
 import { Menu } from '../ui/Menu';
-import { Page } from '../ui/page';
+import { ErrorNotice, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { type ArtifactActions, rawPath } from './actions';
 import {
@@ -34,6 +35,9 @@ import { mainFile, type ViewerData, type ViewerReady, useViewer, versionRow } fr
 /** The permissions of the frame. No `allow-same-origin`: the page gets an opaque origin (DL-165). */
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals';
 
+/** The separator of the summary parts: a no-break space, a dot and a space. */
+const DOT = '\u00a0· ';
+
 /** The way back from the artifact page to the list (§4.3). */
 const ALL_ARTIFACTS = { href: '#/artifacts', label: 'All artifacts' } as const;
 
@@ -50,29 +54,22 @@ export function ArtifactFrame({ url, title }: { readonly url: string; readonly t
   );
 }
 
-function Loading({ what }: { readonly what: string }) {
-  return (
-    <p role="status" className="fd-note fd-art-state">
-      {what}
-    </p>
-  );
-}
-
-function Failed({ text }: { readonly text: string }) {
-  return (
-    <p role="alert" className="fd-note fd-art-state fd-art-error">
-      {text}
-    </p>
-  );
-}
-
-/** What the shown version looks like: a frame, an image, rendered Markdown or a note. */
-function Body({ ready }: { readonly ready: ViewerReady }) {
+/**
+ * What the shown version looks like: a frame, an image, rendered Markdown or a note. A load that
+ * failed is the `ErrorNotice` of a panel (§4.7), with Try again when the viewer can load again.
+ */
+function Body({
+  ready,
+  onRetry,
+}: {
+  readonly ready: ViewerReady;
+  readonly onRetry: (() => void) | undefined;
+}) {
   const { detail, link, text } = ready;
   const { title, kind } = detail.artifact;
   if (kind === 'markdown') {
-    if (text === null || text.kind === 'loading') return <Loading what="Loading the document…" />;
-    if (text.kind === 'error') return <Failed text={text.text} />;
+    if (text === null || text.kind === 'loading') return <Loading text="Loading the document…" />;
+    if (text.kind === 'error') return <ErrorNotice text={text.text} onRetry={onRetry} />;
     return (
       <div className="fd-art-md">
         <Markdown text={text.value} />
@@ -91,7 +88,10 @@ function Body({ ready }: { readonly ready: ViewerReady }) {
     const main = mainFile(detail, ready.version);
     if (main === undefined) {
       return (
-        <Failed text="This version has no files yet. The station has not sent them to the deck." />
+        <ErrorNotice
+          text="This version has no files yet. The station has not sent them to the deck."
+          onRetry={onRetry}
+        />
       );
     }
     const { station_id: station, artifact_id: id, station_name: stationName } = detail.artifact;
@@ -106,8 +106,8 @@ function Body({ ready }: { readonly ready: ViewerReady }) {
       />
     );
   }
-  if (link.kind === 'loading') return <Loading what="Opening the artifact…" />;
-  if (link.kind === 'error') return <Failed text={link.text} />;
+  if (link.kind === 'loading') return <Loading text="Opening the artifact…" />;
+  if (link.kind === 'error') return <ErrorNotice text={link.text} onRetry={onRetry} />;
   if (kind === 'image') {
     return <img className="fd-art-image" src={link.value} alt={title} />;
   }
@@ -122,6 +122,8 @@ type ViewProps = {
   /** The "back" control: a button in the panel, a link in the page. */
   readonly onBack?: (() => void) | undefined;
   readonly onShare: () => void;
+  /** Loads the artifact again (Try again of a load error); absent: no Try again. */
+  readonly onRetry?: (() => void) | undefined;
   /** The owner's "Delete artifact"; absent: no control (R13 P5a). */
   readonly deletion?: DeletionView | undefined;
   /** The sessions of the board: the page names the session that published the artifact. */
@@ -146,7 +148,7 @@ function DeletionNotes({ deletion }: { readonly deletion: DeletionView }) {
       </div>
     );
   }
-  if (phase.kind === 'error') return <Failed text={phase.text} />;
+  if (phase.kind === 'error') return <ErrorNotice text={phase.text} />;
   return null;
 }
 
@@ -283,6 +285,7 @@ export function ArtifactViewerView({
   onVersion,
   onBack,
   onShare,
+  onRetry,
   deletion,
   sessions = [],
   now: givenNow,
@@ -304,9 +307,9 @@ export function ArtifactViewerView({
   if (data.kind !== 'ok') {
     const state =
       data.kind === 'loading' ? (
-        <Loading what="Loading the artifact…" />
+        <Loading text="Loading the artifact…" />
       ) : (
-        <Failed text={data.text} />
+        <ErrorNotice text={data.text} onRetry={onRetry} />
       );
     return page ? (
       <Page title="Artifact" back={ALL_ARTIFACTS} className="fd-art-pageview" label="Artifact" wide>
@@ -390,7 +393,7 @@ export function ArtifactViewerView({
             {stateText(deletion.phase.state)}
           </p>
         ) : (
-          <Body ready={ready} />
+          <Body ready={ready} onRetry={onRetry} />
         )}
       </div>
     </>
@@ -402,13 +405,26 @@ export function ArtifactViewerView({
       (s) => s.station_id === artifact.station_id && s.summary.session_id === artifact.session_id,
     );
     const published = versionRow(ready.detail, ready.version)?.created_at ?? artifact.updated_at;
-    const summary = [
-      artifact.station_name,
-      ...(card === undefined ? [] : [sessionTitle(card)]),
-      publishedText(published, now),
-    ]
+    // The dots of the summary keep to the word before them (a no-break space): a wrapped line
+    // never starts with a dot.
+    const where = [artifact.station_name, ...(card === undefined ? [] : [sessionTitle(card)])]
       .filter((part) => part !== '')
-      .join(' · ');
+      .join(DOT);
+    // A phone (artifacts.css) says the one version in the summary, where it needs no control of
+    // its own ("Lighting · Review · v1 · published 5 h ago"); more versions keep the select.
+    const rest = `${where === '' ? '' : DOT}${publishedText(published, now)}`;
+    const summary =
+      ready.detail.versions.length > 1 ? (
+        `${where}${rest}`
+      ) : (
+        <>
+          {where}
+          <span className="fd-art-metaver">
+            {where === '' ? `v${ready.version}${DOT}` : `${DOT}v${ready.version}`}
+          </span>
+          {rest}
+        </>
+      );
     return (
       <Page
         title={artifact.title}
@@ -485,6 +501,7 @@ export function ArtifactViewer({
         onVersion={onVersion}
         onBack={onBack}
         onShare={() => setSharing(true)}
+        onRetry={() => setReload((n) => n + 1)}
         deletion={deletion}
         sessions={sessions}
       />

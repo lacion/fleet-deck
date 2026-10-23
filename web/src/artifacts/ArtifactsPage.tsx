@@ -234,13 +234,13 @@ function Loaded({
       onSubmit={(e) => e.preventDefault()}
     >
       <label className="fd-field fd-art-search">
-        <span className="fd-vh">Search by title</span>
+        <span className="fd-vh">Search artifacts</span>
         <Icon of={Search} size={14} />
         <input
           type="search"
           className={phone ? undefined : 'fd-sm'}
-          aria-label="Search by title"
-          placeholder="Search by title"
+          aria-label="Search artifacts"
+          placeholder="Search artifacts"
           autoComplete="off"
           value={filters.q}
           onChange={(e) => setFilters({ ...filters, q: e.target.value })}

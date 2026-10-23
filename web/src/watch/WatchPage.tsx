@@ -125,8 +125,13 @@ function Repeat({ n }: { readonly n: number | undefined }) {
   );
 }
 
-/** Where a tile works: the station and the repository (none outside a repository: principle 7),
- * then the branch or the folder with its icon (the strip's rule). */
+/** The fewest characters of a branch or folder that a tile keeps before it cuts the name. */
+const BRANCH_MIN_CH = 18;
+
+/** Where a tile works: the station (never cut), the repository (none outside a repository:
+ * principle 7), then the branch or the folder with its icon (the strip's rule). A short line cuts
+ * the repository first: the branch keeps its first 18 characters (views.css). Each part that can
+ * be cut has its whole text in its title. */
 function Where({
   card,
   stations,
@@ -136,20 +141,29 @@ function Where({
 }) {
   const s = card.summary;
   const repo = repoName(card);
-  const where = [stationName(card.station_id, stations), ...(repo === NO_REPO ? [] : [repo])].join(
-    ' · ',
-  );
   const place =
     s.branch !== null && s.branch !== ''
       ? { text: s.branch, icon: GitBranch, label: 'Branch' }
       : s.cwd !== null && s.cwd !== ''
         ? { text: basename(s.cwd), icon: Folder, label: 'Folder' }
         : null;
+  // The branch keeps at least its first 18 characters, a shorter name all of its own.
+  const keep = place === null ? 0 : Math.min(BRANCH_MIN_CH, [...place.text].length);
   return (
     <span className="fd-wtile-where">
-      <span className="fd-wtile-place">{where}</span>
+      <span className="fd-wtile-station">{stationName(card.station_id, stations)}</span>
+      {repo === NO_REPO ? null : (
+        <span className="fd-wtile-place" title={repo}>
+          <span aria-hidden="true">· </span>
+          {repo}
+        </span>
+      )}
       {place === null ? null : (
-        <span className="fd-wtile-branch" title={`${place.label}: ${place.text}`}>
+        <span
+          className="fd-wtile-branch"
+          title={`${place.label}: ${place.text}`}
+          style={{ '--fd-wtile-keep': `${keep}ch` } as CSSProperties}
+        >
           <Icon of={place.icon} size={12} />
           <span className="fd-vh">{place.label}</span>
           <code>{place.text}</code>
@@ -232,7 +246,12 @@ export function Tile({
       <>
         <span className="fd-dot" data-status="working" aria-hidden="true" />
         <span className="fd-vh">Running now: </span>
-        <ToolCall name={runningName} target={running.target} form={running.form} />
+        <ToolCall
+          name={runningName}
+          target={running.target}
+          form={running.form}
+          note={running.target === '' ? 'running' : ''}
+        />
       </>
     );
   // On the wall it is the newest chat line: the room that no whole line fills falls at the tile
@@ -599,9 +618,11 @@ export function WatchPage({
     </>
   ) : (
     <>
+      {/* One order on every page header (the fleet's): the status segments, the filters, then
+          the view toggles. */}
+      {status}
       {stationSelect}
       {repoSelect}
-      {status}
       {/* A ghost toggle with an icon (the header's one control language, §4.3): pressed, it takes
           the pressed-segment look of base.css. */}
       <button

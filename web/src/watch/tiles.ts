@@ -7,7 +7,7 @@ import type { DeckSession, EventEnvelope, OpenRequest } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { questionForm } from '../session/question';
 import { type StatusFilter, statusMatches } from '../views/StatusSeg';
-import { type TargetForm, toolText, toolWords } from './tooltext';
+import { statusWord, type TargetForm, toolText, toolWords } from './tooltext';
 
 /** The most tiles; one timeline subscription each, and a socket holds 32 (the rest is spare). */
 export const MAX_TILES = 24;
@@ -127,8 +127,11 @@ function lineOf(item: Item): TileLine | null {
       call.form === 'path'
         ? call.target
         : cut(homeShortIn(call.target), false, LINE_CHARS - name.length - 1);
-    const text = target === '' ? name : `${name}: ${target}`;
     const outcome = item.status === 'failed' || item.status === 'denied' ? item.status : null;
+    // A call without a target says how it stands ("Workflow done"): a lone name read as a heading.
+    const note = target === '' && outcome === null ? statusWord(item.status) : '';
+    const text =
+      target === '' ? [name, note].filter((p) => p !== '').join(' ') : `${name}: ${target}`;
     return {
       key: item.key,
       kind: 'tool',
@@ -137,7 +140,7 @@ function lineOf(item: Item): TileLine | null {
       ...(call.name === name ? {} : { label: call.name }),
       target,
       form: call.form,
-      note: '',
+      note,
       ...(outcome === null ? {} : { outcome }),
       node: item.node_id,
     };

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { SessionKey } from '../gen';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import type { ArtifactActions } from './actions';
 import { ArtifactList, visible } from './ArtifactList';
@@ -18,25 +20,8 @@ export function SessionArtifactsList({
   readonly onOpen: (id: string) => void;
   readonly onRetry: () => void;
 }) {
-  if (state.kind === 'loading') {
-    return (
-      <p role="status" className="fd-note">
-        Loading the artifacts…
-      </p>
-    );
-  }
-  if (state.kind === 'error') {
-    return (
-      <div className="fd-art-state">
-        <p role="alert" className="fd-note fd-art-error">
-          {state.text}
-        </p>
-        <button type="button" className="fd-ghost fd-sm" onClick={onRetry}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (state.kind === 'loading') return <Loading text="Loading the artifacts…" />;
+  if (state.kind === 'error') return <ErrorNotice text={state.text} onRetry={onRetry} />;
   if (state.items.length === 0) {
     return (
       <p className="fd-note">
