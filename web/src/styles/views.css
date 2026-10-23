@@ -30,17 +30,8 @@
 }
 
 /* ── Watch: the header (§4.3) ───────────────────────────────────── */
-/* The filters sit in the Page filters slot (page.css .fd-page-filters). */
-.fd-watch-needs {
-  color: var(--act);
-  font-weight: 600;
-}
-
-/* The calm state: the green of the fleet header (§4.4, home.css .fd-home-needs[data-clear]). */
-.fd-watch-clear {
-  color: var(--ok);
-  font-weight: 500;
-}
+/* The filters sit in the Page filters slot (page.css .fd-page-filters). The summary sentence is
+   the fleet's (views/FleetSentence.tsx, with the colors of home.css). */
 
 /* Focus waits while the pointer or the keyboard is in the shown tile. */
 .fd-watch-paused {
@@ -57,29 +48,61 @@
   max-width: 100%;
 }
 
-/* A phone: the two selects share the full first row (half each), so the filter row ends on the
-   right edge of the tiles; the chips wrap to the next row. */
-@media (max-width: 640px) {
-  .fd-wfilter {
-    flex: 1 1 calc(50% - var(--sp-1));
-  }
+/* A phone: one Filters button (the fleet's pattern, §4.8). Its menu hangs from the left edge of
+   the button (the button starts the row) and names each control, the label over the control. */
+.fd-watch-filtermenu {
+  flex: none;
+}
 
-  .fd-wfilter select {
-    width: 100%;
-  }
+.fd-watch-filtermenu .fd-menu-body {
+  right: auto;
+  left: 0;
+  width: min(360px, calc(100vw - 2 * var(--sp-4)));
+  padding: var(--sp-3);
+}
+
+.fd-watch-filtergrid {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.fd-watch-filtergrid > .fd-wfilter {
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.fd-watch-filtergrid select {
+  width: 100%;
+}
+
+/* The status segments share the width of the menu. */
+.fd-watch-filtergrid .fd-watch-status {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+}
+
+/* The Focus switch row starts on the edge of the fields above it. */
+.fd-watch-filtergrid > .fd-menu-switch {
+  padding: 0;
 }
 
 /* ── Watch: the wall of tiles ───────────────────────────────────── */
 /* The tiles of one grid row share the height of the tallest one, so the row ends on one line
-   (Focus shows one tile in one column). */
+   (Focus shows one tile in one column). A tile is at least 420px wide, so that a tool line keeps
+   its command and its file name. WatchPage measures the wall and sets the columns that keep the
+   rows even (`watchColumns`: six tiles are 3 + 3, not 5 + 1); before that the row fills. */
 .fd-wall {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
   align-items: stretch;
   gap: var(--sp-2);
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.fd-wall[data-cols] {
+  grid-template-columns: repeat(var(--fd-watch-cols), minmax(0, 1fr));
 }
 
 .fd-wall[data-focus="true"] {
@@ -161,6 +184,15 @@
   color: var(--faint);
 }
 
+/* The age of the last change at the right of the head (the strip's age column, §4.1). */
+.fd-wtile-age {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
 /* Where the tile works: the station and the repository, then the branch (or the folder) after its
    12px icon, the strip's rule: the icon tells a branch from a folder. */
 .fd-wtile-where {
@@ -237,7 +269,29 @@
   font-family: var(--font-ui);
 }
 
-/* The tool that runs now: the "now" text of a strip. */
+/* A line that came several times in a row (`foldLines`): the text gives way, its count stays at
+   the end. */
+.fd-wtile-line[data-repeat] {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+}
+
+.fd-wtile-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wtile-repeat {
+  flex: none;
+  align-self: center;
+}
+
+/* The tool that runs now: the "now" text of a strip, after the working glyph (the past calls
+   above it have none). */
 .fd-wtile-tool {
   display: flex;
   align-items: baseline;
@@ -250,8 +304,20 @@
   font-size: var(--fs-meta);
 }
 
+.fd-wtile-tool > .fd-dot {
+  flex: none;
+  align-self: center;
+  margin-right: 2px;
+}
+
+/* The tool name keeps its width up to half of the line, then it ends in an ellipsis: the file
+   name or the command is what tells one call from the next. */
 .fd-wtile-toolname {
   flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
   font-weight: 600;
 }
@@ -508,13 +574,15 @@
 }
 
 /* One event: a 36px row in fixed columns, so that the event starts at one x on every row: the
-   icon, the session (named on the first row of its run), the event, the repository and the age.
+   icon, the session (named on the first row of its run, with its repository after the name), the
+   event, the count of a repeated event, the result of a call that did not end well (the chat's
+   result column, §4.5) and the age. The event takes the room that the count and the result leave.
    The whole row opens the session: the session link covers it (::after). */
 .fd-arow {
   position: relative;
   display: grid;
-  grid-template-columns: 16px 160px minmax(0, 1fr) 180px 48px;
-  grid-template-areas: "icon session text repo age";
+  grid-template-columns: 16px 220px minmax(0, 1fr) auto auto 48px;
+  grid-template-areas: "icon session text count result age";
   align-items: baseline;
   column-gap: var(--sp-3);
   min-height: var(--row-h);
@@ -555,18 +623,17 @@
   color: var(--hazard);
 }
 
-/* The session and its repository: two columns of the row on a desktop, the head of the run on a
-   phone. */
+/* The session and its repository: one cell of the row on a desktop ("Login · acme/web", cut as a
+   whole), the head of the run on a phone. */
 .fd-arow-head {
-  display: contents;
-}
-
-.fd-arow-session {
   grid-area: session;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.fd-arow-session {
   color: var(--text);
   font-weight: 500;
 }
@@ -595,8 +662,8 @@
   color: var(--text);
 }
 
-/* A tool call (§4.5): the tool name in weight 600 with no colon, then the target, then a hazard
-   badge for a failed or denied call. The target gives way: a path loses its leading folders. */
+/* A tool call (§4.5): the tool name in weight 600 with no colon, then the target. The target
+   gives way: a path loses its leading folders. */
 .fd-arow-text[data-tool] {
   display: flex;
   align-items: baseline;
@@ -604,8 +671,7 @@
 }
 
 .fd-arow-lead,
-.fd-arow-tool,
-.fd-arow-text[data-tool] > .fd-badge {
+.fd-arow-tool {
   flex: none;
 }
 
@@ -618,8 +684,21 @@
   font-weight: 600;
 }
 
-.fd-arow-text[data-tool] > .fd-badge {
+/* The count of an event that came several times in a row ("4", read "4 times"). */
+.fd-arow-repeat {
+  grid-area: count;
   align-self: center;
+}
+
+/* How a call ended when it did not end well: the hazard word at the right, the chat's result
+   column (§4.5) and the "failed" of a Watch tile. */
+.fd-arow-result {
+  grid-area: result;
+  color: var(--hazard);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .fd-arow-target,
@@ -644,14 +723,9 @@
   text-align: left;
 }
 
-/* The repository is a meta value in sans, the same as the channel list, Watch and the project
-   forge badge (mono stays for branches and paths). */
+/* The repository after the session name: a meta value in sans, the same as the channel list,
+   Watch and the project forge badge (mono stays for branches and paths). */
 .fd-arow-repo {
-  grid-area: repo;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
@@ -868,7 +942,9 @@
     display: none;
   }
 
-  /* A pill keeps a pill shape with a short label ("All"): never a circle. */
+  /* A pill keeps a pill shape with a short label ("All"): never a circle. Every pill has the quiet
+     rest edge of a chip (base.css `.fd-chip`, §3), so that an unpressed channel reads as a
+     control and not as plain text. */
   .fd-achan,
   .fd-achan-ended {
     flex: none;
@@ -876,6 +952,7 @@
     width: auto;
     min-width: 56px;
     margin-top: 0;
+    border: 1px solid color-mix(in srgb, var(--ctl-edge) 60%, transparent);
     border-radius: var(--r-pill);
     padding: 0 var(--sp-3);
   }
@@ -895,7 +972,8 @@
   .fd-achan[aria-pressed="true"],
   .fd-achan[aria-pressed="true"]:hover {
     background: var(--badge-bg);
-    box-shadow: inset 0 0 0 1px var(--ctl-edge);
+    border-color: var(--ctl-edge);
+    box-shadow: none;
     font-weight: 600;
   }
 
@@ -904,10 +982,10 @@
   }
 
   /* A run of one session: its head (the session and its repository) over the first row, then one
-     44px row per event: the icon, the event and the age. */
+     44px row per event: the icon, the event, its count and result, and the age. */
   .fd-arow {
-    grid-template-columns: 16px minmax(0, 1fr) auto;
-    grid-template-areas: "icon text age";
+    grid-template-columns: 16px minmax(0, 1fr) auto auto auto;
+    grid-template-areas: "icon text count result age";
     align-items: center;
     column-gap: var(--sp-3);
     min-height: var(--row-h-touch);
@@ -917,8 +995,8 @@
   .fd-arow[data-run="start"] {
     grid-template-rows: auto minmax(var(--row-h-touch), auto);
     grid-template-areas:
-      "head head head"
-      "icon text age";
+      "head head head head head"
+      "icon text count result age";
     padding-top: var(--sp-3);
   }
 
@@ -926,8 +1004,7 @@
     display: flex;
     grid-area: head;
     align-items: baseline;
-    gap: var(--sp-2);
-    min-width: 0;
+    gap: var(--sp-1);
   }
 
   /* A row after the first of its run keeps only the covering link (its name is for screen
@@ -938,54 +1015,69 @@
 
   .fd-arow-session {
     flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-weight: 600;
   }
 
   .fd-arow-repo {
     flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* A phone: an event and a tool target take up to two lines. Commands that start alike ("cd
+   ~/project/super/…") differ at their end, which one line cut off. A path keeps one line: it
+   already keeps its file name (`PathTail`). */
+@media (max-width: 640px) {
+  .fd-arow-text:not([data-tool]),
+  .fd-arow-target:not([data-path]),
+  .fd-arow-words,
+  :is(.fd-wtile-line, .fd-wtile-tool) > :is(code:not(.fd-wtile-path), .fd-wtile-words) {
+    display: -webkit-box;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  /* The Filters button starts on the gutter: its icon lines up with the summary sentence; the
+     menu keeps the gutter too. */
+  .fd-watch-filtermenu {
+    margin-left: calc(-1 * var(--sp-2));
+  }
+
+  .fd-watch-filtermenu .fd-menu-body {
+    left: var(--sp-2);
   }
 }
 
 /* ── the Files page: the folder form ────────────────────────────── */
-/* The form of a settings page (§4.7, settings.css .fd-set-grid): a 200px label column (13px
-   labels) and the controls after it, on the canvas: Station, Folder with Open, then the pinned and
-   recent folders. A wrapped chip row starts under the first chip. */
+/* The form of a settings page (§4.7): `Field layout="row"` (page.css), a 200px label column and
+   the controls after it, on the canvas: Station, Folder with Open, then the pinned and recent
+   folders as the folder rows of the New session picker (§4.6, §5 paths). The fields keep the
+   360px of a row field, so the select, the path field and the rows share one left and one right
+   edge; Open sits right after the path field. */
 .fd-files-page .fd-files-folder {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--sp-3) var(--sp-5);
+  gap: var(--sp-3);
   min-width: 0;
   margin: 0;
 }
 
-.fd-files-page .fd-files-label {
-  display: flex;
-  align-items: center;
-  min-height: var(--ctl-h);
-  color: var(--text);
-  font-size: var(--fs-ui);
-  font-weight: 500;
-  line-height: 1.25;
-}
-
-.fd-files-page .fd-files-control {
+.fd-files-page .fd-files-folder-path {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
 }
 
-.fd-files-page .fd-files-folder select {
-  width: auto;
-  min-width: 160px;
-  max-width: 360px;
-}
-
 .fd-files-page .fd-files-folder-path > input {
-  flex: 1 1 auto;
-  width: 100%;
-  max-width: 560px;
+  flex: 0 1 360px;
   min-width: 0;
   font-family: var(--font-data);
   font-size: var(--fs-data);
@@ -1006,34 +1098,46 @@
   flex: none;
 }
 
-.fd-files-page .fd-recent {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-1);
-  min-height: var(--ctl-h);
-  margin: 0;
+/* The folder rows: a list on the canvas (§4.7), 36px rows (44px on touch) with --border-soft
+   rules between them; all of them show (no scroll box: at most six rows). */
+.fd-files-page .fd-files-folders {
+  gap: 0;
+  max-width: 360px;
+  max-height: none;
+  overflow: visible;
 }
 
-/* A chip is a plain button on the canvas: the --raised fill and, in the light theme, the hairline
-   edge of a plain button (§3, --btn-edge), so it reads as a button. */
-.fd-files-page .fd-recent .fd-chip {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  background: var(--raised);
-  border-color: var(--btn-edge);
-  color: var(--dim);
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  font-weight: 400;
+.fd-files-page .fd-files-folders > li + li {
+  border-top: 1px solid var(--border-soft);
 }
-.fd-files-page .fd-recent .fd-chip:hover:not(:disabled) {
-  background: var(--raised-hi);
-  color: var(--text);
+
+.fd-files-page .fd-files-folders button {
+  height: var(--row-h);
+  gap: var(--sp-2);
 }
-.fd-files-page .fd-recent .fd-chip[data-pinned] .fd-icon {
-  fill: currentColor;
+@media (pointer: coarse) {
+  .fd-files-page .fd-files-folders button {
+    height: var(--row-h-touch);
+  }
+}
+
+/* The label of the rows sits on the line of the first row (a row is taller than a control). */
+.fd-files-page .fd-fieldwrap:has(> .fd-files-folders) > .fd-fieldlabel {
+  min-height: var(--row-h);
+}
+@media (pointer: coarse) {
+  .fd-files-page .fd-fieldwrap:has(> .fd-files-folders) > .fd-fieldlabel {
+    min-height: var(--row-h-touch);
+  }
+}
+
+/* The hint under the form starts on the control column, under the fields it explains (a centered
+   hint floated away from the form on a wide window). */
+.fd-files-page > .fd-emptystate {
+  align-items: flex-start;
+  margin: 0 0 0 calc(200px + var(--sp-5));
+  padding-top: var(--sp-5);
+  text-align: left;
 }
 
 .fd-files-page .fd-files-view {
@@ -1056,33 +1160,27 @@
   padding-left: 10px;
 }
 
-@media (max-width: 640px) {
-  /* One column: each label over its control, the chip label over the chips. */
-  .fd-files-page .fd-files-folder {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--sp-1);
-  }
-
-  .fd-files-page .fd-files-label {
-    min-height: 0;
-    margin-top: var(--sp-2);
-    color: var(--dim);
-    font-size: var(--fs-meta);
-  }
-
-  .fd-files-page .fd-files-label:first-child {
-    margin-top: 0;
-  }
-
-  .fd-files-page .fd-files-folder select {
-    width: 100%;
-    max-width: none;
-  }
-
+/* Under 720px the row fields stack (page.css): each label over its control, the controls and the
+   rows take the width, and the hint starts on the page gutter. */
+@media (max-width: 720px) {
   .fd-files-page .fd-files-folder-path > input {
+    flex: 1 1 auto;
+  }
+
+  .fd-files-page .fd-files-folders {
     max-width: none;
   }
 
+  .fd-files-page .fd-fieldwrap:has(> .fd-files-folders) > .fd-fieldlabel {
+    min-height: 0;
+  }
+
+  .fd-files-page > .fd-emptystate {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
   /* The search row: the field takes the width, Names stays at its size. */
   .fd-files-page .fd-files-bar form {
     max-width: none;

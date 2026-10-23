@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { card } from '../testing/fleet';
 import { ArtifactPage, ArtifactViewerView, FRAME_SANDBOX } from './ArtifactViewer';
 import { detail, fakeActions } from './fixtures';
 import type { ViewerData, ViewerReady } from './viewer';
@@ -16,7 +17,15 @@ const ready = (over: Partial<ViewerReady> = {}, d = detail('a1')): ViewerData =>
   },
 });
 
-const render = (data: ViewerData, extra: { canShare?: boolean; variant?: 'panel' | 'page' } = {}) =>
+const render = (
+  data: ViewerData,
+  extra: {
+    canShare?: boolean;
+    variant?: 'panel' | 'page';
+    sessions?: Parameters<typeof ArtifactViewerView>[0]['sessions'];
+    now?: number;
+  } = {},
+) =>
   renderToStaticMarkup(
     <ArtifactViewerView
       data={data}
@@ -25,6 +34,8 @@ const render = (data: ViewerData, extra: { canShare?: boolean; variant?: 'panel'
       onVersion={() => {}}
       onBack={() => {}}
       onShare={() => {}}
+      sessions={extra.sessions}
+      now={extra.now}
     />,
   );
 
@@ -85,7 +96,8 @@ describe('artifact viewer', () => {
 
   test('the toolbar: version picker, new tab, download and share', () => {
     const html = render(ready({}, detail('a1', { latest_version: 3 }, [], ['site/index.html'])));
-    expect(html).toContain('aria-label="Version"');
+    // The version is a quiet view option (§4.3): a ghost select.
+    expect(html).toMatch(/<select class="fd-ghost fd-sm" aria-label="Version"/);
     expect(html).toContain('>v3 (latest)<');
     expect(html).toContain('>v2<');
     expect(html).toContain('>v1<');
@@ -114,14 +126,40 @@ describe('artifact viewer', () => {
     expect(html).toContain('<span class="fd-art-more" data-wide="none">');
   });
 
-  test('the page variant links back to the list, the panel has a back button', () => {
-    expect(render(ready(), { variant: 'page' })).toContain('href="#/artifacts"');
-    expect(render(ready())).toContain('Back to the list');
+  test('one version is a muted badge, not a select with one option', () => {
+    const html = render(ready({}, detail('a1', { latest_version: 1 })));
+    expect(html).not.toContain('<select');
+    expect(html).not.toContain('(latest)');
+    expect(html).toContain(
+      '<span class="fd-badge fd-art-version" data-tone="muted"><span class="fd-vh">Version </span>v1</span>',
+    );
   });
 
-  test('the page title is the h1 of the page, wide; the panel keeps an h2', () => {
-    expect(render(ready(), { variant: 'page' })).toContain('<h1 class="fd-art-name fd-wide">');
+  test('the page has the Page header: the way back above the title, the panel a back button', () => {
+    const html = render(ready(), { variant: 'page' });
+    // §4.3: "‹ All artifacts" above the title row, not in it.
+    expect(html).toMatch(
+      /<div class="fd-page-titles"><a class="fd-btn fd-ghost fd-sm fd-page-back" href="#\/artifacts">[\s\S]*All artifacts<\/a><div class="fd-page-titlerow"><h1 class="fd-page-title">/,
+    );
+    expect(html).toContain('aria-label="Artifact"');
+    expect(render(ready())).toContain('Back to the list');
     expect(render(ready())).toContain('<h2 class="fd-art-name">');
+  });
+
+  test('the page says who published the artifact and when; kind and version are its filters', () => {
+    const d = detail('a1', { title: 'Plan', session_id: 'sa' }, [], ['index.html']);
+    const at = d.versions[d.versions.length - 1]?.created_at ?? 0;
+    const html = render(ready({}, d), {
+      variant: 'page',
+      sessions: [card('sa', 'working', 'station-a', { title: 'Review' })],
+      now: at + 5 * 3_600_000,
+    });
+    expect(html).toContain('<h1 class="fd-page-title">Plan</h1>');
+    expect(html).toContain(
+      `<p class="fd-page-desc">${d.artifact.station_name} · Review · published 5 h ago</p>`,
+    );
+    expect(html).toMatch(/<div class="fd-page-filters"><span class="fd-badge" data-kind="html">/);
+    expect(html).toMatch(/<div class="fd-page-actions">[\s\S]*Open in a new tab/);
   });
 
   test('the page without a deck says so', () => {

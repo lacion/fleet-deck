@@ -15,6 +15,7 @@ import {
   nextFocus,
   TILE_LINES,
   tileLines,
+  watchColumns,
   watchSessions,
 } from './tiles';
 import { Tile, WatchPage } from './WatchPage';
@@ -110,11 +111,46 @@ describe('tile lines', () => {
       ]),
     );
     expect(lines.map((l) => [l.name, l.target, l.form])).toEqual([
-      ['Publish artifact · fleetdeck', '/Users/ana/report.html', 'path'],
+      ['Publish artifact', '/Users/ana/report.html', 'path'],
       ['Workflow', '', 'words'],
       ['Agent', 'Review the diff', 'words'],
       ['Read', '/home/ana/briefs/a.png', 'path'],
     ]);
+  });
+
+  test('an MCP tool has no server on the line; its title keeps the whole name', () => {
+    const [line] = tileLines(
+      envelopes('s1', [started('n1', 'mcp__chrome-devtools__take_screenshot', '{}', 'other')]),
+    );
+    expect(line).toMatchObject({
+      name: 'Take screenshot',
+      label: 'Take screenshot · chrome-devtools',
+    });
+  });
+
+  test('the same line several times in a row is one line with its count', () => {
+    const lines = tileLines(
+      envelopes('s1', [
+        started('n1', 'Bash', 'cargo test'),
+        started('n2', 'Bash', 'cargo test'),
+        started('n3', 'Bash', 'cargo test'),
+        said('done'),
+        said('done'),
+      ]),
+    );
+    expect(lines.map((l) => [l.text, l.repeat])).toEqual([
+      ['Bash: cargo test', 3],
+      ['done', 2],
+    ]);
+    // The line keeps the key of its newest copy (the third call of the same timeline).
+    const apart = tileLines(
+      envelopes('s1', [
+        started('n1', 'Bash', 'cargo a'),
+        started('n2', 'Bash', 'cargo b'),
+        started('n3', 'Bash', 'cargo c'),
+      ]),
+    );
+    expect(lines[0]?.key).toBe(apart[2]?.key ?? '');
   });
 
   test('chat lines are plain text: no emphasis, code ticks or heading marks (DL-171)', () => {
@@ -157,15 +193,32 @@ describe('the wall and Focus', () => {
     expect(shown).not.toContain('asleep');
   });
 
-  test('the filters narrow by station, repository and needs-you', () => {
+  test('the filters narrow by station, repository and the status of the fleet', () => {
     const ids = (f: Partial<typeof emptyWatchFilter>) =>
       watchSessions(sessions, { ...emptyWatchFilter, ...f })
         .map((c) => c.summary.session_id)
         .sort();
     expect(ids({ station: 'station-b' })).toEqual(['on-b']);
     expect(ids({ repo: 'acme/web' })).toEqual(['early']);
-    expect(ids({ needsOnly: true })).toEqual(['early', 'late']);
+    expect(ids({ status: 'needs_you' })).toEqual(['early', 'late']);
+    expect(ids({ status: 'working' })).toEqual(['on-b']);
+    expect(ids({ status: 'idle' })).toEqual(['idle-a']);
     expect(filterChoices(sessions).stations).toEqual(['station-a', 'station-b']);
+  });
+
+  test('the wall balances its rows: no lone tile on the last row when a column less avoids it', () => {
+    // A 1144px column fits two 420px tiles, a 1548px column three, a 1756px column four.
+    expect(watchColumns(6, 1144)).toBe(2);
+    expect(watchColumns(6, 1548)).toBe(3);
+    expect(watchColumns(6, 1756)).toBe(3);
+    expect(watchColumns(4, 1548)).toBe(2);
+    expect(watchColumns(7, 1756)).toBe(4);
+    // One row: the tiles keep at most 720px, the rest of the row stays empty.
+    expect(watchColumns(1, 1548)).toBe(3);
+    expect(watchColumns(2, 1548)).toBe(3);
+    expect(watchColumns(1, 600)).toBe(1);
+    // A phone: one column.
+    expect(watchColumns(6, 358)).toBe(1);
   });
 
   test('Focus goes through the sessions that need you, oldest request first, and stays on one', () => {
@@ -230,10 +283,13 @@ describe('the watch page', () => {
     expect(html).toContain(
       'data-kind="tool"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
     );
+    // The call that runs now: the working glyph and its name tell it from the past calls.
     expect(html).toContain(
-      '<span class="fd-wtile-tool" title="Running now"><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
+      '<span class="fd-wtile-tool"><span class="fd-dot" data-status="working" aria-hidden="true"></span><span class="fd-vh">Running now: </span><b class="fd-wtile-toolname">Bash</b><code>cargo test</code></span>',
     );
     expect(html).toContain('class="fd-focus" title="repairing the login test"');
+    // The age of the tile, at the right of its head (the strip's age).
+    expect(html).toMatch(/<time class="fd-wtile-age" dateTime="[^"]+">[^<]+<\/time>/);
     expect(html).toContain('href="#/s/station-a/busy"');
   });
 
@@ -295,23 +351,34 @@ describe('the watch page', () => {
     expect(html).toContain('lucide-git-branch');
   });
 
-  test('the header filters are ghost controls; a chosen filter and a pressed toggle say so', () => {
+  test('the header filters are ghost selects, the status segments of the fleet and the Focus toggle', () => {
     const html = page([card('a', 'working')], {
-      initialFilter: { station: 'station-a', repo: '', needsOnly: true },
+      initialFilter: { station: 'station-a', repo: '', status: 'needs_you' },
+      initialFocus: true,
     });
     expect(html).toMatch(
       /<select class="fd-ghost fd-sm" data-active="true"[^>]*aria-label="Station"/,
     );
     expect(html).toMatch(/<select class="fd-ghost fd-sm" aria-label="Repository"/);
-    expect(html).toContain('<button type="button" class="fd-ghost fd-sm" aria-pressed="true">');
-    expect(html).toContain('lucide-list-filter');
+    // One control for one filter: the fleet's status segments (§4.3), not a "Needs you only" toggle.
+    expect(html).toContain('<div class="fd-seg fd-watch-status" role="group" aria-label="Status">');
+    expect(html).toContain('<button type="button" aria-pressed="true">Needs you</button>');
+    expect(html).toContain('<button type="button" aria-pressed="false">All</button>');
+    expect(html).not.toContain('Needs you only');
+    expect(html).not.toContain('lucide-list-filter');
+    expect(html).toMatch(/<button type="button" class="fd-ghost fd-sm" aria-pressed="true"[^>]*>/);
     expect(html).toContain('lucide-circle-dot');
     expect(html).not.toContain('fd-chip');
   });
 
-  test('the calm state is green, as on the fleet header', () => {
-    expect(page([card('a', 'working')])).toContain(
-      '<span class="fd-watch-clear">All clear.</span>',
+  test('the header says the fleet sentence: the live sessions, their stations and who needs you', () => {
+    const calm = page([card('a', 'working')]);
+    expect(calm).toContain('<span>1 live session</span>');
+    expect(calm).toContain('<span class="fd-home-on"> on <span>1 station</span></span>');
+    // The calm state is green, as on the fleet header.
+    expect(calm).toContain('<span class="fd-home-needs" data-clear="true">All clear</span>');
+    expect(page([waiting('w1', 10), card('b', 'idle')])).toContain(
+      '<span class="fd-home-needs">1 needs you</span>',
     );
   });
 

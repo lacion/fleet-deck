@@ -92,8 +92,10 @@ function RowLink({
 }
 
 /**
- * The artifact rows: the kind icon, the title (with the number of copies and a version after the
- * first), where it came from, the kind and the age. The older copies of a title fold under its row.
+ * The artifact rows: the kind icon, the title (with a version after the first), where it came
+ * from, the kind and the age. The older copies of a title fold under its row: the fold is the one
+ * notation of the copies (a count after the title read as a version). The kind is a quiet word:
+ * the icon says it too.
  */
 export function ArtifactList({ items, now, where, onOpen }: Props) {
   return (
@@ -106,17 +108,11 @@ export function ArtifactList({ items, now, where, onOpen }: Props) {
             </span>
             <span className="fd-art-titlecell">
               <span className="fd-art-title">{a.title}</span>
-              {older.length === 0 ? null : (
-                <span className="fd-count" title={`${older.length + 1} copies`}>
-                  {older.length + 1}
-                  <span className="fd-vh"> copies</span>
-                </span>
-              )}
               {a.latest_version > 1 ? (
                 <span className="fd-art-ver">v{a.latest_version}</span>
               ) : null}
             </span>
-            <span className="fd-badge" data-kind={a.kind}>
+            <span className="fd-badge" data-kind={a.kind} data-tone="muted">
               {KIND_LABEL[a.kind]}
             </span>
             <span className="fd-art-age">{relativeAge(a.updated_at, now)}</span>

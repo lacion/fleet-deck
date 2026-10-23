@@ -24,10 +24,10 @@
   border-bottom: 0;
 }
 
-/* One artifact: a 36px row. Kind icon, title, where, kind and age in fixed columns; the number of
-   copies and a version (only after v1) follow the title. The texts share one baseline (the 12px
-   where and age sit on the line of the 13px title); the icon and the kind badge are boxes and stay
-   centered. */
+/* One artifact: a 36px row. Kind icon, title, where, kind and age in fixed columns; a version
+   (only after v1) follows the title. The texts share one baseline (the 12px where and age sit on
+   the line of the 13px title); the icon is a box and stays centered. The kind is a muted badge
+   (a quiet word: the icon says the kind too). */
 .fd-art-row {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 48px;
@@ -88,10 +88,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fd-art-titlecell > .fd-count {
-  flex: none;
-  align-self: center;
-}
 /* A version after v1: quiet text after the title (v1 is the rule, so it says nothing). */
 .fd-art-ver {
   flex: none;
@@ -100,7 +96,7 @@
 }
 .fd-art-row > .fd-badge {
   grid-area: kind;
-  align-self: center;
+  align-self: baseline;
   justify-self: start;
   max-width: 100%;
 }
@@ -274,22 +270,24 @@
 }
 
 @media (max-width: 640px) {
-  /* Two lines: the icon and the title (with its count and version), then the kind at the left
-     and the age at the right (and the where line on the global page). */
+  /* Two lines: the icon, the title (with its version) and the age, then where it came from with
+     the quiet kind at the end of that line (the kind alone under the title in a session's tab). */
   .fd-art-row,
   .fd-art-row:not(:has(> .fd-art-where)) {
-    grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    grid-template-columns: 14px minmax(0, 1fr) auto;
     grid-template-areas:
-      "icon title title title"
-      ". kind . age";
-    gap: var(--sp-1) var(--sp-2);
+      "icon title age"
+      ". kind kind";
+    gap: 2px var(--sp-2);
     padding: var(--sp-2) 0;
   }
   .fd-art-row:has(> .fd-art-where) {
     grid-template-areas:
-      "icon title title title"
-      ". where where where"
-      ". kind . age";
+      "icon title age"
+      ". where kind";
+  }
+  .fd-art-row:has(> .fd-art-where) > .fd-badge {
+    justify-self: end;
   }
   .fd-art-kind {
     margin-right: 0;
@@ -308,8 +306,8 @@
 
 /* ---------- the viewer ---------- */
 
-/* The viewer is a container: its bar follows the width of the viewer (the full page, the session
-   panel, a phone), not the window. */
+/* The viewer is a container: its actions follow the width of the viewer (the full page, the
+   session panel, a phone), not the window. */
 .fd-art-viewer {
   display: flex;
   flex: 1;
@@ -319,9 +317,14 @@
   min-height: 0;
   container: fd-art / inline-size;
 }
-.fd-art-viewer[data-variant="page"] {
-  height: 100%;
-  padding: var(--sp-3) var(--sp-5) var(--sp-5);
+/* The full page is a `Page` (§4.3: the way back above the title, the summary under it, the kind
+   and the version as filters, the actions at the right): a column whose body fills the rest of
+   the route, so that the frame runs to the bottom. */
+.fd-page.fd-art-pageview {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  container: fd-art / inline-size;
 }
 .fd-pane-body[data-tab="artifacts"] {
   display: flex;
@@ -331,8 +334,8 @@
   flex: 1;
 }
 
-/* The viewer bar: back, the title, the kind and the version, then the actions and the More
-   actions menu. The parts keep their size; only the title gives way (an ellipsis). */
+/* The bar of the session panel: back, the title, the kind and the version, then the actions and
+   the More actions menu. The parts keep their size; only the title gives way (an ellipsis). */
 .fd-art-bar {
   display: flex;
   flex: none;
@@ -357,25 +360,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The full page: the title of a page (`--fs-page`, wide, like every page title). */
-.fd-art-viewer[data-variant="page"] .fd-art-bar > .fd-art-name {
-  font-size: var(--fs-page);
-  letter-spacing: -0.01em;
-}
+/* The version: a ghost select (base.css `select.fd-ghost.fd-sm`) while there are versions to pick,
+   else the muted "v1" badge. In the panel bar it ends the title group, so the actions go right. */
 .fd-art-version {
   display: inline-flex;
+  align-items: center;
+}
+.fd-art-bar > .fd-art-version {
   margin-right: auto;
-}
-.fd-art-version select {
-  height: var(--ctl-h-sm);
-  padding-left: var(--sp-2);
-  font-size: var(--fs-meta);
-}
-@media (pointer: coarse) {
-  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
-  .fd-art-version select {
-    font-size: var(--fs-field);
-  }
 }
 .fd-art-back,
 .fd-art-action {
@@ -411,8 +403,13 @@
 @container fd-art (max-width: 640px) {
   /* The row holds the version, Open in a new tab and the menu: the kind badge gives way. */
   .fd-art-wide,
-  .fd-art-bar > .fd-badge {
+  .fd-art-bar > .fd-badge[data-kind],
+  .fd-art-pageview .fd-page-filters > .fd-badge[data-kind] {
     display: none;
+  }
+  /* The version select then starts the row: its text sits on the page gutter. */
+  .fd-art-pageview .fd-page-filters > .fd-art-version > select {
+    margin-left: calc(-1 * var(--sp-2));
   }
   .fd-art-bar > .fd-art-name {
     display: -webkit-box;
@@ -426,13 +423,69 @@
   }
 }
 
-/* The phone page: the top bar Back already goes to Artifacts, so the bar has no second back; the
-   page has the 16px phone gutter (the frame runs to the screen edges, below). */
-.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] {
-  padding: var(--sp-3) var(--sp-4);
+/* The header of the page: the kind, the version and the actions stay level with the title row
+   (§4.3), and a long title wraps in its column (never an ellipsis). A narrow page (a phone, where
+   the top bar names the artifact, §4.8) has the summary, then one row: the kind and the version
+   at the left, Open in a new tab and the menu at the right. */
+.fd-page.fd-art-pageview > .fd-page-head {
+  flex-wrap: nowrap;
 }
-.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] .fd-art-back {
-  display: none;
+.fd-page.fd-art-pageview > .fd-page-head > .fd-page-filters {
+  flex: none;
+}
+/* A title of two lines keeps its summary under it: the title row grows with the title (the 48px
+   row of §4.3 is the height of one line with its padding), and the summary keeps its place. */
+.fd-page.fd-art-pageview .fd-page-titlerow {
+  min-height: 0;
+  padding-block: var(--sp-3) var(--sp-1);
+}
+.fd-page.fd-art-pageview .fd-page-desc {
+  margin-top: 0;
+}
+/* The phone top bar has the title (shell.css): the row keeps no padding of its own. */
+.fd-app[data-phonebar="true"] .fd-page.fd-art-pageview .fd-page-titlerow {
+  padding-block: 0;
+}
+@container fd-art (max-width: 899px) {
+  .fd-page.fd-art-pageview > .fd-page-head {
+    flex-wrap: wrap;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-titles {
+    flex-basis: 100%;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > :is(.fd-page-filters, .fd-page-actions) {
+    align-self: center;
+    min-height: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-filters {
+    flex: 0 1 auto;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+  .fd-page.fd-art-pageview > .fd-page-head > .fd-page-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    margin-left: auto;
+  }
+}
+
+/* The phone page is a screen of a fixed height, as the session is (shell.css): the frame runs from
+   the action row to the top edge of the bottom bar and is the one thing that scrolls. A taller
+   body (a video and its provenance) scrolls the route. */
+.fd-app[data-layout="phone"][data-route="artifact"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.fd-app[data-layout="phone"][data-route="artifact"] .fd-route {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.fd-app[data-layout="phone"][data-route="artifact"] .fd-art-pageview {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 0;
 }
 
 /* The delete confirmation under the bar. */
@@ -463,9 +516,15 @@
   border-radius: var(--r-card);
   box-shadow: var(--shadow-lift);
 }
-/* The phone page: the frame runs to the screen edges (the artifact gets the whole width). */
-.fd-app[data-layout="phone"] .fd-art-viewer[data-variant="page"] .fd-art-frame {
+/* The phone page: the frame runs to the screen edges (the artifact gets the whole width) and down
+   to the bottom bar (the fixed-height screen above): the body and the frame fill, they do not
+   push. */
+.fd-app[data-layout="phone"] .fd-art-pageview .fd-art-body {
+  min-height: 0;
+}
+.fd-app[data-layout="phone"] .fd-art-pageview .fd-art-frame {
   width: auto;
+  min-height: 0;
   margin-inline: calc(-1 * var(--sp-4));
   border-radius: 0;
   box-shadow: none;

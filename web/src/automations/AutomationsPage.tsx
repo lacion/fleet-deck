@@ -252,6 +252,8 @@ export function AutomationsPage({
   return (
     <Page
       title="Automations"
+      // The title row says how many automations there are (§4.3), only while there are some.
+      count={list === null || list.length === 0 ? undefined : list.length}
       description="Sessions that start on a schedule."
       actions={
         <>

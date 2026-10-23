@@ -1,20 +1,15 @@
 import { useId, useState } from 'react';
-import { shortPath } from '../chat/PathTail';
 import type { DeckSession, StationView } from '../gen';
 import { FilesPanel } from '../session/FilesPanel';
 import type { FileActions } from '../session/workspace';
 import { readPins } from '../spawn/spawn';
-import { homeShort } from '../ui/format';
-import { FolderOpen, Icon, Pin } from '../ui/icons';
-import { EmptyState, Page } from '../ui/page';
+import { pathParts } from '../ui/format';
+import { Folder, FolderOpen, Icon, Pin } from '../ui/icons';
+import { EmptyState, Field, Page } from '../ui/page';
 
-/** A chip names its folder from the root (`~/projects/app`, §5); a long path drops whole leading
- * folders behind "…/" to 28 characters (a chip is as wide as its text, so it is cut by count, not
- * by a measured box). The title keeps the full path. */
-const chipPath = (path: string): string => shortPath(homeShort(path), 28);
-
-/** The most recent session folders that the chip row offers. */
-const MAX_FOLDERS = 8;
+/** The most folder rows that the page offers: every pinned folder, then the recent session
+ * folders up to this number. */
+const MAX_ROWS = 6;
 const ROOT_KEY = 'fd-files-root';
 /** The summary sentence under the title (DESIGN-SYSTEM §4.3). */
 const FILES_DESC = 'Browse and open the files of a station.';
@@ -51,9 +46,11 @@ function sessionFolders(
   sessions: readonly DeckSession[],
   station: string,
   pinned: readonly string[],
+  max: number,
 ): string[] {
   const seen = new Set(pinned);
   const out: string[] = [];
+  if (max <= 0) return out;
   const mine = sessions
     .filter((s) => s.station_id === station && s.summary.cwd !== null && s.summary.cwd !== '')
     .sort((a, b) => b.summary.updated_at - a.summary.updated_at);
@@ -62,9 +59,56 @@ function sessionFolders(
     if (cwd === null || seen.has(cwd)) continue;
     seen.add(cwd);
     out.push(cwd);
-    if (out.length === MAX_FOLDERS) break;
+    if (out.length === max) break;
   }
   return out;
+}
+
+/** A folder row names its folder and its parent from the root (`pathParts`, §5); a home folder is
+ * "Home" (a bare `~` says nothing). */
+function folderName(path: string): { readonly parent: string; readonly base: string } {
+  const parts = pathParts(path);
+  return parts.base === '~' && parts.parent === '' ? { parent: '', base: 'Home' } : parts;
+}
+
+/**
+ * The pinned and recent folders as folder rows, the look of the New session folder picker
+ * (DESIGN-SYSTEM §4.6, §5 paths): a 14px folder or pin icon, the name, then the parent in --faint
+ * mono. The full path is the title of the row.
+ */
+export function FolderRows({
+  pinned,
+  recent,
+  onPick,
+}: {
+  readonly pinned: readonly string[];
+  readonly recent: readonly string[];
+  readonly onPick: (path: string) => void;
+}) {
+  return (
+    <ul className="fd-folder-list fd-files-folders">
+      {[...pinned.map((p) => ({ p, pin: true })), ...recent.map((p) => ({ p, pin: false }))].map(
+        ({ p, pin }) => {
+          const { parent, base } = folderName(p);
+          return (
+            <li key={pin ? `pin:${p}` : p}>
+              <button
+                type="button"
+                data-pinned={pin ? '' : undefined}
+                title={p}
+                aria-label={parent + base}
+                onClick={() => onPick(p)}
+              >
+                <Icon of={pin ? Pin : Folder} size={14} />
+                <span className="fd-folder-base">{base}</span>
+                {parent === '' ? null : <span className="fd-folder-parent">{parent}</span>}
+              </button>
+            </li>
+          );
+        },
+      )}
+    </ul>
+  );
 }
 
 /** The global Files page (DL-141): browse and read the files of any folder of a station. */
@@ -98,15 +142,14 @@ export function FilesPage({
     writeOpened(next);
   };
   const pinned = readPins()[station] ?? [];
-  const recent = sessionFolders(sessions, station, pinned);
+  const recent = sessionFolders(sessions, station, pinned, MAX_ROWS - pinned.length);
   const here = stations.find((s) => s.station_id === station)?.name ?? 'the station';
   // "Pinned and recent" only when a folder is pinned (the folder picker's words).
-  const chipsLabel = pinned.length > 0 ? 'Pinned and recent' : 'Recent';
+  const rowsLabel = pinned.length > 0 ? 'Pinned and recent' : 'Recent';
   return (
     <Page title="Files" description={FILES_DESC} className="fd-files-page" wide>
-      {/* The form of a settings page (§4.7): a 200px label column, the controls after it, on the
-          canvas (no boxed toolbar). The chips sit in the control column, so a wrapped row starts
-          under the first chip. */}
+      {/* The form of a settings page (§4.7): `Field layout="row"`, a 200px label column and the
+          controls after it, on the canvas (no boxed toolbar). */}
       <form
         className="fd-files-folder"
         aria-label="Open a folder"
@@ -115,72 +158,41 @@ export function FilesPage({
           open(station, folder);
         }}
       >
-        <label className="fd-files-label" htmlFor={`${ids}-station`}>
-          Station
-        </label>
-        <div className="fd-files-control">
-          <select
-            id={`${ids}-station`}
-            value={station}
-            onChange={(event) => setStation(event.target.value)}
-          >
+        <Field label="Station" layout="row">
+          <select value={station} onChange={(event) => setStation(event.target.value)}>
             {ordered.map((s) => (
               <option key={s.station_id} value={s.station_id}>
                 {s.name}
               </option>
             ))}
           </select>
-        </div>
-        <label className="fd-files-label" htmlFor={`${ids}-folder`}>
-          Folder
-        </label>
-        <div className="fd-files-control fd-files-folder-path">
-          <input
-            id={`${ids}-folder`}
-            placeholder={`Folder path on ${here}`}
-            value={folder}
-            onChange={(event) => setFolder(event.target.value)}
-          />
-          <button
-            type="submit"
-            className="fd-primary"
-            disabled={folder.trim() === '' || station === ''}
-          >
-            Open
-          </button>
+        </Field>
+        {/* The markup of a row Field with its own label: the label names the input only, not
+            the Open button next to it. */}
+        <div className="fd-fieldwrap" data-layout="row">
+          <label className="fd-fieldlabel" htmlFor={`${ids}-folder`}>
+            Folder
+          </label>
+          <div className="fd-files-folder-path">
+            <input
+              id={`${ids}-folder`}
+              placeholder={`Folder path on ${here}`}
+              value={folder}
+              onChange={(event) => setFolder(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="fd-primary"
+              disabled={folder.trim() === '' || station === ''}
+            >
+              Open
+            </button>
+          </div>
         </div>
         {pinned.length === 0 && recent.length === 0 ? null : (
-          <>
-            <span className="fd-files-label" id={`${ids}-recent`}>
-              {chipsLabel}
-            </span>
-            <div className="fd-recent" role="group" aria-labelledby={`${ids}-recent`}>
-              {pinned.map((path) => (
-                <button
-                  key={`pin:${path}`}
-                  type="button"
-                  className="fd-chip"
-                  data-pinned
-                  title={path}
-                  onClick={() => open(station, path)}
-                >
-                  <Icon of={Pin} size={12} />
-                  {chipPath(path)}
-                </button>
-              ))}
-              {recent.map((path) => (
-                <button
-                  key={path}
-                  type="button"
-                  className="fd-chip"
-                  title={path}
-                  onClick={() => open(station, path)}
-                >
-                  {chipPath(path)}
-                </button>
-              ))}
-            </div>
-          </>
+          <Field label={rowsLabel} layout="row" group>
+            <FolderRows pinned={pinned} recent={recent} onPick={(p) => open(station, p)} />
+          </Field>
         )}
       </form>
       {opened ? (
@@ -192,7 +204,8 @@ export function FilesPage({
           />
         </div>
       ) : (
-        // What comes next (§4.7): Open is the action, so the empty state has no button.
+        // What comes next (§4.7): Open is the action, so the empty state has no button. It starts
+        // on the control column, under the form it explains.
         <EmptyState
           icon={FolderOpen}
           title="Open a folder"

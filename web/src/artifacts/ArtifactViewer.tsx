@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { usePhoneTitle } from '../app/Layout';
+import { relativeAge, sessionTitle } from '../app/sessions';
 import { Markdown } from '../chat/Markdown';
-import type { DeckArtifactDetail } from '../gen';
+import type { DeckArtifactDetail, DeckSession } from '../gen';
 import { useSettings } from '../settings/context';
 import {
   ArrowDown,
@@ -13,6 +14,8 @@ import {
   Trash2,
 } from '../ui/icons';
 import { Menu } from '../ui/Menu';
+import { Page } from '../ui/page';
+import { useNow } from '../ui/useNow';
 import { type ArtifactActions, rawPath } from './actions';
 import {
   CONFIRM_TEXT,
@@ -30,6 +33,9 @@ import { mainFile, type ViewerData, type ViewerReady, useViewer, versionRow } fr
 
 /** The permissions of the frame. No `allow-same-origin`: the page gets an opaque origin (DL-165). */
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals';
+
+/** The way back from the artifact page to the list (§4.3). */
+const ALL_ARTIFACTS = { href: '#/artifacts', label: 'All artifacts' } as const;
 
 /** The sandboxed frame of an HTML, SVG or PDF artifact. */
 export function ArtifactFrame({ url, title }: { readonly url: string; readonly title: string }) {
@@ -118,6 +124,10 @@ type ViewProps = {
   readonly onShare: () => void;
   /** The owner's "Delete artifact"; absent: no control (R13 P5a). */
   readonly deletion?: DeletionView | undefined;
+  /** The sessions of the board: the page names the session that published the artifact. */
+  readonly sessions?: readonly DeckSession[] | undefined;
+  /** Unix ms of "now" (tests). */
+  readonly now?: number | undefined;
 };
 
 /** The confirmation, the error or the pending text of a deletion. */
@@ -220,6 +230,51 @@ function MoreActions({
   );
 }
 
+/**
+ * The version of the shown artifact: a quiet select while there are versions to pick (the ghost
+ * view option of a page header, §4.3), else the one version as a muted badge ("v1": no select
+ * with one option, no "(latest)").
+ */
+function VersionControl({
+  ready,
+  onVersion,
+}: {
+  readonly ready: ViewerReady;
+  readonly onVersion: (version: number) => void;
+}) {
+  const { artifact, versions } = ready.detail;
+  if (versions.length <= 1) {
+    return (
+      <span className="fd-badge fd-art-version" data-tone="muted">
+        <span className="fd-vh">Version </span>v{ready.version}
+      </span>
+    );
+  }
+  return (
+    <label className="fd-art-version">
+      <span className="fd-vh">Version</span>
+      <select
+        className="fd-ghost fd-sm"
+        aria-label="Version"
+        value={ready.version}
+        onChange={(e) => onVersion(Number(e.target.value))}
+      >
+        {[...versions].reverse().map((v) => (
+          <option key={v.version} value={v.version}>
+            {v.version === artifact.latest_version ? `v${v.version} (latest)` : `v${v.version}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** "published 5 h ago", "published just now" (the age of the shown version, §5 times). */
+function publishedText(at: number, now: number): string {
+  const age = relativeAge(at, now);
+  return age === 'now' ? 'published just now' : `published ${age} ago`;
+}
+
 /** The viewer without data calls: the toolbar and the body of one state. */
 export function ArtifactViewerView({
   data,
@@ -229,36 +284,43 @@ export function ArtifactViewerView({
   onBack,
   onShare,
   deletion,
+  sessions = [],
+  now: givenNow,
 }: ViewProps) {
   const wall = useSettings() !== undefined;
+  const now = useNow(givenNow, 30_000);
   // §4.8: the phone top bar names the artifact ("Artifact" while it loads).
   usePhoneTitle(
     variant === 'page' && data.kind === 'ok' ? data.value.detail.artifact.title : undefined,
   );
-  const back =
-    variant === 'page' ? (
-      <a className="fd-btn fd-ghost fd-sm fd-art-back" href="#/artifacts">
-        <Icon of={ChevronLeft} size={14} /> All artifacts
-      </a>
-    ) : (
-      <button type="button" className="fd-ghost fd-sm fd-art-back" onClick={onBack}>
-        <Icon of={ChevronLeft} size={14} /> Back to the list
-      </button>
-    );
+  const page = variant === 'page';
+  // The page has the Page header (§4.3: the way back above the title); the session panel keeps
+  // its bar with a back button.
+  const back = page ? null : (
+    <button type="button" className="fd-ghost fd-sm fd-art-back" onClick={onBack}>
+      <Icon of={ChevronLeft} size={14} /> Back to the list
+    </button>
+  );
   if (data.kind !== 'ok') {
-    return (
+    const state =
+      data.kind === 'loading' ? (
+        <Loading what="Loading the artifact…" />
+      ) : (
+        <Failed text={data.text} />
+      );
+    return page ? (
+      <Page title="Artifact" back={ALL_ARTIFACTS} className="fd-art-pageview" label="Artifact" wide>
+        {state}
+      </Page>
+    ) : (
       <section className="fd-art fd-art-viewer" aria-label="Artifact" data-variant={variant}>
         <div className="fd-art-bar">{back}</div>
-        {data.kind === 'loading' ? (
-          <Loading what="Loading the artifact…" />
-        ) : (
-          <Failed text={data.text} />
-        )}
+        {state}
       </section>
     );
   }
   const ready = data.value;
-  const { artifact, versions } = ready.detail;
+  const { artifact } = ready.detail;
   const main = mainFile(ready.detail, ready.version);
   const viewUrl = ready.link.kind === 'ok' ? ready.link.value : null;
   const rawUrl =
@@ -267,75 +329,60 @@ export function ArtifactViewerView({
       : rawPath(artifact.station_id, artifact.artifact_id, ready.version, main);
   const canDelete =
     deletion !== undefined && (deletion.phase.kind === 'idle' || deletion.phase.kind === 'error');
-  // The page title is the h1 of the page (`--fs-page`, wide); the panel keeps a 15px h2.
-  const Title = variant === 'page' ? 'h1' : 'h2';
-  return (
-    <section className="fd-art fd-art-viewer" aria-label="Artifact" data-variant={variant}>
-      <div className="fd-art-bar">
-        {back}
-        <Title className={variant === 'page' ? 'fd-art-name fd-wide' : 'fd-art-name'}>
-          {artifact.title}
-        </Title>
-        <span className="fd-badge" data-kind={artifact.kind}>
-          {KIND_LABEL[artifact.kind]}
-        </span>
-        <label className="fd-art-version">
-          <span className="fd-vh">Version</span>
-          <select
-            aria-label="Version"
-            value={ready.version}
-            onChange={(e) => onVersion(Number(e.target.value))}
-          >
-            {[...versions].reverse().map((v) => (
-              <option key={v.version} value={v.version}>
-                {v.version === artifact.latest_version ? `v${v.version} (latest)` : `v${v.version}`}
-              </option>
-            ))}
-          </select>
-        </label>
-        {viewUrl === null ? null : (
-          <a
-            className="fd-btn fd-ghost fd-sm fd-art-action"
-            href={viewUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Icon of={LinkIcon} size={14} /> Open in a new tab
-          </a>
-        )}
-        {main === undefined || rawUrl === null ? null : (
-          <a
-            className="fd-btn fd-ghost fd-sm fd-art-action fd-art-wide"
-            href={rawUrl}
-            download={fileName(main)}
-          >
-            <Icon of={ArrowDown} size={14} /> Download
-          </a>
-        )}
-        {canShare ? (
-          <button
-            type="button"
-            className="fd-ghost fd-sm fd-art-action fd-art-wide"
-            onClick={onShare}
-          >
-            <Icon of={Share2} size={14} /> Share…
-          </button>
-        ) : null}
-        <MoreActions
-          wall={wall}
-          target={{
-            kind: 'artifact',
-            station_id: artifact.station_id,
-            artifact_id: artifact.artifact_id,
-            version: ready.version,
-          }}
-          download={
-            main === undefined || rawUrl === null ? null : { url: rawUrl, name: fileName(main) }
-          }
-          onShare={canShare ? onShare : null}
-          onDelete={canDelete ? (deletion?.onBegin ?? null) : null}
-        />
-      </div>
+  const kind = (
+    <span className="fd-badge" data-kind={artifact.kind}>
+      {KIND_LABEL[artifact.kind]}
+    </span>
+  );
+  const version = <VersionControl ready={ready} onVersion={onVersion} />;
+  const actions = (
+    <>
+      {viewUrl === null ? null : (
+        <a
+          className="fd-btn fd-ghost fd-sm fd-art-action"
+          href={viewUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Icon of={LinkIcon} size={14} /> Open in a new tab
+        </a>
+      )}
+      {main === undefined || rawUrl === null ? null : (
+        <a
+          className="fd-btn fd-ghost fd-sm fd-art-action fd-art-wide"
+          href={rawUrl}
+          download={fileName(main)}
+        >
+          <Icon of={ArrowDown} size={14} /> Download
+        </a>
+      )}
+      {canShare ? (
+        <button
+          type="button"
+          className="fd-ghost fd-sm fd-art-action fd-art-wide"
+          onClick={onShare}
+        >
+          <Icon of={Share2} size={14} /> Share…
+        </button>
+      ) : null}
+      <MoreActions
+        wall={wall}
+        target={{
+          kind: 'artifact',
+          station_id: artifact.station_id,
+          artifact_id: artifact.artifact_id,
+          version: ready.version,
+        }}
+        download={
+          main === undefined || rawUrl === null ? null : { url: rawUrl, name: fileName(main) }
+        }
+        onShare={canShare ? onShare : null}
+        onDelete={canDelete ? (deletion?.onBegin ?? null) : null}
+      />
+    </>
+  );
+  const body = (
+    <>
       {deletion === undefined ? null : <DeletionNotes deletion={deletion} />}
       <div className="fd-art-body" data-kind={artifact.kind}>
         {deletion?.phase.kind === 'hidden' ? (
@@ -346,6 +393,52 @@ export function ArtifactViewerView({
           <Body ready={ready} />
         )}
       </div>
+    </>
+  );
+  if (page) {
+    // The page header (§4.3): the way back above the title, then who published it and when; the
+    // kind and the version are the filters of the header, the actions at the right.
+    const card = sessions.find(
+      (s) => s.station_id === artifact.station_id && s.summary.session_id === artifact.session_id,
+    );
+    const published = versionRow(ready.detail, ready.version)?.created_at ?? artifact.updated_at;
+    const summary = [
+      artifact.station_name,
+      ...(card === undefined ? [] : [sessionTitle(card)]),
+      publishedText(published, now),
+    ]
+      .filter((part) => part !== '')
+      .join(' · ');
+    return (
+      <Page
+        title={artifact.title}
+        back={ALL_ARTIFACTS}
+        description={summary}
+        filters={
+          <>
+            {kind}
+            {version}
+          </>
+        }
+        actions={actions}
+        className="fd-art-pageview"
+        label="Artifact"
+        wide
+      >
+        {body}
+      </Page>
+    );
+  }
+  return (
+    <section className="fd-art fd-art-viewer" aria-label="Artifact" data-variant={variant}>
+      <div className="fd-art-bar">
+        {back}
+        <h2 className="fd-art-name">{artifact.title}</h2>
+        {kind}
+        {version}
+        {actions}
+      </div>
+      {body}
     </section>
   );
 }
@@ -359,6 +452,8 @@ type Props = {
   readonly variant: 'panel' | 'page';
   readonly onVersion: (version: number) => void;
   readonly onBack?: () => void;
+  /** The sessions of the board (the page names the session that published it). */
+  readonly sessions?: readonly DeckSession[] | undefined;
 };
 
 /** The viewer of one artifact: a full-height panel in the session view or a full page. */
@@ -370,6 +465,7 @@ export function ArtifactViewer({
   variant,
   onVersion,
   onBack,
+  sessions,
 }: Props) {
   const [reload, setReload] = useState(0);
   const [sharing, setSharing] = useState(false);
@@ -390,6 +486,7 @@ export function ArtifactViewer({
         onBack={onBack}
         onShare={() => setSharing(true)}
         deletion={deletion}
+        sessions={sessions}
       />
       {elevationNode}
       {sharing && detail !== null ? (
@@ -416,12 +513,15 @@ export function ArtifactPage({
   id,
   version,
   onVersion,
+  sessions,
 }: {
   readonly actions: ArtifactActions | undefined;
   readonly station: string;
   readonly id: string;
   readonly version: number | null;
   readonly onVersion: (version: number) => void;
+  /** The sessions of the board: the page header names the session that published it. */
+  readonly sessions?: readonly DeckSession[] | undefined;
 }) {
   if (actions === undefined) {
     return (
@@ -440,6 +540,7 @@ export function ArtifactPage({
       version={version}
       variant="page"
       onVersion={onVersion}
+      sessions={sessions}
     />
   );
 }

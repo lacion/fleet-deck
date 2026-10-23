@@ -83,6 +83,14 @@ describe('the Sessions tab of a project', () => {
       '<details class="fd-lane-ended fd-int-ended"><summary>Ended <span class="fd-count">1</span></summary>',
     );
     expect(html).not.toContain('No sessions in this project yet.');
+    expect(html).not.toContain('No live sessions in');
+  });
+
+  test('a project whose sessions all ended says that nothing runs, above the Ended fold', () => {
+    const html = page([inProject('gone-1', 'p1', 'ended')]);
+    expect(html).toContain('<p class="fd-note fd-int-none">No live sessions in Atlas.</p>');
+    expect(html.indexOf('No live sessions in Atlas.')).toBeLessThan(html.indexOf('fd-int-ended'));
+    expect(html).not.toContain('aria-label="Live sessions"');
   });
 
   test('the sessions are strips that name their station, without the chip of this project', () => {

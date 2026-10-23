@@ -8,7 +8,7 @@ import { homeShort } from '../ui/format';
 export type TargetForm = 'path' | 'code' | 'words';
 
 export type ToolText = {
-  /** The tool name for the owner: "Read", "Publish artifact · fleetdeck". */
+  /** The tool name for the owner: "Read", "Take screenshot · chrome-devtools", "Publish artifact". */
   readonly name: string;
   /** The command, the path, the query or the description; '' when there is none. */
   readonly target: string;
@@ -31,6 +31,10 @@ const CODE_TOOLS: ReadonlySet<string> = new Set([
   'LS',
   'WebFetch',
   'apply_patch',
+  // The shell tools that watch or stop a command: their input is a command or a shell id.
+  'Monitor',
+  'BashOutput',
+  'KillShell',
 ]);
 
 /** The tools whose input is one file. */
@@ -44,6 +48,9 @@ const FILE_TOOLS: ReadonlySet<string> = new Set([
 
 const MCP = /^mcp__(.+?)__(.+)$/;
 
+/** The deck's own MCP server: its tools are words of the board, so they need no server name. */
+const OWN_SERVER = 'fleetdeck';
+
 /** `publish_artifact`, `takeScreenshot`, `list-pages` → `Publish artifact`, `Take screenshot`, … */
 function words(id: string): string {
   const text = id
@@ -56,15 +63,25 @@ function words(id: string): string {
 
 /**
  * The name of a tool for the owner: `mcp__<server>__<tool>` gives the tool in words and the server
- * after a dot ("Publish artifact · fleetdeck"; a plugin server loses its `plugin_` prefix). Every
- * other name stays as it is.
+ * after a dot ("Take screenshot · chrome-devtools"; a plugin server loses its `plugin_` prefix).
+ * A tool of the deck's own server is the words only ("Publish artifact"). Every other name stays as
+ * it is.
  */
 export function toolLabel(name: string): string {
   const m = MCP.exec(name);
   if (m === null) return name;
   const server = (m[1] ?? '').replace(/^plugin_/, '');
   const tool = words(m[2] ?? '');
-  return server === '' ? tool : `${tool} · ${server}`;
+  return server === '' || server === OWN_SERVER ? tool : `${tool} · ${server}`;
+}
+
+/**
+ * The name of a tool without its MCP server ("Take screenshot"): the short form of a tile line,
+ * where the server would take the room of the target. The title of the line keeps `toolLabel`.
+ */
+export function toolWords(name: string): string {
+  const m = MCP.exec(name.trim());
+  return m === null ? name.trim() : words(m[2] ?? '');
 }
 
 /** The keys of a JSON input that name its target, in the order of preference, with their form. */

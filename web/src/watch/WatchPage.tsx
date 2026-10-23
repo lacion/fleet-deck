@@ -1,10 +1,18 @@
 // R6.2 (DL-169): `#/watch`, the first explored form of "watch many sessions" (DL-157): a wall of
 // compact live tiles, one per live session, and a Focus mode that cycles through the sessions
 // that need you. The page is isolated: no other screen imports it.
-import { type FocusEvent, useEffect, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  type FocusEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { formatHash } from '../app/routes';
-import { basename } from '../app/sessions';
-import { liveSessionsText, NO_REPO, repoName, stationName } from '../board/fleet';
+import { basename, relativeAge } from '../app/sessions';
+import { useLayout } from '../app/viewport';
+import { NO_REPO, repoName, stationName } from '../board/fleet';
 import { PathTail } from '../chat/PathTail';
 import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -20,8 +28,12 @@ import {
   MessageSquare,
   Shield,
 } from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
+import { useNow } from '../ui/useNow';
+import { FleetSentence } from '../views/FleetSentence';
 import { FocusLine, focusOf, UnreadMark, unreadOf } from '../views/marks';
+import { StatusSeg, statusMatches } from '../views/StatusSeg';
 import { displayTileLines } from '../wall/displayLines';
 import {
   ALL,
@@ -35,9 +47,10 @@ import {
   tileLines,
   tileRequest,
   type WatchFilter,
+  watchColumns,
   watchSessions,
 } from './tiles';
-import { homePath, type TargetForm, toolText } from './tooltext';
+import { homePath, type TargetForm, toolText, toolWords } from './tooltext';
 
 type Props = {
   readonly sessions: readonly DeckSession[];
@@ -53,6 +66,8 @@ type Props = {
   readonly initialFocused?: string | null;
   /** The filter at the first render (tests). */
   readonly initialFilter?: WatchFilter;
+  /** Unix ms of "now" (tests). */
+  readonly now?: number;
 };
 
 /** The look of an answer: the ApprovalDock rule, at the small size. */
@@ -95,6 +110,17 @@ function ToolCall({
       {note === '' ? null : <span className="fd-wtile-words">{note}</span>}
       {outcome === undefined ? null : <span className="fd-wtile-fail">{outcome}</span>}
     </>
+  );
+}
+
+/** A line that came several times in a row ends in its count (`foldLines`): "3" reads "3 times". */
+function Repeat({ n }: { readonly n: number | undefined }) {
+  if (n === undefined || n < 2) return null;
+  return (
+    <span className="fd-count fd-wtile-repeat">
+      {n}
+      <span className="fd-vh"> times</span>
+    </span>
   );
 }
 
@@ -154,6 +180,7 @@ export function Tile({
   readOnly = false,
   unavailable = false,
   hold,
+  now: givenNow,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -166,7 +193,10 @@ export function Tile({
   readonly unavailable?: boolean;
   /** Focus mode: the tile tells the page while the pointer or the keyboard is in it. */
   readonly hold?: TileHold | undefined;
+  /** Unix ms of "now" (the page's clock); absent: the tile keeps its own. */
+  readonly now?: number | undefined;
 }) {
+  const now = useNow(givenNow, 30_000);
   const s = card.summary;
   const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
   const [busy, setBusy] = useState(false);
@@ -190,6 +220,8 @@ export function Tile({
   });
   const running =
     tool === undefined ? null : toolText(tool.title, tool.input_summary, { kind: tool.tool_kind });
+  // The tile line is short: an MCP tool has no server there; the title keeps the whole name.
+  const runningName = tool === undefined ? '' : toolWords(tool.title);
   const answer = (requestId: string, optionId: string) => {
     if (actions === undefined) return;
     setBusy(true);
@@ -207,10 +239,15 @@ export function Tile({
   };
   const body = (
     <>
+      {/* The age at the right, as on every strip and sidebar row: a stale tile does not look
+          like a busy one. */}
       <span className="fd-wtile-head">
         <span className="fd-dot" data-status={card.status} aria-hidden="true" />
         <span className="fd-wtile-title">{s.title ?? s.callsign ?? s.session_id}</span>
         <UnreadMark count={unreadOf(card)} />
+        <time className="fd-wtile-age" dateTime={new Date(s.updated_at).toISOString()}>
+          {relativeAge(s.updated_at, now)}
+        </time>
       </span>
       <Where card={card} stations={stations} />
       <FocusLine summary={s} />
@@ -226,26 +263,44 @@ export function Tile({
         ) : null
       ) : (
         <span className="fd-wtile-lines">
-          {lines.map((l) => (
-            <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
-              {l.name === undefined ? (
-                l.text
-              ) : (
-                <ToolCall
-                  name={l.name}
-                  target={l.target ?? ''}
-                  form={l.form}
-                  note={l.note}
-                  outcome={l.outcome}
-                />
-              )}
-            </span>
-          ))}
+          {lines.map((l) => {
+            const repeated = l.repeat !== undefined && l.repeat > 1;
+            return (
+              <span
+                key={l.key}
+                className="fd-wtile-line"
+                data-kind={l.kind}
+                data-repeat={repeated ? '' : undefined}
+                title={l.label}
+              >
+                {l.name !== undefined ? (
+                  <ToolCall
+                    name={l.name}
+                    target={l.target ?? ''}
+                    form={l.form}
+                    note={l.note}
+                    outcome={l.outcome}
+                  />
+                ) : repeated ? (
+                  <span className="fd-wtile-text">{l.text}</span>
+                ) : (
+                  l.text
+                )}
+                <Repeat n={l.repeat} />
+              </span>
+            );
+          })}
         </span>
       )}
+      {/* The call that runs now: the working glyph and its name tell it from the past calls. */}
       {running === null ? null : (
-        <span className="fd-wtile-tool" title="Running now">
-          <ToolCall name={running.name} target={running.target} form={running.form} />
+        <span
+          className="fd-wtile-tool"
+          title={running.name === runningName ? undefined : running.name}
+        >
+          <span className="fd-dot" data-status="working" aria-hidden="true" />
+          <span className="fd-vh">Running now: </span>
+          <ToolCall name={runningName} target={running.target} form={running.form} />
         </span>
       )}
     </>
@@ -303,6 +358,20 @@ export function Tile({
   );
 }
 
+/** The width of an element, kept current while it resizes; `null` before the first measure. */
+function useWidth(element: HTMLElement | null): number | null {
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (element === null || typeof ResizeObserver === 'undefined') return undefined;
+    const measure = () => setWidth(element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return width;
+}
+
 /** The watch page: filters, the Focus toggle and the wall. */
 export function WatchPage({
   sessions,
@@ -314,10 +383,16 @@ export function WatchPage({
   initialFocus = false,
   initialFocused = null,
   initialFilter = emptyWatchFilter,
+  now: givenNow,
 }: Props) {
   const [filter, setFilter] = useState<WatchFilter>(initialFilter);
   const [focusOn, setFocusOn] = useState(initialFocus);
   const [focused, setFocused] = useState<string | null>(initialFocused);
+  const phone = useLayout() === 'phone';
+  const now = useNow(givenNow, 30_000);
+  // The wall balances its rows (`watchColumns`): it measures its own width.
+  const [wall, setWall] = useState<HTMLUListElement | null>(null);
+  const wallWidth = useWidth(wall);
   // Focus waits while the pointer or the keyboard is in the shown tile (WCAG 2.2.1, 2.2.2).
   const [hovered, setHovered] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
@@ -395,11 +470,12 @@ export function WatchPage({
     set: (v: string) => void,
   ) => (
     <label className="fd-wfilter">
-      <span className="fd-vh">{label}</span>
-      {/* A view option of the header (§4.3): a ghost select; a chosen filter shows it is on. */}
+      <span className={phone ? 'fd-label' : 'fd-vh'}>{label}</span>
+      {/* A view option of the header (§4.3): a ghost select; a chosen filter shows it is on. The
+          phone menu has the plain select of a form. */}
       <select
-        className="fd-ghost fd-sm"
-        data-active={value !== ALL ? 'true' : undefined}
+        className={phone ? undefined : 'fd-ghost fd-sm'}
+        data-active={!phone && value !== ALL ? 'true' : undefined}
         value={value}
         aria-label={label}
         onChange={(e) => set(e.target.value)}
@@ -413,66 +489,117 @@ export function WatchPage({
       </select>
     </label>
   );
-  const needs = matching.filter((c) => c.status === 'needs_you').length;
-  // The header sentence (DESIGN-SYSTEM §4.3): the live count, then who needs you in --act.
+  // The header sentence (DESIGN-SYSTEM §4.3, §4.4): the fleet's sentence, for the tiles that match.
+  const needs = matching.filter((c) => statusMatches(c, 'needs_you')).length;
+  const onStations = new Set(matching.map((c) => c.station_id)).size;
   const summary = (
     <span aria-live="polite">
-      {liveSessionsText(matching.length)}.{' '}
-      {needs === 0 ? (
-        // The calm state of the fleet header (§4.4): green, the same words.
-        <span className="fd-watch-clear">All clear.</span>
-      ) : (
-        <>
-          <span className="fd-watch-needs">
-            {needs === 1 ? '1 needs you' : `${needs} need you`}
-          </span>
-          .
-        </>
-      )}
+      <FleetSentence live={matching.length} stations={onStations} needsYou={needs} />
     </span>
   );
-  const filters = (
+  const stationSelect = select(
+    'Station',
+    filter.station,
+    'All stations',
+    choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
+    (station) => setFilter({ ...filter, station }),
+  );
+  const repoSelect = select(
+    'Repository',
+    filter.repo,
+    'All repositories',
+    choices.repos.map((r) => ({ value: r, label: r })),
+    (repo) => setFilter({ ...filter, repo }),
+  );
+  // The status filter is the fleet's segmented control (one control for one filter, §4.3).
+  const status = (
+    <StatusSeg
+      value={filter.status}
+      onChange={(next) => setFilter({ ...filter, status: next })}
+      className="fd-watch-status"
+    />
+  );
+  const focusTitle = `Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`;
+  const pausedNote = paused ? (
+    <span className="fd-watch-paused" role="status">
+      Paused
+    </span>
+  ) : null;
+  const active =
+    (filter.station === ALL ? 0 : 1) +
+    (filter.repo === ALL ? 0 : 1) +
+    (filter.status === 'all' ? 0 : 1) +
+    (focusOn ? 1 : 0);
+  // A phone (§4.8): one Filters button, the fleet's pattern; its menu names each control. A
+  // desktop: the selects, the status segments and the Focus toggle in the header row (§4.3).
+  const filters = phone ? (
     <>
-      {select(
-        'Station',
-        filter.station,
-        'All stations',
-        choices.stations.map((id) => ({ value: id, label: stationName(id, stations) })),
-        (station) => setFilter({ ...filter, station }),
-      )}
-      {select(
-        'Repository',
-        filter.repo,
-        'All repositories',
-        choices.repos.map((r) => ({ value: r, label: r })),
-        (repo) => setFilter({ ...filter, repo }),
-      )}
-      {/* Ghost toggles with an icon (the header's one control language, §4.3): pressed, they take
+      <span className="fd-watch-filtermenu">
+        <Menu
+          summary={
+            <>
+              <Icon of={ListFilter} size={14} />
+              Filters
+              {active > 0 ? (
+                <>
+                  {' '}
+                  <span className="fd-count">{active}</span>
+                </>
+              ) : null}
+            </>
+          }
+          summaryClass="fd-ghost fd-sm"
+        >
+          {() => (
+            <div className="fd-watch-filtergrid" role="group" aria-label="Watch filters">
+              {stationSelect}
+              {repoSelect}
+              <div className="fd-wfilter">
+                <span className="fd-label" aria-hidden="true">
+                  Status
+                </span>
+                {status}
+              </div>
+              <label className="fd-menu-switch" title={focusTitle}>
+                <span className="fd-menu-switch-label">
+                  <Icon of={CircleDot} size={14} />
+                  Focus
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="fd-switch"
+                  aria-checked={focusOn}
+                  checked={focusOn}
+                  onChange={(e) => setFocusOn(e.target.checked)}
+                />
+              </label>
+            </div>
+          )}
+        </Menu>
+      </span>
+      {pausedNote}
+    </>
+  ) : (
+    <>
+      {stationSelect}
+      {repoSelect}
+      {status}
+      {/* A ghost toggle with an icon (the header's one control language, §4.3): pressed, it takes
           the pressed-segment look of base.css. */}
       <button
         type="button"
         className="fd-ghost fd-sm"
-        aria-pressed={filter.needsOnly}
-        onClick={() => setFilter({ ...filter, needsOnly: !filter.needsOnly })}
-      >
-        <Icon of={ListFilter} size={14} /> Needs you only
-      </button>
-      <button
-        type="button"
-        className="fd-ghost fd-sm"
         aria-pressed={focusOn}
-        title={`Cycles every ${FOCUS_MS / 1000} s through the sessions that need you`}
+        title={focusTitle}
         onClick={() => setFocusOn(!focusOn)}
       >
         <Icon of={CircleDot} size={14} /> Focus
       </button>
-      {paused ? (
-        <span className="fd-watch-paused" role="status">
-          Paused
-        </span>
-      ) : null}
+      {pausedNote}
     </>
   );
+  const columns = focusOn || wallWidth === null ? null : watchColumns(visible.length, wallWidth);
   return (
     <Page title="Watch" className="fd-watch" description={summary} filters={filters} wide>
       {matching.length > MAX_TILES && !focusOn ? (
@@ -497,7 +624,13 @@ export function WatchPage({
           }
         />
       ) : (
-        <ul className="fd-wall" data-focus={focusOn ? 'true' : undefined}>
+        <ul
+          ref={setWall}
+          className="fd-wall"
+          data-focus={focusOn ? 'true' : undefined}
+          data-cols={columns === null ? undefined : columns}
+          style={columns === null ? undefined : ({ '--fd-watch-cols': columns } as CSSProperties)}
+        >
           {visible.map((card) => (
             <Tile
               key={refOf(card)}
@@ -514,6 +647,7 @@ export function WatchPage({
               freshness={freshness}
               focused={focusOn}
               hold={focusOn ? hold : undefined}
+              now={now}
             />
           ))}
         </ul>

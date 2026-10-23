@@ -74,7 +74,10 @@ export function ProjectSessions({
           <p className="fd-empty">No sessions in this project yet.</p>
         ) : (
           <>
-            {live.length === 0 ? null : (
+            {live.length === 0 ? (
+              // Every session ended: say that nothing runs, as a fleet lane does ("No sessions.").
+              <p className="fd-note fd-int-none">{`No live sessions in ${project.name}.`}</p>
+            ) : (
               <section aria-label="Live sessions">
                 <h3 className="fd-label">
                   Live <span className="fd-count">{live.length}</span>
