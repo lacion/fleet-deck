@@ -63,6 +63,7 @@ impl SessionSummary {
                 self.provider_instance = Some(provider_instance.clone());
                 self.provider_version.clone_from(provider_version);
                 self.model.clone_from(model);
+                self.effort = None;
                 self.cwd = Some(cwd.clone());
                 self.mode.clone_from(mode);
                 self.capabilities = Some(capabilities.as_ref().clone());
@@ -151,6 +152,7 @@ impl SessionSummary {
             }
             Event::ModeChanged { mode } => self.mode = Some(mode.clone()),
             Event::ModelChanged { model } => self.model = Some(model.clone()),
+            Event::EffortChanged { effort } => self.effort.clone_from(effort),
             Event::UsageUpdated { usage, rate_limits } => {
                 add_usage(&mut self.usage, usage);
                 merge_rate_limits(&mut self.rate_limits, rate_limits);
@@ -394,6 +396,9 @@ fn merge_rate_limits(kept: &mut Vec<RateLimit>, more: &[RateLimit]) {
     kept.sort_by(|a, b| a.scope.cmp(&b.scope));
 }
 
+#[cfg(test)]
+#[path = "fold_effort_tests.rs"]
+mod effort_tests;
 #[cfg(test)]
 #[path = "fold_tests.rs"]
 mod tests;

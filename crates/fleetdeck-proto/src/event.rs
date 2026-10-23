@@ -462,6 +462,12 @@ pub enum Event {
     ModeChanged { mode: String },
     #[serde(rename = "model.changed")]
     ModelChanged { model: String },
+    /// The reasoning effort that the provider reports for the session (B18):
+    /// a change, or the first report after a start. `None`: the provider
+    /// reports no effort (the model has none). The fold keeps it in
+    /// `summary.effort`. Older peers decode this kind as unknown.
+    #[serde(rename = "effort.changed")]
+    EffortChanged { effort: Option<String> },
     /// The provider answered an interrupt request (ADR-001 §3.1): this is
     /// the evidence that confirms or refuses the station's interrupt. The
     /// turn ends later with its own `turn.completed` (trap 10).

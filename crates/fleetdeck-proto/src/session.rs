@@ -86,6 +86,12 @@ pub struct SessionSummary {
     pub activity: Activity,
     pub mode: Option<String>,
     pub model: Option<String>,
+    /// The reasoning effort that the provider reports, from the last
+    /// `effort.changed` (B18). Absent: not reported (an older station, a
+    /// provider or model without effort, or no report since the start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<String>,
     pub capabilities: Option<Capabilities>,
     pub current_run: Option<RunId>,
     pub current_turn: Option<TurnId>,
@@ -226,6 +232,7 @@ impl SessionSummary {
             activity: Activity::Idle,
             mode: None,
             model: None,
+            effort: None,
             capabilities: None,
             current_run: None,
             current_turn: None,

@@ -369,6 +369,9 @@ fn samples() -> Vec<Event> {
         Event::SessionMoveUndone {
             move_id: "mv-1".into(),
         },
+        Event::EffortChanged {
+            effort: Some("high".into()),
+        },
     ]
 }
 

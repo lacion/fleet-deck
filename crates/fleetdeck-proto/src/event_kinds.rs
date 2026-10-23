@@ -5,7 +5,7 @@ use super::Event;
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 61] = [
+    pub const KINDS: [&'static str; 62] = [
         "session.started",
         "session.state",
         "run.started",
@@ -67,6 +67,7 @@ impl Event {
         "session.move_in",
         "session.moved",
         "session.move_undone",
+        "effort.changed",
     ];
 
     /// The dotted kind name.
@@ -134,6 +135,7 @@ impl Event {
             Self::SessionMoveIn(_) => "session.move_in",
             Self::SessionMoved { .. } => "session.moved",
             Self::SessionMoveUndone { .. } => "session.move_undone",
+            Self::EffortChanged { .. } => "effort.changed",
         }
     }
 

@@ -58,7 +58,13 @@ title_generated: boolean,
  * The generated digest of the session (DL-167, R10.2): a few lines of
  * "what the agent did". Absent until one exists.
  */
-digest?: string, state: SessionState, activity: Activity, mode: string | null, model: string | null, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
+digest?: string, state: SessionState, activity: Activity, mode: string | null, model: string | null, 
+/**
+ * The reasoning effort that the provider reports, from the last
+ * `effort.changed` (B18). Absent: not reported (an older station, a
+ * provider or model without effort, or no report since the start).
+ */
+effort?: string, capabilities: Capabilities | null, current_run: RunId | null, current_turn: TurnId | null, open_requests: Array<OpenRequest>, 
 /**
  * Ids of running background tasks (L7).
  */

@@ -134,7 +134,7 @@ artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, }
 /**
  * Background work still runs; the session is not idle (L7).
  */
-background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "interrupt.result", 
+background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "effort.changed", effort: string | null, } | { "kind": "interrupt.result", 
 /**
  * The host's id for the request (the station's effect id); `None`
  * when the host gave no id.
