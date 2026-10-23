@@ -407,9 +407,10 @@ impl SessionTarget {
             return self.launch_changed(&session_id, e).await;
         }
         let process: ProcessIncarnation = new_id(self.ids.as_ref());
+        let facts = self.launch_facts(spec);
         if let Err(e) = self
             .store
-            .process_started(session_id.clone(), process.clone(), None)
+            .process_launched(session_id.clone(), process.clone(), None, facts)
             .await
         {
             tracing::error!(error = %e, "the process could not be recorded; stopping it");

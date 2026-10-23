@@ -142,6 +142,8 @@ impl SessionTarget {
                 .as_ref()
                 .and_then(|s| s.cwd.clone())
                 .unwrap_or_default();
+            let facts =
+                crate::workflows::launch::adopted(&self.store, &r.session_id, &r.process).await;
             // A restore starts no new process: no identity (B9, out of scope).
             let turns = self.turns(&r.session_id, Path::new(&cwd)).await;
             turns.set_process(r.process.clone());
@@ -160,15 +162,15 @@ impl SessionTarget {
                     turns,
                     from,
                     Drain::ToHead,
-                    None,
+                    facts,
                 ));
                 continue;
             }
             // `from` is the head before the restoration: the observer sees
             // every event that the driver committed while it replayed.
-            // An adopted process writes no subagent rows: its launch
-            // environment is not known (DL-191).
-            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from, None);
+            // An adopted process gets the launch facts that its launch stored
+            // (B12).
+            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from, facts);
         }
     }
 
@@ -433,9 +435,10 @@ impl SessionTarget {
         let control = Arc::clone(&attached.process);
         let pid = attached.record.provider_identity.as_ref().map(|i| i.pid);
         let process: ProcessIncarnation = new_id(self.ids.as_ref());
+        let facts = self.launch_facts(spec);
         if let Err(e) = self
             .store
-            .process_started(session_id.clone(), process.clone(), pid)
+            .process_launched(session_id.clone(), process.clone(), pid, facts.clone())
             .await
         {
             tracing::error!(error = %e, "the process could not be recorded; stopping it");
@@ -493,7 +496,7 @@ impl SessionTarget {
             driver.clone(),
             launch.stop,
             from,
-            self.launch_facts(spec),
+            facts,
         );
         if prompt.is_some() && super::setup_task::cancelled(cancel) {
             // A stop came during the setup: the first input is not sent.
