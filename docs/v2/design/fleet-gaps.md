@@ -1,6 +1,6 @@
 # Fleet gaps G1, G2, G4 and G5
 
-- **Status:** Draft for the architect, revision 2 (2026-10-23, after the adversary design review round 1; the changes are listed at the end). Risk: **high** (§6: G5 has a deck migration). Adversary DESIGN REVIEW before the design is frozen, PRE-PR REVIEW before the merge.
+- **Status:** Draft for the architect, revision 3 (2026-10-23, after the adversary design review rounds 1 and 2; the changes are listed at the end). Risk: **high** (§6: G5 has a deck migration). Adversary DESIGN REVIEW before the design is frozen, PRE-PR REVIEW before the merge.
 - **Source:** four product gaps that the architect found on 2026-10-23 while running the backlog program (G1 coordinator spawn outside the roots, G2 `fleet_view` station filter, G4 no feedback for a refused board command, G5 wake key without the session). G3 is a separate track.
 - **Code base:** branch `v2`, HEAD `00055138`. All file:line references are on this commit.
 - **Live evidence:** read-only queries of the owner's live deck database on Lighting (`~/.local/share/fleetdeck/deck/deck.db`, opened with `sqlite3 -readonly "file:…?mode=ro"`), §4.1. No session was started and no command was sent.
@@ -329,7 +329,7 @@ The smallest sound mechanism uses the existing route: the board reads `GET /api/
      readonly later?: (signal: AbortSignal) => Promise<Outcome | null>;
    };
    ```
-   **The contract (revision 2):** an outcome with `later` is not final. A consumer that acts on success (marks, unlocks, says "done") must wait for the final outcome; a consumer that only shows the text must show a final refusal when it comes. §4.2.5 lists every consumer and its decision.
+   **The contract (revision 2):** an outcome with `later` is not final. A consumer that acts on success (marks, unlocks, closes a dialog, uses up an input, counts, says "done") must wait for the final outcome; a consumer that only shows the text must show a final refusal when it comes. §4.2.5 lists every consumer and its decision. Revision 3: this applies also to a success side effect that runs **inside** the call that a consumer gives to `controller.act` (the shell chips, §4.2.3 item 2): the controller follows the outcome that the call returns, not the code that ran before the return.
 2. New constants and function (in `commands.ts`, after `outcomeOf`):
    ```ts
    /** G4: the waits before each read of a pending command: 1 s for the first 10 reads, then 5 s. */
@@ -377,7 +377,28 @@ The smallest sound mechanism uses the existing route: the board reads `GET /api/
      if (o.later === undefined) return o;
      return o.later(signal).catch(() => null);
    }
+
+   /** G4 (revision 3): runs `done` once `o` is a confirmed success: now for a final `ok`, else when
+    *  its follow-up resolves `ok` and the follow was not aborted. A refusal or a stopped follow
+    *  (`null`) never runs it. Returns the outcome to hand on: `o` itself when it is final, else `o`
+    *  with a wrapped follow-up (the same final outcome). */
+   export function onConfirmed(o: Outcome, done: () => void): Outcome {
+     const later = o.later;
+     if (later === undefined) {
+       if (o.ok) done();
+       return o;
+     }
+     return {
+       ...o,
+       later: async (signal) => {
+         const final = await later(signal);
+         if (final !== null && final.ok && !signal.aborted) done();
+         return final;
+       },
+     };
+   }
    ```
+   `onConfirmed` does not follow by itself: the consumer that receives the returned outcome follows it (for the composer: `controller.act`, §4.2.2). When nobody follows (the owner opened another session before the first answer came, `controller.ts` returns before it reads `later`), `done` never runs: an unconfirmed success side effect does not happen.
 3. `run` (`commands.ts:244`) changes to:
    ```ts
    const reply = await post(`/api/commands/${METHODS[command.op]}`, body);
@@ -566,6 +587,12 @@ Revision 2: the controller follows **each** pending command until it ends or the
    - `:40` `import { answerVia, dockRefusals, useSessionController } from './controller';`
    - `:560-563` (the four-line `onAnswer`) becomes `onAnswer={answerVia(controller, actions)}`.
    - After `busy={busy !== null}` (`:559`) add `refusals={dockRefusals(controller.refusals, s.open_requests)}`.
+   - Revision 3, the shell chips (design review r2 BLOCKER). `:37` becomes `import { onConfirmed, type SessionActions } from './commands';`. In `onSend`, the comment at `:597` becomes `// B8: the first 64 chips go with the prompt; a confirmed prompt uses them up (G4).`, and the two lines `:612-613` (`if (outcome.ok) shellChips.consume(results);` and `return outcome;`) become one line:
+     ```ts
+     return onConfirmed(outcome, () => shellChips.consume(results));
+     ```
+     So an immediate `Done.` consumes the chips as today; a pending prompt keeps them until the follow of `controller.act('send')` resolves `ok`; a refusal, a stopped follow or a session change keeps them, and the next prompt names them again. Sending a result twice is safe: the station carries each result once (`shell_context.rs:1-15`; `attachable` selects only rows with `included_in IS NULL`, `store/shell_runs.rs:379-388`), so a result that an earlier, later-accepted prompt carried is skipped.
+   - Line count: the four-line `onAnswer` becomes one (−3), the `refusals` prop (+1), the chips (−1): 794 lines.
 3. `web/src/session/SessionHeader.tsx`:
    - `:184` becomes `const outcome = headerOutcome(controller, s.open_requests);` (a refusal that the dock shows is not shown twice).
    - `:753` becomes `<span>{shownText(outcome)}</span>`.
@@ -664,6 +691,77 @@ Revision 2: the controller follows **each** pending command until it ends or the
    },
    ```
    `App.tsx` has 789 lines; this adds 5 (794, under the 800-line limit).
+9. `web/src/chat/ShellCard.tsx` `ReleaseDialog` ("Release the folder", revision 3, design review r2 BLOCKER). On HEAD `release` (`:107-115`) calls `onClose()` on any `ok`, so a pending release closes the dialog and a later refusal is never shown (the prop is `env.onRelease` = `actions.releaseShell`, `SessionView.tsx:507`).
+   - New exported text and function (import `finalOutcome` with `type Outcome` from `../session/commands`):
+     ```ts
+     /** G4: the text when the station did not confirm the release while the board followed it. */
+     export const RELEASE_UNCONFIRMED =
+       'The station did not confirm the release in time. Check the command card again.';
+
+     /** G4: the release, followed while it is pending: the final outcome, or a refusal with
+      *  RELEASE_UNCONFIRMED when the follow stops. Only an `ok` result closes the dialog. */
+     export async function releaseFollowed(
+       onRelease: () => Promise<Outcome>,
+       signal: AbortSignal,
+       onPending: (text: string) => void,
+     ): Promise<Outcome> {
+       const sent = await onRelease();
+       if (sent.later !== undefined) onPending(sent.text);
+       return (await finalOutcome(sent, signal)) ?? { ok: false, text: RELEASE_UNCONFIRMED };
+     }
+     ```
+   - New state `const [note, setNote] = useState<string | null>(null);` and `const life = useRef<AbortController | null>(null);`. The existing `alive` effect (`:101-106`) also makes `const c = new AbortController(); life.current = c;`, and its cleanup also calls `c.abort()`.
+   - `release` becomes:
+     ```ts
+     const release = async () => {
+       setBusy(true);
+       setRefusal(null);
+       const outcome = await releaseFollowed(
+         onRelease,
+         life.current?.signal ?? AbortSignal.abort(),
+         (text) => {
+           if (alive.current) setNote(text);
+         },
+       );
+       if (!alive.current) return;
+       setBusy(false);
+       setNote(null);
+       if (outcome.ok) onClose();
+       else setRefusal(outcome.text);
+     };
+     ```
+   - Render: after the `refusal` line, `{note === null ? null : <p className="fd-note" role="status">{note}</p>}` (`.fd-note` is global, `web/src/styles/base.css:1514`). The button keeps `Releasing…` while the board follows. Cancel, Escape and the overlay click still close the dialog; closing ends the follow (the cleanup aborts it), and the card shows the result (`Released`, or the unchanged card with "Release the folder").
+10. `web/src/board/FleetBoard.tsx` `OfflineTools` "Resume all" (revision 3: the audit found it; it counts a pending resume as resumed, `:222-238`).
+   - New exported pure functions (above `OfflineTools`):
+     ```ts
+     /** G4: resumes each session in turn. A resume counts as confirmed only with a final `ok`; a
+      *  pending one counts apart (its card shows when it resumes). A failure counts as neither. */
+     export async function resumeEach(
+       targets: readonly (Pick<SessionActions, 'resume'> | null)[],
+     ): Promise<{ readonly confirmed: number; readonly pending: number }> {
+       let confirmed = 0;
+       let pending = 0;
+       for (const actions of targets) {
+         try {
+           const o = await actions?.resume();
+           if (o?.ok === true) {
+             if (o.later === undefined) confirmed += 1;
+             else pending += 1;
+           }
+         } catch {
+           // A failed resume counts as not resumed.
+         }
+       }
+       return { confirmed, pending };
+     }
+
+     /** G4: the report of "Resume all". */
+     export function resumeReport(confirmed: number, pending: number, total: number): string {
+       const head = `Resumed ${confirmed} of ${total}`;
+       return pending === 0 ? head : `${head}. ${pending} not confirmed yet`;
+     }
+     ```
+   - `resumeAll` keeps `targets`, `setRunning` and the timer; the loop and the report become `const { confirmed, pending } = await resumeEach(targets);` and `setReport(resumeReport(confirmed, pending, targets.length));`. "Resume all" does not follow: the board does not hold the button for up to 120 s per session, and each card shows its own state.
 
 #### 4.2.4 UI text
 
@@ -681,14 +779,23 @@ Revision 2: the controller follows **each** pending command until it ends or the
 | "Mark as ended", pending, then refused | `Refused: <station message>` (`role="alert"`); no "Marked as ended" | execution dialog |
 | "Mark as ended", the follow stops | `The station did not confirm the mark in time. Check the processes again.` | execution dialog |
 | "Return" with a pending resume | `Back under board control. The station has not confirmed the resume yet.`; then `Back under board control.` (header) or, on a refusal, `Returned, but the resume failed: Refused: <station message>` | header or the tab-strip notice |
+| "Release the folder", pending | `Sent. The station has not confirmed it yet.` (`role="status"`); the button reads `Releasing…`; the dialog stays open | release dialog |
+| "Release the folder", pending, then refused | `Refused: <station message>` (the existing `ErrorNotice`); the dialog stays open | release dialog |
+| "Release the folder", the follow stops | `The station did not confirm the release in time. Check the command card again.` | release dialog |
+| A prompt with shell chips, pending | the chips stay above the composer (`Includes the output of !<command>`) until the station confirms the prompt | composer |
+| A prompt with shell chips, pending, then refused (or the follow stops) | the refusal on the header line; the chips stay, and the next prompt carries them | header, composer |
+| "Resume all" with resumes that are still pending | `Resumed <n> of <total>. <p> not confirmed yet` (`Resumed <n> of <total>` when none is pending, unchanged) | the ended tools row |
 
-#### 4.2.5 The consumers of session commands (revision 2)
+#### 4.2.5 The consumers of session commands (revisions 2 and 3)
 
-Every consumer of a `SessionActions` command outcome on HEAD (search on HEAD: `SessionActions`, `sessionActions`, `actions.<command>(`), and its decision. A consumer marked "own observation" does not read `later`, because it already waits for the effect on the card or in the execution check and shows a failure when the effect does not come.
+Every consumer of a `SessionActions` command outcome on HEAD, and its decision. Revision 3 (design review r2 BLOCKER) widened the search, because revision 2 missed consumers that read `ok` in a callback. The search on HEAD is: every call of a `SessionActions` command in `web/src` outside the tests (`actions.send(`, `actions.answer(`, `actions.resume(`, … for each method of `SessionActions`), and every `.ok` read in `web/src` outside the tests and `gen/`. Each hit is followed to the command that produced the outcome, through props (`onRelease`, `onSend`) and wrappers (`handoverFlow`, `resumeThenSend`). A consumer marked "own observation" does not read `later`, because it already waits for the effect on the card or in the execution check and shows a failure when the effect does not come. A success side effect inside a call that a consumer gives to `controller.act` is a consumer of its own (the row "composer, shell chips").
 
 | Consumer | Commands | Decision |
 | --- | --- | --- |
 | `session/controller.ts` `act`: the header, the composer, the dock, the turns panel (`panelAct`, `SessionView.tsx:332`), the handover (`:219-224`), the model and mode menus | most commands | Follows each pending command (§4.2.2). |
+| `session/SessionView.tsx` `onSend`, the shell chips (`shellChips.consume`, `:612`; revision 3) | `send` (also through `resumeThenSend`) | Consumes the chips only on a confirmed success: `onConfirmed` (§4.2.1 item 2, §4.2.3 item 2). On HEAD a pending `ok` consumed them before the controller followed the prompt. |
+| `chat/ShellCard.tsx` `ReleaseDialog` (`onRelease` = `actions.releaseShell`, `SessionView.tsx:507`; revision 3) | `releaseShell` | Waits for the final outcome; only a confirmed release closes the dialog; a refusal or a stopped follow stays in the dialog (§4.2.3 item 9). |
+| `board/FleetBoard.tsx` `OfflineTools` "Resume all" (`:222-238`; revision 3) | `resume` | Counts a pending resume apart, not as resumed (§4.2.3 item 10). |
 | `board/NeedsYouRail.tsx` | `answer` | Follows (§4.2.3 item 4). |
 | `watch/WatchPage.tsx` | `answer` | Follows; a final refusal is the tile note (§4.2.3 item 5). |
 | `session/ExecutionDialog.tsx` | `reconcileExecution` | Waits for the final outcome; only a confirmed mark shows "Marked as ended" (§4.2.3 item 6). |
@@ -697,6 +804,7 @@ Every consumer of a `SessionActions` command outcome on HEAD (search on HEAD: `S
 | `terminal/handover.ts` `startHandover` (via `handoverFlow.open`) | `stop` | No change: own observation (it waits up to 60 s for the session to end on the card, then says "The session is still stopping."). |
 | `compare/compare.ts` `keepOther` (`ComparePage.tsx:459`) | `stop` | No change: own observation (it waits up to 30 s for the end on the card, then says "The session did not end in 30 seconds."). |
 | `session/ExecutionStop.tsx` `sendStop` | `stopExecution` | No change: own observation (it polls the execution check for `last_stop` of its own command id; no result gives the alert `outcome_unknown`). |
+| `session/SessionView.tsx` `drive` (`:127-133`), `session/HoldNotice.tsx`, `handoverFlow.release` | not session commands: `sharing/people.ts` (drive requests) and `ShellActions.release` (the terminal hold) | No change (they do not use `sessionActions.run`). |
 | `session/FleetControlChip.tsx`, `wall/DiffPane.tsx`, `wall/RacePane.tsx`, `wall/ReviewPane.tsx`, `wall/WallPage.tsx`, `session/paneLayout.ts`, `app/SessionRoute.tsx`, `compare/ComparePage.tsx` (other uses), `runtime/RuntimeApp.tsx` | none (readers: `files`, `fleetAnswers`, `canDrive`) or pass-through | No change. |
 
 ### 4.3 Out of scope
@@ -721,6 +829,12 @@ Every consumer of a `SessionActions` command outcome on HEAD (search on HEAD: `S
 | G4: the owner dismisses the header line while a command is pending, then the station refuses it | the refusal shows |
 | G4: `GET /api/commands/<id>` fails three times in a row | the follow stops; the pending text stays |
 | G4: an e2e fake deck without the GET route (404) | three failed reads, then the follow stops |
+| G4: a prompt with shell chips is pending, then refused | the header shows the refusal; the chips stay; the next prompt names them again |
+| G4: a prompt with shell chips is pending; the owner sends a second prompt before the first is confirmed; both are accepted | both prompts name the chips; the station carries each result once (the first decided prompt takes it, `included_in`); the chips go when the first confirmed success comes |
+| G4: a prompt with shell chips is pending and the owner opens another session | the follow is aborted; the chips of the first session stay (in memory, as today) |
+| G4: a release of a shell folder is pending, then refused | the dialog stays open and shows the refusal; the card keeps "Release the folder" |
+| G4: the owner closes the release dialog while the release is pending | the follow ends; the card shows the result when the station decides (`Released` or unchanged) |
+| G4: "Resume all" over 3 sessions: one `Done.`, one pending, one refused | `Resumed 1 of 3. 1 not confirmed yet` |
 | G5: a deck database at V48 with 10 000 rows | V49 keeps them as legacy tombstones (session `''`); the suppression state stays; the eviction rules apply to them as before |
 | G5: a call of `wake_reserve` with an empty session | `Error` (never wakes); no row is written |
 
@@ -737,6 +851,7 @@ The owned files of T1 to T4 do not overlap; any two can run in parallel (the mac
 Cross-track notes:
 - T1 starts after wall-control B1 (deck V48) is merged into `v2`: V49 is then the 49th entry of `migrations()`. If the architect starts T1 earlier, the brief gives the position 48 for the tests, and the architect renumbers at the merge. wall-control B1 also owns `schema.rs` and `tests/merged_migrations.rs`: do not run T1 in parallel with B1.
 - last-seen T1 owns `crates/fleetdeck-deck/src/store/mod.rs`; no task here changes that file.
+- last-seen T2 owns `web/src/board/fleet.test.tsx`; T4 puts its "Resume all" tests in a new file and does not change that file.
 
 ### T1 (backend): G5, the wake key with the session, migration V49 (≈ 340 lines)
 
@@ -817,17 +932,19 @@ Cross-track notes:
   - `cargo clippy -p fleetdeck-deck -p fleetdeck-proto -p fleetdeck-station --all-targets -- -D warnings`
   - The guards (as T1).
 
-### T4 (ux): G4, the board follows a pending command and shows a refused answer where the owner clicked (≈ 500 lines)
+### T4 (ux): G4, the board follows a pending command and shows a refused answer where the owner clicked (≈ 620 lines)
 
 - **Owned files:**
   - `web/src/session/commands.ts`, `web/src/session/controller.ts`
   - `web/src/session/ApprovalDock.tsx`, `web/src/session/SessionView.tsx`, `web/src/session/SessionHeader.tsx`
   - `web/src/board/NeedsYouRail.tsx`, `web/src/watch/WatchPage.tsx`
   - `web/src/session/ExecutionDialog.tsx`, `web/src/terminal/handover.ts`, `web/src/App.tsx` (`returnTerminal` only)
+  - `web/src/chat/ShellCard.tsx` (`ReleaseDialog` and the two new exports only), `web/src/board/FleetBoard.tsx` (`resumeEach`, `resumeReport` and `resumeAll` only) (revision 3)
   - `web/src/session/follow.test.ts` (new), `web/src/session/shown.test.ts` (new), `web/src/session/approvalDock.test.tsx`, `web/src/board/rail.test.tsx`, `web/src/session/execution.test.tsx`, `web/src/terminal/terminal.test.tsx`
   - `web/src/session/sessionheader_access.test.tsx`, `web/src/session/controls.test.tsx`, `web/src/session/sessionMenu.test.tsx` (each: add `refusals: {},` after `outcome: null,` in the `Controller` literal; `execution.test.tsx:169` the same)
-  - `web/e2e/session.spec.ts`
-- **Changes:** §4.2 (4.2.1 to 4.2.3; 4.2.5 is the audit: the consumers marked "No change" are not changed). Imports: `controller.ts` takes `OpenRequest` from `../gen` and `Reply` from `./question`; `NeedsYouRail.tsx` takes `nextShown`, `shownText` and `type Shown` from `../session/controller` and `type Outcome` from `../session/commands`; `ExecutionDialog.tsx` takes `finalOutcome` from `./commands`. Load the `fleet-design-system` skill first (board UI rule); the design uses only the existing `.fd-q-error` and `.fd-note` lines. `SessionView.tsx` must stay at or below 797 lines; `App.tsx` must stay below 800 lines. In `web/e2e/*.spec.ts`, if a test fails only because a follow `GET /api/commands/<id>` is in `deck.calls`, add `&& c.body !== null` to its filter; change no other e2e line outside `session.spec.ts`.
+  - `web/src/chat/shell.test.tsx`, `web/src/board/resumeAll.test.ts` (new; `web/src/board/fleet.test.tsx` is an owned file of last-seen T2, so this task does not change it) (revision 3)
+  - `web/e2e/session.spec.ts`, `web/e2e/shell-bang.spec.ts` (revision 3: new tests at the end and one copied helper)
+- **Changes:** §4.2 (4.2.1 to 4.2.3, with the revision 3 items: `onConfirmed` in 4.2.1 item 2, the chips in 4.2.3 item 2, 4.2.3 items 9 and 10; 4.2.5 is the audit: the consumers marked "No change" are not changed). Imports: `controller.ts` takes `OpenRequest` from `../gen` and `Reply` from `./question`; `NeedsYouRail.tsx` takes `nextShown`, `shownText` and `type Shown` from `../session/controller` and `type Outcome` from `../session/commands`; `ExecutionDialog.tsx` takes `finalOutcome` from `./commands`; `ShellCard.tsx` takes `finalOutcome` and `type Outcome` from `../session/commands`; `FleetBoard.tsx` uses its existing `SessionActions` import. Load the `fleet-design-system` skill first (board UI rule); the design uses only the existing `.fd-q-error` and `.fd-note` lines. `SessionView.tsx` must stay at or below 797 lines (the design gives 794); `App.tsx` must stay below 800 lines. In `web/e2e/*.spec.ts`, if a test fails only because a follow `GET /api/commands/<id>` is in `deck.calls`, add `&& c.body !== null` to its filter; change no other e2e line outside `session.spec.ts` and `shell-bang.spec.ts`.
 - **Tests:**
   - `follow.test.ts` (injected `wait` that records the ms and resolves at once, and an injected `now`):
     - `a pending command is read until the station refuses it`: GET answers pending, pending, done with a rejected receipt (message `no such request`) → `{ ok: false, text: 'Refused: no such request' }`; three GETs of `/api/commands/c1`; waits `[1000, 1000, 1000]`.
@@ -837,6 +954,7 @@ Cross-track notes:
     - `the follow stops after 120 s`: `now` moves 121 s after the first wait → `null`.
     - `sessionActions follows only a pending answer and only with a reader`: a pending reply with `get` → `later` is a function; with `get = null` → no `later`; a done reply → no `later`.
     - `finalOutcome gives a final outcome as is and waits for a provisional one`: `{ ok: true, text: 'Done.' }` → the same object; an outcome whose `later` resolves `{ ok: false, text: 'Refused: x' }` → that outcome; a `later` that resolves `null` → `null`.
+    - `onConfirmed runs its action only on a confirmed success` (revision 3): a final `D` → `done` ran once and the result is the same object; a final `R` → `done` did not run; `P` whose `later` resolves `D` → `done` has not run when `onConfirmed` returns, and ran once after `await result.later(signal)`, which gives `D`; `P` → `R`: `done` did not run and `later` gives `R`; `P` → `null`: `done` did not run and `later` gives `null`; `P` → `D` with a signal aborted before `later` resolves: `done` did not run.
   - `shown.test.ts` (the pure state functions of `controller.ts`; `P = { ok: true, text: 'Sent. The station has not confirmed it yet.', later: async () => null }`, `R = { ok: false, text: 'Refused: no such request' }`, `D = { ok: true, text: 'Done.' }`):
     - `nextShown counts a repeat of the same refusal`; a different text, target or action resets to 1; `shownText` adds ` (2 times)`.
     - `an immediate refusal repeated counts in the dock`: `onFirst(EMPTY_SHOWN, 'answer', 'r1', R)` twice → `refusals.r1.repeats === 2`; `dockRefusals(state.refusals, [open r1])` → `{ r1: 'Refused: no such request (2 times)' }`.
@@ -853,17 +971,27 @@ Cross-track notes:
     - `a pending mark is followed until the station refuses it`: `reconcileExecution` answers `{ ok: true, text: 'Sent. The station has not confirmed it yet.', later: async () => ({ ok: false, text: 'Refused: a process of the run still lives' }) }` → `markEnded` gives `{ marked: false, text: 'Refused: a process of the run still lives' }`; `onPending` was called once with the pending text.
     - `only a confirmed mark marks`: `Done.` at once → `{ marked: true }` and no `onPending`; pending then `Done.` → `{ marked: true }`; pending then `null` → `{ marked: false, text: MARK_UNCONFIRMED }`.
   - `terminal.test.tsx` (`describe('returnToBoard')`): `a pending resume keeps its follow-up`: as the first test of the block, with `resume` answering `{ ok: true, text: 'Sent. The station has not confirmed it yet.', later: async () => ({ ok: false, text: 'Refused: x' }) }` → `result.text === 'Back under board control. The station has not confirmed the resume yet.'`; `await result.later(new AbortController().signal)` → `{ ok: false, text: 'Returned, but the resume failed: Refused: x' }`.
+  - `shell.test.tsx` (`describe('the shell card')`, revision 3, design review r2 BLOCKER; `P` and `D` as in `shown.test.ts`):
+    - `a pending release is followed until the station refuses it`: `releaseFollowed(async () => ({ ...P, later: async () => ({ ok: false, text: 'Refused: the command still runs' }) }), new AbortController().signal, onPending)` → `{ ok: false, text: 'Refused: the command still runs' }`; `onPending` was called once with `'Sent. The station has not confirmed it yet.'`.
+    - `only a confirmed release closes the dialog`: `D` at once → `{ ok: true, text: 'Done.' }` and no `onPending`; `P` then `D` → `{ ok: true, text: 'Done.' }`; `P` then `null` → `{ ok: false, text: RELEASE_UNCONFIRMED }`.
+  - `board/resumeAll.test.ts` (new, revision 3):
+    - `resume all counts only a confirmed resume`: `resumeEach` over five targets: `resume` gives `D`; `resume` gives `P`; `resume` gives `{ ok: false, text: 'Refused: x' }`; `null`; `resume` throws → `{ confirmed: 1, pending: 1 }`.
+    - `the report names the pending resumes apart`: `resumeReport(2, 0, 3) === 'Resumed 2 of 3'`; `resumeReport(1, 2, 3) === 'Resumed 1 of 3. 2 not confirmed yet'`.
   - `web/e2e/session.spec.ts` (new tests at the end, with the file's helpers):
     - `a refused answer in the session dock shows its text under the request, and a repeat counts`: `approval.answer` answers `receipt(id, 'done', 'no such request')`; open the session; click Allow in the region "Needs you"; the dock shows the alert `Refused: no such request`; click Allow again; the alert reads `Refused: no such request (2 times)`; the session header has no alert with that text.
     - `a pending answer is followed until the station refuses it`: `approval.answer` answers `receipt(id, 'pending')`; `deck.route('GET', /^\/api\/commands\/([^/]+)$/, (m) => ({ status: 200, body: receipt(m[1], 'done', 'no such request') }))`; click Allow; the dock alert `Refused: no such request` appears within 5 s.
+  - `web/e2e/shell-bang.spec.ts` (new tests at the end, revision 3, design review r2 BLOCKER; copy the `receipt` helper of `session.spec.ts:45-…` with `ST`; the GET route is `deck.route('GET', /^\/api\/commands\/([^/]+)$/, (m) => ({ status: 200, body: receipt(m[1], 'done', '<text>') }))`):
+    - `a pending prompt that the station refuses keeps its shell chip`: `setUp(page)`, then `deck.on('/api/commands/session.prompt', (b) => ({ status: 200, body: receipt(idOf(b), 'pending') }))` and the GET route with `'the session is busy'`; emit `shellEvents('pwd', '/home/me/app\n')`; the chip `Includes the output of` is visible; send `what did it print?`; the session header shows the alert `Refused: the session is busy` within 5 s; the chip is still visible. Then `deck.on('/api/commands/session.prompt', accepted('session.prompt'))`; send `again`; the chip has count 0; the last prompt body has `shell_results: ['e1']`.
+    - `a pending release that the station refuses stays in the dialog`: the ended session of `on an ended session the owner releases the folder after a question`; `session.release_shell` answers `receipt(idOf(b), 'pending')`; the GET route with `'the command still runs'`; click "Release the folder", then Release; the dialog shows `Sent. The station has not confirmed it yet.`, then `Refused: the command still runs` within 5 s; the dialog is still open (count 1); Cancel closes it.
 - **depends_on:** none (no generated type changes; it does not read the new reject code).
 - **Acceptance:**
   - `cd web && bun run typecheck && bun run lint`
-  - `cd web && bun run test src/session src/board src/watch src/terminal` (through heavy.sh)
-  - `cd web && bun run e2e session.spec.ts revert.spec.ts` (through heavy.sh)
+  - `cd web && bun run test src/session src/board src/watch src/terminal src/chat` (through heavy.sh)
+  - `cd web && bun run e2e session.spec.ts revert.spec.ts shell-bang.spec.ts` (through heavy.sh)
   - `sh tools/design-check.sh`
   - The guards (as T1).
   - `wc -l web/src/session/SessionView.tsx web/src/App.tsx`: at most 797 and below 800.
+  - `grep -n 'shellChips.consume' web/src/session/SessionView.tsx` shows one line, inside `onConfirmed(`; `grep -n 'if (outcome.ok) onClose' web/src/chat/ShellCard.tsx` still shows one line, after `releaseFollowed` (revision 3).
   - Gallery shot of the session view with an open approval, both themes, desktop and phone (the fleet-design-system skill §3 step 3): the refusal line under the request.
 
 ## 8. Decisions made in this draft
@@ -886,6 +1014,7 @@ Cross-track notes:
 16. **G4: the controller keeps the refused answers by request** (`refusals`), and the dock shows each one under its request. The header line stays one outcome. Rejected: one shown outcome for the dock too (two refusals for two requests would hide one of them).
 17. **G4: the repeat count compares a final outcome with the previous final outcome** (`settled`, and the refusal of the same request); a pending text is not counted and does not reset the count (revision 2, design review r1 MINOR).
 18. **G4: an outcome with `later` is provisional; every consumer is audited** (§4.2.5, revision 2, design review r1 MAJOR 2). "Mark as ended" waits for the final outcome; "Return" passes the follow-up through; the consumers that already watch the effect on the card or in the execution check do not change. Rejected: make `run` wait for the final outcome for every command (it would hold every button for up to 120 s); a `pending` flag in `Outcome` (a second marker for the same fact as `later`).
+19. **G4: a success side effect runs only on a confirmed success** (revision 3, design review r2 BLOCKER). The release dialog closes only on a confirmed release (`releaseFollowed`, `RELEASE_UNCONFIRMED`); the shell chips are used up only when the prompt is confirmed (`onConfirmed`); "Resume all" counts a pending resume apart (`resumeEach`, `resumeReport`). The audit (§4.2.5) now follows every `.ok` read through props and wrappers. Rejected: hide the chips while the prompt is pending and show them again on a refusal (a session change returns before the follow starts, so the chips would stay hidden; and a second prompt that names them is safe, because the station carries each result once); make "Resume all" follow each pending resume (it would hold the button for up to 120 s per session; each card shows its state).
 
 ## 9. Owner questions
 
@@ -913,8 +1042,8 @@ Cross-track notes:
 ## DL-513: G4 the board follows a pending command with `GET /api/commands/<id>` (design agent, 2026-10-23)
 
 - Context: the board gets the receipt in the HTTP answer when the station decides within 5 s (`command_routes.rs:85-90`; live: 76 refused answers settled in 14 ms on average). After a `pending` answer it never read the command again.
-- Decision: `sessionActions.run` gives a `pending` outcome a `later` follow-up that reads `GET /api/commands/<id>` (1 s ×10, then 5 s, at most 120 s; three failed reads stop it). An outcome with `later` is provisional. The session controller follows each pending command on its own; the rail and the watch tiles show the final refusal; "Mark as ended" marks only on a confirmed outcome; "Return" keeps the follow-up of its resume. The consumers that watch the effect themselves (stop and handover, keep-one, the execution stop) do not change.
-- Rejected: a WebSocket event for commands; a longer `RECEIPT_WAIT`; one follow for each controller (a newer action dropped the older refusal); a `run` that waits for the final outcome.
+- Decision: `sessionActions.run` gives a `pending` outcome a `later` follow-up that reads `GET /api/commands/<id>` (1 s ×10, then 5 s, at most 120 s; three failed reads stop it). An outcome with `later` is provisional. The session controller follows each pending command on its own; the rail and the watch tiles show the final refusal; "Mark as ended" marks only on a confirmed outcome; "Return" keeps the follow-up of its resume; the shell release dialog closes only on a confirmed release; the shell chips are used up only by a confirmed prompt; "Resume all" counts a pending resume apart (revision 3). The consumers that watch the effect themselves (stop and handover, keep-one, the execution stop) do not change.
+- Rejected: a WebSocket event for commands; a longer `RECEIPT_WAIT`; one follow for each controller (a newer action dropped the older refusal); a `run` that waits for the final outcome; chips hidden while pending and shown again on a refusal.
 
 ## DL-514: G4 a refused answer is shown under its request in the dock, and a repeat is counted (design agent, 2026-10-23)
 
@@ -937,3 +1066,23 @@ Report: `~/fleetdeck-briefs/backlog/gaps/adv-design-r1.md` (reviewed commit `8dd
 4. **MINOR, a delayed repeat was not counted (§4.2.2).** Confirmed: revision 1 counted a final outcome against `null`. Fixed although it is minor, because the controller rewrite for finding 2 makes the fix free: the count compares a final outcome with the last final outcome (`settled`) and with the last refusal of the same request; a pending outcome does not touch either. The rail uses `railErrors` with the same rule. Tests: `a pending, then refused answer repeated counts` (`shown.test.ts`) and `the rail counts a delayed repeat of a refusal` (`rail.test.tsx`). Changed: §4.2.2, §4.2.3 item 4, T4, §8 item 17.
 
 Not fixed: none. The task ids do not change; T1 and T4 grow (≈ 340 and ≈ 500 lines) and keep their owned files disjoint from T2 and T3.
+
+## Revision 3 (design review round 2)
+
+Report: `~/fleetdeck-briefs/backlog/gaps/adv-design-r2.md` (reviewed commit `b612bfee`, verdict FAIL). The report confirms the r1 BLOCKER (V49 replay protection), the r1 MAJOR (abandoned follow-up) and the r1 MINOR (repeat count) as fixed. It has one finding. It was checked against the code on `v2` (`00055138`) before the change.
+
+1. **BLOCKER, the consumer audit misses actions that treat pending as confirmed (§4.2.5, confidence 0.99).** Confirmed for both paths:
+   - `SessionView.tsx:507` gives `actions.releaseShell` to the shell card as `onRelease`; `ReleaseDialog.release` (`chat/ShellCard.tsx:107-115`) calls `onClose()` on any `ok`, so a pending release closes the dialog, and a later refusal is shown nowhere.
+   - `SessionView.tsx:612` calls `shellChips.consume(results)` on any `ok` inside the call that it gives to `controller.act('send')`, so a pending prompt hides its chips before the controller follows it; a later refusal leaves them hidden, and the next prompt does not name them (`useShellChips`, `chat/ShellChips.tsx:46-63`).
+
+   **Fixed:**
+   - The contract (§4.2.1 item 1) now names a success side effect inside a call given to `controller.act`.
+   - New helper `onConfirmed` (§4.2.1 item 2): the side effect runs on a final `ok` at once, or when the follow-up resolves `ok`; never on a refusal, a stopped follow or an aborted follow.
+   - The composer uses up the chips through `onConfirmed` (§4.2.3 item 2; `SessionView.tsx` goes to 794 lines). A second prompt that names the same chips while the first is pending is safe: the station carries each result once (`included_in`, `store/shell_runs.rs:379-388`).
+   - `ReleaseDialog` follows a pending release (`releaseFollowed`, `RELEASE_UNCONFIRMED`, §4.2.3 item 9): the dialog shows the pending note, closes only on a confirmed release, and keeps a refusal or the "not confirmed in time" text.
+   - The audit search is wider (§4.2.5): every `SessionActions` command call and every `.ok` read, followed through props and wrappers. It found one more consumer that the review did not name: "Resume all" (`board/FleetBoard.tsx:222-238`) counted a pending resume as resumed. **Fixed:** `resumeEach` and `resumeReport` count it apart (`Resumed 1 of 3. 1 not confirmed yet`), §4.2.3 item 10. The other `.ok` readers are not session commands (drive requests, the terminal hold) and are listed as "No change".
+   - Pending-then-refused regressions: `onConfirmed runs its action only on a confirmed success` (`follow.test.ts`); `a pending release is followed until the station refuses it` and `only a confirmed release closes the dialog` (`shell.test.tsx`); `a pending prompt that the station refuses keeps its shell chip` and `a pending release that the station refuses stays in the dialog` (`e2e/shell-bang.spec.ts`); `resume all counts only a confirmed resume` (`board/resumeAll.test.ts`).
+
+   Changed: §4.2.1 items 1 and 2, §4.2.3 items 2, 9 and 10, §4.2.4, §4.2.5, §5, §7 (cross-track note on `fleet.test.tsx`; T4 owned files, changes, tests and acceptance; T4 is now ≈ 620 lines), §8 item 19, DL-513.
+
+Not fixed: none. The task ids do not change. T4 grows, but it stays one task: the new items use `finalOutcome` and `onConfirmed` from `commands.ts`, which T4 owns, so a split would add a dependency and no parallel work. The owned files of T1 to T4 stay disjoint; T4 does not change `web/src/board/fleet.test.tsx` (last-seen T2 owns it).
