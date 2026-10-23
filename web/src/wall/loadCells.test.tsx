@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationResources, StationView } from '../gen';
 import { card, station } from '../testing/fleet';
 import { SideArea } from './Areas';
-import { heatOf, loadHeading, loadMap, MAX_CELLS, sizeOf } from './loadCells';
+import { cellLabel, heatOf, loadMap, MAX_CELLS, sizeOf } from './loadCells';
+import { LoadCount } from './LoadMap';
 
 const load = (id: string, cpu: number | null, rss: number | null = 340e6) => ({
   session_id: id,
@@ -45,8 +46,8 @@ const display = (
   });
 
 describe('the cells of the load heatmap', () => {
-  test('the size follows cpu_pct and None is the smallest', () => {
-    expect(sizeOf(null)).toBe(1);
+  test('the size follows cpu_pct', () => {
+    expect(sizeOf(1)).toBe(1);
     expect(sizeOf(99)).toBe(1);
     expect(sizeOf(100)).toBe(2);
     expect(sizeOf(799)).toBe(2);
@@ -54,7 +55,6 @@ describe('the cells of the load heatmap', () => {
   });
 
   test('the heat is the share of the station cores', () => {
-    expect(heatOf(null, 8)).toBe('unknown');
     expect(heatOf(399, 8)).toBe('mid');
     expect(heatOf(199, 8)).toBe('low');
     expect(heatOf(200, 8)).toBe('mid');
@@ -63,14 +63,31 @@ describe('the cells of the load heatmap', () => {
     expect(heatOf(900, 0)).toBe('low');
   });
 
-  test('the order is cpu_pct descending, None last, then station and session', () => {
-    const cards = [card('a'), card('b'), card('c'), card('d'), card('e', 'working', 'station-b')];
+  test('the order is cpu_pct descending, then station and session', () => {
+    const cards = [card('a'), card('c'), card('d'), card('e', 'working', 'station-b')];
     const out = loadMap(cards, [
-      owner('station-a', [load('a', 50), load('b', null), load('c', 50), load('d', 700)]),
+      owner('station-a', [load('a', 50), load('c', 50), load('d', 700)]),
       owner('station-b', [load('e', 50)]),
     ]);
-    expect(out.cells.map((c) => c.session)).toEqual(['d', 'a', 'c', 'e', 'b']);
+    expect(out.cells.map((c) => c.session)).toEqual(['d', 'a', 'c', 'e']);
     expect(out.more).toBe(0);
+  });
+
+  test('an idle session (under 1% CPU) and an unknown CPU get no cell: they are counted', () => {
+    const cards = [card('a'), card('idle'), card('zero'), card('dark')];
+    const out = loadMap(cards, [
+      owner('station-a', [load('a', 1), load('idle', 0.5), load('zero', 0), load('dark', null)]),
+    ]);
+    expect(out.cells.map((c) => c.session)).toEqual(['a']);
+    expect(out.more).toBe(3);
+  });
+
+  test('a label leaves out a value that the station does not report', () => {
+    expect(cellLabel('Fix login', 'Alpha', 12, 340e6)).toBe(
+      'Fix login on Alpha: CPU 12%, memory 340 MB',
+    );
+    expect(cellLabel('Fix login', 'Alpha', 12, null)).toBe('Fix login on Alpha: CPU 12%');
+    expect(cellLabel('Fix login', 'Alpha', null, null)).toBe('Fix login on Alpha');
   });
 
   test('a load with no live card gets no cell', () => {
@@ -88,7 +105,7 @@ describe('the cells of the load heatmap', () => {
     expect(loadMap(cards, [station('station-a')]).cells).toHaveLength(0);
   });
 
-  test('it keeps 48 cells and counts the rest', () => {
+  test('it keeps 48 cells and counts the rest (the idle s00 too)', () => {
     const ids = Array.from({ length: 50 }, (_, i) => `s${String(i).padStart(2, '0')}`);
     const out = loadMap(
       ids.map((id) => card(id)),
@@ -124,16 +141,18 @@ describe('the load block of the side area', () => {
     sessions = [card('a', 'working', 'station-a', { callsign: 'Falcon' }), card('b')],
   ) => renderToStaticMarkup(<SideArea sessions={sessions} stations={stations} now={1} />);
 
-  test('a cell has the tooltip, the size and the heat', () => {
+  test('a cell has the tooltip, the size and the heat; an unknown load has no cell', () => {
     const html = render([owner('station-a', [load('a', 450, 2.5e9), load('b', null, null)])]);
-    expect(html).toContain('<h2 class="fd-wall-h">CPU by session</h2>');
+    expect(html).toContain(
+      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">1<span class="fd-vh"> more</span></span></h2>',
+    );
     expect(html).toContain('aria-label="CPU by session"');
     expect(html).toContain('title="Falcon on Alpha: CPU 450%, memory 2.5 GB"');
     expect(html).toContain('data-size="2" data-heat="high"');
-    expect(html).toContain('title="b on Alpha: CPU unknown, memory unknown"');
-    expect(html).toContain('data-size="1" data-heat="unknown"');
     expect(html).toContain('>450%<');
-    expect(html).toContain('>—<');
+    expect(html).not.toContain('b on Alpha');
+    expect(html).not.toContain('unknown');
+    expect(html).not.toContain('>—<');
   });
 
   test('a titled session shows its title, without the callsign type', () => {
@@ -145,10 +164,11 @@ describe('the load block of the side area', () => {
     expect(html).not.toContain('fd-callsign');
   });
 
-  test('the heading counts the cells that are not shown', () => {
-    expect(loadHeading(0)).toBe('CPU by session');
-    expect(loadHeading(1)).toBe('CPU by session (+1 more)');
-    expect(loadHeading(7)).toBe('CPU by session (+7 more)');
+  test('the heading counts the sessions without a cell in a pill, never "(+N more)"', () => {
+    expect(renderToStaticMarkup(<LoadCount n={0} />)).toBe('');
+    expect(renderToStaticMarkup(<LoadCount n={7} />)).toBe(
+      '<span class="fd-count">7<span class="fd-vh"> more</span></span>',
+    );
   });
 
   test('the load block is the last block and has no separate count line', () => {
@@ -195,7 +215,9 @@ describe('the load block of the side area', () => {
       ],
       ids.map((id) => card(id)),
     );
-    expect(html).toContain('<h2 class="fd-wall-h">CPU by session (+2 more)</h2>');
+    expect(html).toContain(
+      '<h2 class="fd-wall-h">CPU by session<span class="fd-count">2<span class="fd-vh"> more</span></span></h2>',
+    );
     expect(html).not.toContain('</p>');
   });
 });

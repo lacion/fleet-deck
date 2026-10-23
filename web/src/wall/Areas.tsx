@@ -12,14 +12,14 @@ import { prOfSession } from '../integrations/model';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
 import { shortPath } from '../chat/PathTail';
-import { homeShortIn } from '../ui/format';
+import { homeShortIn, plainLine } from '../ui/format';
 import { activityTool, homePath } from '../watch/tooltext';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
 import { LoadMap } from './LoadMap';
 import { loadMap } from './loadCells';
-import { NEED_LABEL, type Need, oneLine, usageParts, wallSessions } from './model';
+import { ALL_CLEAR, NEED_LABEL, type Need, oneLine, usageParts, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
 import { stationStats } from './stationStats';
@@ -46,7 +46,9 @@ export function NeedsArea({
         )}
       </h2>
       {needs.length === 0 ? (
-        <p className="fd-wall-note">Nothing needs you.</p>
+        // The calm state of the fleet and Watch headers (§4.4): green, the same words. The wall
+        // shows no conflict, so it never needs the "Nothing needs you." of a fleet with one.
+        <p className="fd-wall-note fd-wall-clear">{ALL_CLEAR}</p>
       ) : (
         <ol className="fd-wall-needs">
           {needs.map(({ card, request }) => {
@@ -241,6 +243,10 @@ export function SideArea({
   );
 }
 
+/** A prose row: the first line of the text without its Markdown marks, cut to 160 characters. */
+export const proseLine = (text: string): string =>
+  oneLine(plainLine(oneLine(text, Number.POSITIVE_INFINITY)), 160);
+
 /** The rows that the stream keeps. */
 export const STREAM_ITEMS = 50;
 /** The wait between two reads of the stream. */
@@ -316,6 +322,7 @@ export function StreamArea({
             // words (no raw MCP id, no "(ok)"), a command or a path in mono, words in sans, and a
             // failed or denied call as a hazard badge.
             const tool = activityTool(item.kind, text);
+            const name = item.session_title ?? item.session_id;
             return (
               <li
                 key={`${item.station_id}/${item.session_id}/${item.station_seq ?? `m${n}`}`}
@@ -323,35 +330,40 @@ export function StreamArea({
                 data-outcome={tool?.outcome ?? undefined}
               >
                 <time dateTime={new Date(item.at).toISOString()}>{relativeAge(item.at, now)}</time>{' '}
-                <strong>{item.session_title ?? item.session_id}</strong>{' '}
-                {tool === null ? (
-                  text
-                ) : (
-                  <>
-                    {tool.lead === '' ? null : `${tool.lead} `}
-                    <b className="fd-wall-tool">{tool.name}</b>
-                    {tool.target === '' ? null : tool.form === 'words' ? (
-                      <> {tool.target}</>
-                    ) : (
-                      <>
-                        {' '}
-                        <code>
-                          {tool.form === 'path'
-                            ? shortPath(homePath(tool.target), 60)
-                            : homeShortIn(tool.target)}
-                        </code>
-                      </>
-                    )}
-                    {tool.outcome === null ? null : (
-                      <>
-                        {' '}
-                        <span className="fd-badge" data-tone="hazard">
-                          {tool.outcome === 'failed' ? 'Failed' : 'Denied'}
-                        </span>
-                      </>
-                    )}
-                  </>
-                )}
+                {/* The session is a column of its own (16ch, wall.css): every event starts at one x. */}
+                <strong title={name}>{name}</strong>{' '}
+                {/* The event: an ultra row wraps it under itself (wall.css). */}
+                <span className="fd-wall-event">
+                  {tool === null ? (
+                    // Prose is one plain line, as on the tile above it: no Markdown marks.
+                    proseLine(item.text)
+                  ) : (
+                    <>
+                      {tool.lead === '' ? null : `${tool.lead} `}
+                      <b className="fd-wall-tool">{tool.name}</b>
+                      {tool.target === '' ? null : tool.form === 'words' ? (
+                        <> {tool.target}</>
+                      ) : (
+                        <>
+                          {' '}
+                          <code>
+                            {tool.form === 'path'
+                              ? shortPath(homePath(tool.target), 60)
+                              : homeShortIn(tool.target)}
+                          </code>
+                        </>
+                      )}
+                      {tool.outcome === null ? null : (
+                        <>
+                          {' '}
+                          <span className="fd-badge" data-tone="hazard">
+                            {tool.outcome === 'failed' ? 'Failed' : 'Denied'}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  )}
+                </span>
               </li>
             );
           })}

@@ -58,15 +58,35 @@ function lineOf(event: DisplayEvent, withEnds: boolean): DisplayLine | null {
   }
 }
 
+/**
+ * The lines of the events, oldest first. One tool call is one line: a later event of the same call
+ * (its end, with its status) replaces the line of its start in place, so a call never reads twice.
+ */
+function linesOf(events: readonly DisplayEvent[], withEnds: boolean): DisplayLine[] {
+  const out: DisplayLine[] = [];
+  const calls = new Map<string, number>();
+  for (const e of events) {
+    const line = lineOf(e, withEnds);
+    if (line === null) continue;
+    const node = e.item.item === 'tool' ? e.item.node_id : null;
+    const at = node === null ? undefined : calls.get(node);
+    const first = at === undefined ? undefined : out[at];
+    if (at !== undefined && first !== undefined) {
+      out[at] = { ...line, key: first.key };
+      continue;
+    }
+    if (node !== null) calls.set(node, out.length);
+    out.push(line);
+  }
+  return out;
+}
+
 /** The lines of the chat pane, oldest first, at most `max`. */
 export function displayChatLines(
   events: readonly DisplayEvent[],
   max: number = CHAT_MAX,
 ): DisplayLine[] {
-  return events
-    .map((e) => lineOf(e, true))
-    .filter((l): l is DisplayLine => l !== null)
-    .slice(-max);
+  return linesOf(events, true).slice(-max);
 }
 
 const cut = (text: string): string => {
@@ -78,15 +98,17 @@ const cut = (text: string): string => {
   return line.length <= LINE_MAX ? line : `${line.slice(0, LINE_MAX - 1)}…`;
 };
 
-/** The last agent text and tool lines of a tile, oldest first (the form of `tileLines`). */
+/**
+ * The last agent text and tool lines of a tile, oldest first (the form of `tileLines`). A line that
+ * is empty without its Markdown marks is no line: a tile never draws a blank row.
+ */
 export function displayTileLines(
   events: readonly DisplayEvent[],
   max: number = TILE_LINES,
 ): readonly TileLine[] {
   const out: TileLine[] = [];
-  for (const e of events) {
-    const line = lineOf(e, false);
-    if (line === null || (line.kind !== 'message' && line.kind !== 'tool')) continue;
+  for (const line of linesOf(events, false)) {
+    if (line.kind !== 'message' && line.kind !== 'tool') continue;
     const text = cut(line.text);
     if (text !== '') out.push({ key: line.key, kind: line.kind, text });
   }
