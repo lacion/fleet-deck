@@ -35,6 +35,7 @@ impl ClaudeAdapter {
         let caps = capabilities(self.config.allow_bypass);
         let launch = Launch {
             model: spec.model.clone(),
+            effort: spec.effort.clone(),
             mode: spec.mode.clone(),
             resume: resume.cloned(),
             fork: false,

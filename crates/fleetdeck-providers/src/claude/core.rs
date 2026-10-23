@@ -18,6 +18,7 @@ use fleetdeck_proto::{
 use serde_json::Value;
 
 use super::args::input_uuid;
+use super::effort_set::EffortSet;
 use super::frames::CliFrame;
 use super::{control, map};
 use crate::adapter::{HostInput, ProviderError, Result};
@@ -241,6 +242,23 @@ pub struct ClaudeCore {
     /// The last effort that this core emitted (a valid id, B18).
     #[serde(default)]
     pub(super) effort: Option<String>,
+    /// The models of the last `initialize` answer, with their ids and effort
+    /// levels (B18 Phase 2).
+    #[serde(default)]
+    pub(super) model_choices: Vec<ModelChoice>,
+    /// The model of the last `get_settings` answer.
+    #[serde(default)]
+    pub(super) applied_model: Option<String>,
+    /// The model of the last `session.started` or `model.changed` that this
+    /// core emitted. `None` in a restored older checkpoint.
+    #[serde(default)]
+    pub(super) reported_model: Option<String>,
+    /// Counter of the `fd-effort-N` request ids.
+    #[serde(default)]
+    pub(super) effort_seq: u64,
+    /// The `apply_flag_settings` requests of an effort change, by `N`.
+    #[serde(default)]
+    pub(super) effort_sets: BTreeMap<u64, EffortSet>,
 }
 
 impl ClaudeCore {
@@ -281,6 +299,11 @@ impl ClaudeCore {
             settings_again: false,
             settings_stopped: false,
             effort: None,
+            model_choices: Vec::new(),
+            applied_model: None,
+            reported_model: None,
+            effort_seq: 0,
+            effort_sets: BTreeMap::new(),
         }
     }
 

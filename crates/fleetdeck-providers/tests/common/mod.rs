@@ -34,6 +34,7 @@ pub fn launch_of(args: &[Value]) -> Launch {
     };
     Launch {
         model: after("--model"),
+        effort: after("--effort"),
         mode: after("--permission-mode"),
         resume: after("--resume").map(NativeSessionId),
         fork: args.contains(&"--fork-session"),

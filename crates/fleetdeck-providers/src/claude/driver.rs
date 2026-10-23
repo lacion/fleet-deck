@@ -161,6 +161,7 @@ impl ClaudeAdapter {
         };
         let launch = Launch {
             model: spec.model.clone(),
+            effort: spec.effort.clone(),
             mode: spec.mode.clone(),
             resume,
             fork,
@@ -573,6 +574,12 @@ impl LiveSession for ClaudeSession {
     async fn set_model(&mut self, model: ModelId) -> Result<()> {
         require(&self.caps, Operation::SetModel)?;
         self.run(move |c| c.set_model(&model.0)).await
+    }
+
+    async fn set_effort(&mut self, effort: String, control_id: Option<ControlId>) -> Result<()> {
+        require(&self.caps, Operation::SetEffort)?;
+        self.run(move |c| c.set_effort(&effort, control_id.map(|c| c.0)))
+            .await
     }
 
     /// Claude forks by starting a new process with `--resume <id>

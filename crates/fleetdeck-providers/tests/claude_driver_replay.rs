@@ -37,7 +37,7 @@ use fleetdeck_providers::claude::{
 };
 use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_providers::rawlog::RawLogLimits;
-use fleetdeck_providers::{Answer, Emitted, EventSink, HostInput, LiveSession, ModelId};
+use fleetdeck_providers::{Answer, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId};
 use fleetdeck_testkit::FakeAgent;
 use fleetdeck_testkit::fake::SCENARIO_ENV;
 use serde_json::Value;
@@ -124,6 +124,9 @@ async fn apply(session: &mut ClaudeSession, cmd: HostCmd) {
         HostCmd::SetModel { model } => {
             let model = model.unwrap_or_else(|| "default".to_owned());
             session.set_model(ModelId(model)).await
+        }
+        HostCmd::SetEffort { effort, control_id } => {
+            session.set_effort(effort, control_id.map(ControlId)).await
         }
     };
     result.expect("a recorded host command");

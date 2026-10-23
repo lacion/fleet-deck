@@ -20,7 +20,7 @@ use fleetdeck_proto::effort::effort_of;
 use serde_json::{Value, json};
 
 use super::core::{ClaudeCore, Output};
-use super::{control, frames::ControlResponse};
+use super::{control, effort_set, frames::ControlResponse};
 
 /// The id prefix of the host's `get_settings` requests.
 pub const SETTINGS_ID_PREFIX: &str = "fd-settings-";
@@ -61,10 +61,11 @@ fn settings_seq_of(request_id: &str) -> Option<u64> {
 /// The answer to a `get_settings` request (its id starts with
 /// [`SETTINGS_ID_PREFIX`]).
 pub(super) fn on_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Output> {
-    if settings_seq_of(&resp.request_id) != core.settings_open {
+    let Some(seq) = settings_seq_of(&resp.request_id).filter(|n| Some(*n) == core.settings_open)
+    else {
         // The late answer of a replaced request.
         return Vec::new();
-    }
+    };
     core.settings_open = None;
     core.settings_asked = None;
     let applied = resp
@@ -78,14 +79,23 @@ pub(super) fn on_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<
             error = resp.error.as_deref().unwrap_or_default(),
             "claude get_settings not supported: no more asks in this process"
         );
-        return Vec::new();
+        // No read will verify an applied effort change any more.
+        return effort_set::stop_verifying(core);
     };
     let effort = effort_of(applied.get("effort").and_then(Value::as_str));
     let mut out = Vec::new();
     if effort != core.effort {
         core.effort.clone_from(&effort);
-        out.push(Output::Emit(Event::EffortChanged { effort }));
+        out.push(Output::Emit(Event::EffortChanged {
+            effort: effort.clone(),
+        }));
     }
+    out.extend(effort_set::after_settings(
+        core,
+        applied,
+        effort.as_deref(),
+        seq,
+    ));
     if std::mem::take(&mut core.settings_again) {
         out.extend(core.settings_request());
     }

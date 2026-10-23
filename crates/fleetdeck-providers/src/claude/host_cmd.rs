@@ -36,6 +36,12 @@ pub enum HostCmd {
         /// `None` is the default-model sentinel (trap 2).
         model: Option<String>,
     },
+    /// A change of the reasoning effort (B18 Phase 2).
+    SetEffort {
+        effort: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control_id: Option<String>,
+    },
 }
 
 impl ClaudeCore {
@@ -71,6 +77,9 @@ impl ClaudeCore {
             HostCmd::Interrupt => self.interrupt(None),
             HostCmd::SetMode { mode } => self.set_mode(mode),
             HostCmd::SetModel { model } => self.set_model(model.as_deref().unwrap_or("default")),
+            HostCmd::SetEffort { effort, control_id } => {
+                self.set_effort(effort, control_id.clone())
+            }
         }
     }
 }

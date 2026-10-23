@@ -53,12 +53,18 @@ fn an_initialize_answer_before_the_first_init_emits_the_models_after_the_session
         events[2],
         Event::SessionModels {
             models: vec![
-                model_choice(
-                    "default",
-                    "Default (recommended)",
-                    Some("Use the default model")
-                ),
-                model_choice("opus", "Opus", None),
+                ModelChoice {
+                    resolved: Some("claude-opus-5-5".to_owned()),
+                    ..model_choice(
+                        "default",
+                        "Default (recommended)",
+                        Some("Use the default model")
+                    )
+                },
+                ModelChoice {
+                    resolved: Some("claude-opus-5-5".to_owned()),
+                    ..model_choice("opus", "Opus", None)
+                },
                 model_choice("haiku", "haiku", None),
             ]
         }

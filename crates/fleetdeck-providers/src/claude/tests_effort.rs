@@ -17,7 +17,7 @@ use crate::checkpoint::AdapterCheckpoint;
 const SECRET: &str = "fd-test-secret-0001";
 
 fn init_frame() -> Value {
-    json!({"type":"system","subtype":"init","session_id":"s-1","model":"claude-haiku-4-5",
+    json!({"type":"system","subtype":"init","session_id":"s-1","model":"claude-sonnet-5-5",
            "permissionMode":"default","claude_code_version":"2.1.308"})
 }
 
