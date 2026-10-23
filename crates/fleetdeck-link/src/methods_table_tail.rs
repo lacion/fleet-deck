@@ -19,6 +19,18 @@ const fn mv(name: &'static str, scope: Scope, mutating: bool) -> MethodSpec {
     )
 }
 
+/// A deck-to-station row of `mcp_apps.v1` (B15): never mutating (an app call
+/// has its own durable row, design `mcp-apps.md` §4.6).
+const fn app_row(name: &'static str, scope: Scope) -> MethodSpec {
+    m(
+        name,
+        Callers::DeckToStation,
+        scope,
+        Some(feature::MCP_APPS),
+        false,
+    )
+}
+
 /// A row of feature `desktop_shell.v1` (R13 P4): never mutating.
 const fn shell_row(name: &'static str, callers: Callers, scope: Scope) -> MethodSpec {
     m(name, callers, scope, Some(feature::DESKTOP_SHELL), false)
@@ -33,7 +45,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 63] = [
+pub(crate) const TAIL: [MethodSpec; 68] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -318,4 +330,11 @@ pub(crate) const TAIL: [MethodSpec; 63] = [
         Some(feature::FLEET_VIEW),
         false,
     ),
+    // MCP Apps (B15, `mcp_apps.v1`): the app document and its calls. A call
+    // and a release drive the session; none is a durable command.
+    app_row("session.app_meta", Scope::Read),
+    app_row("session.app_document", Scope::Read),
+    app_row("session.app_call", Scope::Drive),
+    app_row("session.app_calls", Scope::Read),
+    app_row("session.app_release", Scope::Drive),
 ];

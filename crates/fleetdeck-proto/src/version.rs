@@ -264,6 +264,11 @@ pub mod feature {
     /// per-session grant record (MCP P4b §9).
     pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
 
+    /// MCP Apps (B15): the link methods `session.app_meta`,
+    /// `session.app_document`, `session.app_call`, `session.app_calls` and
+    /// `session.app_release`, and the `tool.app` event.
+    pub const MCP_APPS: &str = "mcp_apps.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -329,6 +334,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        MCP_APPS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -505,7 +511,19 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
+        assert!(feature::ALL.contains(&feature::DESKTOP_TOOL_INSTALL));
+    }
+
+    #[test]
+    fn the_mcp_apps_feature_has_its_name_and_is_offered_by_this_build() {
+        assert_eq!(feature::MCP_APPS, "mcp_apps.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::MCP_APPS));
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "mcp_apps.v1")
+        );
     }
 
     #[test]

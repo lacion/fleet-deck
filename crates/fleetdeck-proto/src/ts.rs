@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::accounts as acc;
+use crate::apps as ap;
 use crate::artifacts::{
     Artifact, ArtifactDeleteParams, ArtifactDeleted, ArtifactDeletedState, ArtifactDetail,
     ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind, ArtifactList,
@@ -335,6 +336,23 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ArtifactPublishRequest::export_all(&cfg),
         DeckArtifact::export_all(&cfg),
         DeckArtifactDetail::export_all(&cfg),
+        ap::AppCsp::export_all(&cfg),
+        ap::AppMetaQuery::export_all(&cfg),
+        ap::AppDocumentQuery::export_all(&cfg),
+        ap::AppMeta::export_all(&cfg),
+        ap::AppCallState::export_all(&cfg),
+        ap::AppUncertainCause::export_all(&cfg),
+        ap::AppOpenCall::export_all(&cfg),
+        ap::AppCallsQuery::export_all(&cfg),
+        ap::AppCallsReply::export_all(&cfg),
+        ap::AppReleaseParams::export_all(&cfg),
+        ap::AppReleaseReply::export_all(&cfg),
+        ap::AppDocumentChunk::export_all(&cfg),
+        ap::AppRequest::export_all(&cfg),
+        ap::AppCallParams::export_all(&cfg),
+        ap::AppCallReply::export_all(&cfg),
+        ap::AppCallBody::export_all(&cfg),
+        ap::AppViewReply::export_all(&cfg),
         DisplayView::export_all(&cfg),
         DisplayBinding::export_all(&cfg),
         SessionRef::export_all(&cfg),

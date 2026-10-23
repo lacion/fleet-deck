@@ -422,3 +422,24 @@ fn the_p5a_rows_are_admin_deck_to_station_and_never_mutating() {
     assert_eq!(feature::DESKTOP_CAPTURE, "desktop_capture.v1");
     assert_eq!(feature::ARTIFACTS_DELETE, "artifacts_delete.v1");
 }
+
+/// B15: the five deck-to-station rows of `mcp_apps.v1`, none mutating.
+#[test]
+fn app_methods_scopes() {
+    for (name, scope) in [
+        ("session.app_meta", Scope::Read),
+        ("session.app_document", Scope::Read),
+        ("session.app_call", Scope::Drive),
+        ("session.app_calls", Scope::Read),
+        ("session.app_release", Scope::Drive),
+    ] {
+        let spec = method(name).expect(name);
+        assert_eq!(spec.callers, Callers::DeckToStation, "{name}");
+        assert_eq!(spec.scope, scope, "{name}");
+        assert_eq!(spec.feature, Some(feature::MCP_APPS), "{name}");
+        assert_eq!(spec.feature, Some("mcp_apps.v1"), "{name}");
+        assert!(!spec.mutating, "{name}");
+    }
+    assert!(feature::ALL.contains(&feature::MCP_APPS));
+    assert!(!feature::REQUIRED.contains(&feature::MCP_APPS));
+}

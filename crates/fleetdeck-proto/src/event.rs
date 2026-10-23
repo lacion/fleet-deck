@@ -451,6 +451,19 @@ pub enum Event {
     /// `summary.moved_to` when `move_id` matches.
     #[serde(rename = "session.move_undone")]
     SessionMoveUndone { move_id: String },
+    /// A tool call of this node shipped an MCP App that the station stored
+    /// (B15). Older peers decode this kind as unknown.
+    #[serde(rename = "tool.app")]
+    ToolApp {
+        node_id: NodeId,
+        app_id: String,
+        server: String,
+        tool: String,
+        resource_uri: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        prefers_border: Option<bool>,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

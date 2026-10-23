@@ -369,6 +369,14 @@ fn samples() -> Vec<Event> {
         Event::SessionMoveUndone {
             move_id: "mv-1".into(),
         },
+        Event::ToolApp {
+            node_id: "node-1".into(),
+            app_id: "app-1".into(),
+            server: "srv".into(),
+            tool: "show".into(),
+            resource_uri: "ui://srv/show".into(),
+            prefers_border: Some(true),
+        },
     ]
 }
 
