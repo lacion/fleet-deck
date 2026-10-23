@@ -4,6 +4,7 @@
 // on, a new station and a new binding need the owner's elevation (the deck says so;
 // `withElevation`). The fields are the settings field rows (§4.7, `Field layout="row"`).
 import { useEffect, useId, useRef, useState } from 'react';
+import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { DisplayView, MonitorInfo, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
@@ -361,6 +362,15 @@ export function DisplayRow({
         <Menu summary={<Icon of={Ellipsis} />} summaryClass="fd-iconbtn" label="Display actions">
           {(close) => (
             <>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  window.location.hash = formatHash({ name: 'remote', id: display.display_id });
+                }}
+              >
+                Remote control
+              </button>
               <button
                 type="button"
                 disabled={busy}

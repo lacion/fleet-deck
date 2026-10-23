@@ -4,6 +4,7 @@
 // A press sends one request and never repeats it: an action whose result is not known can have
 // run on the station.
 import { useState } from 'react';
+import { formatHash } from '../app/routes';
 import type { DesktopActBody, DesktopInfo, StationView } from '../gen';
 import { useSettings } from '../settings/context';
 import { describe } from '../settings/http';
@@ -247,6 +248,15 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
                 {w.monitor === null ? '' : ` on ${w.monitor}`}
               </span>
               <span className="fd-desk-buttons">
+                <button
+                  type="button"
+                  className="fd-sm"
+                  onClick={() => {
+                    window.location.hash = formatHash({ name: 'remote', id: w.display_id });
+                  }}
+                >
+                  Remote
+                </button>
                 <button
                   type="button"
                   className="fd-sm"

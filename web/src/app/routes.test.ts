@@ -295,3 +295,20 @@ describe('the wall route (R13 P1)', () => {
     expect((parseHash('#/wall?mode=race&batch=B') as WallRoute).mode).toBe('race');
   });
 });
+
+describe('the remote route (B17)', () => {
+  test('remote_route_round_trips', () => {
+    const route: Route = { name: 'remote', id: '01JABCDEFGHJKMNPQRSTVWXYZ0' };
+    expect(formatHash(route)).toBe('#/remote/01JABCDEFGHJKMNPQRSTVWXYZ0');
+    expect(parseHash(formatHash(route))).toEqual(route);
+    // A part with a slash or a space is encoded and comes back as it was.
+    const odd: Route = { name: 'remote', id: 'a b/c' };
+    expect(formatHash(odd)).toBe('#/remote/a%20b%2Fc');
+    expect(parseHash(formatHash(odd))).toEqual(odd);
+    // A missing id, an extra part and a bad escape are the home.
+    expect(parseHash('#/remote')).toEqual({ name: 'home' });
+    expect(parseHash('#/remote/')).toEqual({ name: 'home' });
+    expect(parseHash('#/remote/a/b')).toEqual({ name: 'home' });
+    expect(parseHash('#/remote/%E0%A4%A')).toEqual({ name: 'home' });
+  });
+});

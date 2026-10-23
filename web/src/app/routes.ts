@@ -54,6 +54,8 @@ export type Route =
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
   | WallRoute
+  /** B17: the remote of one wall display (owner only). */
+  | { readonly name: 'remote'; readonly id: string }
   | { readonly name: 'artifacts' }
   | { readonly name: 'projects' }
   | { readonly name: 'project'; readonly id: string }
@@ -252,6 +254,15 @@ export function parseHash(hash: string): Route {
       return HOME;
     }
   }
+  // B17: `#/remote/<display id>`.
+  if (parts.length === 3 && parts[0] === '' && parts[1] === 'remote') {
+    try {
+      const id = decodeURIComponent(parts[2] ?? '');
+      return id === '' ? HOME : { name: 'remote', id };
+    } catch {
+      return HOME;
+    }
+  }
   // R3: `#/project/<id>`.
   if (parts.length === 3 && parts[0] === '' && parts[1] === 'project') {
     try {
@@ -318,6 +329,8 @@ export function formatHash(route: Route): string {
       return `#/compare/${encodeURIComponent(route.batch)}`;
     case 'project':
       return `#/project/${encodeURIComponent(route.id)}`;
+    case 'remote':
+      return `#/remote/${encodeURIComponent(route.id)}`;
     case 'settings':
       return formatSettings(route);
     case 'artifact': {

@@ -11,7 +11,11 @@ import type {
   DisplayList,
   DisplayView,
   StationId,
+  WallControl,
+  WallControlAck,
+  WallRemoteView,
 } from '../gen';
+import { controlAck, remoteView } from '../remote/api';
 import { DeckError, type DeckIo } from '../settings/http';
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -52,6 +56,12 @@ export type DisplayActions = {
   change(id: string, change: DisplayChange, elevation: string | null): Promise<DisplayView>;
   revoke(id: string): Promise<void>;
   directive(id: string, body: DirectiveBody): Promise<DirectiveView>;
+  /** B17: `GET /api/displays/{id}/remote?after=<seq>`: the state of the wall remote. */
+  remote(id: string, after: number): Promise<WallRemoteView>;
+  /** B17: `POST /api/displays/{id}/control`: one scroll or select step. */
+  control(id: string, control: WallControl): Promise<WallControlAck>;
+  /** B17: `POST /api/displays/{id}/remote/navigate`: an owner directive that the wall reads at once. */
+  remoteNavigate(id: string, directive: DirectiveBody): Promise<WallControlAck>;
 };
 
 const withElevation = (elevation: string | null) => (elevation === null ? {} : { elevation });
@@ -108,6 +118,12 @@ export function displayActions(io: DeckIo): DisplayActions {
       }
       return v as DirectiveView;
     },
+    remote: async (id, after) =>
+      remoteView(await io.get(`/api/displays/${seg(id)}/remote?after=${after}`)),
+    control: async (id, control) =>
+      controlAck(await io.post(`/api/displays/${seg(id)}/control`, { control })),
+    remoteNavigate: async (id, directive) =>
+      controlAck(await io.post(`/api/displays/${seg(id)}/remote/navigate`, { directive })),
   };
 }
 

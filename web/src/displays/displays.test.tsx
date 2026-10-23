@@ -1,6 +1,7 @@
 // R13 P2c, P3c: the owner's side: the Displays page, "Send to wall" and the Desktop panel.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { formatHash } from '../app/routes';
 import { DesktopPanel } from '../desktop/DesktopPanel';
 import { isWebUrl } from '../desktop/DesktopForms';
 import type { DesktopInfo, DisplayView, PendingPairing, StationView } from '../gen';
@@ -362,6 +363,17 @@ describe('a display row', () => {
     expect(html).not.toContain('Revoke this display?');
   });
 
+  test('the_row_menu_opens_the_remote', () => {
+    const html = row(base);
+    // "Remote control" is the first item of the menu of the row, before "Switch to Mission view".
+    const menu = html.slice(html.indexOf('aria-label="Display actions"'));
+    expect(menu).toContain('Remote control');
+    expect(menu.indexOf('Remote control')).toBeLessThan(menu.indexOf('Switch to Mission view'));
+    expect(menu.indexOf('Remote control')).toBeLessThan(menu.indexOf('Revoke…'));
+    // It opens the route of the display.
+    expect(formatHash({ name: 'remote', id: base.display_id })).toBe(`#/remote/${base.display_id}`);
+  });
+
   test('quiet hours are a switch and two times that read the stored text', () => {
     const html = row(base);
     expect(html).toContain('role="group" aria-label="Quiet hours"');
@@ -645,6 +657,13 @@ describe('the Desktop panel', () => {
     expect(html).toContain('Lock the screen');
     expect(html).toContain('Do not disturb');
     expect(html).toContain('Open the wall');
+  });
+
+  test('each open wall has a Remote button before Reload', () => {
+    const html = render(withInfo(info));
+    const wall = html.slice(html.indexOf('Wall D1 on DP-1'));
+    expect(wall).toContain('>Remote</button>');
+    expect(wall.indexOf('>Remote</button>')).toBeLessThan(wall.indexOf('>Reload</button>'));
   });
 
   test('it is absent without the owner settings', () => {
