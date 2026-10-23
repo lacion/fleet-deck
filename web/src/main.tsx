@@ -53,6 +53,23 @@ for (const [type, modality] of [
     { capture: true, passive: true },
   );
 }
+// A theme change is one step (base.css `:root[data-theme-switching]`, DESIGN-SYSTEM §2.5). Every
+// write of `<html data-theme>` (the Appearance choice, the System scheme at sunset, forced colors,
+// an Omarchy palette: `ui/theme.ts`, `ui/palette.ts`) stops the color transitions for two frames,
+// so that no button, tab or segment fades for 120ms through the old theme. The observer runs
+// before the next style update, and a transition that a style read had started is cancelled.
+const html = document.documentElement;
+let themeWrites = 0;
+const themeWatch = new MutationObserver(() => {
+  const write = ++themeWrites;
+  html.dataset['themeSwitching'] = '';
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      if (write === themeWrites) delete html.dataset['themeSwitching'];
+    }),
+  );
+});
+themeWatch.observe(html, { attributeFilter: ['data-theme'] });
 const root = document.getElementById('root');
 if (root === null) {
   throw new Error('index.html has no #root element');

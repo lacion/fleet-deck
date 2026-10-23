@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   addedText,
+  archLabel,
   compactCount,
   contextLabel,
   countText,
@@ -231,5 +232,20 @@ describe('monitorLabel', () => {
       'eDP-1 — Samsung Display Corp. 0x41AA',
     );
     expect(monitorRaw(m('DP-1', ''))).toBe('DP-1');
+  });
+});
+
+describe('archLabel (DESIGN-SYSTEM §5)', () => {
+  test('the Rust target names become the names that owners know', () => {
+    expect(archLabel('aarch64')).toBe('arm64');
+    expect(archLabel('arm64')).toBe('arm64');
+    expect(archLabel('x86_64')).toBe('x86_64');
+    expect(archLabel('amd64')).toBe('x86_64');
+    expect(archLabel('AArch64')).toBe('arm64');
+  });
+
+  test('any other architecture stays as it is', () => {
+    expect(archLabel('riscv64')).toBe('riscv64');
+    expect(archLabel('')).toBe('');
   });
 });

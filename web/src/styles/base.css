@@ -198,6 +198,16 @@ body {
   /* biome-ignore lint/complexity/noImportantStyles: the motion preference must beat every transition of every area rule */
   transition: none !important;
 }
+/* A theme change is one step: while `<html data-theme-switching>` is set (main.tsx, for the two
+   frames after every change of `data-theme`: the Appearance choice, the System scheme at sunset,
+   an Omarchy palette), no color transition runs. Without it the buttons, tabs and segments faded
+   for 120ms through the old theme while the page changed at once (near-white text on white). */
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: a theme change must beat every transition of every area rule */
+  transition: none !important;
+}
 
 /* ── type helpers ───────────────────────────────────────────────── */
 /* The width axis carries meaning: condensed = callsign, wide = place (§2.3). */
@@ -417,17 +427,20 @@ a.fd-btn {
 }
 /* A select keeps room for its chevron when .fd-sm sets the padding of a button. */
 :where(select:not([multiple]):not([size])).fd-sm {
-  padding-right: 28px;
+  padding-right: 24px;
 }
 /* A ghost select (the fleet Group by, the Watch and Artifacts filters): a quiet view option in a
    page header. No fill and no edge at rest; on hover the --raised fill, the --ctl-edge edge (3:1)
    and --text; on keyboard focus the --focus edge of every field. Only the background color
-   changes: the chevron is the background image. Forced colors give it an edge (below).
+   changes: the chevron is the background image, in the text color (the chevron of a ghost menu
+   summary). Weight 500, the weight of the ghost buttons of the same header. Forced colors give
+   it an edge (below).
    It is as wide as its current option (`field-sizing: content`, Chromium 123+ and Safari; Firefox
-   keeps the width of the longest option), up to 220px with an ellipsis: a select as wide as its
-   longest option left the chevron 14–130px after a short label, where it read as a second
-   control. */
+   keeps the width of the longest option), up to 220px (with an ellipsis in Firefox and Safari; the
+   styled select of Chromium cuts a longer label at the chevron): a select as wide as its longest
+   option left the chevron 14–130px after a short label, where it read as a second control. */
 select.fd-ghost {
+  --select-chevron: currentColor;
   field-sizing: content;
   min-width: 0;
   max-width: 220px;
@@ -435,6 +448,21 @@ select.fd-ghost {
   background-color: transparent;
   border-color: transparent;
   color: var(--dim);
+  font-weight: 500;
+}
+/* On a touch screen a field has 16px text (no iOS zoom, --fs-field), and a ghost select sat in a
+   13px line ("Accounts on [Lighting]") or next to 12px ghost buttons ("v2 (latest)", "Open in a
+   new tab"): two type sizes in one line. The line that holds a ghost select takes the field size:
+   the scope line of a settings tab, and the ghost buttons and links of a page header with one. */
+@media (pointer: coarse) {
+  .fd-set-scope:has(> select.fd-ghost) {
+    font-size: var(--fs-field);
+  }
+  .fd-page-head:has(select.fd-ghost)
+    :is(.fd-page-filters, .fd-page-actions)
+    > :is(.fd-ghost, a.fd-btn.fd-ghost):not(select, .fd-iconbtn) {
+    font-size: var(--fs-field);
+  }
 }
 @media (hover: hover) {
   select.fd-ghost:hover:not(:disabled) {
@@ -506,6 +534,7 @@ select.fd-ghost[data-active="true"] {
 .fd-decide > .fd-kbd {
   background: color-mix(in srgb, currentColor 14%, transparent);
   color: inherit;
+  box-shadow: none;
 }
 /* The key hint of a primary that is not ready: no slab of its own, the --faint of the button. */
 :is(.fd-primary, .fd-decide):disabled > .fd-kbd {
@@ -604,36 +633,148 @@ select.fd-ghost[data-active="true"] {
 :where(input[type="time"]:disabled)::-webkit-calendar-picker-indicator {
   cursor: not-allowed;
 }
-/* The select chevron. A <select> has no pseudo-elements, so a mask cannot draw it: two
-   1.5px diagonal strokes (linear gradients in --dim) draw Lucide's chevron-down. */
+/* The select chevron: the glyph of every menu trigger, the 12px Lucide chevron-down of a toggle
+   summary (Filters, Compare configs): a 7×3.5px V with a 1.25px stroke, its ends 10.5px and
+   17.5px in from the padding edge, 6.5px after the label (padding-right 24px), as in the summary.
+   A mask cannot draw it (a native select has no pseudo-element, and the picker icon of a styled
+   picker takes no mask: it is hidden, below), so two 45° strokes (linear gradients) draw it. The
+   stroke is --dim; a ghost select draws it in its text color (--dim, hover --text), as a ghost
+   menu summary does. */
 :where(select:not([multiple]):not([size])) {
+  --select-chevron: var(--dim);
   appearance: none;
-  padding-right: 28px;
+  padding-right: 24px;
   background-image:
     linear-gradient(
       45deg,
-      transparent calc(50% - 1.1px),
-      var(--dim) calc(50% - 0.6px),
-      var(--dim) calc(50% + 0.6px),
-      transparent calc(50% + 1.1px)
+      transparent calc(50% - 0.9px),
+      var(--select-chevron) calc(50% - 0.4px),
+      var(--select-chevron) calc(50% + 0.4px),
+      transparent calc(50% + 0.9px)
     ),
     linear-gradient(
       135deg,
-      transparent calc(50% - 1.1px),
-      var(--dim) calc(50% - 0.6px),
-      var(--dim) calc(50% + 0.6px),
-      transparent calc(50% + 1.1px)
+      transparent calc(50% - 0.9px),
+      var(--select-chevron) calc(50% - 0.4px),
+      var(--select-chevron) calc(50% + 0.4px),
+      transparent calc(50% + 0.9px)
     );
   background-position:
     right 14px center,
-    right 10px center;
-  background-size: 4px 4px;
+    right 10.5px center;
+  background-size: 3.5px 3.5px;
   background-repeat: no-repeat;
   cursor: pointer;
 }
 :where(select) option {
   background: var(--raised);
   color: var(--text);
+}
+/* The list of a select is a menu of the board (§3 `.fd-menu`), not the list of the operating
+   system: Chromium 135+ styles it (`appearance: base-select`). The native list of Chrome on Linux
+   had square corners, no shadow, the OS blue highlight and font and 25px rows, next to the styled
+   Filters menu of the same header. The picker is the `.fd-menu-body` popover (--raised, a
+   --border-soft edge, --r-panel, --shadow-pop, 4px padding, 4px under the select); a row is a
+   menu row (28px, 44px on touch; 8px sides; 13px weight 500 --text; hover --badge-bg, the keyboard
+   focus also a 2px inset --focus ring); the current option has the trailing check of the session
+   Mode menu (concept B), no fill. A long label is cut at the chevron, without an ellipsis: the
+   browser draws the label in an element of its own. The select itself keeps its look: the label centered on the control line as in a button
+   (one baseline with the ghost buttons and summaries of a header), the drawn chevron (the picker
+   icon is hidden) pointing up while the list is open. Firefox and Safari keep the native list. */
+@supports (appearance: base-select) {
+  :where(select:not([multiple]):not([size])),
+  :where(select:not([multiple]):not([size]))::picker(select) {
+    appearance: base-select;
+  }
+  :where(select:not([multiple]):not([size])) {
+    align-items: center;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  :where(select:not([multiple]):not([size]))::picker-icon {
+    display: none;
+  }
+  :where(select:not([multiple]):not([size])):open {
+    background-position:
+      right 10.5px center,
+      right 14px center;
+  }
+  select.fd-ghost:open:not([data-active="true"]) {
+    background-color: var(--raised);
+    color: var(--text);
+  }
+  :where(.fd-sh, .fd-composer, .fd-q-dock, .fd-turn, .fd-dialog, [role="dialog"], .fd-panel)
+    select.fd-ghost:open:not([data-active="true"]) {
+    background-color: var(--badge-bg);
+  }
+  :where(select:not([multiple]):not([size]))::picker(select) {
+    min-inline-size: anchor-size(self-inline);
+    margin-block: 4px;
+    padding: 4px;
+    background: var(--raised);
+    color: var(--text);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-panel);
+    box-shadow: var(--shadow-pop);
+  }
+  :where(select) option {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: var(--ctl-h);
+    padding: 0 var(--sp-2);
+    background: transparent;
+    border-radius: var(--r-ctl);
+    font-size: var(--fs-ui);
+    font-weight: 500;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  :where(select) option:focus-visible {
+    background: var(--badge-bg);
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+  :where(select) option:disabled {
+    color: var(--faint);
+    cursor: not-allowed;
+  }
+  :where(select) option::checkmark {
+    order: 1;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    content: "";
+    background-color: var(--dim);
+    mask:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  /* A group of options (the Spaces and Sessions of the share dialog): its name is a .fd-label on
+     the text edge of the rows (the name has the 6px sides of its 12px text: 2px of indent). */
+  :where(select) optgroup {
+    padding: var(--sp-1) 0 0;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    text-indent: 2px;
+  }
+  :where(select) optgroup + optgroup {
+    margin-top: var(--sp-1);
+  }
+  :where(select) optgroup option {
+    color: var(--text);
+    text-indent: 0;
+  }
+}
+@media (hover: hover) {
+  @supports (appearance: base-select) {
+    :where(select) option:hover:not(:disabled) {
+      background: var(--badge-bg);
+    }
+  }
 }
 
 /* Checkbox and radio: a 16px box on the strip fill; checked = ink fill with an ink-on mark. */
@@ -735,6 +876,12 @@ select.fd-ghost[data-active="true"] {
 .fd-switch:checked {
   background: var(--ok);
 }
+/* A switch that turns on a hazard (Allow bypass permissions: every tool runs without asking,
+   §2.2): the on track is --hazard, not the --ok of "working / ok". The --ink-on knob is 6:1 on it
+   in both themes. */
+.fd-switch[data-tone="hazard"]:checked {
+  background: var(--hazard);
+}
 .fd-switch:checked::after {
   background: var(--ink-on);
   transform: translateX(14px);
@@ -777,7 +924,10 @@ select.fd-ghost[data-active="true"] {
 }
 /* A toggle summary (data-variant="toggle"): a fold that opens in place under a row of toggles,
    not a path. No leading chevron-right; a trailing 12px chevron-down that turns 180° when the
-   details open. The area sets the size and the fill of the summary. */
+   details open: the one chevron of a menu trigger (a select draws the same V, above). A 1.25px
+   stroke (2.5 of 24) in --dim (--text under the pointer), the weight and the color of the select
+   chevron: the 1px --faint stroke read as a thinner, paler glyph next to it at 1x. The area sets
+   the size and the fill of the summary. */
 :where(summary[data-variant="toggle"]) {
   display: inline-flex;
   align-items: center;
@@ -791,11 +941,18 @@ summary[data-variant="toggle"]::after {
   flex: none;
   width: 12px;
   height: 12px;
-  background-color: var(--faint);
+  background-color: var(--dim);
   mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
     center / contain no-repeat;
-  transition: transform var(--t-move);
+  transition:
+    transform var(--t-move),
+    background-color var(--t-fast);
+}
+@media (hover: hover) {
+  summary[data-variant="toggle"]:hover::after {
+    background-color: var(--text);
+  }
 }
 details[open] > summary[data-variant="toggle"]::after {
   transform: rotate(180deg);
@@ -822,6 +979,17 @@ details[open] > summary[data-variant="toggle"]::after {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+}
+/* A key chip on a --raised fill: a dialog (the help keys), a menu, the composer, a field, a plain
+   button (the Needs you answers; its hover is --raised-hi). The dark --badge-bg is --raised-hi,
+   1.1:1 on --raised and 1:1 on --raised-hi, and the keys read as loose dim letters: the chip gets
+   the edge of a control on a raised surface (light: the --border hairline). The chip of a primary
+   has its own tint (above) and no edge. */
+:where(.fd-dialog, [role="dialog"], .fd-menu-body, .fd-composer) .fd-kbd,
+:where(.fd-field) > .fd-kbd,
+:where(button, a.fd-btn):not(.fd-primary, .fd-decide, .fd-danger, .fd-ghost, .fd-iconbtn)
+  > .fd-kbd {
+  box-shadow: inset 0 0 0 1px var(--btn-edge-raised);
 }
 
 /* A field with a leading icon and an optional trailing key hint. */
@@ -1967,7 +2135,8 @@ details[open] > summary[data-variant="toggle"]::after {
   .fd-switch::after {
     background: CanvasText;
   }
-  .fd-switch:checked {
+  .fd-switch:checked,
+  .fd-switch[data-tone="hazard"]:checked {
     background: Highlight;
   }
   .fd-switch:checked::after {
@@ -1987,6 +2156,10 @@ details[open] > summary[data-variant="toggle"]::after {
     color: ButtonFace;
     border-color: ButtonText;
   }
+  /* The toggle chevron keeps the ink under the pointer (its --text hover is a theme color). */
+  summary[data-variant="toggle"]:hover::after {
+    background-color: CanvasText;
+  }
 }
 /* The select chevron is two gradients, and forced colors drop gradients (an url() image stays):
    draw Lucide's chevron-down as an image in the ink of the high-contrast scheme. */
@@ -2000,5 +2173,48 @@ details[open] > summary[data-variant="toggle"]::after {
 @media (forced-colors: active) and (prefers-color-scheme: dark) {
   :where(select:not([multiple]):not([size])) {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); /* ds-exception: forced colors keep only an url() image; white is the ink of a dark high-contrast scheme */
+  }
+}
+/* The styled picker in forced colors: a Canvas list with a CanvasText edge; the row under the
+   pointer or the keyboard is Highlight (the system cue of an active row), the current option has
+   a Highlight ring, and the check is a mask in the ink. The one chevron image keeps its place
+   while the list is open (the gradient pair swaps places, above). */
+@media (forced-colors: active) {
+  @supports (appearance: base-select) {
+    :where(select:not([multiple]):not([size])):open {
+      background-position: right 8px center;
+    }
+    :where(select:not([multiple]):not([size]))::picker(select) {
+      background: Canvas;
+      border-color: CanvasText;
+    }
+    :where(select) option:checked {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+    :where(select) option:focus-visible {
+      forced-color-adjust: none;
+      background: Highlight;
+      color: HighlightText;
+    }
+    :where(select) option::checkmark {
+      forced-color-adjust: none;
+      background-color: CanvasText;
+    }
+    :where(select) option:focus-visible::checkmark {
+      background-color: HighlightText;
+    }
+  }
+}
+@media (forced-colors: active) and (hover: hover) {
+  @supports (appearance: base-select) {
+    :where(select) option:hover:not(:disabled) {
+      forced-color-adjust: none;
+      background: Highlight;
+      color: HighlightText;
+    }
+    :where(select) option:hover:not(:disabled)::checkmark {
+      background-color: HighlightText;
+    }
   }
 }
