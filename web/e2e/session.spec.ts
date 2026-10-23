@@ -611,3 +611,37 @@ test('a pending answer is followed until the station refuses it', async ({ page 
     timeout: 5_000,
   });
 });
+
+test('a refused answer shows in the header when the dock is on another tab', async ({ page }) => {
+  // Review MAJOR (G4): the dock is mounted only on the Chat tab; the header keeps the refusal.
+  const deck = new FakeDeck();
+  deck.sessions = [session({ open_requests: [request], activity: 'needs_you' }, 'needs_you')];
+  let refuse = false;
+  deck.on('/api/commands/approval.answer', (body) => ({
+    status: 200,
+    body: receipt(idOf(body), 'pending'),
+  }));
+  deck.route('GET', /^\/api\/commands\/([^/]+)$/, (m) => ({
+    status: 200,
+    body: refuse ? receipt(m[1] ?? '', 'done', 'no such request') : receipt(m[1] ?? '', 'pending'),
+  }));
+  await setUp(page, deck);
+  await openSession(page, 'Review the repo');
+  const view = page.getByRole('region', { name: 'Session' });
+  await page
+    .getByRole('region', { name: 'Needs you' })
+    .getByRole('button', { name: 'Allow' })
+    .click();
+  await view.getByRole('tab', { name: /^Changes/ }).click();
+  await expect(page.getByRole('region', { name: 'Needs you' })).toHaveCount(0);
+  refuse = true;
+  await expect(view.locator('.fd-sh-outcome')).toContainText('Refused: no such request', {
+    timeout: 5_000,
+  });
+  // Back on the Chat tab the dock shows it under the request, and the header does not repeat it.
+  await view.getByRole('tab', { name: 'Chat' }).click();
+  await expect(page.getByRole('region', { name: 'Needs you' }).getByRole('alert')).toHaveText(
+    'Refused: no such request',
+  );
+  await expect(view.locator('.fd-sh-outcome')).toHaveCount(0);
+});

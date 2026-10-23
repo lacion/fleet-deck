@@ -504,15 +504,17 @@ Revision 2: the controller follows **each** pending command until it ends or the
      return lines;
    }
 
-   /** G4: the header outcome: not a refused answer that the dock shows (it is not shown twice). */
+   /** G4: the header outcome: not a refused answer that the dock shows (it is not shown twice).
+    *  `docked` is the list of requests that the dock shows now: empty when the dock is not
+    *  mounted (another tab), so the header then keeps the refusal. */
    export function headerOutcome(
      c: Pick<Controller, 'outcome' | 'refusals'>,
-     open: readonly OpenRequest[],
+     docked: readonly OpenRequest[],
    ): Shown | null {
      const o = c.outcome;
      if (o === null || o.ok || o.action !== 'answer' || o.target == null) return o;
      const t = o.target;
-     return c.refusals[t] !== undefined && open.some((r) => r.request_id === t) ? null : o;
+     return c.refusals[t] !== undefined && docked.some((r) => r.request_id === t) ? null : o;
    }
 
    /** G4: the dock's answer handler; it names the request as the target of the action. */
@@ -586,7 +588,8 @@ Revision 2: the controller follows **each** pending command until it ends or the
 2. `web/src/session/SessionView.tsx` (797 lines; the change must not add lines):
    - `:40` `import { answerVia, dockRefusals, useSessionController } from './controller';`
    - `:560-563` (the four-line `onAnswer`) becomes `onAnswer={answerVia(controller, actions)}`.
-   - After `busy={busy !== null}` (`:559`) add `refusals={dockRefusals(controller.refusals, s.open_requests)}`.
+   - After `busy={busy !== null}` (`:559`) add `refusals={dockRefusals(controller.refusals, dockRequests)}`.
+   - Pre-PR review fix: `const dockRequests = tab !== 'chat' || !access.questions ? [] : s.open_requests.filter((r) => access.approvals || r.request_kind === 'question');` (after `resumeBar`). The dock gets `requests={dockRequests}`, and `SessionHeader` gets `dockRequests={dockRequests}`.
    - Revision 3, the shell chips (design review r2 BLOCKER). `:37` becomes `import { onConfirmed, type SessionActions } from './commands';`. In `onSend`, the comment at `:597` becomes `// B8: the first 64 chips go with the prompt; a confirmed prompt uses them up (G4).`, and the two lines `:612-613` (`if (outcome.ok) shellChips.consume(results);` and `return outcome;`) become one line:
      ```ts
      return onConfirmed(outcome, () => shellChips.consume(results));
@@ -594,7 +597,7 @@ Revision 2: the controller follows **each** pending command until it ends or the
      So an immediate `Done.` consumes the chips as today; a pending prompt keeps them until the follow of `controller.act('send')` resolves `ok`; a refusal, a stopped follow or a session change keeps them, and the next prompt names them again. Sending a result twice is safe: the station carries each result once (`shell_context.rs:1-15`; `attachable` selects only rows with `included_in IS NULL`, `store/shell_runs.rs:379-388`), so a result that an earlier, later-accepted prompt carried is skipped.
    - Line count: the four-line `onAnswer` becomes one (−3), the `refusals` prop (+1), the chips (−1): 794 lines.
 3. `web/src/session/SessionHeader.tsx`:
-   - `:184` becomes `const outcome = headerOutcome(controller, s.open_requests);` (a refusal that the dock shows is not shown twice).
+   - `:184` becomes `const outcome = headerOutcome(controller, dockRequests);` (a refusal that the dock shows is not shown twice). Pre-PR review fix: a new optional prop `dockRequests?: readonly OpenRequest[]` (default `[]`) carries the requests that the dock shows now.
    - `:753` becomes `<span>{shownText(outcome)}</span>`.
    - Import `headerOutcome` and `shownText` from `./controller`.
 4. `web/src/board/NeedsYouRail.tsx` (each answer has its own `.then` chain, so each pending command is followed on its own already):
@@ -1091,3 +1094,4 @@ Not fixed: none. The task ids do not change. T4 grows, but it stays one task: th
 
 - T1 Q: wall-control B1 (deck V48) is not merged; `v2` and `bl/gaps` end at V47. Which migration position do I use: Option A (the G5 entry is the 48th entry, directly after V47) or Option B (a placeholder V48)? — A: Option A, as §7 states ("the brief gives the position 48 for the tests"). Do not add a placeholder V48: an invented migration would collide with the real wall-control V48 at the merge. Append the G5 line directly after the V47 line in `schema.rs`. In `wake_seen_schema.rs` add `#[cfg(test)] pub(in crate::store) const V49_POSITION: usize = 48;` with the doc "The list position of V49 in `migrations()`: 48 until wall-control V48 is merged into `v2`, then 49 (the architect changes it at the merge)." Both `v49_keeps_the_old_rows_as_legacy_tombstones_and_keys_by_session` and `a_v48_row_blocks_its_request_id_in_every_session_until_it_ages_out` use `to_version(V49_POSITION - 1)` for the pre-V49 shape and `to_version(V49_POSITION)` (or `to_latest()`) for V49; no literal 47, 48 or 49 in these two tests. The five `merged_migrations*` tests change the latest deck version from 47 to 48 (a literal, because an integration test cannot see the constant). At the merge the architect rebases T1 on B1, puts the G5 line after the V48 line of wall-control, sets `V49_POSITION` to 49 and the five tests to 49. `bl/gaps` does not merge into `v2` before wall-control B1 is merged.
 - T1 Q: with Option A, do I keep the name `v49` in the test names, the module docs and the `schema.rs` line comment? — A: Yes. V49 is the number that the architect gave to G5; keep `v49` in every test name (the acceptance filter `test(v49)` stays), in the module doc of `wake_seen_schema.rs`, in the `wake_seen.rs` docs, and keep the table name `wake_seen_v49` in the SQL. "V48 row" in the docs and test names stays the name of the pre-G5 row shape. The `schema.rs` entry stays one line: `M::up(super::wake_seen::schema::SQL), // V49 (G5): the wake key has the session; list position 48 until wall-control V48.` The architect removes the text after the semicolon at the renumber. The position note is only in that comment and in the `V49_POSITION` doc; do not add it to other docs.
+- Pre-PR review MAJOR (G4): the header hid a refused answer whose request was open, also when the dock was not mounted (the Changes, Files, Artifacts or People tab), so no surface showed the refusal. — A: `headerOutcome` takes the requests that the dock shows now (`dockRequests` in `SessionView`: `[]` off the Chat tab or without `access.questions`, else the open requests that the dock lists). The header keeps the refusal when the dock does not show its request. The e2e test `a refused answer shows in the header when the dock is on another tab` covers it.

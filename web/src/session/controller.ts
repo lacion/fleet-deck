@@ -149,15 +149,17 @@ export function dockRefusals(
   return lines;
 }
 
-/** G4: the header outcome: not a refused answer that the dock shows (it is not shown twice). */
+/** G4: the header outcome: not a refused answer that the dock shows (it is not shown twice).
+ *  `docked` is the list of requests that the dock shows now: empty when the dock is not
+ *  mounted (another tab), so the header then keeps the refusal. */
 export function headerOutcome(
   c: Pick<Controller, 'outcome' | 'refusals'>,
-  open: readonly OpenRequest[],
+  docked: readonly OpenRequest[],
 ): Shown | null {
   const o = c.outcome;
   if (o === null || o.ok || o.action !== 'answer' || o.target == null) return o;
   const t = o.target;
-  return c.refusals[t] !== undefined && open.some((r) => r.request_id === t) ? null : o;
+  return c.refusals[t] !== undefined && docked.some((r) => r.request_id === t) ? null : o;
 }
 
 /** G4: the dock's answer handler; it names the request as the target of the action. */

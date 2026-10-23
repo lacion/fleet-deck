@@ -279,6 +279,11 @@ export function SessionView(props: SessionViewProps) {
   const composerShown =
     tab === 'chat' && agentSub === undefined && !composerHidden(s) && access.composer;
   const resumeBar = composerResume && composerShown;
+  // G4: the requests that the dock shows (only on the Chat tab); the header shows the rest.
+  const dockRequests =
+    tab !== 'chat' || !access.questions
+      ? []
+      : s.open_requests.filter((r) => access.approvals || r.request_kind === 'question');
   const order: PaneTab[] = [
     'chat',
     'changes',
@@ -393,6 +398,7 @@ export function SessionView(props: SessionViewProps) {
         session={session}
         stations={stations}
         controller={controller}
+        dockRequests={dockRequests}
         actions={actions ?? null}
         {...(onBack ? { onBack } : {})}
         terminal={terminal}
@@ -547,17 +553,13 @@ export function SessionView(props: SessionViewProps) {
               <div className="fd-pane-foot">
                 {access.questions ? (
                   <ApprovalDock
-                    requests={
-                      access.approvals
-                        ? s.open_requests
-                        : s.open_requests.filter((r) => r.request_kind === 'question')
-                    }
+                    requests={dockRequests}
                     answerable={caps?.approvals === true}
                     enabled={
                       (guest !== null ? flags.live && !flags.ended : flags.approve) && busy === null
                     }
                     busy={busy !== null}
-                    refusals={dockRefusals(controller.refusals, s.open_requests)}
+                    refusals={dockRefusals(controller.refusals, dockRequests)}
                     onAnswer={answerVia(controller, actions)}
                   />
                 ) : null}

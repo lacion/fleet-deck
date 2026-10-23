@@ -3,7 +3,7 @@
 import { type ReactNode, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { stationName } from '../board/fleet';
-import type { DeckSession, ModelChoice, StationView } from '../gen';
+import type { DeckSession, ModelChoice, OpenRequest, StationView } from '../gen';
 import { GeneratedMark } from '../ui/generated';
 import { Menu } from '../ui/Menu';
 import {
@@ -71,6 +71,8 @@ type Props = {
   readonly session: DeckSession;
   readonly stations: readonly StationView[];
   readonly controller: Controller;
+  /** G4: the requests that the approval dock shows now; the header shows every other refusal. */
+  readonly dockRequests?: readonly OpenRequest[];
   readonly actions: SessionActions | null;
   readonly onBack?: () => void;
   readonly terminal: TerminalProps | null;
@@ -114,6 +116,7 @@ export function SessionHeader({
   session,
   stations,
   controller,
+  dockRequests = [],
   actions,
   onBack,
   terminal,
@@ -181,7 +184,7 @@ export function SessionHeader({
       {...(phone ? {} : { session })}
     />
   );
-  const outcome = headerOutcome(controller, s.open_requests);
+  const outcome = headerOutcome(controller, dockRequests);
   const now = useNow(undefined, 30000);
   const ref = sessionRef(session.station_id, s.session_id);
   const starred = priority.use().has(ref);
