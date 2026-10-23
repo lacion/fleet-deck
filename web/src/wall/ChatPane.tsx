@@ -2,6 +2,7 @@
 // composer, no filters and no control. The agent text goes through the chat Markdown in its
 // read-only form (no copy button); the tool calls run on a flight path (DESIGN-SYSTEM §4.5).
 import { Markdown } from '../chat/Markdown';
+import { agentLine } from '../chat/notices';
 import { pairWaiting } from '../chat/waiting';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
@@ -95,9 +96,15 @@ export function chatLines(events: readonly EventEnvelope[], max: number = CHAT_I
 
 function ChatLine({ line }: { readonly line: Line }) {
   if (line.kind === 'message') {
+    // A provider error reads as its cause; the provider's own words stay in the title.
+    const said = agentLine(line.text);
     return (
-      <div className="fd-wall-chatline" data-kind="message">
-        <Markdown text={line.text} readOnly />
+      <div
+        className="fd-wall-chatline"
+        data-kind="message"
+        title={said === line.text ? undefined : line.text.trim()}
+      >
+        <Markdown text={said} readOnly />
       </div>
     );
   }

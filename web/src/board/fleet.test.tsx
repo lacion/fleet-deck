@@ -350,7 +350,7 @@ describe('station projections', () => {
       '4 free<span class="fd-vh"> session slots</span>',
       '<dt>Version</dt><dd>0.2.0</dd>',
       '<li data-instance="personal" title="personal"><span>Claude <span class="fd-station-ver">2.1.5</span></span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
-      '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
+      '<li data-instance="work" title="work"><span>Codex</span></li>',
     ])
       expect(html).toContain(text);
     expect(html).not.toContain(' · ');

@@ -207,6 +207,23 @@ describe('the activity page', () => {
     expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
   });
 
+  test('a provider error in a message row reads as its cause, with the raw words in the title', () => {
+    const html = page({
+      initialItems: [
+        item({
+          kind: 'message',
+          text: 'API Error: Request rejected (429) · All credentials are cooling down',
+          station_seq: 1,
+        }),
+      ],
+    });
+    expect(html).toContain('The provider&#x27;s rate limit stopped it. Try again later.');
+    expect(html).toContain(
+      'title="API Error: Request rejected (429) · All credentials are cooling down"',
+    );
+    expect(html).not.toContain('>API Error');
+  });
+
   test('a finished call loses its "(ok)" and its JSON; a failed call ends in its result', () => {
     const html = page({
       initialItems: [

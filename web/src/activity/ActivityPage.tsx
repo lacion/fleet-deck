@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
+import { agentLine } from '../chat/notices';
 import { PathTail } from '../chat/PathTail';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
@@ -194,8 +195,15 @@ export function RowText({
   readonly open?: boolean;
 }) {
   const tool = activityTool(item.kind, item.text);
-  if (tool === null)
-    return <span className="fd-arow-text">{words(plainLine(item.text), open)}</span>;
+  if (tool === null) {
+    // A provider error in a message reads as its cause; the raw words stay in the title.
+    const said = item.kind === 'message' ? agentLine(item.text) : item.text;
+    return (
+      <span className="fd-arow-text" title={said === item.text ? undefined : item.text.trim()}>
+        {words(plainLine(said), open)}
+      </span>
+    );
+  }
   const lead = words(tool.lead, open);
   const done = item.kind === 'tool' && tool.target === '' && tool.outcome === null;
   return (
@@ -211,7 +219,9 @@ export function RowText({
 /** The whole text of a row in one line, for its hover title (the row cuts it at its width). */
 function fullText(item: ActivityItem, open: boolean): string {
   const tool = activityTool(item.kind, item.text);
-  if (tool === null) return words(plainLine(item.text), open);
+  if (tool === null) {
+    return words(plainLine(item.kind === 'message' ? agentLine(item.text) : item.text), open);
+  }
   const target = tool.form === 'path' ? homePath(tool.target) : homeShortIn(tool.target);
   return [words(tool.lead, open), tool.name, target].filter((part) => part !== '').join(' ');
 }

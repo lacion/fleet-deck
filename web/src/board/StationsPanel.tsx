@@ -286,23 +286,20 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                               </>
                             )}
                           </span>
-                          <span
-                            className="fd-station-auth"
-                            data-auth={
-                              p.auth === 'signed_in'
-                                ? 'ok'
-                                : p.auth === 'signed_out'
-                                  ? 'hazard'
-                                  : 'muted'
-                            }
-                          >
+                          {/* The sign-in state is shown when it is known; otherwise it is absent. */}
+                          {p.auth === 'signed_in' || p.auth === 'signed_out' ? (
                             <span
-                              className="fd-dot"
-                              data-status={p.auth === 'signed_in' ? 'online' : undefined}
-                              aria-hidden="true"
-                            />
-                            {authLabel(p.auth)}
-                          </span>
+                              className="fd-station-auth"
+                              data-auth={p.auth === 'signed_in' ? 'ok' : 'hazard'}
+                            >
+                              <span
+                                className="fd-dot"
+                                data-status={p.auth === 'signed_in' ? 'online' : undefined}
+                                aria-hidden="true"
+                              />
+                              {authLabel(p.auth)}
+                            </span>
+                          ) : null}
                           {/* A signed-out provider names the next step (§5): its station's
                               accounts in Settings, for the owner. */}
                           {p.auth === 'signed_out' && actions?.canAdmin === true ? (
