@@ -1,5 +1,6 @@
-// B6: the agents switcher of the chat tab: the main chat, every subagent and every background
-// command of the session, each with its status. The header row of an agent view lives here too.
+// B6: the agents switcher of the chat tab: the main chat, every subagent, every workflow (B12) and
+// every background command of the session, each with its status. The header row of an agent view
+// lives here too.
 import type { MouseEvent } from 'react';
 import {
   commandTasks,
@@ -13,14 +14,22 @@ import {
   taskStatus,
 } from '../session/tasks';
 import type { Subagent } from '../session/timeline';
+import {
+  firstLine,
+  type WorkflowsSnapshot,
+  type WorkflowView,
+  workflowAgentTotal,
+} from '../session/workflows';
 import { countText, homeShortIn } from '../ui/format';
 import { Check, Icon } from '../ui/icons';
 import { Menu } from '../ui/Menu';
+import { Chip, type WorkflowChoice, WorkflowGroups } from './WorkflowAgents';
 
 export type AgentChoice =
   | { kind: 'main' }
   | { kind: 'agent'; node_id: string }
-  | { kind: 'task'; node_id: string };
+  | { kind: 'task'; node_id: string }
+  | WorkflowChoice;
 
 export type AgentsMenuProps = {
   readonly subagents: readonly Subagent[];
@@ -33,20 +42,15 @@ export type AgentsMenuProps = {
   /** The running count of the pane (it also counts the agents of the summary that started before
       the loaded history); absent: the count of the loaded timeline. */
   readonly running?: number | undefined;
+  /** B12: the workflows of the session, oldest first; absent: none. */
+  readonly workflows?: ReadonlyMap<string, WorkflowView> | undefined;
+  /** B12: the pages of the station projection; `null`: an older station or the first load. */
+  readonly snapshot?: WorkflowsSnapshot | null | undefined;
+  /** B12: the first load of the pages runs. */
+  readonly loading?: boolean | undefined;
+  /** B12: `<task id>:<index>` of the chosen workflow agent; absent: none. */
+  readonly workflowAgent?: string | null | undefined;
 };
-
-const Chip = ({ status }: { status: ShownStatus }) => (
-  <span className="fd-badge" data-tone={status.tone}>
-    {status.label}
-  </span>
-);
-
-/** The first line of a text that has words, trimmed; '' when there is none. */
-const firstLine = (text: string): string =>
-  text
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line !== '') ?? '';
 
 /**
  * The name of a subagent: its task (the description of a Claude agent, the prompt of a Codex one),
@@ -127,9 +131,9 @@ const Part = ({ label, count }: { label: string; count: number }) => (
 );
 
 /**
- * The summary of the menu: "Agents" with the count of the subagents and "Commands" with the count
- * of the background commands (each only when it has one; the Properties panel shows the same
- * numbers), then what runs now (both kinds) with the working glyph.
+ * The summary of the menu: "Agents" with the count of the subagents and the workflow agents and
+ * "Commands" with the count of the background commands (each only when it has one; the
+ * Properties panel shows the same numbers), then what runs now (every kind) with the working glyph.
  */
 function Summary(props: { subagents: number; commands: number; running: number }) {
   const { subagents, commands, running } = props;
@@ -149,10 +153,13 @@ function Summary(props: { subagents: number; commands: number; running: number }
   );
 }
 
+const NO_WORKFLOWS: ReadonlyMap<string, WorkflowView> = new Map();
+
 /** The "Agents" control with its menu. The caller shows it only when `hasAgents` is true. */
 export function AgentsMenu(props: AgentsMenuProps) {
   const { subagents, tasks, toolTitles, agent, onChoose } = props;
-  const running = props.running ?? runningCount(subagents, tasks);
+  const workflows = props.workflows ?? NO_WORKFLOWS;
+  const running = props.running ?? runningCount(subagents, tasks, workflows);
   const commands = commandTasks(tasks);
   const agentRows = ranked(subagents, (sub) => shownStatus(sub, tasks));
   const commandRows = ranked(commands, (task) => taskStatus(task.status));
@@ -166,7 +173,11 @@ export function AgentsMenu(props: AgentsMenuProps) {
       summaryClass="fd-ghost fd-sm"
       variant="toggle"
       summary={
-        <Summary subagents={subagents.length} commands={commands.length} running={running} />
+        <Summary
+          subagents={subagents.length + workflowAgentTotal(workflows)}
+          commands={commands.length}
+          running={running}
+        />
       }
     >
       {(close) => (
@@ -208,6 +219,13 @@ export function AgentsMenu(props: AgentsMenuProps) {
               </button>
             );
           })}
+          <WorkflowGroups
+            workflows={workflows}
+            snapshot={props.snapshot ?? null}
+            loading={props.loading === true}
+            selected={props.workflowAgent ?? null}
+            choose={(choice) => choose(close, choice)}
+          />
           {commandRows.length > 0 ? (
             <GroupHead label="Background commands" count={commandRows.length} />
           ) : null}

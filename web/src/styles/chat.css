@@ -1209,6 +1209,55 @@
   font-size: var(--fs-body);
   text-align: center;
 }
+/* B12: a workflow group of the Agents menu. The head names the workflow, counts its agents and
+   ends with its status chip; a phase head and a note line are 12px --dim, indented 8px. */
+.fd-agent-group-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-agent-group > .fd-badge {
+  margin-left: auto;
+}
+.fd-agent-phase {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1) var(--sp-2) 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-agent-aside {
+  margin: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+/* B12: the view of one workflow agent (WorkflowAgentView.tsx): its facts, its task and its result. */
+.fd-agent-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+}
+.fd-agent-facts dt {
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
+.fd-agent-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fd-agent-text {
+  margin: 0;
+  color: var(--dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fd-agent-text[data-tone="hazard"] {
+  color: var(--hazard);
+}
 /* B6: a chosen background command is marked for 2 s (a selection: blue, not yellow). */
 .fd-chat-tool[data-highlight] {
   outline: 2px solid var(--focus);

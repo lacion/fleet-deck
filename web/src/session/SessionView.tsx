@@ -12,9 +12,10 @@ import {
 } from 'react';
 import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
 import { SessionArtifacts } from '../artifacts/SessionArtifacts';
-import { type AgentChoice, AgentHead, AgentsMenu, subagentName } from '../chat/AgentsMenu';
+import { AgentHead, AgentsMenu, subagentName } from '../chat/AgentsMenu';
 import { ChatView } from '../chat/ChatView';
 import { SubagentWork } from '../chat/SubagentWork';
+import { WorkflowAgentView } from '../chat/WorkflowAgentView';
 import { useSessionHistory } from '../chat/history';
 import type { DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
@@ -33,6 +34,7 @@ import { SideChat } from '../sharing/SideChat';
 import type { ShellActions } from '../shell/shell';
 import type { Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
+import { useAgentChoice } from './agentChoice';
 import { ApprovalDock } from './ApprovalDock';
 import type { SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
@@ -64,6 +66,7 @@ import {
 } from './tasks';
 import { buildTimeline, runningSubagents, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
+import { workflowAgentTotal } from './workflows';
 import { finalizedTurns, useDiffTotal } from './workspace';
 import { shortModel } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
@@ -100,8 +103,6 @@ export type SessionViewProps = {
 
 const noop = () => {};
 
-const HIGHLIGHT_HOLD_MS = 2500;
-
 /** One session: header, tabs, the chat with its approval dock and composer. */
 export function SessionView(props: SessionViewProps) {
   const { session, stations, timeline, freshness, actions, shells, terminals, watch } = props;
@@ -134,31 +135,22 @@ export function SessionView(props: SessionViewProps) {
   const events = timeline?.events ?? [];
   const tree = buildTimeline(events);
   const tasks = useMemo(() => taskStates(events), [events]);
-  // B6: a chosen background command: its card is scrolled to and marked; the mark is not kept.
-  const [highlight, setHighlight] = useState<{ node_id: string; nonce: number } | null>(null);
-  useEffect(() => {
-    if (highlight === null) return;
-    const timer = setTimeout(() => setHighlight(null), HIGHLIGHT_HOLD_MS);
-    return () => clearTimeout(timer);
-  }, [highlight]);
-  // Only the node id of a subagent selects an agent view; any other value shows the main chat.
-  const loadSubagent = guest === null ? (actions?.subagent ?? null) : null;
+  // B6, B12: only the node id of a subagent or `wf:<task>:<index>` selects an agent view; any other
+  // value shows the main chat. A chosen background command is marked (`highlight`).
+  const choice = useAgentChoice({
+    session,
+    actions,
+    events,
+    onAgent,
+    subagents: tree.subagents,
+    member: guest !== null,
+    tab: props.tab,
+    agent: props.agent,
+  });
+  const { agentSub, wf, workflows, highlight, loadSubagent } = choice;
   const titles = toolTitles(tree.items);
   // B8: the Claude shell results that the next prompt carries.
   const shellChips = useShellChips(sessionKey(key), tree.items, s.provider);
-  const agentSub =
-    props.tab === 'chat' || props.tab === undefined
-      ? tree.subagents.find((sub) => sub.node_id === props.agent)
-      : undefined;
-  const chooseAgent = (choice: AgentChoice) => {
-    if (choice.kind === 'task') {
-      onAgent(null);
-      setHighlight({ node_id: choice.node_id, nonce: Date.now() });
-      return;
-    }
-    setHighlight(null);
-    onAgent(choice.kind === 'main' ? null : choice.node_id);
-  };
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
   // DL-191: the Branches view of the Changes tab is the owner's.
@@ -260,7 +252,18 @@ export function SessionView(props: SessionViewProps) {
     hasBase && filesReady && files !== null && changesRead === 'loading',
   );
   // Running agents: the loaded timeline, or the summary for one older than its pages (DL-189).
-  const running = Math.max(runningCount(tree.subagents, tasks), runningSubagents(s));
+  const running = Math.max(runningCount(tree.subagents, tasks, workflows), runningSubagents(s));
+  const agentsMenu = hasAgents(tree.subagents, tasks, workflows) ? (
+    <AgentsMenu
+      {...choice.menu}
+      subagents={tree.subagents}
+      tasks={tasks}
+      toolTitles={titles}
+      agent={agentSub?.node_id ?? null}
+      onChoose={choice.chooseAgent}
+      running={running}
+    />
+  ) : undefined;
   const artifactRows = useArtifactRows(
     artifactsEnv?.actions,
     session.station_id,
@@ -277,7 +280,7 @@ export function SessionView(props: SessionViewProps) {
   const composerResume =
     flags.canResume && !wakes && guest === null && actions !== null && actions !== undefined;
   const composerShown =
-    tab === 'chat' && agentSub === undefined && !composerHidden(s) && access.composer;
+    tab === 'chat' && choice.note === null && !composerHidden(s) && access.composer;
   const resumeBar = composerResume && composerShown;
   const order: PaneTab[] = [
     'chat',
@@ -479,71 +482,65 @@ export function SessionView(props: SessionViewProps) {
                   onBack={() => onAgent(null)}
                 />
               )}
-              <ChatView
-                key={agentSub?.node_id ?? 'main'}
-                items={agentSub === undefined ? tree.items : agentSub.items}
-                provider={s.provider}
-                working={
-                  agentSub === undefined
-                    ? s.current_run !== null
-                    : isLive(shownStatus(agentSub, tasks))
-                }
-                ready={timeline?.ready === true}
-                error={timeline?.error ?? null}
-                onOpenChanges={() => onTab('changes')}
-                {...(agentSub === undefined
-                  ? { history: { view: historyView, gap: historyGap } }
-                  : {})}
-                loadSubagent={loadSubagent}
-                tasks={tasks}
-                highlight={highlight}
-                shell={
-                  guest === null && actions != null
-                    ? {
-                        canStop: flags.drive,
-                        onStop: () => controller.act('interrupt', () => actions.interrupt()),
-                        canRelease: actions.canAdmin,
-                        ended: flags.ended,
-                        onRelease: (effectId) => actions.releaseShell(effectId),
-                      }
-                    : undefined
-                }
-                toolbar={
-                  hasAgents(tree.subagents, tasks) ? (
-                    <AgentsMenu
-                      subagents={tree.subagents}
-                      tasks={tasks}
-                      toolTitles={titles}
-                      agent={agentSub?.node_id ?? null}
-                      onChoose={chooseAgent}
-                      running={running}
-                    />
-                  ) : undefined
-                }
-                emptyText={
-                  agentSub === undefined ? undefined : 'This subagent has no messages yet.'
-                }
-                footer={
-                  agentSub !== undefined &&
-                  loadSubagent !== null &&
-                  agentSub.tool_use_id !== null ? (
-                    <SubagentWork
-                      key={agentSub.node_id}
-                      load={() => loadSubagent(agentSub.tool_use_id ?? '')}
-                    />
-                  ) : undefined
-                }
-                review={
-                  reviewActions === undefined
-                    ? undefined
-                    : {
-                        reviews: review.data?.reviews ?? [],
-                        byShort: review.byShort,
-                        known: review.known,
-                        onOpen: openComment,
-                      }
-                }
-              />
+              {wf === null ? null : (
+                <WorkflowAgentView {...wf} onBack={() => onAgent(null)} toolbar={agentsMenu} />
+              )}
+              {wf !== null ? null : (
+                <ChatView
+                  key={agentSub?.node_id ?? 'main'}
+                  items={agentSub === undefined ? tree.items : agentSub.items}
+                  provider={s.provider}
+                  working={
+                    agentSub === undefined
+                      ? s.current_run !== null
+                      : isLive(shownStatus(agentSub, tasks))
+                  }
+                  ready={timeline?.ready === true}
+                  error={timeline?.error ?? null}
+                  onOpenChanges={() => onTab('changes')}
+                  {...(agentSub === undefined
+                    ? { history: { view: historyView, gap: historyGap } }
+                    : {})}
+                  loadSubagent={loadSubagent}
+                  tasks={tasks}
+                  highlight={highlight}
+                  shell={
+                    guest === null && actions != null
+                      ? {
+                          canStop: flags.drive,
+                          onStop: () => controller.act('interrupt', () => actions.interrupt()),
+                          canRelease: actions.canAdmin,
+                          ended: flags.ended,
+                          onRelease: (effectId) => actions.releaseShell(effectId),
+                        }
+                      : undefined
+                  }
+                  toolbar={agentsMenu}
+                  emptyText={
+                    agentSub === undefined ? undefined : 'This subagent has no messages yet.'
+                  }
+                  footer={
+                    agentSub !== undefined &&
+                    loadSubagent !== null &&
+                    agentSub.tool_use_id !== null ? (
+                      <SubagentWork
+                        key={agentSub.node_id}
+                        load={() => loadSubagent(agentSub.tool_use_id ?? '')}
+                      />
+                    ) : undefined
+                  }
+                  review={
+                    reviewActions === undefined
+                      ? undefined
+                      : {
+                          reviews: review.data?.reviews ?? [],
+                          byShort: review.byShort,
+                          known: review.known,
+                          onOpen: openComment,
+                        }
+                  }
+                />
+              )}
               <div className="fd-pane-foot">
                 {access.questions ? (
                   <ApprovalDock
@@ -563,12 +560,12 @@ export function SessionView(props: SessionViewProps) {
                     }
                   />
                 ) : null}
-                {agentSub !== undefined ? (
+                {choice.note === null ? null : (
                   <p className="fd-agent-note" role="note">
-                    A subagent takes no input. Write in the main chat.
+                    {choice.note}
                   </p>
-                ) : null}
-                {agentSub === undefined && people.drive !== null && access.composer ? (
+                )}
+                {choice.note === null && people.drive !== null && access.composer ? (
                   <MobStrip
                     view={people.drive}
                     busy={driveBusy}
@@ -578,7 +575,7 @@ export function SessionView(props: SessionViewProps) {
                     onRelease={() => drive(people.release)}
                   />
                 ) : null}
-                {agentSub !== undefined || composerHidden(s) ? null : access.composer ? (
+                {choice.note !== null || composerHidden(s) ? null : access.composer ? (
                   <>
                     {confirmLineShown(s) ? (
                       <p className="fd-agent-note" role="note">
@@ -768,7 +765,9 @@ export function SessionView(props: SessionViewProps) {
             stations={stations}
             turns={turns}
             total={total}
-            agents={Math.max(tree.subagents.length, runningSubagents(s))}
+            agents={
+              Math.max(tree.subagents.length, runningSubagents(s)) + workflowAgentTotal(workflows)
+            }
             commands={commandTasks(tasks).length}
             runningAgents={running}
             onOpenChange={onOpenChange}

@@ -12,6 +12,7 @@ import {
   toolTitles,
 } from './tasks';
 import { buildTimeline, type Subagent } from './timeline';
+import type { WorkflowView } from './workflows';
 
 const update = (
   task_id: string,
@@ -200,5 +201,50 @@ describe('the agents of a session', () => {
       ]),
     );
     expect(toolTitles(nested.items).get('b1')).toBe('sleep 60');
+  });
+});
+
+describe('the workflows in the tasks (B12)', () => {
+  const view = (status: string, agents: number): WorkflowView => ({
+    task_id: 'w',
+    node_id: null,
+    name: null,
+    description: null,
+    status,
+    untracked: false,
+    phases: new Map(),
+    agents: new Map(),
+    running_agents: agents,
+    agents_total: agents,
+    source: 'station',
+  });
+
+  test('an unknown task kind keeps local_workflow', () => {
+    const tasks = tasksOf(
+      envelopes('s', [
+        update('w1', 'running', { task_kind: 'local_workflow', description: 'Review' }),
+        // A notification of a task that the current process did not start (a resume).
+        update('w1', 'stopped', { task_kind: 'unknown' }),
+        update('b1', 'stopped', { task_kind: 'unknown' }),
+      ]),
+    );
+    expect(tasks.get('w1')?.kind).toBe('local_workflow');
+    expect(tasks.get('w1')?.status).toBe('stopped');
+    expect(tasks.get('w1')?.description).toBe('Review');
+    // A task that was never known keeps the word.
+    expect(tasks.get('b1')?.kind).toBe('unknown');
+  });
+
+  test('a workflow is something to list and its running agents are counted', () => {
+    const none = new Map<string, TaskState>();
+    const running = new Map([['w', view('running', 3)]]);
+    const stopped = new Map([['w', view('stopped', 0)]]);
+    expect(hasAgents([], none, running)).toBe(true);
+    expect(hasAgents([], none, new Map())).toBe(false);
+    expect(runningCount([], none, running)).toBe(3);
+    expect(runningCount([], none, stopped)).toBe(0);
+    // The running agents of a workflow add to subagents and running commands.
+    const bash = new Map([['c', state({ kind: 'local_bash' })]]);
+    expect(runningCount([agent('n', 'running')], bash, running)).toBe(5);
   });
 });

@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { Event, EventEnvelope } from '../gen';
-import { hasAgents, taskStates, toolTitles } from '../session/tasks';
+import type { Event, EventEnvelope, WorkflowAgent, WorkflowUpdate } from '../gen';
+import { hasAgents, type TaskState, taskStates, toolTitles } from '../session/tasks';
 import { buildTimeline } from '../session/timeline';
+import { type WorkflowsSnapshot, workflowStates } from '../session/workflows';
 import { envelopes, recorded } from '../testing/timeline';
 import { AgentHead, AgentsMenu, commandName, subagentName, summaryNote } from './AgentsMenu';
 
@@ -266,5 +267,207 @@ describe('the agent header', () => {
     expect(html).toContain('‹ Main chat');
     expect(html).toContain('Explore');
     expect(html).toContain('data-tone="ok">running<');
+  });
+});
+
+// B12: the workflow groups of the switcher.
+const wfUpdate = (more: Partial<WorkflowUpdate> = {}): Event => ({
+  kind: 'workflow.updated',
+  task_id: 't1',
+  status: 'running',
+  phases: [],
+  agents: [],
+  running_agents: 0,
+  agents_total: 0,
+  ...more,
+});
+const wfAgent = (index: number, more: Partial<WorkflowAgent> = {}): WorkflowAgent => ({
+  index,
+  label: `Agent ${index}`,
+  state: 'running',
+  ...more,
+});
+
+function wfMenu(
+  events: readonly Event[],
+  options: {
+    snapshot?: WorkflowsSnapshot | null;
+    loading?: boolean;
+    selected?: string | null;
+    tasks?: ReadonlyMap<string, TaskState>;
+  } = {},
+): string {
+  const tree = buildTimeline(recorded('subagent'));
+  const workflows = workflowStates(null, envelopes('s', events));
+  return renderToStaticMarkup(
+    <AgentsMenu
+      subagents={options.tasks === undefined ? [] : tree.subagents}
+      tasks={options.tasks ?? new Map()}
+      toolTitles={new Map()}
+      agent={null}
+      onChoose={() => {}}
+      workflows={workflows}
+      snapshot={options.snapshot ?? null}
+      loading={options.loading === true}
+      workflowAgent={options.selected ?? null}
+    />,
+  );
+}
+
+const SHOWN: Event[] = [
+  wfUpdate({
+    name: 'Review',
+    phases: [
+      { index: 1, title: 'Alpha' },
+      { index: 2, title: 'Beta' },
+    ],
+    agents: [
+      wfAgent(0, { phase_index: 1, label: 'Read files', last_tool: 'Bash' }),
+      wfAgent(1, {
+        phase_index: 1,
+        label: 'Check',
+        state: 'done',
+        result_preview: 'Found 3 issues\nmore',
+      }),
+      wfAgent(2, { phase_index: 1, label: 'Lint', state: 'failed', error: 'timeout' }),
+      wfAgent(3, { phase_index: 2, label: 'Report', state: 'queued' }),
+      wfAgent(4, { label: 'Loose', state: 'stopped' }),
+    ],
+    running_agents: 1,
+    agents_total: 5,
+  }),
+];
+
+describe('the workflow groups of the agents menu (B12)', () => {
+  test('the switcher lists workflow → phase → agent with chips and notes', () => {
+    const html = wfMenu(SHOWN);
+    expect(html).toContain(
+      '<p class="fd-label fd-agent-group"><span class="fd-agent-group-name">Workflow · Review</span><span class="fd-count">5</span><span class="fd-badge" data-tone="ok">running</span></p>',
+    );
+    const at = (text: string) => html.indexOf(text);
+    const order = [
+      'Workflow · Review',
+      '<p class="fd-agent-phase">1. Alpha</p>',
+      'data-wfagent="t1:0"',
+      'data-wfagent="t1:1"',
+      'data-wfagent="t1:2"',
+      '<p class="fd-agent-phase">2. Beta</p>',
+      'data-wfagent="t1:3"',
+      '<p class="fd-agent-phase">Other agents</p>',
+      'data-wfagent="t1:4"',
+    ].map(at);
+    expect(order.every((n) => n >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The second line: the tool of a running agent, the result of a done one, the error of a failed one.
+    expect(html).toContain('<span class="fd-agent-dim">Bash</span>');
+    expect(html).toContain('<span class="fd-agent-dim">Found 3 issues</span>');
+    expect(html).toContain('<span class="fd-agent-dim">timeout</span>');
+    expect(html.match(/fd-agent-dim/g)).toHaveLength(3);
+    // The summary counts the workflow agents and what runs.
+    expect(html).toContain('Agents <span class="fd-count">5</span>');
+    expect(html).toContain('1 running');
+  });
+
+  test('queued is info, failed is hazard', () => {
+    const html = wfMenu(SHOWN);
+    expect(html).toContain('data-tone="info">queued<');
+    expect(html).toContain('data-tone="hazard">failed<');
+    expect(html).toContain('data-tone="muted">done<');
+    expect(html).toContain('data-tone="muted">stopped<');
+  });
+
+  test('agents without a phase go under Other agents', () => {
+    const html = wfMenu([
+      wfUpdate({
+        phases: [{ index: 1, title: 'Alpha' }],
+        agents: [wfAgent(0), wfAgent(1, { phase_index: 1 }), wfAgent(2, { phase_index: 9 })],
+      }),
+    ]);
+    const other = html.indexOf('Other agents');
+    expect(other).toBeGreaterThan(html.indexOf('1. Alpha'));
+    expect(html.indexOf('data-wfagent="t1:1"')).toBeLessThan(other);
+    // An agent of a phase that has no title is not lost: it goes there too.
+    expect(html.indexOf('data-wfagent="t1:0"')).toBeGreaterThan(other);
+    expect(html.indexOf('data-wfagent="t1:2"')).toBeGreaterThan(other);
+  });
+
+  test('a phase without agents shows its head only', () => {
+    const html = wfMenu([wfUpdate({ phases: [{ index: 1, title: 'Alpha' }] })]);
+    expect(html).toContain('<p class="fd-agent-phase">1. Alpha</p>');
+    expect(html).not.toContain('data-wfagent');
+    expect(html).not.toContain('Other agents');
+  });
+
+  test('the chosen workflow agent is marked', () => {
+    // The main chat row carries its own mark while no subagent is chosen: look at the row itself.
+    expect(wfMenu(SHOWN, { selected: 't1:2' })).toContain(
+      'data-wfagent="t1:2" aria-current="true"',
+    );
+    expect(wfMenu(SHOWN, { selected: 't1:2' })).not.toContain('data-wfagent="t1:1" aria-current');
+    expect(wfMenu(SHOWN)).not.toContain('data-wfagent="t1:2" aria-current');
+  });
+
+  test('a run removed by the station says Fleet Deck no longer keeps its agents', () => {
+    const events: Event[] = [
+      {
+        kind: 'task.updated',
+        task_id: 'w1',
+        task_kind: 'local_workflow',
+        status: 'completed',
+        description: 'Review the repo',
+      },
+    ];
+    const html = wfMenu(events, { snapshot: { as_of: 5, runs: [], incomplete: false } });
+    expect(html).toContain('Workflow · Review the repo');
+    expect(html).toContain('Fleet Deck no longer keeps the agents of this workflow.');
+    expect(html).not.toContain('<span class="fd-count">0</span></p>');
+    expect(html).not.toContain('data-wfagent');
+  });
+
+  test('an untracked workflow shows its line', () => {
+    const html = wfMenu([wfUpdate({ name: 'Big', untracked: true })]);
+    expect(html).toContain(
+      'This workflow started while 64 others ran. Fleet Deck does not show or count its agents.',
+    );
+    expect(html).not.toContain('data-wfagent');
+  });
+
+  test('the groups come after the subagents and before the background commands', () => {
+    const tasks = new Map<string, TaskState>([
+      [
+        'b1',
+        {
+          task_id: 'b1',
+          node_id: null,
+          kind: 'local_bash',
+          status: 'running',
+          description: 'sleep 5',
+          summary: null,
+        },
+      ],
+    ]);
+    const html = wfMenu(SHOWN, { tasks });
+    const subagents = html.indexOf('fd-agent-group">Agents <');
+    const workflow = html.indexOf('Workflow · Review');
+    const commands = html.indexOf('Background commands');
+    expect(subagents).toBeGreaterThan(0);
+    expect(workflow).toBeGreaterThan(subagents);
+    expect(commands).toBeGreaterThan(workflow);
+  });
+
+  test('the running count includes running workflow agents', () => {
+    const html = wfMenu([
+      wfUpdate({
+        agents: [wfAgent(0), wfAgent(1), wfAgent(2, { state: 'done' })],
+        running_agents: 2,
+        agents_total: 3,
+      }),
+    ]);
+    expect(html).toContain('2 running');
+    expect(html).toContain('Agents <span class="fd-count">3</span>');
+    // An ended workflow runs nothing.
+    expect(
+      wfMenu([wfUpdate({ status: 'completed', agents: [wfAgent(0)], agents_total: 1 })]),
+    ).not.toContain('running</span>');
   });
 });
