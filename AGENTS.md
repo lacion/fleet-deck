@@ -12,4 +12,5 @@ Several agents share one machine. A build or a test run can fill the disk and st
 - Do not run the tests again after a change that only `cargo fmt` made.
 - Do not run a test in a loop to reproduce a failure that comes and goes. Report it and ask.
 - If cargo reports E0599 for an item that exists, the `kache` compiler cache gave a stale build: run `cargo clean -p <crate>` and build once with `env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo …`.
+- Tests run only when a branch merges into `v2` (owner rule, 2026-10-23). A worker on a feature branch writes its tests but does not run them: it compiles with `sh tools/heavy.sh cargo check -p <crate> --tests` and, for web changes, `bun run typecheck` and `bun run lint`. It keeps each file under 800 lines (`wc -l`). The coordinator runs the tests, one review and `make check` at the merge.
 - The rust-analyzer plugin is off in this project. Search the code with CodeGraph or text search.
