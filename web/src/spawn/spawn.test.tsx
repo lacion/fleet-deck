@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { App } from '../App';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
-import { submitKeyHint } from './keyHint';
+import { submitKeyMod } from './keyHint';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
@@ -155,8 +155,11 @@ describe('spawn form (P4-4)', () => {
     // on every folder field, and not a second "choose a folder".
     expect(html).toContain('placeholder="Folder, e.g. /home/me/app"');
     // No directory yet: the start button is off and the note under the directory says why.
-    expect(html).toContain(
-      `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta+Enter Control+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
+    // The key is two chips: the modifier and Return (an icon: Mona Sans has no ↵).
+    expect(html).toMatch(
+      new RegExp(
+        `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta\\+Enter Control\\+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyMod()}</span><span class="fd-kbd" aria-hidden="true"><svg[^>]*lucide-corner-down-left[^>]*>.*?</svg></span></button>`,
+      ),
     );
     expect(html).toContain(
       '<p class="fd-note fd-spawn-need" id="fd-spawn-need">Choose a folder to start.</p>',
