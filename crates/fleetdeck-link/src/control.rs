@@ -390,6 +390,14 @@ impl Control {
         self.shared.pending().out.len()
     }
 
+    /// How long ago the last message came from the peer (a frame, a
+    /// WebSocket ping or pong). After the end of the link it keeps growing
+    /// from the last message.
+    #[must_use]
+    pub fn since_last_frame(&self) -> Duration {
+        self.shared.last_rx().elapsed()
+    }
+
     /// Inbound requests that wait for this node's answer.
     #[must_use]
     pub fn open_inbound(&self) -> usize {

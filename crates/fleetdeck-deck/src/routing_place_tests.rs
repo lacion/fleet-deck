@@ -15,6 +15,7 @@ fn view(name: &str, live: u64) -> StationView {
         dial_url: None,
         reachable: true,
         last_seen: None,
+        linked_at: None,
         cursor: 0,
         info: Some(StationInfo {
             name: name.to_owned(),

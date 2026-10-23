@@ -35,6 +35,7 @@ mod palette;
 mod requests;
 pub mod router;
 pub mod runtime;
+mod seen;
 pub mod streams;
 
 use std::collections::{HashMap, VecDeque};
@@ -204,11 +205,16 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
     };
     let id = station.station_id.clone();
     let _live = ctx.up(&id, &control, data, remote);
-    if let Err(e) = ctx.store.touch_station(id.clone()).await {
+    if let Err(e) = ctx
+        .store
+        .station_heard(id.clone(), ctx.store.now_ms())
+        .await
+    {
         tracing::warn!(error = %e, "station last_seen");
     }
     tracing::info!(station = %station.name, "station link up");
     fetch_info(&ctx, &control, &id, &station.name);
+    seen::keep_seen(&ctx, &control, &id);
     let mut sync = Sync {
         ctx: Arc::clone(&ctx),
         control: control.clone(),
@@ -268,7 +274,10 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
             break;
         }
     }
-    control.closed().await
+    let closing = control.closed().await;
+    seen::record_end(&ctx.store, &sync.station, &control).await;
+    tracing::info!(station = %station.name, reason = %closing.reason, "station link ended");
+    closing
 }
 
 async fn next(

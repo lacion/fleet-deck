@@ -426,22 +426,4 @@ impl DeckStore {
         })
         .await
     }
-
-    /// Records that the station's link was up now.
-    ///
-    /// # Errors
-    /// A database error.
-    pub async fn touch_station(&self, id: StationId) -> Result<()> {
-        let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
-            conn.execute(
-                "UPDATE stations SET last_seen = ?2 WHERE station_id = ?1",
-                params![id.as_str(), now],
-            )?;
-            Ok(())
-        })
-        .await?;
-        self.board_changed();
-        Ok(())
-    }
 }

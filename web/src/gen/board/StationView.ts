@@ -20,9 +20,17 @@ direction: string, dial_url: string | null,
  */
 reachable: boolean, 
 /**
- * Unix ms of the last link.
+ * Unix ms of the last frame that the deck received from the station
+ * (B22): refreshed every 30 s while a link is up and written when a
+ * link ends. `None`: the station never linked to this deck.
  */
 last_seen: number | null, 
+/**
+ * Unix ms since which the station is reachable without a gap, in this
+ * deck process (the Linked fact, B22). `None` while it is not
+ * reachable. Absent in the answer of an older deck.
+ */
+linked_at?: number, 
 /**
  * The last `station_seq` folded into the read model (freshness).
  */

@@ -696,3 +696,6 @@ async fn the_end_of_the_link_fails_open_requests_and_ends_the_inbound_queue() {
 
 #[path = "control_cancel_tests.rs"]
 mod cancel;
+
+#[path = "control_rx_tests.rs"]
+mod rx;
