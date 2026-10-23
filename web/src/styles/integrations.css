@@ -468,8 +468,10 @@
   padding: 0 var(--sp-2);
   transition: background-color var(--t-fast);
 }
-.fd-int-tab .fd-int-list > li:hover {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-int-tab .fd-int-list > li:hover {
+    background: var(--hover-bg);
+  }
 }
 .fd-int-list > li > input[type="checkbox"] {
   flex: none;
@@ -494,16 +496,22 @@
   font-weight: 400;
   text-align: left;
 }
-.fd-int-row:hover:not(:disabled) {
-  background: transparent;
+@media (hover: hover) {
+  .fd-int-row:hover:not(:disabled) {
+    background: transparent;
+  }
 }
 .fd-int-row:focus-visible {
   outline-offset: -2px;
 }
 /* The open row: selected (the --raised-hi fill and the blue marker of .fd-selbar). */
-.fd-int-list > li[data-open="true"],
-.fd-int-tab .fd-int-list > li[data-open="true"]:hover {
+.fd-int-list > li[data-open="true"] {
   background: var(--raised-hi);
+}
+@media (hover: hover) {
+  .fd-int-tab .fd-int-list > li[data-open="true"]:hover {
+    background: var(--raised-hi);
+  }
 }
 .fd-int-key {
   flex: none;
@@ -688,17 +696,21 @@
   margin: 4px 0 0 12px;
   text-decoration: none;
 }
-a.fd-int-issuechip:hover {
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  a.fd-int-issuechip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 .fd-int-prchip {
   display: inline-flex;
   text-decoration: none;
 }
-a.fd-int-prchip:hover {
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  a.fd-int-prchip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 
 /* ---------- the project of a session (DL-176) ---------- */
@@ -710,9 +722,11 @@ a.fd-int-prchip:hover {
   gap: 4px;
   text-decoration: none;
 }
-a.fd-int-projectchip:hover {
-  color: var(--text);
-  text-decoration: none;
+@media (hover: hover) {
+  a.fd-int-projectchip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
 }
 /* A badge of the project header that opens the repository on the forge. */
 a.fd-int-badge {
@@ -831,8 +845,10 @@ a.fd-int-badge {
   font-weight: 500;
   cursor: pointer;
 }
-.fd-int-advanced > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-int-advanced > summary:hover {
+    color: var(--text);
+  }
 }
 .fd-int-advanced[open] > summary {
   margin-bottom: var(--sp-2);
@@ -921,9 +937,11 @@ a.fd-int-badge {
   font-size: var(--fs-data);
   font-weight: 400;
 }
-.fd-secret-crumbs button:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
+@media (hover: hover) {
+  .fd-secret-crumbs button:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+  }
 }
 .fd-secret-crumbs button[aria-current="location"] {
   color: var(--text);
@@ -968,8 +986,10 @@ a.fd-int-badge {
   font-size: var(--fs-data);
   font-weight: 400;
 }
-.fd-secret-entry > button:only-child:hover:not(:disabled) {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-secret-entry > button:only-child:hover:not(:disabled) {
+    background: var(--raised);
+  }
 }
 .fd-secret-entry .fd-icon {
   color: var(--faint);

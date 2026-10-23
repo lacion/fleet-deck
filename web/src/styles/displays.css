@@ -386,8 +386,10 @@
 }
 
 /* The ghost answer on the --raised row: the --raised hover would be the fill of the row (1:1). */
-.fd-disp-confirm > .fd-ghost:hover:not(:disabled) {
-  background-color: var(--badge-bg);
+@media (hover: hover) {
+  .fd-disp-confirm > .fd-ghost:hover:not(:disabled) {
+    background-color: var(--badge-bg);
+  }
 }
 
 /* ── the Desktop panel of a station card (Computer Use) ───────────────────────────────────── */

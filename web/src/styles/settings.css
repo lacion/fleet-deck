@@ -29,8 +29,7 @@
 .fd-set-tabs [role="tab"] {
   scroll-snap-align: start;
 }
-.fd-set-tabs [role="tab"],
-.fd-set-tabs [role="tab"]:hover:not(:disabled) {
+.fd-set-tabs [role="tab"] {
   flex: none;
   height: 100%;
   margin-bottom: -1px;
@@ -42,6 +41,21 @@
   font-size: var(--fs-ui);
   font-weight: 500;
   white-space: nowrap;
+}
+@media (hover: hover) {
+  .fd-set-tabs [role="tab"]:hover:not(:disabled) {
+    flex: none;
+    height: 100%;
+    margin-bottom: -1px;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    font-size: var(--fs-ui);
+    font-weight: 500;
+    white-space: nowrap;
+  }
 }
 .fd-set-tabs [role="tab"] {
   gap: 6px;
@@ -77,21 +91,36 @@
     transparent
   );
 }
-.fd-set-tabs [role="tab"]:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-set-tabs [role="tab"]:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
-.fd-set-tabs [role="tab"][aria-selected="true"],
-.fd-set-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+.fd-set-tabs [role="tab"][aria-selected="true"] {
   border-bottom-color: var(--text);
   color: var(--text);
 }
-.fd-set-tabs [role="tab"]:focus-visible,
-.fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+@media (hover: hover) {
+  .fd-set-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+    border-bottom-color: var(--text);
+    color: var(--text);
+  }
+}
+.fd-set-tabs [role="tab"]:focus-visible {
   margin-inline: calc(-1 * var(--sp-1));
   padding-inline: var(--sp-1);
   outline: 2px solid var(--focus);
   outline-offset: -2px;
   border-radius: var(--r-chip);
+}
+@media (hover: hover) {
+  .fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+    margin-inline: calc(-1 * var(--sp-1));
+    padding-inline: var(--sp-1);
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+    border-radius: var(--r-chip);
+  }
 }
 /* Forced colors: the transparent underline of a tab is not drawn as it is. An unselected tab hides
    its underline (Canvas), the selected tab draws it in Highlight, and the row rule is CanvasText.
@@ -102,17 +131,26 @@
     border-bottom-color: CanvasText;
   }
   .fd-set-tabs [role="tab"],
+  .fd-set-tabs [role="tab"]:focus-visible {
+    margin-inline: 0;
+    padding: 0 var(--sp-1);
+  }
+  .fd-set-tabs [role="tab"]:not([aria-selected="true"]) {
+    border-bottom-color: Canvas;
+  }
+  .fd-set-tabs [role="tab"][aria-selected="true"] {
+    border-bottom-color: Highlight;
+  }
+}
+@media (forced-colors: active) and (hover: hover) {
   .fd-set-tabs [role="tab"]:hover:not(:disabled),
-  .fd-set-tabs [role="tab"]:focus-visible,
   .fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
     margin-inline: 0;
     padding: 0 var(--sp-1);
   }
-  .fd-set-tabs [role="tab"]:not([aria-selected="true"]),
   .fd-set-tabs [role="tab"]:not([aria-selected="true"]):hover:not(:disabled) {
     border-bottom-color: Canvas;
   }
-  .fd-set-tabs [role="tab"][aria-selected="true"],
   .fd-set-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
     border-bottom-color: Highlight;
   }
@@ -791,8 +829,10 @@ input[data-mono="true"] {
   padding-top: 0;
   padding-bottom: var(--sp-2);
 }
-.fd-set-insttable tbody .fd-set-envrow:hover {
-  background: none;
+@media (hover: hover) {
+  .fd-set-insttable tbody .fd-set-envrow:hover {
+    background: none;
+  }
 }
 .fd-set-env {
   display: flex;
@@ -1041,8 +1081,10 @@ input[data-mono="true"] {
 .fd-omarchy-disclosure[aria-expanded="true"]::before {
   transform: rotate(90deg);
 }
-.fd-omarchy-disclosure:hover:not(:disabled) {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-omarchy-disclosure:hover:not(:disabled) {
+    background: var(--raised);
+  }
 }
 .fd-omarchy-repairlist {
   display: grid;

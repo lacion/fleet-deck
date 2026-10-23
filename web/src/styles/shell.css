@@ -934,19 +934,13 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* A tap leaves no hover fill behind on a touch screen: the fill shows while pressed, and on
    hover only where a pointer hovers. */
-@media (hover: hover) {
-  .fd-sidebar[data-variant="list"] .fd-srow:hover {
-    background: transparent;
-  }
-}
-
 .fd-sidebar[data-variant="list"] .fd-srow:active {
   background: var(--raised);
 }
 
 @media (hover: hover) {
   .fd-sidebar[data-variant="list"] .fd-srow:hover {
-    background: var(--raised);
+    background: var(--hover-bg);
   }
 }
 

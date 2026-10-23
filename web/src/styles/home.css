@@ -164,11 +164,15 @@
     > input:not(:focus):placeholder-shown::placeholder {
     color: transparent;
   }
-  .fd-home:not([data-layout="phone"]) .fd-home-search:hover > input:not(:focus):placeholder-shown {
-    background: var(--raised);
-  }
-  .fd-home:not([data-layout="phone"]) .fd-home-search:hover > .fd-icon {
-    color: var(--text);
+  @media (hover: hover) {
+    .fd-home:not([data-layout="phone"])
+      .fd-home-search:hover
+      > input:not(:focus):placeholder-shown {
+      background: var(--raised);
+    }
+    .fd-home:not([data-layout="phone"]) .fd-home-search:hover > .fd-icon {
+      color: var(--text);
+    }
   }
   .fd-home:not([data-layout="phone"])
     .fd-home-search:is(:focus-within, :has(> input:not(:placeholder-shown))) {
@@ -358,9 +362,11 @@
   font-weight: 600;
   text-decoration: none;
 }
-.fd-q-session:hover {
-  color: var(--text);
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-q-session:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
 }
 .fd-q-kind {
   display: flex;
@@ -454,9 +460,11 @@
   background: var(--raised-hi);
   box-shadow: inset 0 0 0 1px var(--btn-edge);
 }
-.fd-q-body button:not(.fd-decide, .fd-danger):hover:not(:disabled) {
-  background: var(--raised-hi);
-  box-shadow: inset 0 0 0 1px var(--ctl-edge);
+@media (hover: hover) {
+  .fd-q-body button:not(.fd-decide, .fd-danger):hover:not(:disabled) {
+    background: var(--raised-hi);
+    box-shadow: inset 0 0 0 1px var(--ctl-edge);
+  }
 }
 .fd-q-error {
   flex-basis: 100%;
@@ -691,8 +699,10 @@
   box-shadow: var(--shadow-lift);
   transition: background-color var(--t-fast);
 }
-.fd-stripwrap:hover {
-  background: var(--raised-hi);
+@media (hover: hover) {
+  .fd-stripwrap:hover {
+    background: var(--raised-hi);
+  }
 }
 /* The where column of every strip of the board (--fd-where-w): 168px, wider on a wide board
    (16% of the fleet column, at most 260px), so a long branch shows. Every strip of the board has
@@ -720,8 +730,10 @@
   color: var(--text);
   text-decoration: none;
 }
-.fd-strip:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-strip:hover {
+    color: var(--text);
+  }
 }
 .fd-strip:focus-visible {
   outline: 2px solid var(--focus);
@@ -1000,9 +1012,11 @@
 .fd-access-expired > summary::before {
   margin-right: 0;
 }
-.fd-lane-ended > summary:hover,
-.fd-access-expired > summary:hover {
-  color: var(--dim);
+@media (hover: hover) {
+  .fd-lane-ended > summary:hover,
+  .fd-access-expired > summary:hover {
+    color: var(--dim);
+  }
 }
 .fd-lane-ended > summary:focus-visible,
 .fd-access-expired > summary:focus-visible {
@@ -1038,8 +1052,10 @@
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--border-soft);
 }
-.fd-stripwrap:has(> .fd-strip[data-archived="true"]):hover {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-stripwrap:has(> .fd-strip[data-archived="true"]):hover {
+    background: var(--raised);
+  }
 }
 .fd-strip[data-archived="true"] .fd-strip-title {
   font-weight: 500;
@@ -1495,10 +1511,12 @@
   font: inherit;
   font-weight: 500;
 }
-.fd-namebtn:hover:not(:disabled) {
-  background: none;
-  color: var(--text);
-  text-decoration: underline;
+@media (hover: hover) {
+  .fd-namebtn:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+    text-decoration: underline;
+  }
 }
 
 /* The tabbed panel: Activity, Mail & tasks, Assign, Usage. */
@@ -1936,8 +1954,10 @@
   flex: none;
   opacity: 0.7;
 }
-.fd-fleet-compose > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-fleet-compose > summary:hover {
+    color: var(--text);
+  }
 }
 .fd-fleet-compose > summary:focus-visible {
   outline: 2px solid var(--focus);
@@ -2022,9 +2042,11 @@
   align-self: flex-start;
   background: transparent;
 }
-.fd-fleet-give:hover:not(:disabled) {
-  background: transparent;
-  color: var(--text);
+@media (hover: hover) {
+  .fd-fleet-give:hover:not(:disabled) {
+    background: transparent;
+    color: var(--text);
+  }
 }
 .fd-fleet-give:focus-visible {
   outline-offset: 1px;
@@ -2083,15 +2105,14 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-.fd-menu-switch:hover {
-  background: var(--badge-bg);
-}
 .fd-menu-switch[data-disabled="true"] {
   color: var(--dim);
   cursor: default;
 }
-.fd-menu-switch[data-disabled="true"]:hover {
-  background: transparent;
+@media (hover: hover) {
+  .fd-menu-switch[data-disabled="true"]:hover {
+    background: transparent;
+  }
 }
 .fd-home[data-layout="phone"] .fd-filters-menu .fd-menu-body {
   top: calc(100% - 4px);
@@ -2125,8 +2146,10 @@
 .fd-home[data-layout="phone"] .fd-q-body .fd-danger {
   background: var(--raised-hi);
 }
-.fd-home[data-layout="phone"] .fd-q-body .fd-danger:hover:not(:disabled) {
-  background: var(--hazard-bg);
+@media (hover: hover) {
+  .fd-home[data-layout="phone"] .fd-q-body .fd-danger:hover:not(:disabled) {
+    background: var(--hazard-bg);
+  }
 }
 .fd-home[data-layout="phone"] .fd-q-cmd,
 .fd-home[data-layout="phone"] .fd-q-title {

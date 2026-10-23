@@ -54,9 +54,18 @@ describe('chips', () => {
   test('the published chip reads "Artifact · <title>" with its version apart, and opens the viewer', () => {
     const html = withEnv(env({ open: () => {} }), <ArtifactChip chip={chip} />);
     expect(html).toContain(
-      '<span class="fd-art-chip-text">Artifact · Report</span><span class="fd-badge" data-tone="muted">v2</span>',
+      '<span class="fd-art-chip-text">Artifact · Report</span><span class="fd-badge fd-art-ver">v2</span>',
     );
     expect(html).toContain('<button type="button" class="fd-chip fd-art-chip"');
+  });
+
+  test('the published chip shows its version as the neutral badge of the list; version 1 has none', () => {
+    const html = withEnv(env({ open: () => {} }), <ArtifactChip chip={chip} />);
+    expect(html).toContain('<span class="fd-badge fd-art-ver">v2</span>');
+    expect(html).not.toContain('data-tone');
+    const first = withEnv(env({ open: () => {} }), <ArtifactChip chip={{ ...chip, version: 1 }} />);
+    expect(first).not.toContain('fd-badge');
+    expect(first).toContain('Artifact · Report');
   });
 
   test('without an open handler the chip links to the artifact page', () => {

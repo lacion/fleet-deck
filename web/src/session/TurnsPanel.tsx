@@ -30,6 +30,7 @@ import {
 } from './checkpoint';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
+import { foldText, foldTurns, turnFiles } from './turnFolds';
 import {
   type FinalizedTurn,
   mergeTurnPaths,
@@ -615,6 +616,95 @@ export function TurnsPanel(props: Props) {
   }
   const sharedBy = (reason: string) =>
     shared !== null && (shared === NOT_A_GIT_WORKTREE || reason === shared);
+  const row = (t: FinalizedTurn, i: number) => {
+    const block = revertBlock(t, summary, caps);
+    const tf = turnFiles(t);
+    const diff = diffs[t.turnId];
+    const loaded = diffOpen(diff);
+    const loading = !loaded && flight.current.loading(t.turnId);
+    return (
+      <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
+        <span className="fd-turn-name">Turn {i + 1}</span>
+        {t.diff && hasChanges(t.diff) ? (
+          <span className="fd-turn-stat">
+            <TurnStat stat={t.diff} />
+          </span>
+        ) : tf.kind === 'no_snapshot' && tf.reason !== null ? (
+          <span className="fd-turn-stat" title={tf.reason}>
+            {sharedBy(tf.reason) ? 'No snapshot' : checkpointText(tf.reason)}
+          </span>
+        ) : tf.kind === 'no_snapshot' ? (
+          <span className="fd-turn-stat">{checkpointText('')}</span>
+        ) : (
+          <span className="fd-turn-stat">No file changes</span>
+        )}
+        {t.reverted ? <span className="fd-turn-stat">reverted</span> : null}
+        {hasChanges(t.diff) && files ? (
+          <button
+            type="button"
+            className="fd-sm fd-turn-diff"
+            aria-expanded={loaded}
+            aria-busy={loading || undefined}
+            onClick={() => (loaded || loading ? hideDiff(t.turnId) : showDiff(t.turnId))}
+          >
+            <Icon of={ChevronRight} size={14} />
+            {loaded ? 'Hide the diff' : loading ? 'Loading…' : 'Show the diff'}
+          </button>
+        ) : null}
+        {caps?.rollback === true && !t.reverted ? (
+          confirm === t.turnId ? (
+            <span className="fd-confirm" role="group" aria-label="Confirm the revert">
+              Revert the conversation and the files to the start of this turn? This turn and every
+              later turn go away.
+              <button
+                type="button"
+                className="fd-sm fd-danger"
+                disabled={!drive || busy || block !== null}
+                onClick={() => {
+                  setConfirm(null);
+                  if (actions) act(() => actions.revert(t.turnId));
+                }}
+              >
+                Revert
+              </button>
+              <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="fd-sm"
+              disabled={!drive || busy || block !== null}
+              title={block ?? undefined}
+              onClick={() => setConfirm(t.turnId)}
+            >
+              Revert to here
+            </button>
+          )
+        ) : null}
+        {typeof diff === 'string' ? <p role="alert">{diff}</p> : null}
+        {diff && typeof diff !== 'string' ? (
+          <>
+            {diff.fellBack ? (
+              <p className="fd-note">Comments are not available for this turn on this station.</p>
+            ) : null}
+            <Diff
+              patch={diff.diff.patch}
+              truncated={diff.diff.truncated}
+              id={t.turnId}
+              onOpenFile={onOpenFile}
+              review={
+                review === undefined || diff.snapshot === null
+                  ? undefined
+                  : diffReview(review, diff.snapshot)
+              }
+            />
+          </>
+        ) : null}
+      </li>
+    );
+  };
   return (
     <section className="fd-turns" aria-label="Turns">
       {toggle}
@@ -629,94 +719,32 @@ export function TurnsPanel(props: Props) {
         </p>
       )}
       <ol ref={turnsBox}>
-        {turns.map((t, i) => {
-          const block = revertBlock(t, summary, caps);
-          const diff = diffs[t.turnId];
-          const loaded = diffOpen(diff);
-          const loading = !loaded && flight.current.loading(t.turnId);
-          return (
-            <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
-              <span className="fd-turn-name">Turn {i + 1}</span>
-              {t.diff && hasChanges(t.diff) ? (
-                <span className="fd-turn-stat">
-                  <TurnStat stat={t.diff} />
-                </span>
-              ) : t.end?.state === 'unavailable' ? (
-                <span className="fd-turn-stat" title={t.end.reason}>
-                  {sharedBy(t.end.reason) ? 'No snapshot' : checkpointText(t.end.reason)}
-                </span>
-              ) : (
-                <span className="fd-turn-stat">No file changes</span>
-              )}
-              {t.reverted ? <span className="fd-turn-stat">reverted</span> : null}
-              {hasChanges(t.diff) && files ? (
-                <button
-                  type="button"
-                  className="fd-sm fd-turn-diff"
-                  aria-expanded={loaded}
-                  aria-busy={loading || undefined}
-                  onClick={() => (loaded || loading ? hideDiff(t.turnId) : showDiff(t.turnId))}
-                >
-                  <Icon of={ChevronRight} size={14} />
-                  {loaded ? 'Hide the diff' : loading ? 'Loading…' : 'Show the diff'}
-                </button>
-              ) : null}
-              {caps?.rollback === true && !t.reverted ? (
-                confirm === t.turnId ? (
-                  <span className="fd-confirm" role="group" aria-label="Confirm the revert">
-                    Revert the conversation and the files to the start of this turn? This turn and
-                    every later turn go away.
-                    <button
-                      type="button"
-                      className="fd-sm fd-danger"
-                      disabled={!drive || busy || block !== null}
-                      onClick={() => {
-                        setConfirm(null);
-                        if (actions) act(() => actions.revert(t.turnId));
-                      }}
-                    >
-                      Revert
-                    </button>
-                    <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
-                      Cancel
-                    </button>
+        {foldTurns(turns, caps).map((entry) =>
+          entry.kind === 'turn' ? (
+            row(entry.turn, entry.index)
+          ) : (
+            <li
+              key={`fold:${entry.turns[0]?.turn.turnId}`}
+              className="fd-turn-fold"
+              data-first={entry.first + 1}
+              data-last={entry.last + 1}
+            >
+              <details>
+                <summary>
+                  <span className="fd-turn-name">{`Turns ${entry.first + 1}–${entry.last + 1}`}</span>
+                  <span className="fd-turn-stat">
+                    {foldText(
+                      entry.turns.map((r) => r.turn),
+                      sharedBy,
+                      checkpointText,
+                    )}
                   </span>
-                ) : (
-                  <button
-                    type="button"
-                    className="fd-sm"
-                    disabled={!drive || busy || block !== null}
-                    title={block ?? undefined}
-                    onClick={() => setConfirm(t.turnId)}
-                  >
-                    Revert to here
-                  </button>
-                )
-              ) : null}
-              {typeof diff === 'string' ? <p role="alert">{diff}</p> : null}
-              {diff && typeof diff !== 'string' ? (
-                <>
-                  {diff.fellBack ? (
-                    <p className="fd-note">
-                      Comments are not available for this turn on this station.
-                    </p>
-                  ) : null}
-                  <Diff
-                    patch={diff.diff.patch}
-                    truncated={diff.diff.truncated}
-                    id={t.turnId}
-                    onOpenFile={onOpenFile}
-                    review={
-                      review === undefined || diff.snapshot === null
-                        ? undefined
-                        : diffReview(review, diff.snapshot)
-                    }
-                  />
-                </>
-              ) : null}
+                </summary>
+                <ol>{entry.turns.map((r) => row(r.turn, r.index))}</ol>
+              </details>
             </li>
-          );
-        })}
+          ),
+        )}
       </ol>
       {revertHolds(summary.revert?.state) ? (
         <p className="fd-note">A revert holds the session; no new revert starts.</p>

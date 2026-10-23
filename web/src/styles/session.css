@@ -350,8 +350,7 @@
 }
 @media (hover: hover) {
   .fd-sh-confirm > .fd-primary:hover:not(:disabled) {
-    justify-content: center;
-    background: var(--ink-fill);
+    background: color-mix(in srgb, var(--ink-fill) 88%, var(--bg));
     color: var(--ink-on);
   }
 }
@@ -1708,6 +1707,41 @@ fieldset:disabled .fd-opt {
   margin: 0;
   color: var(--faint);
   font-size: var(--fs-meta);
+}
+/* A fold of quiet turns (B23): no strip of its own; the summary is a 36px row with the details
+   chevron, the range in --dim and the cause in --faint; the folded rows are strips under it. */
+.fd-turns li.fd-turn-fold {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.fd-turn-fold > details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  min-height: var(--row-h);
+  padding: 0 var(--sp-2) 0 var(--sp-4);
+  border-radius: var(--r-card);
+  color: var(--dim);
+}
+.fd-turn-fold > details > summary > .fd-turn-name {
+  font-size: var(--fs-ui);
+  font-weight: 500;
+}
+.fd-turn-fold > details > ol {
+  margin-top: 6px;
+}
+@media (hover: hover) {
+  .fd-turn-fold > details > summary:hover {
+    color: var(--text);
+  }
+}
+@media (pointer: coarse) {
+  .fd-turn-fold > details > summary {
+    min-height: var(--tap-min);
+  }
 }
 /* The counts of a turn and of the session diff: `+9 −3 1 file`, the parts spaced by the gap. */
 .fd-turns li > .fd-turn-stat,

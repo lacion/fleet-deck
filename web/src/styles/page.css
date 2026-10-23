@@ -515,8 +515,10 @@
   font-size: var(--fs-meta);
   font-weight: 500;
 }
-.fd-advanced > summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .fd-advanced > summary:hover {
+    color: var(--text);
+  }
 }
 .fd-advanced[open] > summary {
   margin-bottom: var(--sp-3);
@@ -570,8 +572,10 @@
 .fd-table tbody tr {
   transition: background-color var(--t-fast);
 }
-.fd-table tbody tr:hover {
-  background: var(--raised);
+@media (hover: hover) {
+  .fd-table tbody tr:hover {
+    background: var(--raised);
+  }
 }
 /* A row that is no longer live (an expired share): dim ink, not opacity, so the text keeps
    its contrast (WCAG 1.4.3). */
@@ -834,6 +838,9 @@
   .fd-folder-list button:hover:not(:disabled) {
     background: var(--raised);
     border-color: transparent;
+  }
+  :where(.fd-panel, .fd-dialog, [role="dialog"]) .fd-folder-list button:hover:not(:disabled) {
+    background: var(--badge-bg);
   }
 }
 .fd-folder-list .fd-icon {
