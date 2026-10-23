@@ -60,6 +60,14 @@ NEXTEST_TEST_THREADS=${NEXTEST_TEST_THREADS:-$threads}
 CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
 CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
 export CARGO_BUILD_JOBS NEXTEST_TEST_THREADS CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG
+# Several worktrees can share one target folder; a global rustc wrapper cache
+# (kache) then hands the crate of one worktree to another. Build without the
+# wrapper; FD_HEAVY_KACHE=1 keeps it.
+if [ "${FD_HEAVY_KACHE:-0}" != 1 ]; then
+    CARGO_BUILD_RUSTC_WRAPPER=
+    RUSTC_WRAPPER=
+    export CARGO_BUILD_RUSTC_WRAPPER RUSTC_WRAPPER
+fi
 
 # The command, inside the slice when there is one.
 run() {
