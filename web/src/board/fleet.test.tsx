@@ -125,7 +125,7 @@ describe('fleet projections', () => {
     expect(html).toContain('data-ico="stale" title="Stale"');
     // with no branch the place is the directory
     expect(html).toContain('title="Folder: work"');
-    expect(html).toMatch(/title="Background tasks">[\s\S]*?<\/svg><span>1<\/span>/);
+    expect(html).toMatch(/title="Background commands">[\s\S]*?<\/svg><span>1<\/span>/);
     const live = renderToStaticMarkup(
       <FleetBoard sessions={[card('a')]} stations={[]} freshness="live" />,
     );

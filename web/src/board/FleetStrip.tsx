@@ -8,7 +8,6 @@ import { ProjectChip, useOwnProject } from '../integrations/ProjectChip';
 import { useProjects } from '../integrations/context';
 import type { Freshness } from '../runtime/state';
 import { hasChanges } from '../session/changes';
-import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
 import { archived } from '../ui/archive';
 import {
@@ -41,6 +40,7 @@ import {
 } from '../ui/icons';
 import { priority, sessionRef } from '../ui/localSet';
 import { UnreadMark, unreadOf } from '../views/marks';
+import { agentsPartial, backgroundCommands, runningAgents } from './agentCounts';
 import { CardNote, CompareChip } from './cardParts';
 import type { Contested } from './fleet';
 import { stationName } from './fleet';
@@ -92,12 +92,15 @@ export function diffTexts(
 /**
  * One fact of the meta cell: a 12 px icon and an optional number (DESIGN-SYSTEM §4.1: the quiet
  * form of a counter or a flag; a chip that is a link of its own is a `.fd-badge`). The strip is a
- * link, so the fact is an image with a name ("Subagents running: 2"), not only a title.
+ * link, so the fact is an image with a name ("Agents running: 2"), not only a title. A count
+ * that is a lower bound is text ("3+"); `name` is then the name of the image without the note
+ * that the title adds.
  */
 function Ico({
   kind,
   icon,
   title,
+  name = title,
   n,
   tone,
   extra,
@@ -105,14 +108,15 @@ function Ico({
   readonly kind: string;
   readonly icon: LucideIcon;
   readonly title: string;
-  readonly n?: number | undefined;
+  readonly name?: string | undefined;
+  readonly n?: number | string | undefined;
   readonly tone?: 'hazard' | undefined;
   readonly extra?: Record<string, number> | undefined;
 }) {
   return (
     <span
       role="img"
-      aria-label={n === undefined ? title : `${title}: ${n}`}
+      aria-label={n === undefined ? name : `${name}: ${n}`}
       className="fd-strip-ico"
       data-ico={kind}
       data-tone={tone}
@@ -163,7 +167,9 @@ export function FleetStrip({
   const starred = priority.use().has(ref);
   const projects = useProjects();
   const cleared = archived.use().has(ref) && (card.status === 'ended' || card.status === 'lost');
-  const subagents = runningSubagents(s);
+  const agents = runningAgents(s);
+  const partial = agentsPartial(s);
+  const commands = backgroundCommands(s);
   const total = useDiffTotal(ref);
   const digest = digestLine(s.digest);
   const cost = costText(s.usage);
@@ -268,13 +274,16 @@ export function FleetStrip({
           {mail > 0 ? (
             <Ico kind="mail" icon={Mail} title="Mail waiting for delivery" n={mail} />
           ) : null}
-          {subagents > 0 ? (
+          {agents > 0 || partial ? (
             <Ico
-              kind="subagents"
+              kind="agents"
               icon={Workflow}
-              title="Subagents running"
-              n={subagents}
-              extra={{ 'data-running-subagents': subagents }}
+              title={
+                partial ? 'Agents running. Some workflow agents are not counted.' : 'Agents running'
+              }
+              name="Agents running"
+              n={partial ? `${agents}+` : agents}
+              extra={{ 'data-running-agents': agents }}
             />
           ) : null}
           {s.artifacts_count > 0 ? (
@@ -286,13 +295,8 @@ export function FleetStrip({
               extra={{ 'data-artifacts': s.artifacts_count }}
             />
           ) : null}
-          {s.background_tasks.length > 0 ? (
-            <Ico
-              kind="background"
-              icon={ListTodo}
-              title="Background tasks"
-              n={s.background_tasks.length}
-            />
+          {commands > 0 ? (
+            <Ico kind="background" icon={ListTodo} title="Background commands" n={commands} />
           ) : null}
           {s.terminal != null ? (
             <Ico kind="terminal" icon={SquareTerminal} title="In terminal" />

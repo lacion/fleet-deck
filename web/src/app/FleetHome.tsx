@@ -16,6 +16,7 @@ import {
   repoNames,
   stationName,
 } from '../board/fleet';
+import { atWork } from '../board/agentCounts';
 import { record } from '../board/activity';
 import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
 import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
@@ -465,6 +466,7 @@ export function FleetHome({
             stations={liveStations}
             needsYou={needsYou}
             conflicts={conflictCount}
+            atWork={atWork(live)}
           />
           {limit === null ? null : (
             <>
