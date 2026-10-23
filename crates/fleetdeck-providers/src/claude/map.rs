@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
-use super::{requests, usage};
+use super::{requests, usage, workflows};
 
 // The `task_*` frames and the tools under a running task (B6).
 #[path = "tasks.rs"]
@@ -178,6 +178,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
         "task_started" | "task_updated" | "task_notification" => {
             tasks::on_task_frame(core, subtype, body)
         }
+        "task_progress" => workflows::on_task_progress(core, body),
         // `status`, `ui_invalidate`, hook frames, ... never confirm an input:
         // only a frame that names the input's client uuid does (ADR-001).
         _ => Vec::new(),
@@ -357,6 +358,8 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
         {
             provider_refs.insert("agent_id".to_owned(), Value::from(agent_id.as_str()));
         }
+        // The run id of a `Workflow` result comes from the structured result only (B12).
+        let run_id_update = workflows::on_run_id(core, tool_use_id, &node, msg, &mut provider_refs);
         out.push(Output::Emit(Event::ToolCompleted {
             node_id: node.node_id,
             status,
@@ -364,6 +367,7 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
             exit_code: None,
             provider_refs,
         }));
+        out.extend(run_id_update);
     }
     out
 }

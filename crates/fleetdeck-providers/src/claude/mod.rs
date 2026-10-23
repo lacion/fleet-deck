@@ -16,6 +16,7 @@ mod host_cmd;
 mod map;
 mod requests;
 mod usage;
+mod workflows;
 
 mod checkpoint;
 pub use checkpoint::{CHECKPOINT_READS, CHECKPOINT_VERSION};
@@ -41,3 +42,5 @@ mod tests_options;
 mod tests_traps;
 #[cfg(test)]
 mod tests_usage;
+#[cfg(test)]
+mod tests_workflows;

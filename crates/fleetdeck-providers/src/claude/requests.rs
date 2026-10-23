@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::control::{self, PermissionDecision};
 use super::core::{ClaudeCore, Output, ReqState, RuntimeRequest};
-use super::frames::ControlRequest;
+use super::frames::{ControlRequest, valid_agent_id};
 use super::map::{input_summary, refs, tool_kind};
 use crate::adapter::{Answer, ProviderError, Result};
 
@@ -101,6 +101,7 @@ pub(super) fn on_control_request(
             input,
             tool_use_id,
             permission_suggestions,
+            body,
             ..
         } => {
             if core.native_to_app.contains_key(native_id) {
@@ -118,6 +119,11 @@ pub(super) fn on_control_request(
                 request_kind(&tool_name) != RequestKind::Question,
             );
             let details = input_summary(&tool_name, &input);
+            // The asking agent of a workflow agent's request (B12).
+            let agent_id = body
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .filter(|id| valid_agent_id(id));
             core.native_to_app
                 .insert(native_id.to_owned(), request_id.clone());
             core.requests.insert(
@@ -143,6 +149,7 @@ pub(super) fn on_control_request(
                 provider_refs: refs(&[
                     ("control_request_id", Some(native_id)),
                     ("tool_use_id", tool_use_id.as_deref()),
+                    ("agent_id", agent_id),
                 ]),
             })]
         }

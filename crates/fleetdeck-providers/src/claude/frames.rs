@@ -82,6 +82,9 @@ pub struct MessageFrame {
     /// `tool_use_result.agentId` of a user frame, kept only when it matches
     /// `[a-z0-9]{1,64}`; the rest of the structured result is dropped (DL-191).
     pub agent_id: Option<String>,
+    /// `tool_use_result.runId` of a user frame (a workflow run id), kept only
+    /// when it matches `wf_[a-z0-9-]{1,64}` (B12).
+    pub workflow_run_id: Option<String>,
 }
 
 impl MessageFrame {
@@ -155,10 +158,29 @@ fn structured_agent_id(map: &Map<String, Value>) -> Option<String> {
         .get("tool_use_result")
         .or_else(|| map.get("toolUseResult"))?;
     let id = result.get("agentId")?.as_str()?;
-    let valid = (1..=64).contains(&id.len())
+    valid_agent_id(id).then(|| id.to_owned())
+}
+
+/// True for an agent id of `[a-z0-9]{1,64}`.
+pub(super) fn valid_agent_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
         && id
             .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// The workflow run id of the top-level structured tool result. Only a string
+/// of `wf_[a-z0-9-]{1,64}` counts; nothing is read from text (B12).
+fn structured_workflow_run_id(map: &Map<String, Value>) -> Option<String> {
+    let result = map
+        .get("tool_use_result")
+        .or_else(|| map.get("toolUseResult"))?;
+    let id = result.get("runId")?.as_str()?;
+    let rest = id.strip_prefix("wf_")?;
+    let valid = (1..=64).contains(&rest.len())
+        && rest
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
     valid.then(|| id.to_owned())
 }
 
@@ -198,6 +220,7 @@ pub fn parse_value(value: Value) -> Result<CliFrame, ParseError> {
                 is_replay: map.get("isReplay").and_then(Value::as_bool) == Some(true),
                 message: map.get("message").cloned().unwrap_or(Value::Null),
                 agent_id: structured_agent_id(&map),
+                workflow_run_id: structured_workflow_run_id(&map),
             };
             if kind == "assistant" {
                 CliFrame::Assistant(msg)

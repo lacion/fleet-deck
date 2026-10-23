@@ -9,12 +9,16 @@ use serde_json::{Map, Value};
 
 use super::close_ids;
 use crate::claude::core::{ClaudeCore, Output, truncate};
+use crate::claude::workflows;
 
 /// The longest `summary` of a `task.updated` event.
 const SUMMARY_CHARS: usize = 200;
 
 /// `task_kind` of a task that no `task_started` frame announced.
 const UNKNOWN_KIND: &str = "unknown";
+
+/// `task_type` of a Claude workflow (B12).
+const WORKFLOW_KIND: &str = "local_workflow";
 
 /// The statuses that end a task; any other text keeps the task running.
 const FINAL_STATUSES: &[&str] = &["completed", "failed", "killed", "stopped", "cancelled"];
@@ -75,14 +79,21 @@ pub(super) fn on_task_frame(
         .as_deref()
         .and_then(|id| core.tools.get(id))
         .map(|n| n.node_id.as_str().to_owned());
+    let workflow_start = subtype == "task_started" && task_kind == WORKFLOW_KIND;
     let mut out = vec![Output::Emit(Event::TaskUpdated {
-        task_id,
+        task_id: task_id.clone(),
         node_id,
         task_kind,
-        status,
+        status: status.clone(),
         description,
         summary,
     })];
+    // A workflow run also has its own events (B12), after the task event.
+    if workflow_start {
+        out.extend(workflows::on_started(core, &task_id, body));
+    } else if ended {
+        out.extend(workflows::on_final(core, &task_id, &status));
+    }
     // A task that ends closes what is still open under it, after its event.
     if ended && let Some(root) = tool_use_id {
         let ids = open_under(core, &root);
