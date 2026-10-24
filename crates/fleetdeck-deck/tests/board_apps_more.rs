@@ -265,7 +265,7 @@ async fn call_route_writes_audit_for_tools_call_only() {
     let ok = by_detail(&format!("{APP}/bump ok"));
     assert_eq!(ok.result, AuditResult::Ok);
     assert_eq!(ok.actor, "owner");
-    assert_eq!(ok.target.as_deref(), Some("fake/s1"));
+    assert_eq!(ok.target, Some(format!("{st}/s1")));
     assert_eq!(
         by_detail(&format!("{APP}/bump confirm")).result,
         AuditResult::Ok
@@ -315,10 +315,7 @@ async fn release_route_writes_audit() {
     };
     assert_eq!(find(&format!("{CALL} ok")).result, AuditResult::Ok);
     assert_eq!(find(&format!("{CALL} ok")).actor, "owner");
-    assert_eq!(
-        find(&format!("{CALL} ok")).target.as_deref(),
-        Some("fake/s1")
-    );
+    assert_eq!(find(&format!("{CALL} ok")).target, Some(format!("{st}/s1")));
     assert_eq!(find(&format!("{CALL} not_open")).result, AuditResult::Ok);
     assert_eq!(
         find(&format!("{CALL} call_running")).result,

@@ -180,7 +180,7 @@ fn bootstrap_constant_is_the_design_source() {
         "host.postMessage({\"fleet-deck-app-hello\":1},\"*\",[ch.port2]);\n})();</script>"
     ));
     assert_eq!(APP_BOOTSTRAP.matches("<script>").count(), 1);
-    assert_eq!(APP_BOOTSTRAP.lines().count(), 11);
+    assert_eq!(APP_BOOTSTRAP.lines().count(), 12);
 }
 
 #[test]
