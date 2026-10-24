@@ -884,3 +884,8 @@ Other changes of revision 2:
 | T1 | A running turn is use of a bound grant: the link stream by token, four touch points (sweep, batch, snapshot, `station.info` answer) | none |
 | T2 | The store refusals say why a grant ended: `grant_end` with `GrantEnd`, `EndFacts` and the three texts | none |
 | T3 | The link refusal says why: `GrantSource::refusal`, the `EndFacts` cache of `DeckPeers`, and station notes for ended-grant writes | T2 (code), T1 (the checklist row) |
+
+## Owner decision Q1 (2026-10-24)
+
+"The coordinator session is working" means a running turn OR running background work of the session: `current_run` set, or `background_tasks` not empty (subagents, workflow agents, background commands), or `running_agents > 0`; the session is not exited or lost. Background work alone keeps the grant in effect; the idle clock starts when the turn and all background work stopped. The freshness rules (§3.2) and the lifetime cap are unchanged. Code: `grant_turns.rs` `turn_running`; test `background_work_without_a_turn_keeps_the_grant_in_effect`.
+

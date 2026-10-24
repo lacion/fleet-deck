@@ -318,17 +318,15 @@ async fn no_extension_before_the_read_model_reaches_the_reported_head_or_with_an
 }
 
 #[tokio::test]
-async fn no_extension_for_an_exited_or_lost_session_or_for_background_work_only() {
+async fn no_extension_for_an_exited_or_lost_session() {
     let w = world().await;
     let mut exited = session("c-exited", true);
     exited.state = SessionState::Exited;
     let mut lost = session("c-lost", true);
     lost.state = SessionState::Lost;
-    let mut background = session("c-bg", false);
-    background.background_tasks = vec!["t1".to_owned()];
-    seed(&w, &w.a, vec![exited, lost, background], 5).await;
+    seed(&w, &w.a, vec![exited, lost], 5).await;
     let mut grants = Vec::new();
-    for id in ["c-exited", "c-lost", "c-bg"] {
+    for id in ["c-exited", "c-lost"] {
         grants.push(bound(&w, &w.a, id, 600_000).await);
     }
     up(&w, &w.a, 1);
@@ -543,4 +541,26 @@ async fn the_newest_live_link_that_answered_decides() {
     assert_eq!(w.s.inner.current_stream(&w.a), stream(5));
     w.s.clear_link_features(&w.a, 1);
     assert_eq!(w.s.inner.current_stream(&w.a), None);
+}
+
+#[tokio::test]
+async fn background_work_without_a_turn_keeps_the_grant_in_effect() {
+    // Owner decision 2026-10-24: background tasks or running agents count as work.
+    let w = world().await;
+    let mut tasks = session("c-bg", false);
+    tasks.background_tasks = vec!["t1".to_owned()];
+    let mut agents = session("c-agents", false);
+    agents.running_agents = 2;
+    let idle = session("c-idle", false);
+    seed(&w, &w.a, vec![tasks, agents, idle], 5).await;
+    let g_tasks = bound(&w, &w.a, "c-bg", 600_000).await;
+    let g_agents = bound(&w, &w.a, "c-agents", 600_000).await;
+    let g_idle = bound(&w, &w.a, "c-idle", 600_000).await;
+    up(&w, &w.a, 1);
+    answer(&w, &w.a, 1, 5).await;
+    advance(&w, 30);
+    sweep(&w).await;
+    assert_eq!(get(&w, &g_tasks).await.last_used_at, Some(w.s.now_ms()));
+    assert_eq!(get(&w, &g_agents).await.last_used_at, Some(w.s.now_ms()));
+    assert_ne!(get(&w, &g_idle).await.last_used_at, Some(w.s.now_ms()));
 }

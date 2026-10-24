@@ -22,10 +22,14 @@ use crate::store::{DeckStore, Inner, Result, call};
 /// The incarnation and the head of one `station.info` answer (§3.2).
 pub(crate) type Stream = (IncarnationId, u64);
 
-/// A running turn (G6 §3.1): a run is active and the process lives.
+/// The session works (G6 §3.1, owner decision 2026-10-24): a run is active,
+/// or background work runs (subagents, workflow agents, background
+/// commands), and the process lives.
 #[must_use]
 pub(crate) fn turn_running(summary: &SessionSummary) -> bool {
-    summary.current_run.is_some()
+    (summary.current_run.is_some()
+        || !summary.background_tasks.is_empty()
+        || summary.running_agents > 0)
         && !matches!(summary.state, SessionState::Exited | SessionState::Lost)
 }
 
