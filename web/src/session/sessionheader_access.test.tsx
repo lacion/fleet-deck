@@ -22,6 +22,7 @@ describe('the Fleet access menu item', () => {
       flags: sessionFlags(s, 'live', actions),
       busy: null,
       outcome: null,
+      refusals: {},
       act: () => {},
       dismiss: () => {},
     };

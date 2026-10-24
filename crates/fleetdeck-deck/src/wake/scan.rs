@@ -26,6 +26,9 @@ const READ_TRIES: usize = 3;
 
 type Marks = BTreeMap<StationId, Option<SnapshotMark>>;
 
+/// A request on a card: the station, the session and the request id (G5).
+type RequestKey = (StationId, SessionId, String);
+
 /// A request that passed the checks of the wake rule and waits for a display.
 struct Candidate {
     station: StationId,
@@ -55,7 +58,7 @@ pub(super) struct Scanner {
     /// The mark of each station at the last scan.
     marks: Marks,
     /// The requests that the task handled and that are still on a card.
-    known: BTreeSet<(StationId, String)>,
+    known: BTreeSet<RequestKey>,
     /// The start time (deck clock) of the last job of each monitor.
     cooldown: HashMap<(StationId, String), i64>,
     /// Until when a suppression warning is not repeated.
@@ -138,7 +141,7 @@ impl Scanner {
                 (station, changed)
             })
             .collect();
-        let mut present = BTreeSet::new();
+        let mut present: BTreeSet<RequestKey> = BTreeSet::new();
         let mut candidates = Vec::new();
         for card in &cards {
             let station = &card.station_id;
@@ -146,12 +149,15 @@ impl Scanner {
             let is_baseline = baseline.get(station).copied().unwrap_or(true);
             for request in &card.summary.open_requests {
                 let request_id = request.request_id.as_str().to_owned();
-                let key = (station.clone(), request_id.clone());
+                let session = &card.summary.session_id;
+                let key = (station.clone(), session.clone(), request_id.clone());
                 present.insert(key.clone());
                 if !self.known.insert(key) {
                     continue;
                 }
-                let reserve = store.wake_reserve(station.as_str(), &request_id, now).await;
+                let reserve = store
+                    .wake_reserve(station.as_str(), session.as_str(), &request_id, now)
+                    .await;
                 self.note_reserve(reserve, now);
                 if is_baseline {
                     WakeCounters::bump(&self.counters().baseline);
@@ -167,7 +173,7 @@ impl Scanner {
                 }
                 candidates.push(Candidate {
                     station: station.clone(),
-                    session: card.summary.session_id.clone(),
+                    session: session.clone(),
                     request_id,
                     requested_at: request.requested_at,
                     repo: card.summary.repo.as_ref().map(|r| last_component(&r.root)),

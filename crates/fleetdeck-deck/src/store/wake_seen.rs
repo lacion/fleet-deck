@@ -13,8 +13,12 @@
 //! 4. when the table still holds 10 000 rows (all younger than 120 s), the
 //!    suppression state is set to now plus 120 s and the answer is
 //!    `Suppressed`;
-//! 5. `INSERT ... ON CONFLICT DO NOTHING`: one row is `Reserved`, none is
-//!    `Seen`.
+//! 5. `INSERT ... ON CONFLICT DO NOTHING`, then the tombstone check: one row
+//!    inserted and no tombstone is `Reserved`; else `Seen`.
+//!
+//! The key is `(station_id, session_id, request_id)` (V49, G5): request ids
+//! are per session. A V48 row is a legacy tombstone (session `''`): it makes
+//! its request id `Seen` in every session of its station until it ages out.
 //!
 //! A row younger than 120 s is never evicted: 120 s is longer than the 60 s
 //! window of a new request plus the 5 s skew.
@@ -48,9 +52,13 @@ pub enum WakeReserve {
 fn reserve(
     conn: &mut Connection,
     station_id: &str,
+    session_id: &str,
     request_id: &str,
     now: i64,
 ) -> Result<WakeReserve> {
+    if session_id == schema::LEGACY_SESSION {
+        return Ok(WakeReserve::Error);
+    }
     let tx = conn.transaction()?;
     let suspended: i64 = tx.query_row(
         "SELECT suspended_until_ms FROM wake_state WHERE id = 1",
@@ -85,12 +93,18 @@ fn reserve(
         return Ok(WakeReserve::Suppressed);
     }
     let n = tx.execute(
-        "INSERT INTO wake_seen (station_id, request_id, first_seen_ms) VALUES (?1, ?2, ?3)
-         ON CONFLICT DO NOTHING",
-        params![station_id, request_id, now],
+        "INSERT INTO wake_seen (station_id, session_id, request_id, first_seen_ms)
+         VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+        params![station_id, session_id, request_id, now],
+    )?;
+    let legacy: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM wake_seen
+         WHERE station_id = ?1 AND session_id = '' AND request_id = ?2)",
+        params![station_id, request_id],
+        |r| r.get(0),
     )?;
     tx.commit()?;
-    Ok(if n == 1 {
+    Ok(if n == 1 && !legacy {
         WakeReserve::Reserved
     } else {
         WakeReserve::Seen
@@ -98,18 +112,25 @@ fn reserve(
 }
 
 impl DeckStore {
-    /// Records that the wake rule observed `(station_id, request_id)`. Only
+    /// Records that the wake rule observed `(station_id, session_id,
+    /// request_id)`. A legacy tombstone of `(station_id, request_id)` (V49)
+    /// makes the answer `Seen`; an empty `session_id` is `Error`. Only
     /// [`WakeReserve::Reserved`] may lead to a wake. A baseline observation
     /// uses the same operation, because it must block later wakes.
     pub async fn wake_reserve(
         &self,
         station_id: &str,
+        session_id: &str,
         request_id: &str,
         now_ms: i64,
     ) -> WakeReserve {
-        let (station, request) = (station_id.to_owned(), request_id.to_owned());
+        let (station, session, request) = (
+            station_id.to_owned(),
+            session_id.to_owned(),
+            request_id.to_owned(),
+        );
         match call(&self.inner.db, move |conn| {
-            reserve(conn, &station, &request, now_ms)
+            reserve(conn, &station, &session, &request, now_ms)
         })
         .await
         {
@@ -121,3 +142,10 @@ impl DeckStore {
         }
     }
 }
+
+#[path = "wake_seen_schema.rs"]
+pub(super) mod schema;
+
+#[cfg(test)]
+#[path = "wake_seen_tests.rs"]
+mod tests;

@@ -2,11 +2,18 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { OpenRequest } from '../gen';
-import { sessionActions } from '../session/commands';
+import { type Outcome, sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { recordedRequest } from '../testing/timeline';
-import { NeedsYouRail, railCursor, railKeyOption, railStep } from './NeedsYouRail';
+import {
+  NeedsYouRail,
+  railCursor,
+  railErrors,
+  railKey,
+  railKeyOption,
+  railStep,
+} from './NeedsYouRail';
 
 const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
   request_id: 'r1',
@@ -316,5 +323,25 @@ describe('needs-you rail', () => {
       />,
     );
     expect(idle).toBe('');
+  });
+});
+
+describe('the rail keys and errors (G4)', () => {
+  const P: Outcome = { ok: true, text: 'Sent. The station has not confirmed it yet.' };
+  const R: Outcome = { ok: false, text: 'Refused: no such request' };
+
+  test('the rail keys a request by station, session and request id', () => {
+    expect(railKey({ station_id: 'a', session_id: 's1' }, 'req-3')).not.toBe(
+      railKey({ station_id: 'a', session_id: 's2' }, 'req-3'),
+    );
+  });
+
+  test('the rail counts a delayed repeat of a refusal', () => {
+    const e0 = {};
+    expect(railErrors(e0, 'k', P)).toBe(e0);
+    const e1 = railErrors(e0, 'k', R);
+    expect(e1['k']?.repeats).toBe(1);
+    expect(railErrors(e1, 'k', P)).toBe(e1);
+    expect(railErrors(e1, 'k', R)['k']?.repeats).toBe(2);
   });
 });

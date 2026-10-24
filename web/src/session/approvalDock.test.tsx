@@ -88,4 +88,23 @@ describe('approval dock (DL-140)', () => {
     expect(html.match(/From (a )?workflow agent/g)).toHaveLength(2);
     expect(dock([request('r1')])).not.toContain('From workflow agent');
   });
+
+  test('a refusal is shown under its request only (G4)', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalDock
+        requests={[request('r1'), request('r2')]}
+        answerable
+        enabled
+        busy={false}
+        refusals={{ r2: 'Refused: no such request (2 times)' }}
+        onAnswer={() => {}}
+      />,
+    );
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
+    const items = html.split('<li').slice(1);
+    const [first, second] = items;
+    expect(first).not.toContain('role="alert"');
+    expect(second).toContain('data-request="r2"');
+    expect(second).toContain('Refused: no such request (2 times)');
+  });
 });

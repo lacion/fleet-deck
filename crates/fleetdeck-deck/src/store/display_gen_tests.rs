@@ -494,17 +494,20 @@ async fn a_ceiling_change_deletes_the_directive_and_another_change_keeps_it() {
 async fn a_wake_request_reserves_once_and_across_two_concurrent_observations() {
     let r = rig().await;
     assert_eq!(
-        r.s.wake_reserve("s", "r1", 1_000).await,
+        r.s.wake_reserve("s", "x", "r1", 1_000).await,
         WakeReserve::Reserved
     );
-    assert_eq!(r.s.wake_reserve("s", "r1", 2_000).await, WakeReserve::Seen);
     assert_eq!(
-        r.s.wake_reserve("s", "r2", 2_000).await,
+        r.s.wake_reserve("s", "x", "r1", 2_000).await,
+        WakeReserve::Seen
+    );
+    assert_eq!(
+        r.s.wake_reserve("s", "x", "r2", 2_000).await,
         WakeReserve::Reserved
     );
     let (a, b) = tokio::join!(
-        r.s.wake_reserve("s", "r3", 3_000),
-        r.s.wake_reserve("s", "r3", 3_000)
+        r.s.wake_reserve("s", "x", "r3", 3_000),
+        r.s.wake_reserve("s", "x", "r3", 3_000)
     );
     let reserved = [a, b]
         .iter()
@@ -513,13 +516,13 @@ async fn a_wake_request_reserves_once_and_across_two_concurrent_observations() {
     assert_eq!(reserved, 1, "{a:?} {b:?}");
     // A key of another station is another key.
     assert_eq!(
-        r.s.wake_reserve("t", "r1", 4_000).await,
+        r.s.wake_reserve("t", "x", "r1", 4_000).await,
         WakeReserve::Reserved
     );
     // Rows older than 24 hours are pruned.
     let day = 24 * 60 * 60 * 1000;
     assert_eq!(
-        r.s.wake_reserve("s", "r1", 1_000 + day + 1).await,
+        r.s.wake_reserve("s", "x", "r1", 1_000 + day + 1).await,
         WakeReserve::Reserved
     );
 }
@@ -534,7 +537,7 @@ async fn a_wake_key_survives_a_restart_so_a_restored_request_does_not_wake_again
             .await
             .unwrap();
         assert_eq!(
-            s.wake_reserve("s", "r1", 1_000).await,
+            s.wake_reserve("s", "x", "r1", 1_000).await,
             WakeReserve::Reserved
         );
         // The process stops after the commit and before the dispatch.
@@ -542,7 +545,10 @@ async fn a_wake_key_survives_a_restart_so_a_restored_request_does_not_wake_again
     let s = DeckStore::open(&path, det.clock(), det.ids())
         .await
         .unwrap();
-    assert_eq!(s.wake_reserve("s", "r1", 2_000).await, WakeReserve::Seen);
+    assert_eq!(
+        s.wake_reserve("s", "x", "r1", 2_000).await,
+        WakeReserve::Seen
+    );
 }
 
 #[tokio::test]
@@ -553,7 +559,7 @@ async fn a_saturated_wake_table_suppresses_and_recovers_after_120_seconds() {
         let tx = conn.transaction()?;
         for i in 0..WAKE_SEEN_MAX {
             tx.execute(
-                "INSERT INTO wake_seen (station_id, request_id, first_seen_ms) VALUES ('s', ?1, ?2)",
+                "INSERT INTO wake_seen (station_id, session_id, request_id, first_seen_ms) VALUES ('s', 'x', ?1, ?2)",
                 params![format!("b{i}"), 1_000_000 + i],
             )?;
         }
@@ -564,17 +570,17 @@ async fn a_saturated_wake_table_suppresses_and_recovers_after_120_seconds() {
     .unwrap();
     let now = 1_010_000;
     assert_eq!(
-        r.s.wake_reserve("s", "new", now).await,
+        r.s.wake_reserve("s", "x", "new", now).await,
         WakeReserve::Suppressed
     );
     // The suppression is persisted: also an unknown key is suppressed.
     assert_eq!(
-        r.s.wake_reserve("s", "other", now + 60_000).await,
+        r.s.wake_reserve("s", "x", "other", now + 60_000).await,
         WakeReserve::Suppressed
     );
     // After 120 s the state ends and the old rows can be evicted.
     assert_eq!(
-        r.s.wake_reserve("s", "later", now + 120_000).await,
+        r.s.wake_reserve("s", "x", "later", now + 120_000).await,
         WakeReserve::Reserved
     );
     let rows: i64 = call(&r.s.inner.db, |conn| {

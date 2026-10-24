@@ -342,7 +342,9 @@ async fn a_key_that_was_reserved_before_never_wakes_after_a_restart_or_a_new_inc
     // The key was committed by an earlier process that crashed before the send.
     let t = now(&f);
     assert_eq!(
-        f.store.wake_reserve(f.station.as_str(), "r1", t).await,
+        f.store
+            .wake_reserve(f.station.as_str(), "s1", "r1", t)
+            .await,
         fleetdeck_deck::store::wake_seen::WakeReserve::Reserved
     );
     let wake = start(&f, &c, Limits::default()).await;
@@ -403,7 +405,7 @@ async fn a_saturated_table_suppresses_the_wake_and_it_recovers_after_120_seconds
     let t = now(&f);
     for i in 0..10_000 {
         f.store
-            .wake_reserve("seed-station", &format!("seed-{i}"), t)
+            .wake_reserve("seed-station", "seed-session", &format!("seed-{i}"), t)
             .await;
     }
     let wake = start(&f, &c, Limits::default()).await;

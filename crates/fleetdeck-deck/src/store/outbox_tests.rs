@@ -47,10 +47,31 @@ fn a_station_rejection_already_answered_ends_the_item_with_its_code() {
         }
     };
     for (code, reason) in [
-        (RejectCode::AlreadyAnswered, "rejected: already_answered"),
-        (RejectCode::AnswerCapReached, "rejected: answer_cap_reached"),
+        (
+            RejectCode::AlreadyAnswered,
+            "rejected: already_answered: no",
+        ),
+        (
+            RejectCode::AnswerCapReached,
+            "rejected: answer_cap_reached: no",
+        ),
     ] {
         let got = next(&rejected(code));
         assert_eq!(got, Some((OutboxState::Dead, Some(reason.to_owned()))));
     }
+}
+
+/// G1: the reason of a rejected receipt carries the station text, clean and
+/// cut.
+#[test]
+fn a_rejected_reason_carries_the_station_text_cut_and_clean() {
+    let reason = |message: &str| {
+        let reject = fleetdeck_proto::Reject::new(RejectCode::Forbidden, message);
+        rejected_reason(Some(&reject))
+    };
+    assert_eq!(reason(""), "rejected: forbidden");
+    assert_eq!(reason("a\nb"), "rejected: forbidden: a b");
+    let long = reason(&"x".repeat(400));
+    assert_eq!(long, format!("rejected: forbidden: {}…", "x".repeat(300)));
+    assert_eq!(rejected_reason(None), "rejected: unknown");
 }

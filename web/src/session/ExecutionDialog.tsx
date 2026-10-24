@@ -8,9 +8,9 @@ import type { ExecutionCheck } from '../gen';
 import { Icon, X } from '../ui/icons';
 import { Loading } from '../ui/Loading';
 import { ErrorNotice } from '../ui/page';
-import type { Outcome, SessionActions } from './commands';
+import { finalOutcome, type Outcome, type SessionActions } from './commands';
 import { ESCAPED_TITLE, ExecutionStop, stillRuns } from './ExecutionStop';
-import { type CheckMode, markAndResume, RESUME_TEXTS } from './resumeRefusal';
+import { type CheckMode, MARK_UNCONFIRMED, markAndResume, RESUME_TEXTS } from './resumeRefusal';
 
 type ProcessList = { readonly title: string; readonly rows: readonly string[] };
 
@@ -81,6 +81,8 @@ type BodyProps = {
   readonly busy: boolean;
   readonly marked: boolean;
   readonly markError: string | null;
+  /** G4: the line while the station has not confirmed a sent mark (`null`: none). */
+  readonly markNote?: string | null;
   /** `mark`: Mark as ended (menu). `both`: mark, then resume. `resume`: resume only. */
   readonly onAct: (act: 'mark' | 'both' | 'resume', shimId: string) => void;
   readonly onCheck: (check: ExecutionCheck) => void;
@@ -93,11 +95,22 @@ export function ExecutionBody(p: BodyProps) {
   const resumeMode = p.purpose === 'resume';
   const view = executionView(check);
   const shimId = check.shim_id;
-  const alert =
-    markError === null ? null : (
-      <p className="fd-note" role="alert">
-        {markError}
+  const note =
+    p.markNote === null || p.markNote === undefined ? null : (
+      <p className="fd-note" role="status">
+        {p.markNote}
       </p>
+    );
+  const alert =
+    markError === null ? (
+      note
+    ) : (
+      <>
+        {note}
+        <p className="fd-note" role="alert">
+          {markError}
+        </p>
+      </>
     );
   return (
     <div className="fd-exec-body">
@@ -184,6 +197,27 @@ export function ExecutionBody(p: BodyProps) {
   );
 }
 
+/** G4: the text of an unconfirmed mark (it lives with `markAndResume`, which also follows a mark). */
+export { MARK_UNCONFIRMED };
+
+export type MarkResult =
+  | { readonly marked: true }
+  | { readonly marked: false; readonly text: string };
+
+/** G4: "Mark as ended": the command, followed while it is pending. Only a confirmed mark marks. */
+export async function markEnded(
+  actions: Pick<SessionActions, 'reconcileExecution'>,
+  shimId: string,
+  signal: AbortSignal,
+  onPending: (text: string) => void,
+): Promise<MarkResult> {
+  const sent = await actions.reconcileExecution(shimId);
+  if (sent.later !== undefined) onPending(sent.text);
+  const final = await finalOutcome(sent, signal);
+  if (final === null) return { marked: false, text: MARK_UNCONFIRMED };
+  return final.ok ? { marked: true } : { marked: false, text: final.text };
+}
+
 type Props = {
   readonly actions: SessionActions;
   readonly onClose: () => void;
@@ -206,11 +240,16 @@ export function ExecutionDialog({ actions, onClose, purpose = 'menu', onResumed 
   const [busy, setBusy] = useState(false);
   const [marked, setMarked] = useState(false);
   const [markError, setMarkError] = useState<string | null>(null);
+  const [markNote, setMarkNote] = useState<string | null>(null);
   const alive = useRef(true);
+  const life = useRef<AbortController | null>(null);
   useEffect(() => {
     alive.current = true;
+    const c = new AbortController();
+    life.current = c;
     return () => {
       alive.current = false;
+      c.abort();
     };
   }, []);
 
@@ -244,17 +283,26 @@ export function ExecutionDialog({ actions, onClose, purpose = 'menu', onResumed 
     setBusy(false);
     setMarkError(text);
   };
-  const markAndGo = (shimId: string) => resumeStep(() => markAndResume(actions, shimId));
+  const markAndGo = (shimId: string) =>
+    resumeStep(() => markAndResume(actions, shimId, life.current?.signal ?? AbortSignal.abort()));
   const resumeOnly = () => resumeStep(() => actions.resume());
 
   const mark = async (shimId: string) => {
     setBusy(true);
     setMarkError(null);
-    const outcome = await actions.reconcileExecution(shimId);
+    const result = await markEnded(
+      actions,
+      shimId,
+      life.current?.signal ?? AbortSignal.abort(),
+      (text) => {
+        if (alive.current) setMarkNote(text);
+      },
+    );
     if (!alive.current) return;
     setBusy(false);
-    if (outcome.ok) setMarked(true);
-    else setMarkError(outcome.text);
+    setMarkNote(null);
+    if (result.marked) setMarked(true);
+    else setMarkError(result.text);
   };
 
   const view = check === null ? null : executionView(check);
@@ -303,6 +351,7 @@ export function ExecutionDialog({ actions, onClose, purpose = 'menu', onResumed 
             busy={busy}
             marked={marked}
             markError={markError}
+            markNote={markNote}
             onAct={(act, id) =>
               void (act === 'mark' ? mark(id) : act === 'both' ? markAndGo(id) : resumeOnly())
             }

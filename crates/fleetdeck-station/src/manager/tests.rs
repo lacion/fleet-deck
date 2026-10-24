@@ -416,7 +416,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
         (spec(&ws, "nope"), RejectCode::UnknownProvider),
         (
             spec(&outside.to_string_lossy(), "claude"),
-            RejectCode::Forbidden,
+            RejectCode::OutsideRoots,
         ),
         (
             spec(&missing.to_string_lossy(), "claude"),
@@ -432,7 +432,7 @@ async fn the_station_policy_decides_in_the_command_transaction() {
     assert_eq!(
         st.rejected(plain_start(spec(&link.to_string_lossy(), "claude"), None))
             .await,
-        RejectCode::Forbidden
+        RejectCode::OutsideRoots
     );
 
     let s = st.start(&ws, Some("hello")).await;
@@ -759,6 +759,8 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+#[path = "outside_roots_tests.rs"]
+mod outside_roots;
 #[path = "request_key_tests.rs"]
 mod request_key;
 #[path = "shell_wired_tests.rs"]

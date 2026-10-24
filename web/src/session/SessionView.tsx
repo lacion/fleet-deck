@@ -36,10 +36,10 @@ import type { Watch } from '../terminal/handover';
 import type { TerminalStore } from '../terminal/store';
 import { useAgentChoice } from './agentChoice';
 import { ApprovalDock } from './ApprovalDock';
-import type { SessionActions } from './commands';
+import { onConfirmed, type SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
-import { useSessionController } from './controller';
+import { answerVia, dockRefusals, useSessionController } from './controller';
 import { useArtifactRows } from './artifactRows';
 import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
@@ -284,6 +284,11 @@ export function SessionView(props: SessionViewProps) {
   const composerShown =
     tab === 'chat' && choice.note === null && !composerHidden(s) && access.composer;
   const resumeBar = composerResume && composerShown;
+  // G4: the requests that the dock shows (only on the Chat tab); the header shows the rest.
+  const dockRequests =
+    tab !== 'chat' || !access.questions
+      ? []
+      : s.open_requests.filter((r) => access.approvals || r.request_kind === 'question');
   const order: PaneTab[] = [
     'chat',
     'changes',
@@ -398,6 +403,7 @@ export function SessionView(props: SessionViewProps) {
         session={session}
         stations={stations}
         controller={controller}
+        dockRequests={dockRequests}
         actions={check.actions ?? null}
         {...(onBack ? { onBack } : {})}
         terminal={terminal}
@@ -543,21 +549,15 @@ export function SessionView(props: SessionViewProps) {
               <div className="fd-pane-foot">
                 {access.questions ? (
                   <ApprovalDock
-                    requests={
-                      access.approvals
-                        ? s.open_requests
-                        : s.open_requests.filter((r) => r.request_kind === 'question')
-                    }
+                    requests={dockRequests}
                     answerable={caps?.approvals === true}
                     enabled={
                       (guest !== null ? flags.live && !flags.ended : flags.approve) && busy === null
                     }
                     busy={busy !== null}
                     from={choice.requestFrom}
-                    onAnswer={(request, option, reply) =>
-                      actions &&
-                      controller.act('answer', () => actions.answer(request, option, reply))
-                    }
+                    refusals={dockRefusals(controller.refusals, dockRequests)}
+                    onAnswer={answerVia(controller, actions)}
                   />
                 ) : null}
                 {choice.note === null ? null : (
@@ -591,7 +591,7 @@ export function SessionView(props: SessionViewProps) {
                       nativeQueue={caps?.native_follow_up === true}
                       onSend={(kind, text, images) => {
                         if (!actions) return;
-                        // B8: the first 64 chips go with the prompt; a sent prompt uses them up.
+                        // B8: the first 64 chips go with the prompt; a confirmed prompt uses them up (G4).
                         const results = shellChips.toSend();
                         controller.act('send', async () => {
                           // R6.6: a hibernated session resumes first, then takes the prompt.
@@ -607,8 +607,7 @@ export function SessionView(props: SessionViewProps) {
                                 images,
                               )
                             : await actions.send(kind, text, images, results);
-                          if (outcome.ok) shellChips.consume(results);
-                          return outcome;
+                          return onConfirmed(outcome, () => shellChips.consume(results));
                         });
                       }}
                       bang={bang}

@@ -398,7 +398,13 @@ export function App({
       return;
     }
     onReturnTerminal(tab).then(
-      (outcome) => notify({ text: outcome.text, tone: outcome.ok ? 'info' : 'error' }, route),
+      (outcome) => {
+        notify({ text: outcome.text, tone: outcome.ok ? 'info' : 'error' }, route);
+        // G4: a refused resume after a pending one is shown too (the follow ends by itself after 120 s).
+        void outcome.later?.(new AbortController().signal).then((final) => {
+          if (final !== null && !final.ok) notify({ text: final.text, tone: 'error' }, route);
+        });
+      },
       (e: unknown) => notify({ text: message(e), tone: 'error' }, route),
     );
   };

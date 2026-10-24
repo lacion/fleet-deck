@@ -7,7 +7,14 @@ import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { type Outcome, sessionActions } from './commands';
 import { type Controller, sessionFlags } from './controller';
-import { ExecutionBody, ExecutionDialog, executionView, finishResume } from './ExecutionDialog';
+import {
+  ExecutionBody,
+  ExecutionDialog,
+  executionView,
+  finishResume,
+  MARK_UNCONFIRMED,
+  markEnded,
+} from './ExecutionDialog';
 import { markAndResume, RESUME_TEXTS, withResumeCheck } from './resumeRefusal';
 import { SessionHeader } from './SessionHeader';
 
@@ -286,6 +293,7 @@ describe('session menu entry', () => {
     flags: sessionFlags(s, 'live', actions),
     busy: null,
     outcome: null,
+    refusals: {},
     act: () => {},
     dismiss: () => {},
   };
@@ -370,5 +378,56 @@ describe('the resume steps of the dialog', () => {
     );
     expect(text).toBe('Refused: busy');
     expect(closed).toBe(0);
+  });
+});
+
+describe('mark as ended follows a pending command (G4)', () => {
+  const PENDING_TEXT = 'Sent. The station has not confirmed it yet.';
+  const signal = new AbortController().signal;
+  const actionsOf = (sent: Outcome) => ({ reconcileExecution: async () => sent });
+
+  test('a pending mark is followed until the station refuses it', async () => {
+    const texts: string[] = [];
+    const result = await markEnded(
+      actionsOf({
+        ok: true,
+        text: PENDING_TEXT,
+        later: async () => ({ ok: false, text: 'Refused: a process of the run still lives' }),
+      }),
+      'shim-1',
+      signal,
+      (t) => texts.push(t),
+    );
+    expect(result).toEqual({ marked: false, text: 'Refused: a process of the run still lives' });
+    expect(texts).toEqual([PENDING_TEXT]);
+  });
+
+  test('only a confirmed mark marks', async () => {
+    const texts: string[] = [];
+    const onPending = (t: string) => texts.push(t);
+    expect(
+      await markEnded(actionsOf({ ok: true, text: 'Done.' }), 'shim-1', signal, onPending),
+    ).toEqual({ marked: true });
+    expect(texts).toEqual([]);
+    expect(
+      await markEnded(
+        actionsOf({
+          ok: true,
+          text: PENDING_TEXT,
+          later: async () => ({ ok: true, text: 'Done.' }),
+        }),
+        'shim-1',
+        signal,
+        onPending,
+      ),
+    ).toEqual({ marked: true });
+    expect(
+      await markEnded(
+        actionsOf({ ok: true, text: PENDING_TEXT, later: async () => null }),
+        'shim-1',
+        signal,
+        onPending,
+      ),
+    ).toEqual({ marked: false, text: MARK_UNCONFIRMED });
   });
 });

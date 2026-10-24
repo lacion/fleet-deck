@@ -15,6 +15,9 @@
 //! 7. no audit row, one debug line, and never a write to `last_used_at`.
 //!
 //! The projections are in `fleet_view_build.rs`.
+//!
+//! The `station` filter (an id or a unique name) keeps the items of one
+//! station in the `stations`, `projects` and `sessions` views (G2).
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -60,6 +63,12 @@ pub const SESSION_LIMITED: (&str, &str) = ("rate_limited", "at most 60 fleet vie
 pub const BAD_CURSOR: (&str, &str) = ("invalid_params", "the cursor is not valid");
 /// The refusal of params that do not parse.
 pub const BAD_PARAMS: (&str, &str) = ("invalid_params", "the fleet view request is not valid");
+/// The refusal of a `station` filter that is not a station id or a unique
+/// station name (G2).
+pub const UNKNOWN_STATION: (&str, &str) = (
+    "invalid_params",
+    "no paired station has this id or this unique name",
+);
 
 /// Why a fleet view is not answered.
 #[derive(Debug)]
@@ -286,21 +295,34 @@ impl DeckStore {
             None => None,
         };
         let entries = self.projection(request.view).await?;
-        let mut station_filter = match request.view {
-            FleetView::Projects => request.station,
-            _ => None,
-        };
-        // A filter by station name is the filter by its id.
-        if let Some(filter) = &mut station_filter {
-            let value = filter.as_str().to_owned();
-            let id = call(&self.inner.db, move |conn| {
-                coordinator::names::resolve_station(conn, &value)
-            })
-            .await?;
-            if let Some(id) = id {
-                *filter = StationId::from(id);
+        // The filter by station (G2): every view but `me`; a name is its id.
+        let station_filter = match request.station {
+            Some(filter) => {
+                let value = filter.as_str().to_owned();
+                let id = call(&self.inner.db, move |conn| {
+                    if let Some(id) = coordinator::names::resolve_station(conn, &value)? {
+                        return Ok(Some(id));
+                    }
+                    let is_id: bool = conn.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM stations WHERE station_id = ?1)",
+                        rusqlite::params![value],
+                        |r| r.get(0),
+                    )?;
+                    Ok(is_id.then_some(value))
+                })
+                .await?;
+                match id {
+                    Some(id) => Some(StationId::from(id)),
+                    None => {
+                        return Err(FleetViewError::Refused(
+                            UNKNOWN_STATION.0,
+                            UNKNOWN_STATION.1,
+                        ));
+                    }
+                }
             }
-        }
+            None => None,
+        };
         Ok(page_of(
             request.view,
             &entries,
@@ -371,3 +393,7 @@ impl DeckStore {
             .expect("the permits are free")
     }
 }
+
+#[cfg(test)]
+#[path = "fleet_view_filter_tests.rs"]
+mod filter_tests;

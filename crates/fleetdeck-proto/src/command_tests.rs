@@ -331,3 +331,14 @@ fn a_command_result_without_a_seq_serializes_as_before_and_an_old_one_decodes() 
         with
     );
 }
+
+#[test]
+fn outside_roots_is_a_stored_reject_code() {
+    assert_eq!(
+        serde_json::to_value(RejectCode::OutsideRoots).unwrap(),
+        "outside_roots"
+    );
+    let back: RejectCode = serde_json::from_value(json!("outside_roots")).unwrap();
+    assert_eq!(back, RejectCode::OutsideRoots);
+    assert!(RejectCode::OutsideRoots.stores_receipt());
+}

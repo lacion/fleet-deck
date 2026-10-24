@@ -1,7 +1,7 @@
 // DL-433 (design `resume-after-stop.md` §3.4): a resume that the station refuses because a
 // previous run is not proven ended opens the previous-run dialog in resume mode (owner only).
 import { useMemo, useState } from 'react';
-import type { Outcome, SessionActions } from './commands';
+import { finalOutcome, type Outcome, type SessionActions } from './commands';
 
 /** The station refused a resume because a previous run is not proven ended (DL-182, DL-433). */
 export const UNPROVEN_RUN = 'not_resumable: the previous execution may still run';
@@ -43,15 +43,22 @@ export function withResumeCheck(actions: SessionActions, onRefused: () => void):
   };
 }
 
+/** G4: the text when the station did not confirm the mark while the board followed it. */
+export const MARK_UNCONFIRMED =
+  'The station did not confirm the mark in time. Check the processes again.';
+
 /**
  * DL-433: the owner marks the run as ended, then resumes the session. A refusal of the mark
  * stops the chain (nothing resumes); the outcome is the first refusal or the resume outcome.
+ * G4: a pending mark is followed until the station decides; only a confirmed mark resumes.
  */
 export async function markAndResume(
   actions: Pick<SessionActions, 'reconcileExecution' | 'resume'>,
   shimId: string,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<Outcome> {
-  const marked = await actions.reconcileExecution(shimId);
+  const marked = await finalOutcome(await actions.reconcileExecution(shimId), signal);
+  if (marked === null) return { ok: false, text: MARK_UNCONFIRMED };
   if (!marked.ok) return marked;
   return actions.resume();
 }

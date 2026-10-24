@@ -38,8 +38,9 @@ impl FleetView {
     }
 }
 
-/// The params of `fleet.view` (design §2.1). `station` filters the `projects`
-/// view and the other views ignore it; `cursor` is ignored for `me`.
+/// The params of `fleet.view` (design §2.1). `station` (an id or a unique
+/// name) filters the `stations`, `projects` and `sessions` views; `me`
+/// ignores it and `cursor`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FleetViewRequest {

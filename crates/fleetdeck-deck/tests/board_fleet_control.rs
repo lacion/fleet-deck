@@ -19,10 +19,11 @@ use common::fleet::*;
 use common::*;
 use fleetdeck_deck::store::outbox::{Gate, OutboxItem, OutboxState};
 use fleetdeck_deck::store::{GrantClass, NewCommand, QueryAnswer};
-use fleetdeck_proto::RejectCode;
 use fleetdeck_proto::command::{CommandEnvelope, CommandOrigin, GrantScope};
-use fleetdeck_proto::command::{ControlSkill, CoordinatorSpec, SessionCommand};
+use fleetdeck_proto::command::{ControlSkill, CoordinatorSpec, Reject, SessionCommand};
+use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{AuthorityCheck, CoordinatorBinding, CoordinatorQuery};
+use fleetdeck_proto::{Receipt, RejectCode};
 use serde_json::{Value, json};
 use settings_support::*;
 
@@ -623,4 +624,61 @@ async fn the_status_of_a_call_lists_its_deliveries_and_a_lineage_call_has_no_aut
     else {
         panic!("{params}");
     };
+}
+
+/// G1: the `reason` of a refused delivery names the code and the station
+/// text.
+#[tokio::test]
+async fn the_status_of_a_refused_call_names_the_code_and_the_station_text() {
+    const TEXT: &str = "The folder /tmp/x is outside the allowed roots of station box.";
+    let mut r = rig().await;
+    let b = bound(&r.f, "coord-1", &[GrantClass::Drive], true).await;
+    assert!(
+        call(&r.f, &b, "k9", stop(&r.f, "w1"))
+            .await
+            .reject
+            .is_none()
+    );
+    let _ = Fixture::answer(&mut r.station, |id| {
+        Outcome::Ok(json!(Receipt::rejected(
+            id.clone(),
+            Reject::new(RejectCode::OutsideRoots, TEXT),
+            0
+        )))
+    })
+    .await;
+    let f = &r.f;
+    f.wait("dead", |f| {
+        let (store, b) = (f.store.clone(), b.clone());
+        let q = query(
+            f,
+            &b,
+            CoordinatorQuery::CommandStatus {
+                command_id: "k9".into(),
+            },
+        );
+        let station = f.station.clone();
+        async move {
+            let QueryAnswer::Value(got) =
+                store.coordinator_query(station, q).await.unwrap().unwrap()
+            else {
+                panic!("expected a value");
+            };
+            got["deliveries"][0]["state"] == "dead"
+        }
+    })
+    .await;
+    let got = ask(
+        f,
+        &b,
+        CoordinatorQuery::CommandStatus {
+            command_id: "k9".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        got["deliveries"][0]["reason"],
+        format!("rejected: outside_roots: {TEXT}")
+    );
 }

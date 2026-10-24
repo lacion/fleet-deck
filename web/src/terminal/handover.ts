@@ -90,7 +90,7 @@ export async function returnToBoard(
     resume: () => Promise<Outcome>;
   },
   timeoutMs = 15000,
-): Promise<{ ok: boolean; text: string }> {
+): Promise<Outcome> {
   if (await deps.shellLive()) {
     try {
       await deps.close();
@@ -106,9 +106,21 @@ export async function returnToBoard(
     };
   }
   const resumed = await deps.resume();
-  return resumed.ok
-    ? { ok: true, text: 'Back under board control.' }
-    : { ok: false, text: `Returned, but the resume failed: ${resumed.text}` };
+  const back = (o: Outcome): Outcome =>
+    o.ok
+      ? { ok: true, text: 'Back under board control.' }
+      : { ok: false, text: `Returned, but the resume failed: ${o.text}` };
+  const later = resumed.later;
+  if (later === undefined) return back(resumed);
+  // G4: a pending resume keeps its follow-up; the final text is the same as without the wait.
+  return {
+    ...back(resumed),
+    text: 'Back under board control. The station has not confirmed the resume yet.',
+    later: async (signal) => {
+      const final = await later(signal);
+      return final === null ? null : back(final);
+    },
+  };
 }
 
 /** Clear a terminal hold whose process the station cannot see. */

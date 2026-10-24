@@ -28,7 +28,7 @@ use super::grant_scopes::in_effect;
 use super::{DeckError, DeckStore, call, grants};
 
 /// One item of a projection: its sort key, its JSON, the serialized bytes of
-/// the JSON, and (projects) the stations that the `station` filter matches.
+/// the JSON, and the stations that the `station` filter matches.
 #[derive(Debug)]
 pub(super) struct Entry {
     pub(super) key: Vec<String>,
@@ -120,7 +120,8 @@ fn providers_of(info: &StationInfo) -> (Vec<ProviderItem>, bool) {
 
 impl DeckStore {
     /// The `stations` projection: every paired station, by `(name,
-    /// station_id)`.
+    /// station_id)`. The `stations` of an entry is its station, for the
+    /// `station` filter.
     pub(super) async fn build_stations(&self) -> Result<Vec<Entry>, DeckError> {
         let records = self.stations().await?;
         let projects = self.projects().await?;
@@ -159,7 +160,7 @@ impl DeckStore {
                 project_count: counts.get(record.station_id.as_str()).copied().unwrap_or(0),
             };
             let key = vec![name, record.station_id.as_str().to_owned()];
-            out.extend(entry(key, &item, Vec::new()));
+            out.extend(entry(key, &item, vec![record.station_id.clone()]));
         }
         out.sort_by(|a, b| a.key.cmp(&b.key));
         Ok(out)
@@ -202,7 +203,8 @@ impl DeckStore {
     }
 
     /// The `sessions` projection: every session whose card status is not
-    /// `ended`, by `(station name, callsign, session_id)`.
+    /// `ended`, by `(station name, callsign, session_id)`. The `stations` of
+    /// an entry is its station, for the `station` filter.
     pub(super) async fn build_sessions(&self) -> Result<Vec<Entry>, DeckError> {
         let records = self.stations().await?;
         let sessions = self.sessions().await?;
@@ -237,7 +239,7 @@ impl DeckStore {
                 status: session.status,
             };
             let key = vec![station, callsign, summary.session_id.as_str().to_owned()];
-            out.extend(entry(key, &item, Vec::new()));
+            out.extend(entry(key, &item, vec![session.station_id.clone()]));
         }
         out.sort_by(|a, b| a.key.cmp(&b.key));
         Ok(out)

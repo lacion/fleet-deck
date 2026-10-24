@@ -79,6 +79,7 @@ describe('one Resume primary on a screen (§2.2)', () => {
           flags: sessionFlags(lost(), 'live', drive),
           busy: null,
           outcome: null,
+          refusals: {},
           act: noop,
           dismiss: noop,
         }}

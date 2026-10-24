@@ -1,6 +1,6 @@
 // DL-433: the refusal of a resume because a previous run is not proven ended.
 import { describe, expect, test } from 'bun:test';
-import { isUnprovenRun, markAndResume, withResumeCheck } from './resumeRefusal';
+import { isUnprovenRun, MARK_UNCONFIRMED, markAndResume, withResumeCheck } from './resumeRefusal';
 import { type Outcome, sessionActions } from './commands';
 
 describe('isUnprovenRun', () => {
@@ -53,6 +53,24 @@ describe('markAndResume', () => {
   test('a refused resume returns its text', async () => {
     const t = run({ ok: true, text: 'Done.' }, { ok: false, text: 'Refused: busy' });
     expect(await t.result).toEqual({ ok: false, text: 'Refused: busy' });
+  });
+
+  test('a pending mark resumes only when the station confirms it (G4)', async () => {
+    const pending = (final: Outcome | null): Outcome => ({
+      ok: true,
+      text: 'Sent.',
+      later: async () => final,
+    });
+    const done = { ok: true, text: 'Done.' };
+    const confirmed = run(pending(done), done);
+    expect(await confirmed.result).toEqual(done);
+    expect(confirmed.calls).toEqual(['reconcile shim-1', 'resume']);
+    const refused = run(pending({ ok: false, text: 'Refused: a process lives' }), done);
+    expect(await refused.result).toEqual({ ok: false, text: 'Refused: a process lives' });
+    expect(refused.calls).toEqual(['reconcile shim-1']);
+    const lost = run(pending(null), done);
+    expect(await lost.result).toEqual({ ok: false, text: MARK_UNCONFIRMED });
+    expect(lost.calls).toEqual(['reconcile shim-1']);
   });
 });
 

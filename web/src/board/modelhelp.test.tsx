@@ -45,6 +45,7 @@ const board = (s: DeckSession) =>
 const idle = {
   busy: null,
   outcome: null,
+  refusals: {},
   act: () => {},
   dismiss: () => {},
 };

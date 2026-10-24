@@ -789,6 +789,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::secret_files::SQL),
         // V48 (B17 wall pages): `wall_pages` and the `page` mode.
         M::up(super::wall_pages_schema::SQL),
+        // V49 (G5): the wake key has the session.
+        M::up(super::wake_seen::schema::SQL),
     ])
 }
 
