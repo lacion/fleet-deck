@@ -53,6 +53,7 @@ fn exactly_these_methods_are_open_to_a_member() {
     assert_eq!(
         open,
         [
+            "analytics.read",
             "approval.answer",
             "auth.logout",
             "auth.session",

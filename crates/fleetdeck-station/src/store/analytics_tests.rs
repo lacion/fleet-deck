@@ -339,7 +339,8 @@ async fn an_imported_prefix_has_no_session() {
         .iter()
         .map(|r| (r.session_id.as_str(), r.requests))
         .collect();
-    assert_eq!(by, vec![("sb", 1), ("", 2)]);
+    // The rows of one hour are in session order: the unattributed row first.
+    assert_eq!(by, vec![("", 2), ("sb", 1)]);
 }
 
 #[tokio::test]

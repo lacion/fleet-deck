@@ -7,6 +7,7 @@
 
 mod common;
 mod displays_support;
+mod settings_support;
 mod share_support;
 
 use std::collections::BTreeSet;
@@ -18,6 +19,7 @@ use fleetdeck_link::LiveLink;
 use fleetdeck_link::control::InboundRequest;
 use fleetdeck_proto::link::{Outcome, Scope, WireError};
 use serde_json::{Value, json};
+use settings_support::{elevate, set_password};
 use share_support::*;
 
 const HOUR: i64 = 3_600_000;
@@ -199,12 +201,19 @@ async fn a_board_share_member_gets_no_unattributed_rows() {
 
 #[tokio::test]
 async fn a_member_without_history_gets_the_same_query() {
-    let (f, mut station, c, h) = setup().await;
+    let (f, mut station, c, _) = setup().await;
     let st = f.station.0.clone();
+    // A share with the history needs the elevation (DL-189); a new password
+    // ends the old logins.
+    set_password(&c).await;
+    let h = owner(&c).await;
     let mut sent = Vec::new();
     for (name, history) in [("Alice", false), ("Carol", true)] {
-        let share = json!({ "kind": "session", "target": format!("{st}/s1"),
-                            "role": "viewer", "history": history });
+        let mut share = json!({ "kind": "session", "target": format!("{st}/s1"),
+                                "role": "viewer", "history": history });
+        if history {
+            share["elevation"] = json!(elevate(&c, &h).await);
+        }
         let (member, _, _) = join(&c, &h, share, name).await;
         let answer = page_json(vec![usage(SINCE, Some("s1"), 1)], vec![], None);
         let (r, seen) = call(
@@ -313,10 +322,24 @@ async fn the_sixteenth_page_sets_truncated_before() {
 
 #[tokio::test]
 async fn a_member_asking_an_uncovered_station_gets_404() {
+    use fleetdeck_core::identity::Identity;
+    use fleetdeck_deck::store::stations::NewStation;
+
     let (f, mut station, c, h) = setup().await;
-    let share = json!({ "kind": "session", "target": "other-station/s1", "role": "viewer" });
+    // A second station where the member has no covered session.
+    f.store
+        .pin_station(NewStation {
+            key: Identity::generate().unwrap().public_key(),
+            name: "other".to_owned(),
+            scopes: BTreeSet::new(),
+            dial_url: None,
+        })
+        .await
+        .unwrap();
+    let share = json!({ "kind": "session", "target": format!("{}/s1", f.station.0),
+                        "role": "viewer" });
     let (member, _, _) = join(&c, &h, share, "Eve").await;
-    let r = get(&c, &member, &format!("{}&station=fake", path())).await;
+    let r = get(&c, &member, &format!("{}&station=other", path())).await;
     expect(&r, 404, "unknown_station");
     // The owner asking a name that does not exist gets the same answer.
     let r = get(&c, &h, &format!("{}&station=no-such", path())).await;
@@ -352,17 +375,23 @@ async fn a_token_and_a_display_get_403() {
 
 #[tokio::test]
 async fn an_offline_and_an_old_station_are_states_not_errors() {
-    let (f, mut station, c, h) = setup().await;
+    let (f, station, c, h) = setup().await;
     f.store.set_link_features(&f.station, 98, vec![]);
     let r = get(&c, &h, &path()).await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body["stations"][0]["state"], "unsupported");
     assert!(r.body["stations"][0]["answer"].is_null());
     f.store.clear_link_features(&f.station, 98);
+    // The station link ends: the station is offline.
+    station.control.close("test", "the station stops");
+    let deadline = tokio::time::Instant::now() + T;
+    while f.store.is_reachable(&f.station) {
+        assert!(tokio::time::Instant::now() < deadline, "still reachable");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     let r = get(&c, &h, &path()).await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body["stations"][0]["state"], "offline");
-    quiet(&mut station).await;
 }
 
 #[tokio::test]
