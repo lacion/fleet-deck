@@ -28,7 +28,9 @@ pub const DECK_NOT_POSTURE: &[&str] = &[
 ];
 
 /// The station danger keys that are configuration, or a value whose default
-/// is already the widest.
+/// is already the widest. The `[provider_updates]` keys (B28) are danger for
+/// their elevation; they turn on or tune a feature and relax no control of
+/// the table of §3.6 (the version gate holds for a pin, B28 §3.4).
 pub const STATION_NOT_POSTURE: &[&str] = &[
     "allowed_roots",
     "capture_monitors",
@@ -36,6 +38,10 @@ pub const STATION_NOT_POSTURE: &[&str] = &[
     "host",
     "tailscale_bin",
     "retention.history_days",
+    "provider_updates.enabled",
+    "provider_updates.claude_pin",
+    "provider_updates.codex_pin",
+    "provider_updates.min_age_hours",
 ];
 
 /// The station keys that the posture can list (the table of §3.6).
