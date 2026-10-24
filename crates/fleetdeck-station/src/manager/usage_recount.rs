@@ -130,7 +130,7 @@ fn scan(
     let mut opened = locate::locate(home, kind, &job.cwd, &job.native, trust)?;
     match kind {
         ProviderKind::Claude => {
-            let found = last_cost_state(&mut opened.file, &job.native, u64::MAX)
+            let found = last_cost_state(&mut opened.file, &job.native, u64::MAX, trust.deadline)
                 .map_err(|e| fail_of(&e))?;
             Ok(found.map(|totals| {
                 let mut usage = totals.usage();

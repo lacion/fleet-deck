@@ -134,3 +134,80 @@ async fn an_untrusted_file_is_refused() {
         .await;
     assert!(message.contains("not_trusted"), "{message}");
 }
+
+/// Sets the mode of `path`.
+fn chmod(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// The owner can read every file as root: a test of no access then proves
+/// nothing.
+fn is_root() -> bool {
+    rustix::process::geteuid().is_root()
+}
+
+/// The refusal keeps the old count and no `usage.set` is written.
+async fn assert_old_count_kept(fx: &Fx) {
+    let summary = fx.store().summary("s1".into()).await.unwrap().unwrap();
+    assert_eq!(summary.usage, old_count());
+    assert_eq!(summary.usage.scheme, None);
+    assert!(summary.usage_recount.is_none());
+}
+
+#[tokio::test]
+async fn a_provider_home_without_access_is_refused_and_a_retry_counts() {
+    if is_root() {
+        return;
+    }
+    let mut fx = Fx::new().await;
+    fx.session("s1", ProviderKind::Claude, Some(NATIVE)).await;
+    write_private(
+        &fx.claude_file(),
+        &format!("{}{}", claude_user(), cost_state(20, 0.2)),
+    );
+    // No search right on the directory that holds the home: the home
+    // exists, but it cannot be resolved.
+    chmod(&fx.root, 0o600);
+    let message = fx
+        .refused("s1", RejectCode::InvalidState, "record_unreadable")
+        .await;
+    // The access returns: a retry reads the record.
+    chmod(&fx.root, 0o700);
+    assert!(message.contains("not_trusted"), "{message}");
+    assert_old_count_kept(&fx).await;
+    let (usage, previous, source, _) = set_parts(fx.accepted("s1").await);
+    assert_eq!(source, UsageSource::ClaudeTranscript);
+    assert_eq!(previous, old_count());
+    assert_eq!(usage.input_tokens, Some(20));
+}
+
+#[tokio::test]
+async fn a_codex_directory_without_access_is_refused_and_a_retry_counts() {
+    if is_root() {
+        return;
+    }
+    let mut fx = Fx::new().await;
+    fx.session("s1", ProviderKind::Codex, Some(NATIVE)).await;
+    write_private(
+        &fx.codex_file(),
+        &format!(
+            "{}{}{}",
+            codex_meta(),
+            codex_context("gpt-5"),
+            codex_count(1000, 400, 50)
+        ),
+    );
+    // The month directory of the rollout cannot be opened.
+    let month = fx.root.join(".codex/sessions/2026/10");
+    chmod(&month, 0o000);
+    let message = fx
+        .refused("s1", RejectCode::InvalidState, "record_unreadable")
+        .await;
+    chmod(&month, 0o700);
+    assert!(message.contains("not_trusted"), "{message}");
+    assert_old_count_kept(&fx).await;
+    let (usage, _, source, _) = set_parts(fx.accepted("s1").await);
+    assert_eq!(source, UsageSource::CodexRollout);
+    assert_eq!(usage.output_tokens, Some(50));
+}
