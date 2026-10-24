@@ -123,8 +123,54 @@ async fn page(
     }
 }
 
-/// The pages of one station, merged: the rows appended, `sources` and
-/// `coverage` of the first page, the `partial_hour` of each page in
+/// Adds a later page to `merged`. The station builds `sources` again for
+/// each page and their order can change (a home that the first scan did not
+/// list yet, a retired home): the sources are merged by provider and key, a
+/// new source goes to the end, and the `source` index of every incoming row
+/// is translated into the merged list. A row whose index is not in its own
+/// page is dropped (it names no home).
+fn absorb(merged: &mut AnalyticsAnswer, mut got: AnalyticsAnswer) {
+    let map: Vec<u32> = got
+        .sources
+        .drain(..)
+        .map(|src| {
+            let at = merged
+                .sources
+                .iter()
+                .position(|m| m.provider == src.provider && m.key == src.key)
+                .unwrap_or_else(|| {
+                    merged.sources.push(src);
+                    merged.sources.len() - 1
+                });
+            u32::try_from(at).unwrap_or(u32::MAX)
+        })
+        .collect();
+    let mut dropped = 0_usize;
+    for mut row in got.usage.drain(..) {
+        let to = usize::try_from(row.source)
+            .ok()
+            .and_then(|i| map.get(i).copied());
+        match to {
+            Some(to) => {
+                row.source = to;
+                merged.usage.push(row);
+            }
+            None => dropped += 1,
+        }
+    }
+    if dropped > 0 {
+        tracing::warn!(
+            method = METHOD,
+            dropped,
+            "the station sent usage rows without a source"
+        );
+    }
+    merged.activity.append(&mut got.activity);
+}
+
+/// The pages of one station, merged: the rows appended, the `sources` merged
+/// by provider and key ([`absorb`]), the `coverage` of the first page, the
+/// `partial_hour` of each page in
 /// `partial_hours`, and `truncated_before` when `MAX_PAGES` pages were not
 /// enough.
 async fn pages(
@@ -143,10 +189,7 @@ async fn pages(
         }
         match merged.as_mut() {
             None => merged = Some(got),
-            Some(m) => {
-                m.usage.append(&mut got.usage);
-                m.activity.append(&mut got.activity);
-            }
+            Some(m) => absorb(m, got),
         }
         match next {
             None => break,

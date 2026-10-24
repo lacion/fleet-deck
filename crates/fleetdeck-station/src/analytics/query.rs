@@ -352,7 +352,7 @@ fn fill_page(page: &mut AnalyticsAnswer, hours: Vec<HourRows>, base: usize, budg
             return;
         };
         let mut usage = first.usage;
-        usage.sort_by(|a, b| tokens(b).cmp(&tokens(a)));
+        usage.sort_by_key(|r| std::cmp::Reverse(tokens(r)));
         for row in usage {
             let row_len = row_size(&row);
             if size + row_len > budget {

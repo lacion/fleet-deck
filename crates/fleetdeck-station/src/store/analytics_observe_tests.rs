@@ -526,11 +526,56 @@ async fn a_start_of_another_conversation_closes_nothing() {
 }
 
 #[tokio::test]
-async fn a_lost_session_closes_its_run() {
+async fn a_lost_session_closes_its_run_at_its_last_evidence() {
     let r = rig().await;
     r.put("s1", 1_000, started(None)).await;
+    r.put("s1", 3_000, turn_started("t1")).await;
+    // The other session's events are no evidence of `s1`.
+    r.put("s2", 5_000, started(None)).await;
     r.put("s1", 9_000, state(SessionState::Lost)).await;
-    assert_eq!(r.runs("s1").await, vec![(1_000, Some(9_000))]);
+    assert_eq!(r.runs("s1").await, vec![(1_000, Some(3_000))]);
+    // An exit is seen by the station: the run closes at the event.
+    r.put("s2", 8_000, state(SessionState::Exited)).await;
+    assert_eq!(r.runs("s2").await, vec![(5_000, Some(8_000))]);
+}
+
+#[tokio::test]
+async fn a_restart_loss_closes_the_run_before_the_recovery_events() {
+    // Recovery writes the failed turn, the failed run and `lost` at the
+    // restart; the run closes at the last event before them.
+    for behind in [false, true] {
+        let r = rig().await;
+        r.put("s1", 1_000, started(None)).await;
+        r.put(
+            "s1",
+            2_000,
+            Event::RunStarted {
+                run_id: "run-1".into(),
+                input_summary: "hi".to_owned(),
+                origin: fleetdeck_proto::event::RunOrigin::Board,
+                author: None,
+                input_id: None,
+                input_text: None,
+            },
+        )
+        .await;
+        r.put("s1", 3_000, turn_started("t1")).await;
+        if behind {
+            // The cursor has not counted anything yet (the first start at V50).
+            r.forget(1).await;
+        }
+        r.det.set(60_000);
+        let report = r.s.recover(Vec::new()).await.unwrap();
+        assert!(report.lost_sessions >= 1);
+        while r.step(2_000).await {}
+        assert_eq!(
+            r.runs("s1").await,
+            vec![(1_000, Some(3_000))],
+            "behind: {behind}"
+        );
+        // `s2` never started: no run, nothing to close.
+        assert!(r.runs("s2").await.is_empty());
+    }
 }
 
 #[tokio::test]

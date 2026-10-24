@@ -233,14 +233,94 @@ function stationComplete(s: StationAnalytics): boolean {
 const countedSources = (sources: readonly AnalyticsSource[]): AnalyticsSource[] =>
   sources.filter((src) => src.state !== 'missing');
 
+type Entry = { station: number; group: Group };
+
+const NUMBERS = ['requests', 'input', 'cache_read', 'cache_write', 'output', 'reasoning'] as const;
+
+/**
+ * The rows that count for one bucket identity `(source key, hour, provider, model, conversation)`
+ * (design §3.10 "One home read by two stations", build answer A11). `entries` are the station
+ * groups of the identity, the stations sorted by name.
+ *
+ * - A proven row (with a `session_id`) holds only the records of that session's runs on its
+ *   station, so the proven rows of different sessions are disjoint and all count. The rows of one
+ *   session on two stations (one record set seen twice) count once: the group with the most
+ *   requests (a tie: the first station by name).
+ * - The unproven rest: the winner group (the most requests; a tie: the group with a session,
+ *   then the first station by name) holds the most complete count of the bucket. The part of it
+ *   that the counted proven rows do not hold counts once, as one row without a session on the
+ *   winner's station (the owner only: a member answer has no unproven row).
+ * - Two stations that prove one record for two sessions (runs at one time) make the proven rows
+ *   larger than the winner: for the owner, the winner group alone counts (no double count).
+ */
+function countBucket(entries: readonly Entry[], owner: boolean): Counted[] {
+  let win: Entry | undefined;
+  for (const e of entries) {
+    const better =
+      win === undefined ||
+      e.group.requests > win.group.requests ||
+      (e.group.requests === win.group.requests && e.group.hasSession && !win.group.hasSession);
+    if (better) win = e;
+  }
+  if (win === undefined) return [];
+  if (entries.length === 1) return win.group.rows.map((row) => ({ row, station: win.station }));
+
+  const bySession = new Map<string, { station: number; rows: UsageHour[]; requests: number }>();
+  for (const { station, group } of entries) {
+    const mine = new Map<string, { station: number; rows: UsageHour[]; requests: number }>();
+    for (const row of group.rows) {
+      if (row.session_id === undefined) continue;
+      const v = mine.get(row.session_id) ?? { station, rows: [], requests: 0 };
+      v.rows.push(row);
+      v.requests += row.requests;
+      mine.set(row.session_id, v);
+    }
+    for (const [id, v] of mine) {
+      const best = bySession.get(id);
+      if (best === undefined || v.requests > best.requests) bySession.set(id, v);
+    }
+  }
+  const proven: Counted[] = [];
+  for (const v of bySession.values()) {
+    for (const row of v.rows) proven.push({ row, station: v.station });
+  }
+  if (!owner) return proven;
+
+  const provenRequests = proven.reduce((n, c) => n + c.row.requests, 0);
+  if (provenRequests > win.group.requests) {
+    return win.group.rows.map((row) => ({ row, station: win.station }));
+  }
+  const first = win.group.rows[0];
+  if (first === undefined) return proven;
+  const rest: UsageHour = { ...first };
+  delete rest.session_id;
+  for (const key of NUMBERS) {
+    const all = win.group.rows.reduce((n, r) => n + r[key], 0);
+    const known = proven.reduce((n, c) => n + c.row[key], 0);
+    rest[key] = Math.max(0, all - known);
+  }
+  const priced = win.group.rows.filter((r) => r.cost_usd !== undefined);
+  if (priced.length === 0) {
+    delete rest.cost_usd;
+  } else {
+    const all = priced.reduce((n, r) => n + (r.cost_usd ?? 0), 0);
+    const known = proven.reduce((n, c) => n + (c.row.cost_usd ?? 0), 0);
+    rest.cost_usd = Math.max(0, all - known);
+  }
+  const empty = NUMBERS.every((key) => rest[key] === 0);
+  return empty ? proven : [...proven, { row: rest, station: win.station }];
+}
+
 export function merge(answer: FleetAnalytics, since: number, until: number, zone: string): Merged {
   const answering = answer.stations
     .filter((s) => s.state === 'ok' && s.answer !== undefined)
     .sort(byName);
 
-  // One home read by two stations (revision 2): per bucket identity, the station group with
-  // the most requests counts (a tie: the group with a session, then the first station by name).
-  const groups: Map<string, Group>[] = answering.map((s) => {
+  // One home read by two stations (revision 2, build answer A11): per bucket identity, the
+  // proven rows of every station count once per session, and the unproven rest of the most
+  // complete station group counts once (`countBucket`).
+  const buckets = new Map<string, { station: number; group: Group }[]>();
+  answering.forEach((s, station) => {
     const sources = s.answer?.sources ?? [];
     const map = new Map<string, Group>();
     for (const row of s.answer?.usage ?? []) {
@@ -257,23 +337,14 @@ export function merge(answer: FleetAnalytics, since: number, until: number, zone
       g.requests += row.requests;
       g.hasSession = g.hasSession || row.session_id !== undefined;
     }
-    return map;
-  });
-  const winner = new Map<string, { station: number; group: Group }>();
-  groups.forEach((map, station) => {
     for (const [id, group] of map) {
-      const best = winner.get(id);
-      const better =
-        best === undefined ||
-        group.requests > best.group.requests ||
-        (group.requests === best.group.requests && group.hasSession && !best.group.hasSession);
-      if (better) winner.set(id, { station, group });
+      const list = buckets.get(id) ?? [];
+      list.push({ station, group });
+      buckets.set(id, list);
     }
   });
   const counted: Counted[] = [];
-  for (const { station, group } of winner.values()) {
-    for (const row of group.rows) counted.push({ row, station });
-  }
+  for (const entries of buckets.values()) counted.push(...countBucket(entries, answer.owner));
 
   const owner = answer.owner;
   const total = newAcc();

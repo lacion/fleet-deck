@@ -411,3 +411,74 @@ async fn bad_params_are_400() {
     }
     quiet(&mut station).await;
 }
+
+/// A source with its own key.
+fn keyed(key: &str) -> Value {
+    let mut s = source(false, json!({ "state": "ok" }));
+    s["key"] = json!(key);
+    s
+}
+
+#[tokio::test]
+async fn pages_with_a_new_source_order_keep_the_source_of_each_row() {
+    let (_f, mut station, c, h) = setup().await;
+    // Page 1 lists [A, B]; page 2 lists [B, C] (A retired, C new); page 3
+    // lists only [C]. Each row names its own page's index.
+    let mut p1 = page_json(
+        vec![usage(SINCE + 8 * HOUR, Some("s1"), 1)],
+        vec![],
+        Some(SINCE + 8 * HOUR),
+    );
+    p1["sources"] = json!([keyed("aaaaaaaaaaaaaaaa"), keyed("bbbbbbbbbbbbbbbb")]);
+    p1["usage"][0]["source"] = json!(1);
+    let mut p2 = page_json(
+        vec![
+            usage(SINCE + 5 * HOUR, Some("s1"), 2),
+            usage(SINCE + 5 * HOUR, Some("s1"), 3),
+        ],
+        vec![],
+        Some(SINCE + 5 * HOUR),
+    );
+    p2["sources"] = json!([keyed("bbbbbbbbbbbbbbbb"), keyed("cccccccccccccccc")]);
+    p2["usage"][0]["source"] = json!(0);
+    p2["usage"][1]["source"] = json!(1);
+    let mut p3 = page_json(
+        vec![usage(SINCE, Some("s1"), 4), usage(SINCE, Some("s1"), 5)],
+        vec![],
+        None,
+    );
+    p3["sources"] = json!([keyed("cccccccccccccccc")]);
+    p3["usage"][0]["source"] = json!(0);
+    // An index outside its page names no home: the deck drops the row.
+    p3["usage"][1]["source"] = json!(7);
+    let answers = vec![Outcome::Ok(p1), Outcome::Ok(p2), Outcome::Ok(p3)];
+    let (r, seen) = call(&c, &h, &mut station, &path(), answers).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(seen.len(), 3);
+    let sources = rows(&r, 0, "sources");
+    let keys: Vec<&str> = sources.iter().map(|s| s["key"].as_str().unwrap()).collect();
+    assert_eq!(
+        keys,
+        ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc"]
+    );
+    let usage_rows = rows(&r, 0, "usage");
+    let got: Vec<(u64, &str)> = usage_rows
+        .iter()
+        .map(|u| {
+            let at = usize::try_from(u["source"].as_u64().unwrap()).unwrap();
+            (u["requests"].as_u64().unwrap(), keys[at])
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (1, "bbbbbbbbbbbbbbbb"),
+            (2, "bbbbbbbbbbbbbbbb"),
+            (3, "cccccccccccccccc"),
+            (4, "cccccccccccccccc"),
+        ],
+        "{}",
+        r.body
+    );
+    quiet(&mut station).await;
+}

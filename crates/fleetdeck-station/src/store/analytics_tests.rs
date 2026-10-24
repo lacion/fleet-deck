@@ -624,3 +624,88 @@ fn run_started(n: u32) -> NewEvent {
     }
     .into()
 }
+
+fn session_started() -> NewEvent {
+    Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::capability::Capabilities::minimal()),
+        resumed: None,
+        provider_refs: fleetdeck_proto::event::ProviderRefs::new(),
+        title: None,
+        branch: None,
+        repo: None,
+    }
+    .into()
+}
+
+/// Review finding A11: the station and the provider of the shared session
+/// `sa` die; the owner continues the conversation in a terminal; the station
+/// restarts and recovery writes `lost` at the restart. The outage is not a
+/// proven run: the terminal records have no session, and a member of `sa`
+/// (with or without the history permission, one query) does not see them.
+#[tokio::test]
+async fn a_terminal_continuation_during_an_outage_is_not_the_shared_session() {
+    const H: i64 = 10 * HOUR_MS;
+    let at = |ms: i64| u64::try_from(H + ms).unwrap();
+    let det = Det::new();
+    let s = store(&det).await;
+    holder(&s, "sa", "claude", "conv-1").await;
+    det.set(at(1_000));
+    s.append("sa".into(), vec![session_started()])
+        .await
+        .unwrap();
+    // The last event of the process before the crash.
+    det.set(at(2_000));
+    s.append("sa".into(), vec![run_started(1)]).await.unwrap();
+    // The restart: no process survived.
+    det.set(at(40_000));
+    let report = s.recover(Vec::new()).await.unwrap();
+    assert_eq!(report.lost_sessions, 1);
+    assert_eq!(
+        scalar(
+            &s,
+            "SELECT ended_at FROM analytics_exec WHERE session_id = 'sa'"
+        )
+        .await,
+        H + 2_000,
+        "the run closes at the last evidence, not at the restart"
+    );
+    // The scan after the restart reads a record of the run and the terminal
+    // continuation (made at H + 20 s, in the outage).
+    commit(
+        &s,
+        ProviderKind::Claude,
+        vec![
+            rec(H + 1_500, "conv-1", Some("run"), 1),
+            rec(H + 20_000, "conv-1", Some("terminal"), 7),
+        ],
+    )
+    .await;
+    let mut owner: Vec<(String, u64)> = usage(&s)
+        .await
+        .into_iter()
+        .map(|r| (r.session_id, r.input))
+        .collect();
+    owner.sort();
+    assert_eq!(owner, vec![(String::new(), 7), ("sa".to_owned(), 1)]);
+    for sessions in [Some(vec!["sa".into()]), None] {
+        let member = s
+            .analytics_usage_rows(0, i64::MAX, Audience::Member, sessions)
+            .await
+            .unwrap();
+        assert_eq!(member.len(), 1);
+        assert_eq!(
+            (
+                member[0].session_id.as_str(),
+                member[0].requests,
+                member[0].input
+            ),
+            ("sa", 1, 1)
+        );
+    }
+}

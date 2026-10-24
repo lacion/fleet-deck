@@ -66,6 +66,8 @@ struct Counter<'a> {
     hour: i64,
     session: &'a str,
     at: i64,
+    /// The `station_seq` of the event.
+    seq: i64,
 }
 
 impl Counter<'_> {
@@ -123,15 +125,37 @@ impl Counter<'_> {
 
     /// The session's process ended: its open rows go, its open interval
     /// closes (design section 3.6 and 3.6a).
-    fn end_session(&self) -> Result<()> {
+    ///
+    /// `session.ended` and `exited`: the station saw the end, so the interval
+    /// closes at the event. `lost`: the station did not see the end (the
+    /// station restart recovery writes `lost` at the restart, after an outage
+    /// of unknown length). The interval closes at the last evidence of the
+    /// process: the latest earlier event of the session with a time before
+    /// this one (the other recovery events have the same time), never before
+    /// the start of the interval. The outage is not a proven run: a record
+    /// made in it (a terminal continuation of the conversation) has no
+    /// session (build answer A11).
+    fn end_session(&self, lost: bool) -> Result<()> {
         self.conn.execute(
             "DELETE FROM analytics_open WHERE session_id = ?1",
             [self.session],
         )?;
-        self.conn.execute(
-            "UPDATE analytics_exec SET ended_at = ?2 WHERE session_id = ?1 AND ended_at IS NULL",
-            params![self.session, self.at],
-        )?;
+        if lost {
+            self.conn.execute(
+                "UPDATE analytics_exec
+                 SET ended_at = MAX(started_at, COALESCE(
+                   (SELECT max(at) FROM events
+                    WHERE session_id = ?1 AND station_seq < ?3 AND at < ?2),
+                   started_at))
+                 WHERE session_id = ?1 AND ended_at IS NULL",
+                params![self.session, self.at, self.seq],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE analytics_exec SET ended_at = ?2 WHERE session_id = ?1 AND ended_at IS NULL",
+                params![self.session, self.at],
+            )?;
+        }
         Ok(())
     }
 
@@ -181,6 +205,7 @@ fn observe_one(conn: &Connection, envelope: &EventEnvelope) -> Result<()> {
         hour: envelope.at - envelope.at.rem_euclid(HOUR_MS),
         session: envelope.session_id.as_str(),
         at: envelope.at,
+        seq: to_i64(envelope.station_seq)?,
     };
     match event {
         Event::SessionStarted { resumed, .. } => {
@@ -286,9 +311,13 @@ fn observe_one(conn: &Connection, envelope: &EventEnvelope) -> Result<()> {
         }
         Event::SessionEnded { .. }
         | Event::SessionStateChanged {
-            state: SessionState::Exited | SessionState::Lost,
+            state: SessionState::Exited,
             ..
-        } => c.end_session(),
+        } => c.end_session(false),
+        Event::SessionStateChanged {
+            state: SessionState::Lost,
+            ..
+        } => c.end_session(true),
         _ => Ok(()),
     }
 }

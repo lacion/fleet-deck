@@ -139,6 +139,69 @@ describe('merge', () => {
     expect(m.notInRun?.requests).toBe(0);
   });
 
+  test('a member keeps the disjoint runs of two stations on one home in one hour', () => {
+    // One home, one conversation, one hour: station A ran it for s1 (3 requests), then station B
+    // for s2 (2 requests). Each member answer holds only its own proven run.
+    const a = answer({ usage: [usage({ requests: 3, session_id: 's1', cost_usd: 3 })] });
+    const b = answer({ usage: [usage({ requests: 2, session_id: 's2', cost_usd: 2 })] });
+    const m = merge(fleet([station('A', a), station('B', b)], false), ...WIDE, ZONE);
+    expect(m.total.requests).toBe(5);
+    expect(m.total.cost).toBe(5);
+    expect(m.perSession.get('s1')?.totals.requests).toBe(3);
+    expect(m.perSession.get('s2')?.totals.requests).toBe(2);
+    expect(m.stations.map((s) => s.totals?.requests)).toEqual([3, 2]);
+  });
+
+  test('the owner counts the disjoint runs of two stations on one home once', () => {
+    // The owner form: each station also holds the other's run as an unproven row.
+    const a = answer({
+      usage: [
+        usage({ requests: 3, session_id: 's1', cost_usd: 3 }),
+        usage({ requests: 2, session_id: undefined, cost_usd: 2 }),
+      ],
+    });
+    const b = answer({
+      usage: [
+        usage({ requests: 3, session_id: undefined, cost_usd: 3 }),
+        usage({ requests: 2, session_id: 's2', cost_usd: 2 }),
+      ],
+    });
+    const m = merge(fleet([station('A', a), station('B', b)]), ...WIDE, ZONE);
+    expect(m.total.requests).toBe(5);
+    expect(m.total.cost).toBe(5);
+    expect(m.notInRun?.requests).toBe(0);
+    expect(m.perSession.get('s1')?.totals.requests).toBe(3);
+    expect(m.perSession.get('s2')?.totals.requests).toBe(2);
+  });
+
+  test('the owner keeps the unproven rest of the most complete station once', () => {
+    // A holds a terminal part (4) that B never saw; B proves its own run (2).
+    const a = answer({
+      usage: [
+        usage({ requests: 1, session_id: 's1', cost_usd: 1 }),
+        usage({ requests: 6, session_id: undefined, cost_usd: 6 }),
+      ],
+    });
+    const b = answer({
+      usage: [
+        usage({ requests: 1, session_id: undefined, cost_usd: 1 }),
+        usage({ requests: 2, session_id: 's2', cost_usd: 2 }),
+      ],
+    });
+    const m = merge(fleet([station('A', a), station('B', b)]), ...WIDE, ZONE);
+    expect(m.total.requests).toBe(7);
+    expect(m.total.cost).toBe(7);
+    expect(m.notInRun?.requests).toBe(4);
+    expect(m.perSession.get('s2')?.totals.requests).toBe(2);
+  });
+
+  test('one session seen by two stations counts once', () => {
+    const a = answer({ usage: [usage({ requests: 3, session_id: 's1' })] });
+    const b = answer({ usage: [usage({ requests: 2, session_id: 's1' })] });
+    const m = merge(fleet([station('A', a), station('B', b)], false), ...WIDE, ZONE);
+    expect(m.total.requests).toBe(3);
+  });
+
   test('two rows of one station in one bucket both count', () => {
     const a = answer({ usage: [usage({ session_id: 's1' }), usage({ session_id: undefined })] });
     const m = merge(fleet([station('A', a)]), ...WIDE, ZONE);
