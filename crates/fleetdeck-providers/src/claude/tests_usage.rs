@@ -51,8 +51,13 @@ fn finish_turn(core: &mut ClaudeCore, n: u8) -> Vec<Output> {
 fn the_usage_request_is_written_after_init_and_asks_to_skip_the_behaviors() {
     let mut core = ClaudeCore::new(config(false));
     let out = feed(&mut core, init_frame());
+    // `init` also writes `get_settings` (B18): compare the `get_usage` writes only.
+    let usage_writes: Vec<Value> = writes(&out)
+        .into_iter()
+        .filter(|w| w["request"]["subtype"] == "get_usage")
+        .collect();
     assert_eq!(
-        writes(&out),
+        usage_writes,
         vec![json!({"type":"control_request","request_id":"fd-usage-1",
                     "request":{"subtype":"get_usage","skip_behaviors":true}})]
     );

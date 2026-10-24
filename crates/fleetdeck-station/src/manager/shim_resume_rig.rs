@@ -312,6 +312,7 @@ impl Rig {
 
     pub fn spec(&self, instance: &str) -> SessionSpec {
         SessionSpec {
+            effort: None,
             provider_instance: instance.into(),
             cwd: self.workspace(),
             mode: (instance == "claude").then(|| "default".to_owned()),

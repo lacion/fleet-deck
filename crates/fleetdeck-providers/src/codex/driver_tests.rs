@@ -270,6 +270,7 @@ async fn open_with(
     let adapter = CodexAdapter::new(config, host);
     let dir = tempfile::tempdir().unwrap();
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "codex".into(),
         cwd: dir.path().to_string_lossy().into_owned(),
         mode: None,

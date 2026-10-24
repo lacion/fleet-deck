@@ -296,6 +296,7 @@ async fn a_launching_command_without_a_launch_mode_is_refused_as_version_skew() 
             CoordinatorOp::Spawn {
                 station: station.clone(),
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "claude".into(),
                     cwd: "/w".to_owned(),
                     mode: Some("plan".to_owned()),

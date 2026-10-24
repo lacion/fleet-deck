@@ -53,6 +53,7 @@ impl Rig {
         };
         let payload = EffectPayload::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: "claude".into(),
                 cwd: self.workspace(),
                 mode: Some("default".to_owned()),

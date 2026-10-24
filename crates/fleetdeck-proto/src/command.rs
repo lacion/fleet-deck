@@ -38,6 +38,12 @@ pub struct SessionSpec {
     /// restrictive mode (L8).
     pub mode: Option<String>,
     pub model: Option<String>,
+    /// The reasoning effort that the session starts with (B18 Phase 2): an
+    /// effort id that the station checks with `valid_effort`. Absent: the
+    /// provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<String>,
     pub title: Option<String>,
     /// The coordinator grant of the new session (M3 6-5, ADR-006 §4); only
     /// an owner start through the deck may carry one.
@@ -192,6 +198,13 @@ pub enum SessionCommand {
     SetModel {
         session_id: SessionId,
         model: String,
+    },
+    /// Choose the reasoning effort of a live session (B18 Phase 2, design
+    /// `docs/v2/design/effort.md` §9.1). `effort` is checked with
+    /// `valid_effort` by the station.
+    SetEffort {
+        session_id: SessionId,
+        effort: String,
     },
     Fork {
         session_id: SessionId,
@@ -424,6 +437,7 @@ impl SessionCommand {
             Self::Answer { .. } => "approval.answer",
             Self::SetMode { .. } => "session.set_mode",
             Self::SetModel { .. } => "session.set_model",
+            Self::SetEffort { .. } => "session.set_effort",
             Self::Fork { .. } => "session.fork",
             Self::Stop { .. } => "session.stop",
             Self::Revert { .. } => "session.revert",
@@ -476,6 +490,7 @@ impl SessionCommand {
             | Self::Answer { session_id, .. }
             | Self::SetMode { session_id, .. }
             | Self::SetModel { session_id, .. }
+            | Self::SetEffort { session_id, .. }
             | Self::Fork { session_id }
             | Self::Stop { session_id, .. }
             | Self::Revert { session_id, .. }

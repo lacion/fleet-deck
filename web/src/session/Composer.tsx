@@ -7,10 +7,11 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ImageInput, ModelChoice } from '../gen';
+import type { ImageInput } from '../gen';
 import { useDismiss } from '../ui/dismiss';
 import { ArrowUp, Icon, Paperclip, Play } from '../ui/icons';
 import type { InputKind } from './commands';
+import type { ComposerModelChoice } from './effortChoice';
 import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './images';
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY, recentPaths } from './at';
 import { type CommandList, commandMenu, matchCommand, pickCommand } from './slash';
@@ -58,11 +59,7 @@ type Props = {
    * The model can be changed: the chip is the summary of its own popover of models (§4.5); absent:
    * the chip only shows the model.
    */
-  readonly modelChoice?: {
-    readonly current: string | null;
-    readonly models: readonly ModelChoice[] | null;
-    readonly onSet: (model: string) => void;
-  };
+  readonly modelChoice?: ComposerModelChoice;
   /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
   readonly callsign?: string | null;
   /** The phone layout: Send is a round icon button at the right (concept A). */

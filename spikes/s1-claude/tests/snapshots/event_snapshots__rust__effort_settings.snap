@@ -1,0 +1,74 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "2c35cb6f-85d4-431f-854c-bd0db0021c43"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-48c6-8000-5406a1cd9151",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0002-48c6-8000-5406a1cd9151"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-48c6-8000-5406a1cd9151",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "pong"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "pong"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 46,
+      "cost_usd": 0.007511
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 46,
+      "cost_usd": 0.007511
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-48c6-8000-5406a1cd9151",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

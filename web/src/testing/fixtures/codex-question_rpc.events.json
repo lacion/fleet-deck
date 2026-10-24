@@ -64,6 +64,30 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
+      "kind": "effort.changed",
+      "effort": "high"
+    }
+  },
+  {
+    "station_seq": 203,
+    "session_id": "codex-question_rpc",
+    "session_seq": 3,
+    "at": 1760000003000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "effort.changed",
+      "effort": "low"
+    }
+  },
+  {
+    "station_seq": 204,
+    "session_id": "codex-question_rpc",
+    "session_seq": 4,
+    "at": 1760000004000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
       "kind": "run.started",
       "run_id": "run-1",
       "input_summary": "Ask me one question with your user-input question tool: which color do I prefer, red or blue? Then reply with exactly t…",
@@ -73,10 +97,10 @@
     }
   },
   {
-    "station_seq": 203,
+    "station_seq": 205,
     "session_id": "codex-question_rpc",
-    "session_seq": 3,
-    "at": 1760000003000,
+    "session_seq": 5,
+    "at": 1760000005000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -90,10 +114,10 @@
     }
   },
   {
-    "station_seq": 204,
+    "station_seq": 206,
     "session_id": "codex-question_rpc",
-    "session_seq": 4,
-    "at": 1760000004000,
+    "session_seq": 6,
+    "at": 1760000006000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -104,10 +128,10 @@
     }
   },
   {
-    "station_seq": 205,
+    "station_seq": 207,
     "session_id": "codex-question_rpc",
-    "session_seq": 5,
-    "at": 1760000005000,
+    "session_seq": 7,
+    "at": 1760000007000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -118,10 +142,10 @@
     }
   },
   {
-    "station_seq": 206,
+    "station_seq": 208,
     "session_id": "codex-question_rpc",
-    "session_seq": 6,
-    "at": 1760000006000,
+    "session_seq": 8,
+    "at": 1760000008000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -139,10 +163,10 @@
     }
   },
   {
-    "station_seq": 207,
+    "station_seq": 209,
     "session_id": "codex-question_rpc",
-    "session_seq": 7,
-    "at": 1760000007000,
+    "session_seq": 9,
+    "at": 1760000009000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -194,10 +218,10 @@
     }
   },
   {
-    "station_seq": 208,
+    "station_seq": 210,
     "session_id": "codex-question_rpc",
-    "session_seq": 8,
-    "at": 1760000008000,
+    "session_seq": 10,
+    "at": 1760000010000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -208,10 +232,10 @@
     }
   },
   {
-    "station_seq": 209,
+    "station_seq": 211,
     "session_id": "codex-question_rpc",
-    "session_seq": 9,
-    "at": 1760000009000,
+    "session_seq": 11,
+    "at": 1760000011000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -223,10 +247,10 @@
     }
   },
   {
-    "station_seq": 210,
+    "station_seq": 212,
     "session_id": "codex-question_rpc",
-    "session_seq": 10,
-    "at": 1760000010000,
+    "session_seq": 12,
+    "at": 1760000012000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -245,10 +269,10 @@
     }
   },
   {
-    "station_seq": 211,
+    "station_seq": 213,
     "session_id": "codex-question_rpc",
-    "session_seq": 11,
-    "at": 1760000011000,
+    "session_seq": 13,
+    "at": 1760000013000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -269,10 +293,10 @@
     }
   },
   {
-    "station_seq": 212,
+    "station_seq": 214,
     "session_id": "codex-question_rpc",
-    "session_seq": 12,
-    "at": 1760000012000,
+    "session_seq": 14,
+    "at": 1760000014000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -283,10 +307,10 @@
     }
   },
   {
-    "station_seq": 213,
+    "station_seq": 215,
     "session_id": "codex-question_rpc",
-    "session_seq": 13,
-    "at": 1760000013000,
+    "session_seq": 15,
+    "at": 1760000015000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -297,10 +321,10 @@
     }
   },
   {
-    "station_seq": 214,
+    "station_seq": 216,
     "session_id": "codex-question_rpc",
-    "session_seq": 14,
-    "at": 1760000014000,
+    "session_seq": 16,
+    "at": 1760000016000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -319,10 +343,10 @@
     }
   },
   {
-    "station_seq": 215,
+    "station_seq": 217,
     "session_id": "codex-question_rpc",
-    "session_seq": 15,
-    "at": 1760000015000,
+    "session_seq": 17,
+    "at": 1760000017000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -343,10 +367,10 @@
     }
   },
   {
-    "station_seq": 216,
+    "station_seq": 218,
     "session_id": "codex-question_rpc",
-    "session_seq": 16,
-    "at": 1760000016000,
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -357,10 +381,10 @@
     }
   },
   {
-    "station_seq": 217,
+    "station_seq": 219,
     "session_id": "codex-question_rpc",
-    "session_seq": 17,
-    "at": 1760000017000,
+    "session_seq": 19,
+    "at": 1760000019000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -371,10 +395,10 @@
     }
   },
   {
-    "station_seq": 218,
+    "station_seq": 220,
     "session_id": "codex-question_rpc",
-    "session_seq": 18,
-    "at": 1760000018000,
+    "session_seq": 20,
+    "at": 1760000020000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -385,10 +409,10 @@
     }
   },
   {
-    "station_seq": 219,
+    "station_seq": 221,
     "session_id": "codex-question_rpc",
-    "session_seq": 19,
-    "at": 1760000019000,
+    "session_seq": 21,
+    "at": 1760000021000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {

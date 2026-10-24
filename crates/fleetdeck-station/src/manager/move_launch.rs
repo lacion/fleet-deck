@@ -303,6 +303,7 @@ impl SessionTarget {
             Err(e) => return Self::internal(&e),
         }
         let mut spec = SessionSpec {
+            effort: None,
             provider_instance: provider_instance.clone(),
             cwd: worktree.clone(),
             mode: None,

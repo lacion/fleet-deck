@@ -231,6 +231,7 @@ fn start_request(
         command_id: None,
         command: SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: instance.id.clone(),
                 cwd,
                 mode: None,

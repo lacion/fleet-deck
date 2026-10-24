@@ -573,6 +573,7 @@ mod skill_tests {
 
     fn spec() -> SessionSpec {
         SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: "/w".to_owned(),
             mode: None,

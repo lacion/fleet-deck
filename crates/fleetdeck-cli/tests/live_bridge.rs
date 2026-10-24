@@ -254,6 +254,7 @@ fn spec(kind: ProviderKind, cwd: &Path) -> SessionSpec {
         _ => ("codex", "never/read-only"),
     };
     SessionSpec {
+        effort: None,
         provider_instance: instance.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         mode: Some(mode.to_owned()),

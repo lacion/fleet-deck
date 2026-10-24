@@ -41,9 +41,10 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
             stop_all(conn, session)?;
             prune(conn, session)
         }
-        Event::SessionStateChanged { state, .. }
-            if matches!(state, SessionState::Lost | SessionState::Exited) =>
-        {
+        Event::SessionStateChanged {
+            state: SessionState::Lost | SessionState::Exited,
+            ..
+        } => {
             stop_all(conn, session)?;
             prune(conn, session)
         }

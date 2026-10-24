@@ -4,17 +4,15 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
+    BackgroundTask, ExpiredReason, InputState, ModelChoice, ProviderKind, RunOrigin, TurnStatus,
 };
 use fleetdeck_proto::{Capabilities, Event, InputId, NodeId, RunId, TurnId, input_text_of};
 use serde_json::{Value, json};
 
-pub(super) use super::core_types::{HostRequest, InputEntry, Ordinals, ToolNode};
+pub(super) use super::core_types::{EffortPick, HostRequest, InputEntry, Ordinals, ToolNode};
 use super::rpc::{self, Incoming};
 use super::shell::PendingShell;
-use super::{
-    COLLABORATION_MODES, CoreConfig, MAX_MODEL_CHARS, Mode, SessionSpec, requests, summary_of,
-};
+use super::{CoreConfig, Mode, SessionSpec, requests, summary_of};
 use crate::adapter::{HostInput, ProviderError, Result};
 
 /// One output of the core.
@@ -53,6 +51,16 @@ pub struct CodexCore {
     pub(super) thread_id: Option<String>,
     /// Model that the thread reports, or the last accepted model change.
     pub(super) thread_model: Option<String>,
+    /// The last reasoning effort that this core emitted (B18); an older
+    /// checkpoint has none.
+    #[serde(default)]
+    pub(super) thread_effort: Option<String>,
+    /// The last complete `model/list` (B18 Phase 2).
+    #[serde(default)]
+    pub(super) model_choices: Vec<ModelChoice>,
+    /// The effort that the next `turn/start` sends (B18 Phase 2).
+    #[serde(default)]
+    pub(super) pending_effort: Option<EffortPick>,
     /// Collaboration mode for the next turns (`plan` or `default`); `None`
     /// sends no `collaborationMode` (experimental API, DL-013).
     pub(super) collaboration: Option<String>,
@@ -129,6 +137,9 @@ impl CodexCore {
             ended: false,
             thread_id: None,
             thread_model: None,
+            thread_effort: None,
+            model_choices: Vec::new(),
+            pending_effort: None,
             collaboration: None,
             run: None,
             turn: None,
@@ -287,7 +298,7 @@ impl CodexCore {
         id
     }
 
-    fn live(&self) -> Result<()> {
+    pub(super) fn live(&self) -> Result<()> {
         if self.ended {
             return Err(ProviderError::SessionEnded);
         }
@@ -337,6 +348,7 @@ impl CodexCore {
         if let Some(c) = &spec.cwd {
             params.insert("cwd".into(), c.clone().into());
         }
+        super::effort_set::add_thread_config(&mut params, spec.effort.as_deref());
         self.mode = Some(mode);
         let (method, kind) = match &spec.resume {
             Some(thread) => {
@@ -407,7 +419,8 @@ impl CodexCore {
         params.insert("threadId".into(), thread.into());
         params.insert("clientUserMessageId".into(), input_id.as_str().into());
         params.insert("input".into(), rpc::input_items(input));
-        if let Some(e) = &self.spec.effort {
+        let (pick, effort) = self.take_effort();
+        if let Some(e) = &effort {
             params.insert("effort".into(), e.clone().into());
         }
         if let Some(m) = &self.pending_model {
@@ -423,7 +436,7 @@ impl CodexCore {
                 "collaborationMode".into(),
                 json!({"mode": c, "settings": {
                     "model": model,
-                    "reasoning_effort": self.spec.effort,
+                    "reasoning_effort": effort,
                     "developer_instructions": null,
                 }}),
             );
@@ -436,6 +449,7 @@ impl CodexCore {
         self.turn_input = Some(input_id.clone());
         let id = self.host_id(HostRequest::TurnStart {
             input_id: input_id.clone(),
+            effort: pick,
         });
         vec![Output::Write(rpc::request(
             &id,
@@ -530,51 +544,6 @@ impl CodexCore {
             "thread/backgroundTerminals/list",
             json!({ "threadId": thread }),
         ))])
-    }
-
-    /// Sets the collaboration mode of the next turns (`plan` or `default`).
-    ///
-    /// # Errors
-    /// [`ProviderError::InvalidMode`] for another name.
-    pub fn set_collaboration(&mut self, mode: &str) -> Result<Vec<Output>> {
-        self.live()?;
-        if !COLLABORATION_MODES.contains(&mode) {
-            return Err(ProviderError::InvalidMode(mode.to_owned()));
-        }
-        self.collaboration = Some(mode.to_owned());
-        Ok(Vec::new())
-    }
-
-    /// Changes the mode for the next turn. Codex takes the approval policy and
-    /// sandbox per `turn/start`; `mode.changed` follows only when the
-    /// app-server accepted a turn with the new mode (trap 1).
-    ///
-    /// # Errors
-    /// [`ProviderError::InvalidMode`] for a mode that the session does not offer.
-    pub fn set_mode(&mut self, mode: &str) -> Result<Vec<Output>> {
-        self.live()?;
-        let offered = self.config.capabilities.modes.iter().any(|m| m == mode);
-        let parsed = Mode::parse(mode).filter(|_| offered);
-        self.pending_mode =
-            Some(parsed.ok_or_else(|| ProviderError::InvalidMode(mode.to_owned()))?);
-        Ok(Vec::new())
-    }
-
-    /// Changes the model for the next turn (`model` of `turn/start`);
-    /// `model.changed` follows when the app-server accepted that turn.
-    ///
-    /// # Errors
-    /// [`ProviderError::InvalidModel`] for an empty, long or spaced name.
-    pub fn set_model(&mut self, model: &str) -> Result<Vec<Output>> {
-        self.live()?;
-        if model.is_empty()
-            || model.chars().count() > MAX_MODEL_CHARS
-            || model.chars().any(char::is_whitespace)
-        {
-            return Err(ProviderError::InvalidModel(model.to_owned()));
-        }
-        self.pending_model = Some(model.to_owned());
-        Ok(Vec::new())
     }
 
     /// Handles one app-server frame.
@@ -788,5 +757,7 @@ impl CodexCore {
     }
 }
 
+#[path = "core_next_turn.rs"]
+mod next_turn;
 #[path = "core_skills.rs"]
 mod skills;

@@ -71,6 +71,15 @@ impl InputEntry {
     }
 }
 
+/// An effort choice that waits for the next turn, or that a `turn/start`
+/// carries (B18 Phase 2).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) struct EffortPick {
+    pub(super) effort: String,
+    /// The station's effect id, echoed in `effort.set_result`.
+    pub(super) control_id: Option<String>,
+}
+
 /// What a host request was for, so its reply can be mapped.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum HostRequest {
@@ -81,6 +90,10 @@ pub(super) enum HostRequest {
     BackgroundList,
     TurnStart {
         input_id: InputId,
+        /// The effort pick that this request carries (B18 Phase 2); a
+        /// checkpoint of an older build has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<EffortPick>,
     },
     TurnSteer {
         input_id: InputId,

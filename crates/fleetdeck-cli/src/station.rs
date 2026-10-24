@@ -143,6 +143,7 @@ pub async fn run(dirs: &NodeDirs, args: &RunArgs) -> anyhow::Result<()> {
         dirs,
         &command(SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: args.provider.clone().into(),
                 cwd,
                 mode: args.mode.clone(),

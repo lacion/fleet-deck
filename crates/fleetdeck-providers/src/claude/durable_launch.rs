@@ -37,6 +37,7 @@ impl ClaudeAdapter {
         let caps = capabilities(self.config.allow_bypass);
         let launch = Launch {
             model: spec.model.clone(),
+            effort: spec.effort.clone(),
             mode: spec.mode.clone(),
             resume: resume.cloned(),
             fork: false,
@@ -93,6 +94,7 @@ mod tests {
 
     fn spec(dir: &std::path::Path, mode: Option<&str>) -> SessionSpec {
         SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: dir.to_string_lossy().into_owned(),
             mode: mode.map(str::to_owned),

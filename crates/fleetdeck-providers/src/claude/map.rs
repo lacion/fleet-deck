@@ -3,15 +3,15 @@
 use std::collections::BTreeSet;
 
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, FileChange, InputState, ModelChoice, RateLimit, ToolKind,
-    ToolStatus, TurnStatus, Usage,
+    BackgroundTask, ExpiredReason, FileChange, InputState, RateLimit, ToolKind, ToolStatus,
+    TurnStatus, Usage,
 };
 use fleetdeck_proto::{Event, NodeId};
 use serde_json::{Map, Value};
 
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
-use super::{commands, requests, usage, workflows};
+use super::{commands, effort, effort_set, requests, usage, workflows};
 
 // The `task_*` frames and the tools under a running task (B6).
 #[path = "tasks.rs"]
@@ -124,6 +124,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 return out;
             }
             core.started = true;
+            core.reported_model = get("model");
             let config = &core.config;
             let mut out: Vec<Output> = identity.into_iter().collect();
             out.push(Output::Emit(Event::SessionStarted {
@@ -154,6 +155,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 out.extend(commands::from_init(core, body));
             }
             out.extend(core.usage_request());
+            out.extend(core.settings_request());
             out
         }
         "commands_changed" => commands::from_objects(core, body.get("commands")),
@@ -523,6 +525,7 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     }));
     out.extend(core.end_turn(status, Some(usage)));
     out.extend(core.usage_request());
+    out.extend(core.settings_request());
     out
 }
 
@@ -587,27 +590,6 @@ pub(super) fn close_ids(core: &mut ClaudeCore, ids: &BTreeSet<String>) -> Vec<Ou
         .collect()
 }
 
-/// The models of an `initialize` response for the board, in the CLI order:
-/// `value` is what `set_model` takes; an entry without `value` is dropped
-/// (DL-151).
-fn model_choices(response: &Value) -> Vec<ModelChoice> {
-    let text = |m: &Value, k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
-    response
-        .get("models")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|m| {
-            let value = text(m, "value")?;
-            Some(ModelChoice {
-                label: text(m, "displayName").unwrap_or_else(|| value.clone()),
-                description: text(m, "description"),
-                value,
-            })
-        })
-        .collect()
-}
-
 /// The model values of an `initialize` response (`value` and `resolvedModel`).
 fn advertised_models(response: &Value) -> Vec<String> {
     let mut models: Vec<String> = response
@@ -627,6 +609,12 @@ fn advertised_models(response: &Value) -> Vec<String> {
 }
 
 fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Output> {
+    if resp.request_id.starts_with(effort::SETTINGS_ID_PREFIX) {
+        return effort::on_response(core, resp);
+    }
+    if resp.request_id.starts_with(effort_set::EFFORT_ID_PREFIX) {
+        return effort_set::on_response(core, resp);
+    }
     // The CLI also echoes responses to its own requests: ignore unknown ids.
     let Some(kind) = core.host_requests.remove(&resp.request_id) else {
         return Vec::new();
@@ -663,7 +651,8 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
             {
                 core.mode = Some(mode.to_owned());
             }
-            let models = model_choices(&resp.response);
+            let models = effort_set::model_choices(&resp.response);
+            core.model_choices.clone_from(&models);
             let mut out = Vec::new();
             if !models.is_empty() {
                 if core.started {
@@ -685,7 +674,12 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
         HostRequest::SetModel(model) => {
             let model = model.unwrap_or_else(|| "default".to_owned());
             core.model = Some(model.clone());
-            vec![Output::Emit(Event::ModelChanged { model })]
+            core.reported_model = Some(model.clone());
+            effort_set::on_model_set(core);
+            // A model change can change or clamp the effort (B18).
+            let mut out = vec![Output::Emit(Event::ModelChanged { model })];
+            out.extend(core.settings_request());
+            out
         }
         // Answered above.
         HostRequest::Interrupt(_) | HostRequest::Usage => Vec::new(),

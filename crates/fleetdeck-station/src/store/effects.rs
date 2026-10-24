@@ -18,20 +18,21 @@
 //! | answer | `tool.output` / `tool.completed` of the request's node |
 //! | interrupt | `interrupt.result { accepted }` with its effect id (DL-036) |
 //! | set mode / set model | `mode.changed` / `model.changed` with the requested value |
+//! | set effort | `effort.set_result` with its effect id (`effects_observe.rs`, B18) |
 //! | stop | `session.ended` |
 //!
 //! `input.updated { refused }` retires a prompt as not dispatched (ADR-002).
 
 use fleetdeck_core::{IdSource, new_id};
 use fleetdeck_proto::event::InputState;
-use fleetdeck_proto::{CommandId, Event, EventBody, EventEnvelope, SessionId};
+use fleetdeck_proto::{CommandId, Event, EventEnvelope, SessionId};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use fleetdeck_providers::adapter::answered_request;
-
 use super::{Result, StoreError, to_i64, to_u64};
 use super::{log, requests};
+
+pub(super) use super::effects_observe::observe;
 
 macro_rules! text_id {
     ($(#[$m:meta])* $name:ident) => {
@@ -148,6 +149,9 @@ pub const REASON_STATION_RESTART: &str = "station_restart";
 pub const REASON_WORKER_RESTART: &str = "worker_restart";
 pub const REASON_PROCESS_LOST: &str = "process_lost";
 pub const REASON_REFUSED: &str = "refused_by_provider";
+/// The reason of a `set_effort` effect that a newer choice replaced before
+/// the provider took it (B18 Phase 2).
+pub const REASON_SUPERSEDED: &str = "superseded_by_a_newer_choice";
 /// The reason prefix of a start effect whose first input was refused before
 /// any I/O (GATE-M2 P2-a); also the `error` code.
 pub const FIRST_INPUT_NOT_SENT: &str = "first_input_not_sent";
@@ -614,123 +618,6 @@ fn transition_events(effect: &Effect, to: EffectState, reason: &str) -> Vec<Even
         }],
         _ => Vec::new(),
     }
-}
-
-/// Folds provider evidence into the outbox: called for every appended
-/// event, inside its transaction. It appends no events itself.
-pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> Result<()> {
-    let EventBody::Known(event) = &envelope.event else {
-        return Ok(());
-    };
-    let session = envelope.session_id.as_str();
-    let open = "state IN ('claimed', 'outcome_unknown')";
-    let confirm = |filter: &str, args: &[&dyn rusqlite::ToSql]| -> Result<()> {
-        let sql = format!(
-            "UPDATE effects SET state = 'confirmed', updated_at = ?1
-             WHERE session_id = ?2 AND {open} AND {filter}
-             RETURNING kind"
-        );
-        let mut all: Vec<&dyn rusqlite::ToSql> = vec![&now, &session];
-        all.extend_from_slice(args);
-        let mut stmt = conn.prepare(&sql)?;
-        let kinds = stmt
-            .query_map(all.as_slice(), |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        for kind in kinds {
-            // Crash tests: the evidence and the confirmation are in this
-            // uncommitted transaction (M2 P2-8).
-            crate::fault::hit(crate::fault::FaultPoint::BeforeConfirm, &kind);
-        }
-        Ok(())
-    };
-    match event {
-        // A message answer starts as a provider input (GATE-M2 P2-b): its
-        // start confirms the answer effect of its request.
-        Event::InputUpdated {
-            input_id,
-            state: InputState::Started,
-            ..
-        } if answered_request(input_id).is_some() => {
-            if let Some(request) = answered_request(input_id) {
-                confirm("kind = 'answer' AND correlation = ?3", &[&request.as_str()])?;
-            }
-        }
-        Event::InputUpdated {
-            input_id,
-            state: InputState::Refused,
-            ..
-        } if answered_request(input_id).is_some() => {
-            if let Some(request) = answered_request(input_id) {
-                conn.execute(
-                    "UPDATE effects SET state = 'retired_not_dispatched', reason = ?4, updated_at = ?1
-                     WHERE session_id = ?2 AND state IN ('claimed', 'outcome_unknown')
-                       AND kind = 'answer' AND correlation = ?3",
-                    params![now, session, request.as_str(), REASON_REFUSED],
-                )?;
-            }
-        }
-        Event::InputUpdated {
-            input_id,
-            state: InputState::Started,
-            ..
-        } => confirm(
-            "kind IN ('prompt', 'steer', 'follow_up') AND correlation = ?3",
-            &[&input_id.as_str()],
-        )?,
-        Event::InputUpdated {
-            input_id,
-            state: InputState::Refused,
-            ..
-        } => {
-            conn.execute(
-                "UPDATE effects SET state = 'retired_not_dispatched', reason = ?4, updated_at = ?1
-                 WHERE session_id = ?2 AND state IN ('queued', 'claimed', 'outcome_unknown')
-                   AND kind IN ('prompt', 'steer', 'follow_up') AND correlation = ?3",
-                params![now, session, input_id.as_str(), REASON_REFUSED],
-            )?;
-        }
-        Event::SessionStarted { .. } => confirm("kind IN ('start', 'resume')", &[])?,
-        Event::ToolOutput { node_id, .. } | Event::ToolCompleted { node_id, .. } => confirm(
-            "kind = 'answer' AND correlation IN
-                 (SELECT request_id FROM runtime_requests WHERE session_id = ?2 AND node_id = ?3)",
-            &[&node_id.as_str()],
-        )?,
-        // Only the provider's answer to this effect's own control request
-        // settles an interrupt (ADR-001 §3.1); a turn that ends is no
-        // evidence, it can end for any reason.
-        Event::InterruptResult {
-            control_id: Some(effect_id),
-            accepted: true,
-            ..
-        } => confirm(
-            "kind = 'interrupt' AND effect_id = ?3",
-            &[&effect_id.as_str()],
-        )?,
-        Event::InterruptResult {
-            control_id: Some(effect_id),
-            accepted: false,
-            ..
-        } => {
-            conn.execute(
-                "UPDATE effects SET state = 'retired_not_dispatched', reason = ?4, updated_at = ?1
-                 WHERE session_id = ?2 AND state IN ('claimed', 'outcome_unknown')
-                   AND kind = 'interrupt' AND effect_id = ?3",
-                params![now, session, effect_id.as_str(), REASON_REFUSED],
-            )?;
-        }
-        Event::ModeChanged { mode } => {
-            confirm("kind = 'set_mode' AND correlation = ?3", &[&mode.as_str()])?;
-        }
-        Event::ModelChanged { model } => {
-            confirm(
-                "kind = 'set_model' AND correlation = ?3",
-                &[&model.as_str()],
-            )?;
-        }
-        Event::SessionEnded { .. } => confirm("kind = 'stop'", &[])?,
-        _ => {}
-    }
-    Ok(())
 }
 
 /// Settles the effects of a process that is gone: queued → retired, claimed

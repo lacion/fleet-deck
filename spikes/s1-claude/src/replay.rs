@@ -86,6 +86,8 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
             // The product core asks `get_usage` after init (R4.5, DL-161);
             // the spike adapter never does, so that recorded write is skipped.
             Record::In { frame } if is_usage_probe(frame) => {}
+            // The same for `get_settings` (B18).
+            Record::In { frame } if is_settings_probe(frame) => {}
             Record::In { frame } => {
                 let actual = queue.pop_front().ok_or_else(|| ReplayError::MissingWrite {
                     index,
@@ -136,6 +138,13 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
 pub fn is_usage_probe(frame: &Value) -> bool {
     frame.get("type").and_then(Value::as_str) == Some("control_request")
         && frame.pointer("/request/subtype").and_then(Value::as_str) == Some("get_usage")
+}
+
+/// True for the product core's `get_settings` control request (B18).
+#[must_use]
+pub fn is_settings_probe(frame: &Value) -> bool {
+    frame.get("type").and_then(Value::as_str) == Some("control_request")
+        && frame.pointer("/request/subtype").and_then(Value::as_str) == Some("get_settings")
 }
 
 fn collect(outs: Vec<Output>, report: &mut ReplayReport, queue: &mut VecDeque<Value>) {

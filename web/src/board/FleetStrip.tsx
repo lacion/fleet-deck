@@ -17,8 +17,8 @@ import {
   isRiskyMode,
   modeLabel,
   modelFamily,
+  modelText,
   removedText,
-  shortModel,
 } from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
@@ -233,7 +233,7 @@ export function FleetStrip({
             {s.callsign ?? s.session_id.slice(0, 8)}
           </span>
           <span className="fd-strip-model" data-family={modelFamily(s.model) ?? undefined}>
-            {shortModel(s.model)}
+            {modelText(s.model, s.effort)}
           </span>
         </span>
         <span className="fd-strip-main">

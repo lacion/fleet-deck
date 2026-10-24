@@ -78,6 +78,7 @@ mod tests {
     #[test]
     fn the_trait_default_of_a_durable_resume_is_unsupported() {
         let spec = SessionSpec {
+            effort: None,
             provider_instance: "x".into(),
             cwd: "/w".to_owned(),
             mode: None,

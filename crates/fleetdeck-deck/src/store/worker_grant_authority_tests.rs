@@ -126,6 +126,7 @@ async fn fleet_control_approval_of_a_worker_spawn_stays_inside_the_worker_grant(
     let spawn = |station: &StationId, mode: Option<&str>| CoordinatorOp::Spawn {
         station: station.clone(),
         spec: SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: "/w/app".to_owned(),
             mode: mode.map(str::to_owned),

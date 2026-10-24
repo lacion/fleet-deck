@@ -37,6 +37,7 @@ fn adapter(scenario: &str, poll: Option<Duration>) -> CodexAdapter {
 
 fn spec(cwd: &std::path::Path) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "codex".into(),
         cwd: cwd.to_string_lossy().into_owned(),
         mode: None,

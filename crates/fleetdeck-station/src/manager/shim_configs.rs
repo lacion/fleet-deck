@@ -14,6 +14,7 @@ pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
         let instance = summary.provider_instance.clone()?;
         let adapter = adapters.get(&instance)?;
         let spec = fleetdeck_proto::command::SessionSpec {
+            effort: summary.effort_choice.clone(),
             provider_instance: instance,
             cwd: summary.cwd.clone()?,
             mode: summary.mode.clone(),

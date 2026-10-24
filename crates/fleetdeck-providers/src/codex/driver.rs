@@ -282,7 +282,7 @@ impl CodexAdapter {
         };
         let thread = super::SessionSpec {
             model: spec.model.clone(),
-            effort: self.config.effort.clone(),
+            effort: spec.effort.clone().or_else(|| self.config.effort.clone()),
             mode: spec.mode.clone(),
             cwd: Some(cwd_text),
             resume,
@@ -690,6 +690,12 @@ impl LiveSession for CodexSession {
     async fn set_model(&mut self, model: ModelId) -> Result<()> {
         require(&self.caps, Operation::SetModel)?;
         self.run(move |c| c.set_model(&model.0)).await
+    }
+
+    async fn set_effort(&mut self, effort: String, control_id: Option<ControlId>) -> Result<()> {
+        require(&self.caps, Operation::SetEffort)?;
+        self.run(move |c| c.set_effort(&effort, control_id.map(|c| c.0)))
+            .await
     }
 
     /// Codex forks with `thread/fork` in a new process

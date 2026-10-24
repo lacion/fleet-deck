@@ -16,14 +16,14 @@
 use std::collections::HashSet;
 
 use crate::event::{
-    BackgroundTask, Event, EventEnvelope, RateLimit, SessionState, ToolKind, Usage, UsageRecount,
-    WorkflowUpdate,
+    BackgroundTask, EffortSetOutcome, Event, EventEnvelope, RateLimit, SessionState, ToolKind,
+    Usage, UsageRecount, WorkflowUpdate,
 };
 use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
     Activity, LegacyUsage, MAX_RUNNING_TOOLS, MAX_RUNNING_WORKFLOWS, OpenRequest, RunningTool,
-    RunningWorkflow, SUBAGENT_TASK_KINDS, SessionBase, SessionError, SessionRevert,
-    SessionSummary, TerminalHold, WORKFLOW_TASK_KINDS,
+    RunningWorkflow, SUBAGENT_TASK_KINDS, SessionBase, SessionError, SessionRevert, SessionSummary,
+    TerminalHold, WORKFLOW_TASK_KINDS,
 };
 
 impl SessionSummary {
@@ -70,6 +70,7 @@ impl SessionSummary {
                 self.provider_instance = Some(provider_instance.clone());
                 self.provider_version.clone_from(provider_version);
                 self.model.clone_from(model);
+                self.effort = None;
                 self.cwd = Some(cwd.clone());
                 self.mode.clone_from(mode);
                 self.capabilities = Some(capabilities.as_ref().clone());
@@ -158,6 +159,15 @@ impl SessionSummary {
             }
             Event::ModeChanged { mode } => self.mode = Some(mode.clone()),
             Event::ModelChanged { model } => self.model = Some(model.clone()),
+            Event::EffortChanged { effort } => self.effort.clone_from(effort),
+            // The choice persists at the provider's acceptance, never at a
+            // verification result (effort.md §9.1, decision 22).
+            Event::EffortChosen { effort } => self.effort_choice = Some(effort.clone()),
+            Event::EffortSetResult {
+                requested,
+                outcome: EffortSetOutcome::Accepted,
+                ..
+            } => self.effort_choice = Some(requested.clone()),
             Event::UsageUpdated { usage, rate_limits } => {
                 self.fold_usage(usage, at);
                 merge_rate_limits(&mut self.rate_limits, rate_limits);
@@ -358,7 +368,10 @@ impl SessionSummary {
             // The board reads the reason from the event (FG-12).
             | Event::ArtifactsUnavailable { .. }
             // A late checkpoint never changes the activity (L13).
-            | Event::TurnFinalized { .. } => {}
+            | Event::TurnFinalized { .. }
+            // A verification or refusal reports what the provider runs; it
+            // changes neither the choice nor the observed effort (B18).
+            | Event::EffortSetResult { .. } => {}
         }
     }
 
@@ -562,6 +575,9 @@ fn merge_rate_limits(kept: &mut Vec<RateLimit>, more: &[RateLimit]) {
     kept.sort_by(|a, b| a.scope.cmp(&b.scope));
 }
 
+#[cfg(test)]
+#[path = "fold_effort_tests.rs"]
+mod effort_tests;
 #[cfg(test)]
 #[path = "fold_tests.rs"]
 mod tests;

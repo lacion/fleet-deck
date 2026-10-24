@@ -114,6 +114,24 @@ pub fn get_usage(request_id: &str) -> Value {
     control_request(request_id, "get_usage", json!({"skip_behaviors": true}))
 }
 
+/// `apply_flag_settings` with the reasoning effort level (B18 Phase 2): the
+/// CLI answers `{}` and applies the level to the session.
+#[must_use]
+pub fn apply_effort(request_id: &str, effort: &str) -> Value {
+    control_request(
+        request_id,
+        "apply_flag_settings",
+        json!({"settings": {"effortLevel": effort}}),
+    )
+}
+
+/// `get_settings`: the settings that apply to the session. The host reads
+/// only `applied.effort` of the answer (B18).
+#[must_use]
+pub fn get_settings(request_id: &str) -> Value {
+    control_request(request_id, "get_settings", json!({}))
+}
+
 /// The host's decision for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionDecision {

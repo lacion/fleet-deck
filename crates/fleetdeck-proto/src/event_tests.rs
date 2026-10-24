@@ -271,11 +271,17 @@ fn samples() -> Vec<Event> {
                     value: "default".into(),
                     label: "Default (recommended)".into(),
                     description: Some("Use the default model".into()),
+                    resolved: Some("claude-opus-5-5".into()),
+                    efforts: Some(vec!["low".into(), "high".into()]),
+                    default_effort: Some("high".into()),
                 },
                 crate::event::ModelChoice {
                     value: "opus".into(),
                     label: "Opus".into(),
                     description: None,
+                    resolved: None,
+                    efforts: None,
+                    default_effort: None,
                 },
             ],
         },
@@ -395,6 +401,19 @@ fn samples() -> Vec<Event> {
             running_agents: 0,
             agents_total: 0,
         })),
+        Event::EffortChanged {
+            effort: Some("high".into()),
+        },
+        Event::EffortSetResult {
+            control_id: Some("eff-1".into()),
+            requested: "low".into(),
+            effort: Some("medium".into()),
+            outcome: crate::event::EffortSetOutcome::Adjusted,
+            message: Some("capped".into()),
+        },
+        Event::EffortChosen {
+            effort: "high".into(),
+        },
     ]
 }
 
@@ -557,18 +576,6 @@ mod decode_props {
             let _ = serde_json::from_str::<ControlFrame>(&text);
         }
     }
-}
-
-#[test]
-fn a_model_choice_without_a_description_decodes() {
-    let body: EventBody = serde_json::from_value(
-        json!({"kind": "session.models", "models": [{"value": "opus", "label": "Opus"}]}),
-    )
-    .unwrap();
-    let Some(Event::SessionModels { models }) = body.known() else {
-        panic!("expected session.models");
-    };
-    assert_eq!(models[0].description, None);
 }
 
 #[test]
@@ -740,73 +747,4 @@ fn a_task_update_omits_its_empty_optional_fields_and_decodes_without_them() {
                "status": "running"})
     );
     assert_eq!(serde_json::from_value::<Event>(json).unwrap(), bare);
-}
-
-#[test]
-fn the_fleet_git_events_have_their_wire_names_and_optional_fields() {
-    let push = serde_json::to_value(Event::SessionPush {
-        state: crate::fleet_git::PushState::Pushed,
-        ref_name: "fd/a/b".into(),
-        oid: Some("abc".into()),
-        desired_oid: None,
-        stop_code: None,
-        attempts: 0,
-        next_attempt_at: None,
-        code: None,
-        text: None,
-    })
-    .unwrap();
-    assert_eq!(
-        push,
-        json!({"kind": "session.push", "state": "pushed", "ref_name": "fd/a/b", "oid": "abc", "attempts": 0})
-    );
-    // An event of a newer station with an unknown push state still decodes.
-    let newer: EventBody = serde_json::from_value(
-        json!({"kind": "session.push", "state": "paused", "ref_name": "r", "attempts": 1}),
-    )
-    .unwrap();
-    assert!(matches!(
-        newer.known(),
-        Some(Event::SessionPush {
-            state: crate::fleet_git::PushState::Unknown,
-            ..
-        })
-    ));
-    let stale: EventBody = serde_json::from_value(
-        json!({"kind": "workspace.base_stale", "code": "fetch_timeout", "text": "t"}),
-    )
-    .unwrap();
-    assert_eq!(stale.kind_name(), "workspace.base_stale");
-    assert!(stale.known().is_some());
-}
-
-#[test]
-fn the_artifact_events_have_their_wire_names_and_optional_fields() {
-    let ready = serde_json::to_value(Event::ArtifactsReady {
-        path: None,
-        url: Some("http://100.100.100.100:8080/t/nas/art/app/ada/".into()),
-    })
-    .unwrap();
-    assert_eq!(
-        ready,
-        json!({"kind": "artifacts.ready", "url": "http://100.100.100.100:8080/t/nas/art/app/ada/"})
-    );
-    for (kind, name) in [
-        ("artifacts.unavailable", "mount_missing"),
-        ("artifacts.revoked", "share_unverified"),
-    ] {
-        let body: EventBody =
-            serde_json::from_value(json!({"kind": kind, "code": name, "text": "t"})).unwrap();
-        assert_eq!(body.kind_name(), kind);
-        assert!(body.known().is_some());
-    }
-    // A bare `artifacts.ready` decodes (both fields are optional).
-    let bare: EventBody = serde_json::from_value(json!({"kind": "artifacts.ready"})).unwrap();
-    assert!(matches!(
-        bare.known(),
-        Some(Event::ArtifactsReady {
-            path: None,
-            url: None
-        })
-    ));
 }

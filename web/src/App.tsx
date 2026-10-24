@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ArtifactActions } from './artifacts/actions';
 import { ArtifactPage } from './artifacts/ArtifactViewer';
 import { ArtifactsPage } from './artifacts/ArtifactsPage';
@@ -54,6 +54,7 @@ import { SpawnForm } from './spawn/SpawnForm';
 import type { Watch } from './terminal/handover';
 import { TerminalDock } from './terminal/TerminalDock';
 import { type TermTab, type TerminalStore, tabId } from './terminal/store';
+import { useTabCount } from './terminal/tabCount';
 import { archived } from './ui/archive';
 import { priority } from './ui/localSet';
 import { useNow } from './ui/useNow';
@@ -131,17 +132,6 @@ const NO_TERMINALS: Notice = {
   text: 'No terminal is open. Open a session and select Terminal to start one.',
   tone: 'info',
 };
-
-const noSubscribe = () => () => {};
-
-/** How many terminal tabs the dock has. */
-function useTabCount(store: TerminalStore | undefined): number {
-  return useSyncExternalStore(
-    store?.subscribe ?? noSubscribe,
-    () => store?.getState().tabs.length ?? 0,
-    () => 0,
-  );
-}
 
 const sessionRoute = (key: SessionKey): Route => ({
   name: 'session',

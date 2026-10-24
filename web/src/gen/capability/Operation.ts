@@ -3,4 +3,4 @@
 /**
  * An operation on a live session that a capability can forbid.
  */
-export type Operation = "prompt" | "steer" | "follow_up" | "interrupt" | "answer" | "edit_input" | "set_mode" | "set_model" | "fork" | "resume" | "stop" | "revert";
+export type Operation = "prompt" | "steer" | "follow_up" | "interrupt" | "answer" | "edit_input" | "set_mode" | "set_model" | "set_effort" | "fork" | "resume" | "stop" | "revert";

@@ -32,6 +32,7 @@ pub const SAFEST_MODE: &str = "default";
 #[must_use]
 pub fn capabilities(allow_bypass: bool) -> Capabilities {
     Capabilities {
+        set_effort: true,
         resume: true,
         fork: true,
         requests_survive_restart: false,
@@ -70,6 +71,8 @@ pub fn capabilities(allow_bypass: bool) -> Capabilities {
 pub struct Launch {
     /// A model id; `None` and the `default` sentinel pass no `--model` (trap 2).
     pub model: Option<String>,
+    /// A reasoning effort level: `--effort <level>` after `--model` (B18).
+    pub effort: Option<String>,
     /// A native mode. A mode that the session does not offer runs as the most
     /// restrictive one (L8).
     pub mode: Option<String>,
@@ -104,6 +107,9 @@ pub fn cli_args(launch: &Launch, caps: &Capabilities) -> Vec<String> {
     args.extend(["--permission-mode".to_owned(), mode.to_owned()]);
     if let Some(model) = launch.model.as_deref().filter(|m| *m != "default") {
         args.extend(["--model".to_owned(), model.to_owned()]);
+    }
+    if let Some(effort) = launch.effort.as_deref() {
+        args.extend(["--effort".to_owned(), effort.to_owned()]);
     }
     if let Some(id) = &launch.resume {
         args.extend(["--resume".to_owned(), id.0.clone()]);

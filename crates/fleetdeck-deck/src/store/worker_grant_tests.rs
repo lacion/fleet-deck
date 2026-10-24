@@ -101,6 +101,7 @@ async fn world() -> World {
 fn start(cwd: &str) -> SessionCommand {
     SessionCommand::Start {
         spec: SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: cwd.to_owned(),
             mode: None,

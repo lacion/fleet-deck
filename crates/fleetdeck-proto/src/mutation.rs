@@ -66,6 +66,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.interrupt",
     "session.set_mode",
     "session.set_model",
+    "session.set_effort",
     "session.stop",
     "session.revert",
     "session.rename",

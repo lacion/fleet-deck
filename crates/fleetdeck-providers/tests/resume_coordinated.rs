@@ -28,6 +28,7 @@ const WAIT: Duration = Duration::from_secs(20);
 
 fn spec(instance: &str, cwd: &std::path::Path) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: instance.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         mode: None,

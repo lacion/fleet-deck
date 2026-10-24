@@ -105,6 +105,7 @@ fn an_import_carries_a_native_id_that_can_never_read_as_a_flag() {
 
 fn launched_spec() -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".into(),
         mode: None,
@@ -279,6 +280,20 @@ fn a_land_command_has_the_op_land_and_the_session_land_method() {
     assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
     assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
     assert!(crate::mutation::SESSION_METHODS.contains(&"session.land"));
+}
+
+#[test]
+fn a_set_effort_command_has_the_op_set_effort_and_the_session_set_effort_method() {
+    let value = serde_json::json!({"op": "set_effort", "session_id": "s1", "effort": "high"});
+    let cmd: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+    assert!(matches!(
+        &cmd,
+        SessionCommand::SetEffort { effort, .. } if effort == "high"
+    ));
+    assert_eq!(cmd.method(), "session.set_effort");
+    assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
+    assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
+    assert!(crate::mutation::SESSION_METHODS.contains(&"session.set_effort"));
 }
 
 #[test]

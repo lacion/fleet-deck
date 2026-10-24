@@ -97,6 +97,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
 
     // An owner start from the deck (origin board).
     let mut spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: ws.to_string_lossy().into_owned(),
         mode: Some("default".to_owned()),
@@ -298,6 +299,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
 #[test]
 fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         mode: None,
@@ -364,6 +366,7 @@ fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
 #[test]
 fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() {
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         mode: None,
@@ -445,6 +448,7 @@ fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() 
 #[test]
 fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         mode: None,
@@ -517,6 +521,7 @@ fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
 #[test]
 fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "codex".into(),
         cwd: "/w".to_owned(),
         mode: None,
@@ -551,6 +556,7 @@ fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
 /// A spec for the `tools_for` checks; `grant` adds a coordinator grant.
 fn tools_spec(grant: bool) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: "/w".to_owned(),
         mode: None,

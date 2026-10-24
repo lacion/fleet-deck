@@ -120,6 +120,9 @@ pub enum ProviderError {
     InvalidMode(String),
     #[error("model `{0}` is not offered by this provider")]
     InvalidModel(String),
+    /// The effort level is not among the levels of the current model (B18).
+    #[error("effort `{0}` is not offered by this model")]
+    EffortNotOffered(String),
     #[error("input id `{0}` cannot be used")]
     InvalidInput(String),
     #[error("unknown request {0}")]
@@ -343,6 +346,13 @@ pub trait LiveSession: Send {
     async fn answer(&mut self, answer: Answer) -> Result<()>;
     async fn set_mode(&mut self, mode: PermissionMode) -> Result<()>;
     async fn set_model(&mut self, model: ModelId) -> Result<()>;
+    /// Changes the reasoning effort (B18 Phase 2). The provider's answer
+    /// comes as `effort.set_result` with `control_id`. Unsupported by
+    /// default.
+    async fn set_effort(&mut self, effort: String, control_id: Option<ControlId>) -> Result<()> {
+        let _ = (effort, control_id);
+        Err(Unsupported::new(Operation::SetEffort).into())
+    }
     /// The native id to fork from: the station passes it to
     /// [`ProviderAdapter::fork`] (DL-033).
     async fn fork(&mut self) -> Result<NativeSessionId>;

@@ -65,6 +65,8 @@ export type SessionActions = {
   answer(requestId: string, optionId: string, reply?: Reply | null): Promise<Outcome>;
   setMode(mode: string): Promise<Outcome>;
   setModel(model: string): Promise<Outcome>;
+  /** B18: change the reasoning effort of the session (`session.set_effort`). */
+  setEffort(effort: string): Promise<Outcome>;
   /** The board title (DL-095); `null` clears it. Allowed on an ended session too. */
   rename(title: string | null): Promise<Outcome>;
   /** The restart auto-continuation preference (ADR-007); default off. */
@@ -125,6 +127,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   answer: 'approval.answer',
   set_mode: 'session.set_mode',
   set_model: 'session.set_model',
+  set_effort: 'session.set_effort',
   fork: 'session.fork',
   stop: 'session.stop',
   revert: 'session.revert',
@@ -377,6 +380,7 @@ export function sessionActions(
       }),
     setMode: (mode) => run({ op: 'set_mode', session_id, mode }),
     setModel: (model) => run({ op: 'set_model', session_id, model }),
+    setEffort: (effort) => run({ op: 'set_effort', session_id, effort }),
     rename: (title) => run({ op: 'rename', session_id, title }),
     setAutoContinue: (enabled) => run({ op: 'set_auto_continue', session_id, enabled }),
     revert: (turn_id) => run({ op: 'revert', session_id, turn_id }),

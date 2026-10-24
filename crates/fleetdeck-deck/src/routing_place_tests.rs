@@ -8,6 +8,7 @@ use fleetdeck_proto::{SessionSummary, StationId};
 
 fn view(name: &str, live: u64) -> StationView {
     StationView {
+        session_effort: false,
         station_id: StationId::from(name.to_owned()),
         name: name.to_owned(),
         key: "k".to_owned(),

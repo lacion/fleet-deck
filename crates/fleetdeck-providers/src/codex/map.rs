@@ -1,11 +1,11 @@
 //! App-server replies and notifications → canonical events (ADR-002 §2.5).
 
 use fleetdeck_proto::event::{
-    BackgroundTask, ExpiredReason, FileChange, InputState, ModelChoice, ProviderKind, ProviderRefs,
-    ToolKind, ToolStatus, TurnStatus, Usage,
+    BackgroundTask, ExpiredReason, FileChange, InputState, ProviderKind, ProviderRefs, ToolKind,
+    ToolStatus, TurnStatus, Usage,
 };
 use fleetdeck_proto::{Event, NodeId, TurnId};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::core::{CodexCore, HostRequest, Output, ToolNode};
 use super::truncate;
@@ -19,16 +19,15 @@ mod agents;
 #[path = "map_tools.rs"]
 mod map_tools;
 use map_tools::{tool_kind, tool_title};
-
-/// Pages of `model/list` that follow the first one (DL-151).
-const MODEL_LIST_MORE_PAGES: u8 = 4;
+// `model/list` and its pages (moved out of this file for the module size rule).
+#[path = "map_models.rs"]
+mod map_models;
 
 /// Notifications that the core reads but maps to no event. Every other
 /// unknown method counts as an unknown frame, so a new protocol feature
 /// shows up in replay.
 pub const IGNORED_NOTIFICATIONS: &[&str] = &[
     "thread/status/changed",
-    "thread/settings/updated",
     "thread/name/updated",
     "thread/archived",
     "thread/unarchived",
@@ -65,6 +64,7 @@ pub const IGNORED_NOTIFICATIONS: &[&str] = &[
 /// app-server schema.
 pub const HANDLED_NOTIFICATIONS: &[&str] = &[
     "thread/started",
+    "thread/settings/updated",
     "turn/started",
     "turn/completed",
     "item/started",
@@ -158,17 +158,20 @@ impl CodexCore {
                 HostRequest::ThreadStart | HostRequest::ThreadResume | HostRequest::ThreadFork,
                 Ok(r),
             ) => self.on_thread(&r),
-            (HostRequest::TurnStart { input_id }, Ok(r)) => self.on_turn_accepted(&input_id, &r),
+            (HostRequest::TurnStart { input_id, effort }, Ok(r)) => {
+                self.on_turn_accepted(&input_id, effort, &r)
+            }
             (HostRequest::TurnSteer { input_id }, Ok(_)) => {
                 let turn = self.turn.clone();
                 self.set_input_state(&input_id, InputState::Received, turn)
             }
-            (HostRequest::TurnStart { input_id }, Err((code, message))) => {
+            (HostRequest::TurnStart { input_id, effort }, Err((code, message))) => {
                 self.turn_requested = false;
                 self.turn_input = None;
                 let mut out = self.set_input_state(&input_id, InputState::Refused, None);
                 out.push(rpc_error(code, message));
                 out.extend(self.refuse_held_interrupt("the turn did not start"));
+                out.extend(self.on_turn_refused_effort(effort));
                 out.extend(self.dispatch_follow_up());
                 out
             }
@@ -258,6 +261,7 @@ impl CodexCore {
         });
         let mut out = vec![started];
         out.extend(identity);
+        out.extend(self.effort_of_thread_answer(r));
         if self.config.request_models {
             out.push(self.model_list(0, Vec::new(), None));
             out.push(self.skill_catalog());
@@ -265,43 +269,12 @@ impl CodexCore {
         out
     }
 
-    /// The `model/list` request for the next page (DL-151).
-    fn model_list(&mut self, pages: u8, models: Vec<ModelChoice>, cursor: Option<&str>) -> Output {
-        let id = self.host_id(HostRequest::ModelList { pages, models });
-        let params = cursor.map_or_else(|| json!({}), |c| json!({ "cursor": c }));
-        Output::Write(super::rpc::request(&id, "model/list", params))
-    }
-
-    /// A page of `model/list`: the next page, or `session.models` when the
-    /// last page (or the page limit) is reached. No models: no event.
-    fn on_model_list(&mut self, pages: u8, mut models: Vec<ModelChoice>, r: &Value) -> Vec<Output> {
-        models.extend(
-            r.get("data")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|m| m.get("hidden").and_then(Value::as_bool) != Some(true))
-                .filter_map(|m| {
-                    let value = str_at(m, "model").or_else(|| str_at(m, "id"))?;
-                    Some(ModelChoice {
-                        value: value.to_owned(),
-                        label: str_at(m, "displayName").unwrap_or(value).to_owned(),
-                        description: str_at(m, "description").map(str::to_owned),
-                    })
-                }),
-        );
-        if let Some(cursor) = str_at(r, "nextCursor")
-            && pages < MODEL_LIST_MORE_PAGES
-        {
-            return vec![self.model_list(pages + 1, models, Some(cursor))];
-        }
-        if models.is_empty() {
-            return Vec::new();
-        }
-        vec![Output::Emit(Event::SessionModels { models })]
-    }
-
-    fn on_turn_accepted(&mut self, input_id: &fleetdeck_proto::InputId, r: &Value) -> Vec<Output> {
+    fn on_turn_accepted(
+        &mut self,
+        input_id: &fleetdeck_proto::InputId,
+        effort: Option<super::core::EffortPick>,
+        r: &Value,
+    ) -> Vec<Output> {
         self.turn_requested = false;
         let mut out = Vec::new();
         if let Some(m) = self.pending_mode.take() {
@@ -313,6 +286,7 @@ impl CodexCore {
             self.thread_model = Some(model.clone());
             out.push(Output::Emit(Event::ModelChanged { model }));
         }
+        out.extend(self.on_turn_effort(effort));
         if let Some(native) = r.pointer("/turn/id").and_then(Value::as_str) {
             out.extend(self.ensure_turn(native));
         }
@@ -393,6 +367,8 @@ impl CodexCore {
                     .into_iter()
                     .collect()
             }
+            "thread/settings/updated" if self.own_thread(p) => self.on_settings_updated(p),
+            "thread/settings/updated" => Vec::new(),
             "account/rateLimits/updated" => match super::limits::rate_limits(p) {
                 limits if limits.is_empty() => Vec::new(),
                 rate_limits => vec![Output::Emit(Event::UsageUpdated {

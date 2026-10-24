@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use super::args::input_uuid;
 use super::commands::CommandState;
+use super::effort_set::EffortSet;
 use super::frames::CliFrame;
 use super::process_usage::{ProcessUsage, UsageBase};
 use super::workflows::WorkflowEntry;
@@ -241,6 +242,49 @@ pub struct ClaudeCore {
     /// `None` only in a checkpoint of an older build.
     #[serde(default)]
     pub(super) usage: Option<ProcessUsage>,
+    /// Counter of the `fd-settings-N` request ids (B18).
+    #[serde(default)]
+    pub(super) settings_seq: u64,
+    /// The `N` of the open `get_settings` request. It is not in
+    /// `host_requests`, so an older build restores this checkpoint
+    /// (docs/v2/design/effort.md §4.3.1).
+    #[serde(default)]
+    pub(super) settings_open: Option<u64>,
+    /// When the open request was written. Not in the checkpoint: a restored
+    /// open request counts as stale.
+    #[serde(skip)]
+    pub(super) settings_asked: Option<std::time::Instant>,
+    /// A `get_settings` is due when the open one is answered.
+    #[serde(default)]
+    pub(super) settings_again: bool,
+    /// The CLI refused `get_settings` or answered in another shape.
+    #[serde(default)]
+    pub(super) settings_stopped: bool,
+    /// The last effort that this core emitted (a valid id, B18).
+    #[serde(default)]
+    pub(super) effort: Option<String>,
+    /// The models of the last `initialize` answer, with their ids and effort
+    /// levels (B18 Phase 2).
+    #[serde(default)]
+    pub(super) model_choices: Vec<ModelChoice>,
+    /// The model of the last `get_settings` answer; `None` after a model
+    /// change until a newer answer.
+    #[serde(default)]
+    pub(super) applied_model: Option<String>,
+    /// The `settings_seq` at the last model change: an answer with an id at
+    /// or below it was written before the change and its model is old.
+    #[serde(default)]
+    pub(super) model_set_seq: u64,
+    /// The model of the last `session.started` or `model.changed` that this
+    /// core emitted. `None` in a restored older checkpoint.
+    #[serde(default)]
+    pub(super) reported_model: Option<String>,
+    /// Counter of the `fd-effort-N` request ids.
+    #[serde(default)]
+    pub(super) effort_seq: u64,
+    /// The `apply_flag_settings` requests of an effort change, by `N`.
+    #[serde(default)]
+    pub(super) effort_sets: BTreeMap<u64, EffortSet>,
 }
 
 impl ClaudeCore {
@@ -281,6 +325,18 @@ impl ClaudeCore {
             last_total_cost: None,
             commands: CommandState::default(),
             usage,
+            settings_seq: 0,
+            settings_open: None,
+            settings_asked: None,
+            settings_again: false,
+            settings_stopped: false,
+            effort: None,
+            model_choices: Vec::new(),
+            applied_model: None,
+            model_set_seq: 0,
+            reported_model: None,
+            effort_seq: 0,
+            effort_sets: BTreeMap::new(),
         }
     }
 

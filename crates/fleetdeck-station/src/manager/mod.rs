@@ -60,10 +60,10 @@ mod stop_exec;
 mod stop_plan;
 mod stop_signal;
 mod stop_state;
-mod submit_route;
 #[cfg(test)]
 #[path = "stop_tree.rs"]
 mod stop_tree;
+mod submit_route;
 pub mod target;
 mod task_stop;
 pub mod trash;
@@ -772,6 +772,8 @@ mod shell_run_tests;
 #[path = "session_holds_wired_tests.rs"]
 mod session_holds_wired_tests;
 
+#[cfg(test)]
+mod effort_tests;
 #[cfg(test)]
 #[path = "worker_grant_tests.rs"]
 mod worker_grant_tests;

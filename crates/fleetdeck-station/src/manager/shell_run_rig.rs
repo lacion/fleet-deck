@@ -192,6 +192,7 @@ impl Rig {
         let d = self
             .local(SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "claude".into(),
                     cwd: self.app_root(),
                     mode: Some("default".to_owned()),

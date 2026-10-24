@@ -397,6 +397,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
         let (code, message) = r
             .refused(SessionCommand::Start {
                 spec: SessionSpec {
+                    effort: None,
                     provider_instance: "claude".into(),
                     cwd,
                     mode: None,

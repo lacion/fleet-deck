@@ -206,6 +206,7 @@ impl Rig {
                 station,
                 SessionCommand::Start {
                     spec: SessionSpec {
+                        effort: None,
                         provider_instance: "codex".into(),
                         cwd: self.workspace().to_string_lossy().into_owned(),
                         mode: None,

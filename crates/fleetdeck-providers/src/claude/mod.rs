@@ -13,6 +13,8 @@ mod commands;
 pub mod control;
 pub mod cost_state;
 pub mod driver;
+pub mod effort;
+mod effort_set;
 pub mod frames;
 mod host_cmd;
 mod map;
@@ -40,6 +42,12 @@ pub use requests::request_kind;
 mod tests;
 #[cfg(test)]
 mod tests_commands;
+#[cfg(test)]
+mod tests_effort;
+#[cfg(test)]
+mod tests_effort_model;
+#[cfg(test)]
+mod tests_effort_set;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]

@@ -12,6 +12,7 @@ import { AgentFields } from './AgentFields';
 import { BranchFields } from './BranchFields';
 import { BrowseSessions } from './BrowseSessions';
 import { CloneAccess } from './CloneAccess';
+import { useSpawnEffort } from './EffortField';
 import { FleetControlFields } from './FleetControlFields';
 import { TargetStations } from './TargetStations';
 import {
@@ -140,6 +141,7 @@ export function SpawnForm({
   const cwd = cwdText === null || cwdText.trim() === '' ? null : cwdText.trim();
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');
+  const effort = useSpawnEffort(station, auto, knownModels(sessions, stationId, instance), model);
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
   const [importId, setImportId] = useState('');
@@ -405,6 +407,7 @@ export function SpawnForm({
               cwd: target ?? '',
               mode: modes.includes(mode) ? mode : null,
               model: model.trim() === '' ? null : model.trim(),
+              ...(effort.value === '' ? {} : { effort: effort.value }),
               title: title.trim() === '' ? null : title.trim(),
               // The deck creates the grant and fills in its id, expiry and
               // control skill (ADR-006 §4, DL-217); 0 means its default.
@@ -571,6 +574,7 @@ export function SpawnForm({
                   model={model}
                   models={knownModels(sessions, stationId, instance)}
                   onModel={setModel}
+                  effort={effort}
                   modes={modes}
                   mode={mode}
                   onMode={setMode}

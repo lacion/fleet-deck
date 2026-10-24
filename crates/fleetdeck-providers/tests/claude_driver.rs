@@ -52,6 +52,7 @@ fn spec(root: &std::path::Path) -> SessionSpec {
     let ws = root.join("ws");
     std::fs::create_dir_all(&ws).unwrap();
     SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: ws.to_string_lossy().into_owned(),
         mode: Some("default".to_owned()),

@@ -4,6 +4,7 @@ import {
   agentLine,
   answeredText,
   apiCause,
+  effortSetNotice,
   errorNotice,
   expiredText,
   modelNotice,
@@ -179,5 +180,49 @@ describe('agentLine', () => {
     expect(agentLine('  \nAPI Error: 529 overloaded')).toBe(
       'The provider is overloaded. Try again later.',
     );
+  });
+});
+
+describe('effortSetNotice (B18 Phase 2)', () => {
+  const result = (
+    outcome: Parameters<typeof effortSetNotice>[0]['outcome'],
+    effort: string | null = null,
+    message?: string,
+  ): Parameters<typeof effortSetNotice>[0] => ({
+    kind: 'effort.set_result',
+    control_id: null,
+    requested: 'max',
+    effort,
+    outcome,
+    ...(message === undefined ? {} : { message }),
+  });
+
+  test('an outcome that is no news has no notice', () => {
+    for (const outcome of ['accepted', 'applied', 'superseded'] as const) {
+      expect(effortSetNotice(result(outcome, 'max'))).toBeNull();
+    }
+  });
+
+  test('adjusted, unverified and refused have their words and tone', () => {
+    expect(effortSetNotice(result('adjusted', 'high'))).toEqual({
+      text: 'Effort is high, not max',
+      tone: 'info',
+    });
+    expect(effortSetNotice(result('adjusted'))).toEqual({
+      text: 'This model does not use an effort setting',
+      tone: 'info',
+    });
+    expect(effortSetNotice(result('unverified'))).toEqual({
+      text: 'Effort set to max; the provider does not report it',
+      tone: 'info',
+    });
+    expect(effortSetNotice(result('refused', null, 'not offered'))).toEqual({
+      text: 'Effort not changed: not offered',
+      tone: 'error',
+    });
+    expect(effortSetNotice(result('refused'))).toEqual({
+      text: 'Effort not changed.',
+      tone: 'error',
+    });
   });
 });

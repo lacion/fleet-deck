@@ -420,6 +420,7 @@ async fn a_queued_worker_start_waits_for_a_compatible_link_and_expires_with_its_
         station: f.station.clone(),
         command: SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: "claude".into(),
                 cwd: "/w".to_owned(),
                 mode: None,

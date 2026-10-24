@@ -395,6 +395,7 @@ impl LinkBackend {
         let offset = cron::parse_offset(&schedule.timezone).unwrap_or(0);
         Ok(SessionCommand::Start {
             spec: SessionSpec {
+                effort: None,
                 provider_instance: schedule.provider_instance.clone(),
                 cwd: schedule.path.clone(),
                 mode: schedule.mode.clone(),

@@ -7,4 +7,18 @@ export type ModelChoice = {
 /**
  * What the provider takes to select the model (`set_model`).
  */
-value: string, label: string, description: string | null, };
+value: string, label: string, description: string | null, 
+/**
+ * The model id that `value` selects (Claude `resolvedModel`); `None`
+ * when `value` is the id itself (Codex).
+ */
+resolved?: string, 
+/**
+ * The effort levels of the model. `None`: not advertised; empty: the
+ * model has no effort setting.
+ */
+efforts?: Array<string>, 
+/**
+ * The provider's default level (Codex `defaultReasoningEffort`).
+ */
+default_effort?: string, };

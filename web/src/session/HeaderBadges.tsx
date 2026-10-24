@@ -15,7 +15,8 @@ import {
   isRiskyMode,
   modeLabel,
   modelFamily,
-  shortModel,
+  modelText,
+  modelTitle,
 } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
 import { CopyButton } from './CopyButton';
@@ -80,9 +81,9 @@ export function Who({ session }: { readonly session: DeckSession }) {
       <span
         className="fd-sh-model"
         data-family={modelFamily(s.model) ?? undefined}
-        title={s.model ?? 'default model'}
+        title={modelTitle(s.model, s.effort)}
       >
-        {shortModel(s.model)}
+        {modelText(s.model, s.effort)}
       </span>
       <span className="fd-sh-provider">{providerLabel(s.provider)}</span>
     </span>

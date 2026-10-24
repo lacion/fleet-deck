@@ -211,14 +211,60 @@ export function ModelPicker(props: {
 }
 
 /**
+ * The effort levels of the current model as radio rows (B18 Phase 2): the level that the provider
+ * reports is checked. `onDone` closes the menu after a pick.
+ */
+export function EffortPicker(props: {
+  current: string | null;
+  levels: readonly string[];
+  onSet: (level: string) => void;
+  onDone?: (() => void) | undefined;
+}) {
+  return (
+    <fieldset className="fd-modes">
+      <legend>Effort</legend>
+      <div className="fd-modes-list" role="radiogroup" aria-label="Effort">
+        {props.levels.map((level) => {
+          const current = level === props.current;
+          return (
+            <button
+              key={level}
+              type="button"
+              role="radio"
+              className="fd-mode-row fd-selbar"
+              title={`Reasoning effort: ${level}`}
+              aria-checked={current}
+              disabled={current}
+              onClick={() => {
+                props.onDone?.();
+                props.onSet(level);
+              }}
+            >
+              {level}
+              {current ? <Icon of={Check} size={14} /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+/**
  * The composer model chip: the summary of its own popover, which opens upward from the chip and
- * lists the models (§4.5). `name` is the short name of the current model.
+ * lists the models (§4.5), then the effort levels of the model when the session can set them.
+ * `name` is the short name of the current model.
  */
 export function ModelMenu(props: {
   name: string;
   current: string | null;
   models: readonly ModelChoice[] | null;
   onSet: (model: string) => void;
+  effort?: {
+    readonly current: string | null;
+    readonly levels: readonly string[];
+    readonly onSet: (level: string) => void;
+  };
 }) {
   return (
     <Menu
@@ -233,13 +279,16 @@ export function ModelMenu(props: {
       title="Change the model"
     >
       {(close) => (
-        <ModelPicker
-          current={props.current}
-          models={props.models}
-          enabled
-          onSet={props.onSet}
-          onDone={close}
-        />
+        <>
+          <ModelPicker
+            current={props.current}
+            models={props.models}
+            enabled
+            onSet={props.onSet}
+            onDone={close}
+          />
+          {props.effort === undefined ? null : <EffortPicker {...props.effort} onDone={close} />}
+        </>
       )}
     </Menu>
   );

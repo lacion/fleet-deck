@@ -28,6 +28,7 @@ use super::methods::COMMAND_PREFIX;
 use super::recount_audit::{RecountAudit, watch_recount};
 use super::{Board, access};
 use crate::link::CommandKind;
+use crate::link::router::{EFFORT_UNSUPPORTED, EFFORT_UNSUPPORTED_TEXT, is_effort_command};
 use crate::store::worker_grant::{Provenance, WorkerStart};
 use crate::store::{
     AuditResult, DeckCommand, DeckError, LinkFeature, MemberAction, NewAudit, Principal,
@@ -243,6 +244,20 @@ async fn route(
             StatusCode::CONFLICT,
             "import_pin_unsupported",
             "This station cannot verify an import. Update it.".to_owned(),
+        ));
+    }
+    // An effort command needs a station with `session_effort.v1`; a station
+    // that is down is checked again at every send (B18 Phase 2).
+    if is_effort_command(&req.command)
+        && board
+            .store
+            .link_feature(&rec.station_id, feature::SESSION_EFFORT)
+            == LinkFeature::Without
+    {
+        return Err(refuse(
+            StatusCode::CONFLICT,
+            EFFORT_UNSUPPORTED,
+            EFFORT_UNSUPPORTED_TEXT.to_owned(),
         ));
     }
     // Stopping the processes of a lost run (BG-4): the owner, the feature and

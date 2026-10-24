@@ -40,6 +40,7 @@ import { onConfirmed, type SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
 import { answerVia, dockRefusals, useSessionController } from './controller';
+import { composerModelChoice } from './effortChoice';
 import { useArtifactRows } from './artifactRows';
 import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
@@ -70,7 +71,7 @@ import { commandList } from './slash';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { workflowAgentTotal } from './workflows';
 import { finalizedTurns, useDiffTotal } from './workspace';
-import { shortModel } from '../ui/format';
+import { modelText } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
 
 export { readFilesOpen } from './paneLayout';
@@ -636,7 +637,7 @@ export function SessionView(props: SessionViewProps) {
                       searchFiles={searchFiles}
                       {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                       draftKey={`${session.station_id}/${s.session_id}`}
-                      model={shortModel(s.model)}
+                      model={modelText(s.model, s.effort)}
                       callsign={s.callsign}
                       {...(guest === null &&
                       caps?.set_model === true &&
@@ -644,12 +645,7 @@ export function SessionView(props: SessionViewProps) {
                       busy === null &&
                       layout !== 'phone'
                         ? {
-                            modelChoice: {
-                              current: s.model,
-                              models: s.models ?? sessionModels(events),
-                              onSet: (m: string) =>
-                                actions && controller.act('model', () => actions.setModel(m)),
-                            },
+                            modelChoice: composerModelChoice(s, events, actions, controller),
                           }
                         : {})}
                     />

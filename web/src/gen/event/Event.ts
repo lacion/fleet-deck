@@ -23,6 +23,7 @@ import type { RepoInfo } from "../session/RepoInfo";
 import type { ApprovalOption } from "./ApprovalOption";
 import type { BackgroundTask } from "./BackgroundTask";
 import type { DiffSummary } from "./DiffSummary";
+import type { EffortSetOutcome } from "./EffortSetOutcome";
 import type { ExpiredReason } from "./ExpiredReason";
 import type { FileChange } from "./FileChange";
 import type { InputState } from "./InputState";
@@ -145,7 +146,24 @@ artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, }
 /**
  * Background work still runs; the session is not idle (L7).
  */
-background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "interrupt.result", 
+background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "kind": "model.changed", model: string, } | { "kind": "effort.changed", effort: string | null, } | { "kind": "effort.set_result", 
+/**
+ * The station's effect id (the host's control id); `None` without one.
+ */
+control_id: string | null, 
+/**
+ * The level that the owner chose.
+ */
+requested: string, 
+/**
+ * The effort that the provider reports after the change; `None`:
+ * not reported.
+ */
+effort: string | null, outcome: EffortSetOutcome, 
+/**
+ * The provider's text of a refusal.
+ */
+message?: string, } | { "kind": "effort.chosen", effort: string, } | { "kind": "interrupt.result", 
 /**
  * The host's id for the request (the station's effect id); `None`
  * when the host gave no id.

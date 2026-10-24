@@ -217,6 +217,7 @@ impl Station {
 
 pub(super) fn spec(cwd: &str, instance: &str) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: instance.into(),
         cwd: cwd.to_owned(),
         mode: Some("default".to_owned()),

@@ -33,11 +33,11 @@ use fleetdeck_providers::PermissionMode;
 use fleetdeck_providers::claude::frames::parse_value;
 use fleetdeck_providers::claude::{
     BYPASS_MODE, ClaudeAdapter, ClaudeAdapterConfig, ClaudeCore, ClaudeSession, CoreConfig,
-    HostCmd, Origin, Output, RawLogSettings, capabilities,
+    HostCmd, Origin, Output, RawLogSettings, capabilities, effort,
 };
 use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
 use fleetdeck_providers::rawlog::RawLogLimits;
-use fleetdeck_providers::{Answer, Emitted, EventSink, HostInput, LiveSession, ModelId};
+use fleetdeck_providers::{Answer, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId};
 use fleetdeck_testkit::FakeAgent;
 use fleetdeck_testkit::fake::SCENARIO_ENV;
 use serde_json::Value;
@@ -132,6 +132,9 @@ async fn apply(session: &mut ClaudeSession, cmd: HostCmd) {
             let model = model.unwrap_or_else(|| "default".to_owned());
             session.set_model(ModelId(model)).await
         }
+        HostCmd::SetEffort { effort, control_id } => {
+            session.set_effort(effort, control_id.map(ControlId)).await
+        }
     };
     result.expect("a recorded host command");
 }
@@ -185,6 +188,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path) -> Play
         (Some(id), true) => Origin::Fork(id.clone()),
     };
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: workspace.to_string_lossy().into_owned(),
         mode: launch.mode.clone(),
@@ -283,11 +287,22 @@ fn check_raw_log(at: &str, records: &[Value], played: &Played) {
         recorded("in"),
         "{at}: raw log of written frames"
     );
-    assert_eq!(
-        logged("out"),
-        recorded("out"),
-        "{at}: raw log of read frames"
-    );
+    // A `get_settings` answer is logged with `applied` only (B18).
+    let recorded_out: Vec<Value> = recorded("out")
+        .iter()
+        .map(|f| effort::raw_view(f).into_owned())
+        .collect();
+    assert_eq!(logged("out"), recorded_out, "{at}: raw log of read frames");
+    for entry in std::fs::read_dir(&played.raw_dir).unwrap() {
+        let file = entry.unwrap().path();
+        assert!(
+            !std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("fd-test-secret"),
+            "{at}: the raw log {} holds a settings secret",
+            file.display()
+        );
+    }
     for e in &played.events {
         if let Some(r) = &e.raw_ref {
             let line = lines
@@ -302,7 +317,7 @@ fn check_raw_log(at: &str, records: &[Value], played: &Played) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_recorded_fixture_replays_through_the_production_adapter() {
     let files = fixtures();
-    assert_eq!(files.len(), 19, "the recorded Rust fixtures");
+    assert_eq!(files.len(), 20, "the recorded Rust fixtures");
     let mut played_processes = 0;
     let mut with_refs = 0;
     for path in &files {
@@ -319,6 +334,6 @@ async fn every_recorded_fixture_replays_through_the_production_adapter() {
             played_processes += 1;
         }
     }
-    assert_eq!(played_processes, 22, "every recorded process");
+    assert_eq!(played_processes, 23, "every recorded process");
     assert!(with_refs > 0, "events carry raw_refs");
 }

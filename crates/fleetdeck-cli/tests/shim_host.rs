@@ -375,6 +375,7 @@ async fn a_claude_session_runs_a_turn_through_the_shim_host() {
     let ws = rig.tmp.path().join("ws");
     std::fs::create_dir(&ws).unwrap();
     let spec = SessionSpec {
+        effort: None,
         provider_instance: "claude".into(),
         cwd: ws.to_string_lossy().into_owned(),
         mode: Some("default".to_owned()),

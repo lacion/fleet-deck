@@ -10,7 +10,13 @@ export type SessionSpec = { provider_instance: ProviderInstanceId, cwd: string,
  * A native mode; a mode that the provider does not offer runs as the most
  * restrictive mode (L8).
  */
-mode: string | null, model: string | null, title: string | null, 
+mode: string | null, model: string | null, 
+/**
+ * The reasoning effort that the session starts with (B18 Phase 2): an
+ * effort id that the station checks with `valid_effort`. Absent: the
+ * provider default.
+ */
+effort?: string, title: string | null, 
 /**
  * The coordinator grant of the new session (M3 6-5, ADR-006 §4); only
  * an owner start through the deck may carry one.

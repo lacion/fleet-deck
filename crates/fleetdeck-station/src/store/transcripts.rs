@@ -223,7 +223,10 @@ impl Store {
 ///
 /// # Errors
 /// A database or JSON error.
-pub(super) fn first_effect(conn: &rusqlite::Connection, session: &SessionId) -> Result<FirstEffect> {
+pub(super) fn first_effect(
+    conn: &rusqlite::Connection,
+    session: &SessionId,
+) -> Result<FirstEffect> {
     let first: Option<(String, String)> = conn
         .query_row(
             "SELECT kind, payload FROM effects WHERE session_id = ?1

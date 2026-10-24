@@ -273,6 +273,10 @@ pub mod feature {
     /// `session.coordinator_set`: live changes of a session's grant and the
     /// per-session grant record (MCP P4b §9).
     pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
+    /// `session.set_effort`, `SessionSpec.effort` and the effort events
+    /// `effort.set_result` and `effort.chosen` (B18 Phase 2, design
+    /// `docs/v2/design/effort.md` §9).
+    pub const SESSION_EFFORT: &str = "session_effort.v1";
 
     /// B17 §3.1: the wall control relay and the owner remote (the routes
     /// `POST /api/displays/{id}/control`, `POST .../remote/navigate`, `GET
@@ -355,6 +359,7 @@ pub mod feature {
         WALL_CONTROL,
         WALL_PAGES,
         USAGE_RECOUNT,
+        SESSION_EFFORT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -547,12 +552,29 @@ mod tests {
     }
 
     #[test]
+    fn the_session_effort_feature_follows_the_usage_recount_in_all() {
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::USAGE_RECOUNT) + 1, at(feature::SESSION_EFFORT));
+    }
+
+    #[test]
     fn the_usage_recount_feature_has_its_name_is_offered_and_not_required() {
         assert_eq!(feature::USAGE_RECOUNT, "usage_recount.v1");
         let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
         assert_eq!(at(feature::USAGE_RECOUNT), at(feature::WALL_PAGES) + 1);
-        assert_eq!(feature::ALL.last(), Some(&feature::USAGE_RECOUNT));
         assert!(!feature::REQUIRED.contains(&feature::USAGE_RECOUNT));
+    }
+
+    #[test]
+    fn the_session_effort_feature_has_its_name_and_is_the_last_in_all() {
+        assert_eq!(feature::SESSION_EFFORT, "session_effort.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::SESSION_EFFORT));
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "session_effort.v1")
+        );
     }
 
     #[test]

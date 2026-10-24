@@ -9,7 +9,7 @@ import { optionClass as approvalClass } from '../session/ApprovalDock';
 import type { Outcome, SessionActions } from '../session/commands';
 import { nextShown, type Shown, sessionFlags, shownText } from '../session/controller';
 import { questionForm } from '../session/question';
-import { shortModel } from '../ui/format';
+import { modelText } from '../ui/format';
 import {
   Bell,
   BellOff,
@@ -258,7 +258,9 @@ export function NeedsYouRail({
                   <span className="fd-q-call fd-callsign">
                     {w.card.summary.callsign ?? w.key.session_id.slice(0, 8)}
                   </span>
-                  <span className="fd-q-model">{shortModel(w.card.summary.model)}</span>
+                  <span className="fd-q-model">
+                    {modelText(w.card.summary.model, w.card.summary.effort)}
+                  </span>
                 </span>
                 <span className="fd-q-what">
                   <a

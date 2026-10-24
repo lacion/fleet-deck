@@ -86,6 +86,18 @@ pub struct SessionSummary {
     pub activity: Activity,
     pub mode: Option<String>,
     pub model: Option<String>,
+    /// The reasoning effort that the provider reports, from the last
+    /// `effort.changed` (B18). Absent: not reported (an older station, a
+    /// provider or model without effort, or no report since the start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<String>,
+    /// The owner's chosen effort (B18 Phase 2), from `effort.chosen` and
+    /// from `effort.set_result` with outcome `accepted`. A resume passes it
+    /// on; `session.started` does not clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort_choice: Option<String>,
     pub capabilities: Option<Capabilities>,
     pub current_run: Option<RunId>,
     pub current_turn: Option<TurnId>,
@@ -274,6 +286,8 @@ impl SessionSummary {
             activity: Activity::Idle,
             mode: None,
             model: None,
+            effort: None,
+            effort_choice: None,
             capabilities: None,
             current_run: None,
             current_turn: None,

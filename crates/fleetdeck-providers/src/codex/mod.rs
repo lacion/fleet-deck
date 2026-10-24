@@ -18,6 +18,8 @@ mod checkpoint;
 mod core;
 mod core_types;
 mod driver;
+mod effort;
+mod effort_set;
 mod host_cmd;
 mod limits;
 mod map;
@@ -30,6 +32,10 @@ mod shell;
 mod tests;
 #[cfg(test)]
 mod tests_checkpoint;
+#[cfg(test)]
+mod tests_effort;
+#[cfg(test)]
+mod tests_effort_set;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]
@@ -164,6 +170,7 @@ pub fn native_modes(allow_full_access: bool) -> Vec<String> {
 #[must_use]
 pub fn capabilities(allow_full_access: bool) -> Capabilities {
     Capabilities {
+        set_effort: true,
         resume: true,
         fork: true,
         requests_survive_restart: false,

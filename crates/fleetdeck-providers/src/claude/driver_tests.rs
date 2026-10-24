@@ -310,6 +310,7 @@ mod skill {
         let adapter = ClaudeAdapter::new(config, Arc::new(Recorder(Arc::clone(&spawned))));
         let dir = tempfile::tempdir().unwrap();
         let spec = SessionSpec {
+            effort: None,
             provider_instance: "claude".into(),
             cwd: dir.path().to_string_lossy().into_owned(),
             mode: None,

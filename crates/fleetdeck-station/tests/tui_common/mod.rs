@@ -350,6 +350,7 @@ pub async fn released(rig: &Rig, session: &SessionId) -> bool {
 pub fn import(native: &str, rig: &Rig) -> SessionCommand {
     SessionCommand::Import {
         spec: SessionSpec {
+            effort: None,
             provider_instance: ProviderInstanceId::new("claude"),
             cwd: rig.root.to_string_lossy().into_owned(),
             mode: None,

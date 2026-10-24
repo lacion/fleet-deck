@@ -1,13 +1,14 @@
 // The Agent row of the New session sheet for a chosen station (DESIGN-SYSTEM.md §4.6): the provider
 // instances as a segmented control with the limit of each instance (R4.3), the fuel badge of a
-// tight limit, then the model and the permission mode as two select pills with a leading icon
-// (sparkles, shield). The modes show their names (`modeLabel`, as in the session header), never
+// tight limit, then the model, the effort (B18) and the permission mode as select pills with a
+// leading icon (sparkles, zap, shield). The modes show their names (`modeLabel`, as in the session header), never
 // the raw ids. Moved out of `SpawnForm.tsx` for the module size rule; the form keeps every
 // state and every handler.
 import type { RateMeter } from '../board/usage';
 import type { ModelChoice, StationProvider } from '../gen';
 import { modeLabel } from '../ui/format';
 import { Shield } from '../ui/icons';
+import { EffortField, type SpawnEffort } from './EffortField';
 import { ModelField, PillWrap } from './ModelField';
 import { Seg } from './SpawnSheet';
 import { providerChoice } from './spawn';
@@ -24,6 +25,7 @@ export function AgentFields({
   model,
   models,
   onModel,
+  effort,
   modes,
   mode,
   onMode,
@@ -43,6 +45,8 @@ export function AgentFields({
   readonly model: string;
   readonly models: readonly ModelChoice[] | null;
   readonly onModel: (model: string) => void;
+  /** B18: the effort choice; it shows no field when it has no levels. */
+  readonly effort: SpawnEffort;
   readonly modes: readonly string[];
   readonly mode: string;
   readonly onMode: (mode: string) => void;
@@ -73,6 +77,7 @@ export function AgentFields({
       )}
       <span className="fd-spawn-pills">
         <ModelField key={fieldKey} value={model} models={models} onChange={onModel} />
+        <EffortField effort={effort} />
         <PillWrap icon={Shield}>
           <select
             aria-label="Permission mode"

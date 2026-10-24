@@ -54,6 +54,7 @@ fn program(var: &str, default: &str) -> PathBuf {
 
 fn spec(instance: &str, cwd: &std::path::Path, mode: &str) -> SessionSpec {
     SessionSpec {
+        effort: None,
         provider_instance: instance.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         mode: Some(mode.to_owned()),

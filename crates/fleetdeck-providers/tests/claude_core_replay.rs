@@ -225,7 +225,7 @@ fn kinds(events: &[Event]) -> Vec<String> {
 #[test]
 fn every_recorded_fixture_replays_through_the_production_core() {
     let files = fixtures();
-    assert_eq!(files.len(), 19, "the recorded Rust fixtures");
+    assert_eq!(files.len(), 20, "the recorded Rust fixtures");
     let mut writes = 0;
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -247,8 +247,9 @@ fn every_recorded_fixture_replays_through_the_production_core() {
         writes += report.writes_checked;
         assert_eq!(report.unknown_frames, 0, "{name}: unknown frames");
     }
-    // 62 recorded writes and one `get_usage` after the first `init` of each of the 22 processes.
-    assert_eq!(writes, 84, "every recorded write is compared");
+    // 62 recorded writes, one `get_usage` and one `get_settings` after the first `init` of each
+    // of the 22 processes, and the 5 writes of `effort_settings` (B18).
+    assert_eq!(writes, 84 + 22 + 5, "every recorded write is compared");
 }
 
 fn replay_named(scenario: &str) -> Vec<Event> {

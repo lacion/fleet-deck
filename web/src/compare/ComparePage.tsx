@@ -10,7 +10,7 @@ import type { DeckSession, SessionDiff, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import { hasChanges } from '../session/changes';
 import type { Outcome, SessionActions } from '../session/commands';
-import { modelFamily, shortModel } from '../ui/format';
+import { modelFamily, modelText } from '../ui/format';
 import { Check, GitCompare, Icon, Trash2, X } from '../ui/icons';
 import { Loading } from '../ui/Loading';
 import { sessionRef } from '../ui/localSet';
@@ -233,7 +233,7 @@ function Column({
           {STATUS_LABEL[card.status]}
           {' · '}
           <span className="fd-badge" data-family={modelFamily(s.model) ?? undefined}>
-            {shortModel(s.model)}
+            {modelText(s.model, s.effort)}
           </span>
           {' · '}
           {stationName(card.station_id, stations)}
