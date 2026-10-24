@@ -55,6 +55,8 @@ export type Route =
   | { readonly name: 'files' }
   | { readonly name: 'watch' }
   | { readonly name: 'activity' }
+  /** B29: `#/analytics` (the fleet) and `#/analytics/<station name>`. */
+  | { readonly name: 'analytics'; readonly station: string | null }
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
@@ -159,6 +161,18 @@ function parseSettings(parts: readonly string[], query: string): Route {
   return HOME;
 }
 
+/** `#/analytics` and `#/analytics/<station name>` (B29); a bad part is the home. */
+function parseAnalytics(parts: readonly string[]): Route {
+  if (parts.length === 2) return { name: 'analytics', station: null };
+  if (parts.length !== 3) return HOME;
+  try {
+    const station = decodeURIComponent(parts[2] ?? '');
+    return station === '' ? HOME : { name: 'analytics', station };
+  } catch {
+    return HOME;
+  }
+}
+
 /** `station/id` as a pair; `undefined` for a bad text. */
 function refPair(text: string | null): { station: string; id: string } | undefined {
   if (text === null) return undefined;
@@ -258,6 +272,7 @@ export function parseHash(hash: string): Route {
   const parts = path.split('/');
   if (path === '/wall') return parseWall(query);
   if (parts[0] === '' && parts[1] === 'settings') return parseSettings(parts, query);
+  if (parts[0] === '' && parts[1] === 'analytics') return parseAnalytics(parts);
   // R1.4: `#/compare/<batch id>`.
   if (parts.length === 3 && parts[0] === '' && parts[1] === 'compare') {
     try {
@@ -346,6 +361,10 @@ export function formatHash(route: Route): string {
       return `#/remote/${encodeURIComponent(route.id)}`;
     case 'settings':
       return formatSettings(route);
+    case 'analytics':
+      return route.station === null
+        ? '#/analytics'
+        : `#/analytics/${encodeURIComponent(route.station)}`;
     case 'artifact': {
       const base = `#/artifact/${encodeURIComponent(route.station)}/${encodeURIComponent(route.id)}`;
       return route.version === null ? base : `${base}/${route.version}`;

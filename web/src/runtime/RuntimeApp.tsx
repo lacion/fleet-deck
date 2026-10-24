@@ -40,6 +40,7 @@ import {
 } from './connection';
 import { deviceLinkAction } from './deviceLink';
 import { viewsActions } from './views';
+import { AnalyticsProvider } from '../analytics/context';
 import { ReviewProvider } from '../review/context';
 import { reviewActions, reviewHttp } from '../review/api';
 import { JoinPage } from '../sharing/JoinPage';
@@ -54,6 +55,8 @@ import { stationPalettePath } from '../ui/palette';
 const ARTIFACT_WAIT_MS = 25_000;
 /** The deck waits up to 75 s for the station's answer to an issue or pull request read (R3). */
 const INTEGRATION_WAIT_MS = 80_000;
+// B29: the deck waits up to 2 s for a free slot and 60 s for the stations (design analytics.md §3.9).
+const ANALYTICS_WAIT_MS = 70_000;
 /** The deck waits up to 15 s for a station; the settings calls wait a little longer. */
 const SETTINGS_WAIT_MS = 20_000;
 // R13 P5a (design §7.1): the screenshot POST waits 45 s; the lookups and the deletions 15 s.
@@ -254,6 +257,11 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
           10_000,
         ),
       }),
+    [connection],
+  );
+  // B29: every login reads the analytics; the deck answers 403 `owner_only` to a token or display.
+  const analyticsGet = useMemo(
+    () => (path: string) => connection.get(path, ANALYTICS_WAIT_MS),
     [connection],
   );
   const conflicts = useMemo(
@@ -517,33 +525,35 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   return (
     <PeopleProvider value={people}>
       <ReviewProvider value={review}>
-        <App
-          sessions={state.sessions}
-          stations={state.stations}
-          freshness={state.freshness}
-          actions={actions}
-          timelines={state.timelines}
-          watch={watch}
-          sessionActions={commands}
-          filesFor={filesFor}
-          spawn={spawn}
-          assign={assign}
-          fleet={fleet}
-          feed={state.feed}
-          artifacts={artifacts}
-          integrations={integrations}
-          plans={plans}
-          automations={automations}
-          conflicts={conflicts}
-          extras={extras}
-          chrome={chrome}
-          terminals={terminals}
-          summaryWatch={summaryWatch}
-          onReturnTerminal={returnTerminal}
-          race={race}
-          views={views}
-          settings={settings}
-        />
+        <AnalyticsProvider value={analyticsGet}>
+          <App
+            sessions={state.sessions}
+            stations={state.stations}
+            freshness={state.freshness}
+            actions={actions}
+            timelines={state.timelines}
+            watch={watch}
+            sessionActions={commands}
+            filesFor={filesFor}
+            spawn={spawn}
+            assign={assign}
+            fleet={fleet}
+            feed={state.feed}
+            artifacts={artifacts}
+            integrations={integrations}
+            plans={plans}
+            automations={automations}
+            conflicts={conflicts}
+            extras={extras}
+            chrome={chrome}
+            terminals={terminals}
+            summaryWatch={summaryWatch}
+            onReturnTerminal={returnTerminal}
+            race={race}
+            views={views}
+            settings={settings}
+          />
+        </AnalyticsProvider>
       </ReviewProvider>
     </PeopleProvider>
   );

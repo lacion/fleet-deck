@@ -4,6 +4,7 @@ import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import {
   Activity,
+  ChartColumn,
   ChevronRight,
   CircleHelp,
   Eye,
@@ -108,15 +109,18 @@ export function More({ stations = [], terminalCount, chrome, onPalette, onHelp }
   const settings = settingsLink && !guest;
   const tools = onPalette !== undefined || settings || onHelp !== undefined;
   const offline = stations.filter((station) => !station.reachable).length;
+  const analytics = <PageLink href="#/analytics" icon={ChartColumn} label="Analytics" />;
   return (
     <Page title="More" className="fd-more">
       {/* The pages in the order of the desktop sidebar, then the tools (§4.2, §4.8). */}
       <nav aria-label="More pages" className="fd-more-nav">
         <ul className="fd-more-links">
           <PageLink href="#/watch" icon={Eye} label="Watch" />
+          {guest ? analytics : null}
           {guest ? null : (
             <>
               <PageLink href="#/activity" icon={Activity} label="Activity" />
+              {analytics}
               <PageLink
                 href="#/stations"
                 icon={Server}

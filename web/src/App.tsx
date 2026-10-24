@@ -16,6 +16,7 @@ import type { RaceSummary } from './compare/compare';
 import { ComparePage } from './compare/ComparePage';
 import { StationsPanel } from './board/StationsPanel';
 import { ActivityPage } from './activity/ActivityPage';
+import { AnalyticsPage } from './analytics/AnalyticsPage';
 import type { FleetActions } from './fleet/fleet';
 import type { IntegrationActions } from './integrations/actions';
 import { IntegrationsProvider } from './integrations/context';
@@ -600,6 +601,8 @@ export function App({
             fleet={fleet}
           />
         );
+      case 'analytics':
+        return <AnalyticsPage route={route} stations={stations} />;
       case 'files':
         return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;
       case 'compare':
