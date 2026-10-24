@@ -173,7 +173,7 @@ fn old_peer_keeps_tool_app_as_unknown() {
 fn tool_app_kind_name_is_listed() {
     assert_eq!(tool_app(None).kind_name(), "tool.app");
     assert!(Event::KINDS.contains(&"tool.app"));
-    assert_eq!(Event::KINDS.len(), 62);
+    assert_eq!(Event::KINDS.len(), 68);
 }
 
 #[test]
