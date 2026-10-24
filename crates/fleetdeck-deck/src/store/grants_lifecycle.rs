@@ -267,14 +267,41 @@ fn apply_ended(
     } else {
         "revoked"
     };
-    tx.execute(
+    let n = tx.execute(
         "UPDATE tokens SET state = ?4, revoked_reason = ?5
          WHERE station_id = ?1 AND binding_id = ?2 AND bound_generation = ?3
            AND state != 'revoked'",
         params![station.as_str(), binding_id, generation, state, reason],
     )?;
     invalidate_ended_binding(tx, station, binding_id, generation)?;
-    Ok(BTreeSet::new())
+    // The grant's own station: the link cache reads its end texts again
+    // (G6 §3.6).
+    Ok(if n > 0 {
+        BTreeSet::from([station.clone()])
+    } else {
+        BTreeSet::new()
+    })
+}
+
+/// The station of `grant_id` when a write changed that grant (`n == 1`):
+/// the caller notes it so that the link cache reads the end texts again
+/// (G6 §3.6).
+pub(super) fn ended_station(
+    tx: &Connection,
+    grant_id: &str,
+    n: usize,
+) -> Result<Option<StationId>> {
+    if n != 1 {
+        return Ok(None);
+    }
+    Ok(tx
+        .query_row(
+            "SELECT station_id FROM tokens WHERE grant_id = ?1",
+            [grant_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+        .map(StationId::from))
 }
 
 /// The late-bound rule (design §6.4): a `coordinator.bound` for a terminal
@@ -363,7 +390,11 @@ fn owner_ended(
         grant_narrowing::fail_removed_tx(tx, &grant_id, &none, Removal::Revoked, now)?;
     }
     invalidate_coordinator_directives(tx, &grant_id)?;
-    Ok(Some(sync_coordinate_scopes(tx, now)?))
+    let mut changed = sync_coordinate_scopes(tx, now)?;
+    if n == 1 {
+        changed.insert(station.clone());
+    }
+    Ok(Some(changed))
 }
 
 /// Applies the coordinator binding projection of a coordinator-capable
@@ -424,12 +455,15 @@ pub(super) fn apply_projection(
             at,
         )?);
         if p.state == Phase::Revoked {
-            tx.execute(
+            let n = tx.execute(
                 "UPDATE tokens SET state = 'revoked', revoked_reason = 'snapshot_revoked'
                  WHERE station_id = ?1 AND grant_id = ?2 AND binding_id IS NULL
                    AND state != 'revoked'",
                 params![station.as_str(), p.grant_id],
             )?;
+            if n > 0 {
+                changed.insert(station.clone());
+            }
         }
     }
     // The projection can reactivate, end or revoke grants (design §2.3).
@@ -464,3 +498,7 @@ fn claims_start(
         Some(named) => named.is_none_or(|s| s == session.0),
     })
 }
+
+#[cfg(test)]
+#[path = "grants_lifecycle_notes_tests.rs"]
+mod notes_tests;
