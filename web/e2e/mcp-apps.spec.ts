@@ -115,7 +115,8 @@ test('the app cannot read document.cookie of the board (opaque origin)', async (
   await setUp(page, (apps) => {
     apps.token = 'cookie';
     apps.documents['cookie'] = doc(
-      `out("cookie=[" + document.cookie + "] origin=" + location.origin);`,
+      // `location.origin` is the URL's origin; `self.origin` is the opaque origin of the sandbox.
+      `out("cookie=[" + document.cookie + "] origin=" + self.origin);`,
     );
   });
   await expect(frame(page).locator('#out')).toHaveText('cookie=[] origin=null');
