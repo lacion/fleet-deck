@@ -23,6 +23,9 @@ pub mod coordinator;
 
 pub mod fault;
 
+/// Provider CLI updates: detection, gate and signature verification (B28).
+pub mod cli_update;
+
 /// The config drift report (FG-11).
 pub mod drift;
 
