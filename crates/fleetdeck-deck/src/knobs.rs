@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use fleetdeck_core::config::{CloneTransport, DeckConfig};
+use fleetdeck_core::config_grant_limits::GrantLimits;
 
 use crate::fleet_git_radar::RadarOptions;
 use crate::store::DeckStore;
@@ -46,6 +47,10 @@ pub struct DeckKnobs {
     pub delivery_ms: i64,
     /// `clone_transport = "ssh"`: a remote derived from the forge uses `git@host:repo.git` (Fleet Sync §1.3).
     pub clone_ssh: bool,
+    /// `[grant_limits]` (B27 §3.2), read at each grant creation and cap change.
+    pub grant: GrantLimits,
+    /// `worker_grant.allow_bypass` (B27 §3.4), read at each decision and dispatch check.
+    pub worker_bypass: bool,
 }
 
 impl Default for DeckKnobs {
@@ -65,6 +70,8 @@ impl Default for DeckKnobs {
             audit_max_rows: 200_000,
             delivery_ms: 24 * HOUR_MS,
             clone_ssh: false,
+            grant: GrantLimits::default(),
+            worker_bypass: false,
         }
     }
 }
@@ -89,6 +96,8 @@ impl DeckKnobs {
             audit_max_rows: i64::from(config.retention.audit_max_rows),
             delivery_ms: i64::from(config.limits.delivery_hours) * HOUR_MS,
             clone_ssh: config.clone_transport == CloneTransport::Ssh,
+            grant: config.grant_limits,
+            worker_bypass: config.worker_grant.allow_bypass,
         }
     }
 }
@@ -216,6 +225,8 @@ mod tests {
                 audit_max_rows: 12_000,
                 delivery_ms: 13 * 60 * 60 * 1000,
                 clone_ssh: true,
+                grant: GrantLimits::default(),
+                worker_bypass: false,
             }
         );
     }

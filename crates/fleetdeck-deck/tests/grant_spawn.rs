@@ -72,7 +72,7 @@ async fn each_spawn_field_rule_refuses_with_its_message_and_stores_nothing() {
         ),
         (
             json!({"classes": ["spawn"], "spawn_cap": 51}),
-            "spawn_cap is 0 to 50",
+            "spawn_cap is above the grant limit of the deck (Settings, Grant limits)",
         ),
         (
             json!({"classes": ["read"], "max_modes": {"claude": "plan"}}),

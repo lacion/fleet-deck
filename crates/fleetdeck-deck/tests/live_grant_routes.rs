@@ -254,7 +254,10 @@ async fn elevation_rules_follow_the_creation_rules(r: &Rig) {
     let bad = with(spec(json!(["read", "spawn"])), json!({"spawn_cap": 51}));
     let got = r.give("run-3", bad, None).await;
     expect(&got, 400, "invalid_grant");
-    message(&got, "spawn_cap is 0 to 50");
+    message(
+        &got,
+        "spawn_cap is above the grant limit of the deck (Settings, Grant limits)",
+    );
     let fleet = spec(json!(["read", "inspect"]));
     let got = r.give("run-3", fleet.clone(), None).await;
     expect(&got, 400, "elevation_required");

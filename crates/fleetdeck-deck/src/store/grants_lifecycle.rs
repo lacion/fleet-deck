@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use fleetdeck_core::config_grant_limits::GrantLimits;
 use fleetdeck_core::ids::IdSource;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_proto::{SessionId, StationId};
@@ -60,6 +61,7 @@ pub(super) fn record_lifecycle(
     e: &fleetdeck_proto::EventEnvelope,
     now: i64,
     late: (&dyn IdSource, i64),
+    limits: &GrantLimits,
 ) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::event::{Event, EventBody};
     let EventBody::Known(event) = &e.event else {
@@ -86,6 +88,7 @@ pub(super) fn record_lifecycle(
                 native_id: native_id.clone(),
             },
             Some((late.0, now, late.1)),
+            limits,
         )?,
         Event::CoordinatorWorkerOutcome {
             grant_id,
@@ -134,6 +137,7 @@ fn apply_bound(
     at: i64,
     b: &CoordinatorBinding,
     late: Option<(&dyn IdSource, i64, i64)>,
+    limits: &GrantLimits,
 ) -> Result<()> {
     let Some(grant) = get_grant(tx, &b.grant_id)? else {
         return Ok(());
@@ -192,7 +196,7 @@ fn apply_bound(
         && grant.state != GrantState::Revoked;
     if ours && renewed {
         let now = late.map_or(at, |(_, now, _)| now);
-        if super::worker_grant_end::over_worker_cap(tx, &grant, now)? {
+        if super::worker_grant_end::over_worker_cap(tx, &grant, now, limits)? {
             super::worker_grant::revoke_tx(tx, &b.grant_id, "worker_cap", now)?;
             if let Some(queue) = late {
                 queue_revoke(tx, station, session, &b.grant_id, queue)?;
@@ -413,6 +417,7 @@ pub(super) fn apply_projection(
     station: &StationId,
     at: i64,
     projection: &[fleetdeck_proto::CoordinatorBindingState],
+    limits: &GrantLimits,
 ) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::CoordinatorBindingPhase as Phase;
     let mut changed = BTreeSet::new();
@@ -428,7 +433,7 @@ pub(super) fn apply_projection(
                 provider_instance: p.provider_instance.clone().into(),
                 native_id: native_id.clone(),
             };
-            apply_bound(tx, station, &p.session_id, at, &binding, None)?;
+            apply_bound(tx, station, &p.session_id, at, &binding, None, limits)?;
         }
         let reason = match p.state {
             Phase::Pending | Phase::Active => continue,

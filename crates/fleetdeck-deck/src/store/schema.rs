@@ -771,10 +771,8 @@ pub fn migrations() -> Migrations<'static> {
         // V38 (R13 P7b task F): the click allowance and the `any_window` scope
         // of a grant, the `pointer_click` tool and the `window_list` bucket.
         M::up(super::coordinator_input_any_schema::SQL),
-        // V39 (BG-3): the setup reports of unpaired keys and their retry
-        // permissions, `store/provision_reports.rs`.
+        // V39 (BG-3): the setup reports of unpaired keys and their retry permissions, `store/provision_reports.rs`; V40 (MCP P0): the grant of a coordinator receipt.
         M::up(super::provision_reports::SQL),
-        // V40 (MCP P0): the grant of a coordinator receipt.
         M::up(super::coordinator_receipt_grant_schema::SQL),
         M::up(super::recording_length_schema::SQL),
         M::up(super::session_idle_schema::SQL),
@@ -787,10 +785,11 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::grants::owner_grant_schema::SQL),
         // V47 (Fleet Sync FS-3): secret_files.
         M::up(super::secret_files::SQL),
-        // V48 to V50: wall pages and the page mode (B17), the wake key with the session (G5), displays.allow_apps (B17 wall apps).
+        // V48 to V50: wall pages and the page mode (B17), the wake key with the session (G5), displays.allow_apps (B17 wall apps); V52 (B27): wider grant limits, `grants::grant_limits_schema`.
         M::up(super::wall_pages_schema::SQL),
         M::up(super::wake_seen::schema::SQL),
         M::up(super::display_apps_schema::SQL),
+        M::up(super::grants::grant_limits_schema::SQL),
     ])
 }
 
