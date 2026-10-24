@@ -383,12 +383,14 @@ pub fn detect(kind: ProviderKind, binary: &Path, env: &ChildEnv) -> Result<Insta
         classify(kind, &chain, home.as_deref(), &hop_of, &|p: &Path| {
             p.exists()
         });
+    // The instance PATH comes before the fixed places (§3.3).
     if let Tool::Native { gpgv, .. } = &mut tool
-        && gpgv.is_none()
         && let Some(found) = find_gpgv(path_var)
     {
         *gpgv = Some(found);
-        blocked = None;
+        if blocked == Some(reason::GPGV_MISSING) {
+            blocked = None;
+        }
     }
     Ok(Install {
         kind,
