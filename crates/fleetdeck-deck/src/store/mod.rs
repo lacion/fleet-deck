@@ -276,6 +276,9 @@ struct Inner {
     /// The remote address of each live link of a station, by link token; in
     /// memory only (the devices list reads it).
     link_peers: Mutex<BTreeMap<StationId, BTreeMap<u64, std::net::IpAddr>>>,
+    /// The `station.info` stream of each live link, by link token (G6);
+    /// lock order: `link_features`, then `link_streams`.
+    link_streams: Mutex<BTreeMap<StationId, BTreeMap<u64, grant_scopes::turns::Stream>>>,
     /// Presence, chat and mob-driver updates for the board sockets (R11).
     social: broadcast::Sender<Arc<presence::SocialEvent>>,
     /// Who has a session open now (R11.5); in memory only.
@@ -420,6 +423,7 @@ impl DeckStore {
                 fleet_control: AtomicBool::new(false),
                 link_features: Mutex::default(),
                 link_peers: Mutex::default(),
+                link_streams: Mutex::default(),
                 social: broadcast::channel(LIVE_BUFFER).0,
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
@@ -535,13 +539,16 @@ impl DeckStore {
                 }
             }
         }
-        let mut map = self.link_features();
-        if let Some(links) = map.get_mut(station) {
-            links.remove(&token);
-            if links.is_empty() {
-                map.remove(station);
+        {
+            let mut map = self.link_features();
+            if let Some(links) = map.get_mut(station) {
+                links.remove(&token);
+                if links.is_empty() {
+                    map.remove(station);
+                }
             }
         }
+        self.inner.forget_link_stream(station, token);
     }
 
     /// Whether `station` has a live link and whether every live link

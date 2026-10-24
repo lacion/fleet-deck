@@ -21,7 +21,13 @@ pub(super) const INFO_REFRESH: Duration = Duration::from_secs(60);
 /// (version, capacity, providers, resources). The board name follows the
 /// station's own `name` setting: the deck adopts the name of the first
 /// answer only.
-pub(super) fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str) {
+pub(super) fn fetch_info(
+    ctx: &Arc<DeckLink>,
+    control: &Control,
+    id: &StationId,
+    name: &str,
+    token: u64,
+) {
     let (ctx, control, id, stored) = (
         Arc::clone(ctx),
         control.clone(),
@@ -40,6 +46,20 @@ pub(super) fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId,
             );
             async move {
                 let answer = ask_info(&control).await;
+                // G6 §3.2: the stream of this link, before the board gets
+                // the answer; recorded only while the link lives.
+                if let Ok(Some(info)) = &answer
+                    && let Err(e) = ctx
+                        .store
+                        .record_link_stream(
+                            id.clone(),
+                            token,
+                            (info.incarnation.clone(), info.head),
+                        )
+                        .await
+                {
+                    tracing::warn!(error = %e, "link stream");
+                }
                 if matches!(answer, Ok(Some(_))) && !announced.swap(true, Ordering::Relaxed) {
                     tokio::spawn(async move { fleet_git_sync::sync_station(&ctx, id).await });
                 }

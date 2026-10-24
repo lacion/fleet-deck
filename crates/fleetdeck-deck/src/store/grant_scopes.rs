@@ -16,12 +16,13 @@
 //!   (grant stations PRE-PR round 1, GS2).
 //! - [`DeckStore::sweep_grants`] ends every grant that is `active` but past
 //!   its lifetime or idle, and rebuilds the scopes. It runs at deck start
-//!   and every 30 s.
+//!   and every 30 s. It first records running turns as use (G6, `turns`).
 //! - Every transaction that changes a scope notes the changed stations
 //!   ([`DeckStore::note_scope_changes`]); the link cache (`DeckPeers`) takes
 //!   the notes and refreshes each station from the store.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::link::Scope;
@@ -30,6 +31,9 @@ use rusqlite::{Connection, Transaction, params};
 use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grants::{GRANT_COLUMNS, Grant, GrantState, finish, grant_row};
 use super::{AuditResult, DeckStore, Inner, NewAudit, Result, call};
+
+#[path = "grant_turns.rs"]
+pub(crate) mod turns;
 
 /// The refusal text of a `coordinate` admission when no grant in effect
 /// names the station.
@@ -214,16 +218,23 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn sweep_grants(&self) -> Result<BTreeSet<StationId>> {
-        let now = self.now_ms();
-        let (ended, changed) = call(&self.inner.db, move |conn| {
+        let inner = Arc::clone(&self.inner);
+        let (ended, changed, touched) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
+            // The grant stations rule GS2: the time of the decision is read
+            // in its own transaction. The streams are read here too (G6).
+            let now = super::now_ms(&inner.clock);
+            let touched = turns::touch_running_turns(&tx, &inner, now)?;
             let ended = end_stale(&tx, now)?;
             super::worker_grant::prune(&tx, now)?;
             let changed = sync_coordinate_scopes(&tx, now)?;
             tx.commit()?;
-            Ok((ended, changed))
+            Ok((ended, changed, touched))
         })
         .await?;
+        if touched > 0 {
+            tracing::debug!(touched, "running turns kept their grants in use");
+        }
         for (grant_id, reason) in ended {
             self.audit_or_log(
                 NewAudit::new("deck", "coordinator.grant_expired", AuditResult::Ok)
