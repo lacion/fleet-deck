@@ -100,6 +100,19 @@ describe('the board copy of the fields', () => {
     expect(off).not.toContain('fd-set-hazard');
   });
 
+  test('the_keep_grants_switch_shows_a_warning_while_it_is_off', () => {
+    const keep = meta('keep_grants_on_update', 'Keep grants on update', 'bool', {});
+    const off = fields({
+      view: view({ fields: [keep], values: { keep_grants_on_update: false } }),
+    });
+    expect(off).toContain('fd-set-hazard');
+    expect(off).toContain(
+      'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.',
+    );
+    const on = fields({ view: view({ fields: [keep], values: { keep_grants_on_update: true } }) });
+    expect(on).not.toContain('fd-set-hazard');
+  });
+
   test('the host help reads the same on every station version', () => {
     const old = meta('host', 'Where sessions run', 'enum', {
       options: ['direct', 'shim'],

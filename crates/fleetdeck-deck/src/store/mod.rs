@@ -64,6 +64,7 @@ mod fleet_view_paging_tests;
 #[cfg(test)]
 mod fleet_view_tests;
 pub mod git_snapshots;
+mod grant_audit;
 pub mod grant_scopes;
 mod grant_spawn_caps;
 pub mod grants;
@@ -280,6 +281,8 @@ struct Inner {
     /// The `station.info` stream of each live link, by link token (G6);
     /// lock order: `link_features`, then `link_streams`.
     link_streams: Mutex<BTreeMap<StationId, BTreeMap<u64, grant_scopes::turns::Stream>>>,
+    /// The links that wait for their return check (B26 §3.3a).
+    settle: station_link::SettleState,
     /// Presence, chat and mob-driver updates for the board sockets (R11).
     social: broadcast::Sender<Arc<presence::SocialEvent>>,
     /// Who has a session open now (R11.5); in memory only.
@@ -425,6 +428,7 @@ impl DeckStore {
                 link_features: Mutex::default(),
                 link_peers: Mutex::default(),
                 link_streams: Mutex::default(),
+                settle: station_link::SettleState::new(),
                 social: broadcast::channel(LIVE_BUFFER).0,
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
@@ -550,6 +554,7 @@ impl DeckStore {
             }
         }
         self.inner.forget_link_stream(station, token);
+        self.inner.forget_settle(station, token);
     }
 
     /// Whether `station` has a live link and whether every live link

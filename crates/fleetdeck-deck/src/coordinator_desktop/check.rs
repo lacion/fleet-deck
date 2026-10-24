@@ -23,7 +23,7 @@ use fleetdeck_proto::mutation::CoordinatorBinding;
 
 use super::authorize::{Held, Tool, local_pass};
 use super::permits::Arrival;
-use super::policy::caller_policy;
+use super::policy::caller_policy_bound;
 use crate::link::DeckLink;
 use crate::store::coordinator_desktop::{OpState, OpTool};
 
@@ -101,11 +101,17 @@ async fn pass(
 ) -> Verdict {
     let first = local_pass(ctx, held).await.map_err(reason)?;
     let binding: CoordinatorBinding = first.binding.ok_or(AuthorityReason::AuthorityLost)?;
-    caller_policy(ctx, held.caller, caller_session, &binding, deadline)
+    let epoch = caller_policy_bound(ctx, held.caller, caller_session, &binding, deadline)
         .await
         .map_err(reason)?;
     // The caller policy can wait up to 3 s: the deck checks again.
     local_pass(ctx, held).await.map_err(reason)?;
+    // B26 §3.3a: a link of the caller that returned after the policy answer
+    // makes the answer stale (its return check can drop the grant). No await
+    // follows this check.
+    if !ctx.store.settled_since(held.caller, epoch) {
+        return Err(AuthorityReason::AuthorityUnknown);
+    }
     Ok(())
 }
 

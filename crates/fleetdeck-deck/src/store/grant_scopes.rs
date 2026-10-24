@@ -16,7 +16,8 @@
 //!   (grant stations PRE-PR round 1, GS2).
 //! - [`DeckStore::sweep_grants`] ends every grant that is `active` but past
 //!   its lifetime or idle, and rebuilds the scopes. It runs at deck start
-//!   and every 30 s. It first records running turns as use (G6, `turns`).
+//!   and every 30 s. It first records running turns as use (G6, `turns`) and
+//!   holds the grants of offline stations (B26, `hold`).
 //! - Every transaction that changes a scope notes the changed stations
 //!   ([`DeckStore::note_scope_changes`]); the link cache (`DeckPeers`) takes
 //!   the notes and refreshes each station from the store.
@@ -34,6 +35,12 @@ use super::{AuditResult, DeckStore, Inner, NewAudit, Result, call};
 
 #[path = "grant_turns.rs"]
 pub(crate) mod turns;
+
+#[path = "grant_hold.rs"]
+pub(crate) mod hold;
+
+#[path = "grant_hold_schema.rs"]
+pub(super) mod hold_schema;
 
 /// The refusal text of a `coordinate` admission when no grant in effect
 /// names the station.
@@ -219,21 +226,25 @@ impl DeckStore {
     /// A database error.
     pub async fn sweep_grants(&self) -> Result<BTreeSet<StationId>> {
         let inner = Arc::clone(&self.inner);
-        let (ended, changed, touched) = call(&self.inner.db, move |conn| {
+        let (ended, changed, (touched, held)) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             // The grant stations rule GS2: the time of the decision is read
             // in its own transaction. The streams are read here too (G6).
             let now = super::now_ms(&inner.clock);
             let touched = turns::touch_running_turns(&tx, &inner, now)?;
+            let held = hold::hold_offline(&tx, &inner, now)?;
             let ended = end_stale(&tx, now)?;
             super::worker_grant::prune(&tx, now)?;
             let changed = sync_coordinate_scopes(&tx, now)?;
             tx.commit()?;
-            Ok((ended, changed, touched))
+            Ok((ended, changed, (touched, held)))
         })
         .await?;
         if touched > 0 {
             tracing::debug!(touched, "running turns kept their grants in use");
+        }
+        if held > 0 {
+            tracing::debug!(held, "offline stations kept their grants in use");
         }
         for (grant_id, reason) in ended {
             self.audit_or_log(

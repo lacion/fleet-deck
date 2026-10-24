@@ -188,3 +188,37 @@ fn end_facts_classify_the_lifetime_at_the_refusal_time() {
     };
     assert_eq!(lifetime.at(at - 1), GrantEnd::Lifetime);
 }
+
+#[tokio::test]
+async fn a_station_update_and_a_station_reset_have_their_own_text() {
+    let base = sample().await;
+    let inside = base.created_at + 1_000;
+    let past = base.expires_at + 1;
+    for (reason, end) in [
+        ("station_updated", GrantEnd::StationUpdated),
+        ("station_reset", GrantEnd::StationReset),
+    ] {
+        let mut g = base.clone();
+        g.state = GrantState::Revoked;
+        g.revoked_reason = Some(reason.to_owned());
+        assert_eq!(grant_end(&g, inside), Some(end));
+        assert_eq!(grant_end(&g, past), Some(end));
+        let facts = EndFacts {
+            end,
+            expires_at: g.expires_at,
+        };
+        assert_eq!(facts.at(past), end);
+    }
+    assert_eq!(
+        end_text(GrantEnd::StationUpdated),
+        "Your fleet grant ended when your station was updated, because the deck setting \"Keep grants on update\" is off. The owner can give a new grant on the board."
+    );
+    assert_eq!(
+        end_text(GrantEnd::StationReset),
+        "Your fleet grant ended because your station started with new data. The owner can give a new grant on the board."
+    );
+    let mut g = base.clone();
+    g.state = GrantState::Revoked;
+    g.revoked_reason = Some("owner".to_owned());
+    assert_eq!(grant_end(&g, inside), Some(GrantEnd::Revoked));
+}

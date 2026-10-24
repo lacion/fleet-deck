@@ -39,6 +39,11 @@ export function grantState(g: GrantView): string {
   if (g.state === 'active') return g.generation === null ? 'waiting for its session' : 'active';
   if (g.state === 'expired')
     return g.revoked_reason === 'idle' ? 'expired after idle time' : 'expired';
+  if (g.state === 'revoked') {
+    if (g.revoked_reason === 'station_updated') return 'ended by a station update';
+    if (g.revoked_reason === 'station_reset') return 'ended: the station has new data';
+    if (g.revoked_reason === 'station_removed') return 'ended: the station was removed';
+  }
   return g.state;
 }
 

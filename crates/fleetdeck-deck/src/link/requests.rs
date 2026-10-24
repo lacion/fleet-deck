@@ -36,13 +36,33 @@ use crate::store::{LinkV2, QueryAnswer};
 /// 6.2).
 pub const AUTHORITY_CHECK_DEADLINE: Duration = Duration::from_secs(5);
 
-/// Answers one request of `station`.
+/// How long a request on a returning link waits for the return check of its
+/// station (B26 section 3.3a). It is below the station's wait limits.
+pub const SETTLE_WAIT: Duration = Duration::from_secs(8);
+
+/// The text of the refusal of a request on a link that has not settled.
+pub const NOT_SETTLED: &str =
+    "The deck has not finished the check of this station after its return. Try again in a minute.";
+
+/// Answers one request of `station` on link `token`.
 pub(crate) async fn answer(
     ctx: &DeckLink,
     control: &Control,
     station: StationId,
+    token: u64,
     req: InboundRequest,
 ) {
+    if !ctx
+        .store
+        .wait_link_settled(&station, token, SETTLE_WAIT)
+        .await
+    {
+        let refused = Outcome::Err(WireError::new(code::TIMEOUT, NOT_SETTLED));
+        if let Err(e) = control.respond(req.id, refused).await {
+            tracing::debug!(error = %e, "response");
+        }
+        return;
+    }
     let outcome = match req.method.as_str() {
         "coordinator.call" => coordinator_call(ctx, station, &req).await,
         "coordinator.query" => coordinator_query(ctx, station, &req).await,
@@ -267,6 +287,14 @@ async fn authority_answer(
         Ok(local) => local,
         Err(reason) => return Ok(refused(reason)),
     };
+    // B26 §3.3a: the policy answer holds only for the links of the caller
+    // that were settled when the deck asked. A link of the caller that
+    // returned since then waits for (or ran) its return check, which can drop
+    // the grant after the last pass read it. No await follows this check.
+    if !ctx.store.settled_since(&check.caller_station, policy.epoch) {
+        return Ok(refused("caller_unreachable"));
+    }
+    let policy = policy.answer;
     if !policy.bound {
         return Ok(refused("caller_unbound"));
     }

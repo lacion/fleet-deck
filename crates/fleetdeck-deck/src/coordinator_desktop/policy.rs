@@ -40,6 +40,24 @@ pub(crate) async fn caller_policy(
     binding: &CoordinatorBinding,
     deadline: Instant,
 ) -> Result<(), &'static str> {
+    caller_policy_bound(link, caller_station, caller_session, binding, deadline)
+        .await
+        .map(|_| ())
+}
+
+/// [`caller_policy`] that returns the settle epoch of the caller station of
+/// the answer (B26 §3.3a). A final decision after a later local pass checks
+/// `DeckStore::settled_since(caller_station, epoch)`.
+///
+/// # Errors
+/// `not_granted` or `authority_unknown`.
+pub(crate) async fn caller_policy_bound(
+    link: &DeckLink,
+    caller_station: &StationId,
+    caller_session: &SessionId,
+    binding: &CoordinatorBinding,
+    deadline: Instant,
+) -> Result<u64, &'static str> {
     let Some(timeout) = wait(deadline_ms::CALLER_POLICY, deadline) else {
         return Err(code::AUTHORITY_UNKNOWN);
     };
@@ -47,14 +65,15 @@ pub(crate) async fn caller_policy(
         caller_session: caller_session.clone(),
         binding: Some(binding.clone()),
     };
-    let Some(answer) = link.policy_now_with(caller_station, query, timeout).await else {
+    let Some(bound) = link.policy_now_with(caller_station, query, timeout).await else {
         return Err(code::AUTHORITY_UNKNOWN);
     };
+    let answer = bound.answer;
     let Some(matches) = answer.binding_matches else {
         return Err(code::AUTHORITY_UNKNOWN);
     };
     if answer.fleet_control && answer.bound && matches {
-        Ok(())
+        Ok(bound.epoch)
     } else {
         Err(code::NOT_GRANTED)
     }

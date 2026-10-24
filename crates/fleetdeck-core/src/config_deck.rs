@@ -53,6 +53,8 @@ pub struct DeckConfig {
     pub conflict_mail: bool,
     /// Fleet control (ADR-008 section 3): off by default; off stops it all.
     pub fleet_control: bool,
+    /// `keep_grants_on_update` (B26): a station that comes back with a new version keeps the fleet grants of its sessions. On by default.
+    pub keep_grants_on_update: bool,
     /// Desktop control (R13 §6.4): off by default; off stops every desktop action
     /// and wake that has not started.
     pub desktop_control: bool,
@@ -88,6 +90,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "tailnet_hostname",
     "conflict_mail",
     "fleet_control",
+    "keep_grants_on_update",
     "desktop_control",
     "tailscale_cert",
     "clone_host",
@@ -112,6 +115,7 @@ struct RawDeck {
     tailnet_hostname: Option<String>,
     conflict_mail: Option<bool>,
     fleet_control: Option<bool>,
+    keep_grants_on_update: Option<bool>,
     desktop_control: Option<bool>,
     tailscale_cert: Option<bool>,
     clone_host: Option<String>,
@@ -199,6 +203,7 @@ impl DeckConfig {
             tailnet_hostname,
             conflict_mail: raw.conflict_mail.unwrap_or(true),
             fleet_control: raw.fleet_control.unwrap_or(false),
+            keep_grants_on_update: raw.keep_grants_on_update.unwrap_or(true),
             desktop_control: raw.desktop_control.unwrap_or(false),
             tailscale_cert: raw.tailscale_cert.unwrap_or(false),
             clone_host: clone_host.unwrap_or_else(|| "github.com".to_owned()),

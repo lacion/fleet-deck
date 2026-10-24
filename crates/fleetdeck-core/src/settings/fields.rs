@@ -393,6 +393,14 @@ pub fn deck_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "keep_grants_on_update",
+            "Keep grants on update",
+            K::Bool,
+            Live,
+            "When a station comes back after an update, its sessions keep their fleet grants. Off: a station that comes back with a new version ends the grants of its sessions, and you give them again. A station with new data, or a station that you remove, always ends them.",
+        )
+        .danger(),
+        field(
             "desktop_control",
             "Desktop control",
             K::Bool,

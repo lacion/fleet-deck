@@ -122,6 +122,7 @@ Each Linear account remembers the app that made it. A refresh uses that app only
 | `tailnet_hostname` | (none) | The tailnet DNS name of the deck, for the WebSocket `Origin` check. |
 | `conflict_mail` | `true` | When two sessions change the same file within 30 minutes, the deck sends each session one follow-up mail about it (DL-145). Set `false` to turn this off. |
 | `fleet_control` | `false` | Lets coordinator sessions with a fleet-control grant drive any session, read the fleet and answer approvals (ADR-008). Off stops every fleet-control action at once. Applies at once. Turning it on needs the owner's elevation; turning it off does not. See §7.3. |
+| `keep_grants_on_update` | `true` | When a station comes back after an update or a restart, the fleet grants of its sessions stay. While a station is offline, the deck counts up to 60 minutes as use of those grants. Off: a station that comes back with a new version ends them. A station with new data, or a removed station, always ends them. Applies at once. Turning it on needs the owner's elevation (B26). |
 | `clone_host` | `github.com` | The Git host for a repository that the board gets as `owner/name`. A lower-case host name, for example `gitlab.com`. Applies at once. |
 | `clone_org` | (empty) | The owner or group for a repository that the board gets by name only. Use `acme` or a group path such as `acme/tools`. Applies at once. |
 | `clone_transport` | `https` | `https` uses your Git credential helper. `ssh` uses your SSH keys. It decides the URL that the board builds from a short name. Applies at once. |
@@ -367,6 +368,8 @@ A fleet-control grant lets a coordinator drive any session on its stations, star
 - A coordinator never acts for another coordinator, for itself, or for a shared session. Share guests and members never extend a coordinator.
 - A fleet-control intent expires after 10 minutes. The deck checks the grant again before each send and each resend. When the grant is revoked, expired or changed, or a switch is off, the deck does not send the command and the item ends `dead` with the reason `authority_lost`.
 - The answer cap of a grant is 500 by default (0 to 5000). The deck counts only an accepted answer.
+- A grant stays in use while its station is offline, for at most 60 minutes after the last frame of that station. After that time, the normal idle rule applies. A station that comes back never revives a grant that has ended.
+- A station that comes back is checked before its sessions use a grant. A new station version ends the grants when `keep_grants_on_update` is off. New station data ends them with either setting. The audit log has one `coordinator.grant_kept` or `coordinator.grant_dropped` row for each grant.
 
 Residual windows (ADR-008 §6.2). A revocation, or a switch that you turn off, stops every action whose provider write has not begun. Two short windows stay open. (a) Between a `valid` answer of `coordinator.authority_check` and the provider write inside the target station process: no wait for another process, a few milliseconds. (b) Between the `coordinator.policy_now` answer of the caller station and that `valid` answer: one deck step, at most the 5 s deadline of the check. No window comes from the propagation of a setting, because each switch is read live from its own process.
 

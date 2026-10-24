@@ -13,6 +13,7 @@ use super::coordinator::grant_narrowing::{self, Removal};
 use super::display_directives_coordinator::{
     invalidate_coordinator_directives, invalidate_ended_binding, invalidate_stale_generation,
 };
+use super::grant_audit;
 use super::grant_scopes::{in_effect, sync_coordinate_scopes};
 use super::grants::owner_grants;
 use super::grants::{GrantState, get_grant};
@@ -55,6 +56,32 @@ pub(super) fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Opti
 /// `late` is the id source and the delivery time of a `session.coordinator_revoke`
 /// that a late `coordinator.bound` of a terminal worker grant queues.
 pub(super) fn record_lifecycle(
+    tx: &Connection,
+    station: &StationId,
+    e: &fleetdeck_proto::EventEnvelope,
+    now: i64,
+    late: (&dyn IdSource, i64),
+) -> Result<BTreeSet<StationId>> {
+    use fleetdeck_proto::event::{Event, EventBody};
+    let EventBody::Known(event) = &e.event else {
+        return Ok(BTreeSet::new());
+    };
+    let cause = match event {
+        Event::CoordinatorBound { .. } => "bound",
+        Event::CoordinatorEnded { reason, .. } | Event::CoordinatorWorkerOutcome { reason, .. } => {
+            reason.as_str()
+        }
+        Event::SessionEnded { .. } => "session_ended",
+        _ => return apply_lifecycle(tx, station, e, now, late),
+    };
+    let before = grant_audit::active_of_station(tx, station)?;
+    let changed = apply_lifecycle(tx, station, e, now, late)?;
+    grant_audit::audit_ends_tx(tx, station, &before, cause, now)?;
+    Ok(changed)
+}
+
+/// The body of [`record_lifecycle`], without the audit rows.
+fn apply_lifecycle(
     tx: &Connection,
     station: &StationId,
     e: &fleetdeck_proto::EventEnvelope,
@@ -224,7 +251,7 @@ fn apply_bound(
 
 /// Queues `session.coordinator_revoke` of `grant_id` for `session` on `station`
 /// (`ids`: the id source, the time and the delivery window).
-fn queue_revoke(
+pub(super) fn queue_revoke(
     tx: &Connection,
     station: &StationId,
     session: &SessionId,
@@ -409,6 +436,19 @@ fn owner_ended(
 /// A synthetic `Revoked` or `Expired` entry (no `native_id`) of a grant with
 /// a row ends it by the rule of [`owner_ended`] (MCP P4b §5).
 pub(super) fn apply_projection(
+    tx: &Connection,
+    station: &StationId,
+    at: i64,
+    projection: &[fleetdeck_proto::CoordinatorBindingState],
+) -> Result<BTreeSet<StationId>> {
+    let before = grant_audit::active_of_station(tx, station)?;
+    let changed = apply_projection_rows(tx, station, at, projection)?;
+    grant_audit::audit_ends_tx(tx, station, &before, "snapshot", at)?;
+    Ok(changed)
+}
+
+/// The body of [`apply_projection`], without the audit rows.
+fn apply_projection_rows(
     tx: &Connection,
     station: &StationId,
     at: i64,

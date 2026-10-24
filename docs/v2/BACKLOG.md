@@ -338,7 +338,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Is the drop intended for a key change (a new station, or a changed key), and not for a plain version update? If so, keep the grants on a version change and drop them on a key change.
   - Make it a setting: "keep grants on update" (default on), with a clear warning when it is off.
   - The audit log records every grant that an update keeps or drops.
-- **Status:** open (noted only).
+- **Status:** done on branch `bl/grants-update` (2026-10-24): design `docs/v2/design/grants-update.md`, tasks T1-T5 (DL-530 to DL-539). The cause was the idle clock, not a key change. The deck now holds grants for up to 60 minutes while a station is offline, settles them at the return, and has the setting `keep_grants_on_update`. The merge commit is the one that merges this branch into `v2`.
 
 ## B27. Security defaults the owner can change: a default agent mode, unlimited grants, bypass permissions (owner request, 2026-10-22)
 
