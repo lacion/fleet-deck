@@ -40,6 +40,7 @@ mod coordinator_receipt_grant_schema;
 mod coordinator_recording_schema;
 pub mod desktop_captures;
 pub(crate) mod desktop_recordings;
+mod display_apps_schema;
 pub mod display_directive_schema;
 pub mod display_directives;
 pub mod display_directives_coordinator;

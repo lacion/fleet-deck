@@ -66,6 +66,7 @@ pub mod subagent;
 pub mod ts;
 pub mod untrusted;
 pub mod version;
+pub mod wall_apps;
 pub mod wall_control;
 pub mod wall_pages;
 

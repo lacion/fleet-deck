@@ -8,7 +8,10 @@
 import { type Ref, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { artifactPath, DISPLAY_HEADER } from '../display/api';
+import { appArtifactPath, artifactPath, DISPLAY_HEADER } from '../display/api';
+import type { WallAppFeed } from '../gen';
+import { useAppFeed } from './appFeed';
+import { WallAppFrame } from './WallAppFrame';
 import { longFrameTop, scrollBehavior } from './control';
 import type { DisplayEnv } from './displayChanges';
 
@@ -20,6 +23,7 @@ export const CARD_TEXT = 'Open this artifact on your own device';
 export type State =
   | { readonly kind: 'loading' }
   | { readonly kind: 'frame'; readonly url: string }
+  | { readonly kind: 'app'; readonly url: string }
   | { readonly kind: 'image'; readonly url: string }
   | { readonly kind: 'markdown'; readonly text: string }
   | { readonly kind: 'card' }
@@ -68,10 +72,18 @@ export async function failureState(res: Response): Promise<State> {
 }
 
 /** The state for a 200 answer: the element that fits its content type. */
-export async function successState(res: Response, url: string, stop: () => void): Promise<State> {
+export async function successState(
+  res: Response,
+  url: string,
+  stop: () => void,
+  app = false,
+): Promise<State> {
   const mime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
   if (mime === 'text/html') {
     stop();
+    // An app runs only when the deck answered with a policy that allows scripts.
+    const csp = res.headers.get('content-security-policy') ?? '';
+    if (app && csp.includes('allow-scripts')) return { kind: 'app', url };
     return { kind: 'frame', url };
   }
   if (mime.startsWith('image/')) {
@@ -116,10 +128,13 @@ export function ArtifactBody({
   state,
   tenths,
   fitRef,
+  feed,
 }: {
   readonly state: State;
   readonly tenths: number;
   readonly fitRef?: Ref<HTMLDivElement>;
+  /** The app feed (wall apps). */
+  readonly feed?: WallAppFeed | undefined;
 }) {
   return (
     <>
@@ -137,6 +152,7 @@ export function ArtifactBody({
           />
         </div>
       ) : null}
+      {state.kind === 'app' ? <WallAppFrame src={state.url} title="Wall app" data={feed} /> : null}
       {state.kind === 'image' ? <img className="fd-art-image" src={state.url} alt="" /> : null}
       {state.kind === 'markdown' ? <DisplayMarkdown text={state.text} /> : null}
     </>
@@ -149,6 +165,7 @@ export function DisplayArtifactPane({
   version,
   env,
   frameTenths = 0,
+  app = false,
 }: {
   readonly station: string;
   readonly id: string;
@@ -156,9 +173,11 @@ export function DisplayArtifactPane({
   readonly env: DisplayEnv | undefined;
   /** The position of a long-fit frame, in tenths of a screen (`WallRemoteState.frame_tenths`). */
   readonly frameTenths?: number;
+  /** Wall apps: the directive asks to run the file as an app (the deck decides the policy). */
+  readonly app?: boolean;
 }) {
   const [state, setState] = useState<State>({ kind: 'loading' });
-  const url = artifactPath(station, id, version);
+  const url = app ? appArtifactPath(station, id, version) : artifactPath(station, id, version);
   const fetcher = env?.fetcher;
   const has = env !== undefined;
   useEffect(() => {
@@ -177,7 +196,7 @@ export function DisplayArtifactPane({
     }).then(
       async (res) => {
         const next = res.ok
-          ? await successState(res, url, () => controller.abort())
+          ? await successState(res, url, () => controller.abort(), app)
           : await failureState(res);
         if (live) setState(next);
       },
@@ -187,7 +206,7 @@ export function DisplayArtifactPane({
       live = false;
       controller.abort();
     };
-  }, [has, fetcher, url]);
+  }, [has, fetcher, url, app]);
   // A long-fit frame sits at the absolute position of `frameTenths`, never relative to the
   // current position: a second step during a smooth scroll lands on the same place.
   const fit = useRef<HTMLDivElement>(null);
@@ -196,9 +215,10 @@ export function DisplayArtifactPane({
     if (el === null || frameTenths <= 0) return;
     el.scrollTo({ top: longFrameTop(frameTenths, el.clientHeight), behavior: scrollBehavior() });
   }, [frameTenths, state.kind]);
+  const feed = useAppFeed(env, station, id, version, state.kind === 'app');
   return (
     <section className="fd-wall-artifact" aria-label="Artifact">
-      <ArtifactBody state={state} tenths={frameTenths} fitRef={fit} />
+      <ArtifactBody state={state} tenths={frameTenths} fitRef={fit} feed={feed} />
     </section>
   );
 }

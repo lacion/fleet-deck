@@ -241,6 +241,8 @@ export * from "./display/PendingPairing";
 export * from "./display/RemoteNavigate";
 export * from "./display/ScrollStep";
 export * from "./display/SessionRef";
+export * from "./display/WallAppCard";
+export * from "./display/WallAppFeed";
 export * from "./display/WallArea";
 export * from "./display/WallControl";
 export * from "./display/WallControlAck";

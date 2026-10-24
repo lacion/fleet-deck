@@ -96,6 +96,9 @@ pub enum DirectiveBody {
     },
     Artifact {
         artifact: ArtifactRef,
+        /// B17 wall apps: run the file as an app when the display allows it.
+        #[serde(default)]
+        app: bool,
         #[serde(default)]
         pin: bool,
         #[serde(default)]

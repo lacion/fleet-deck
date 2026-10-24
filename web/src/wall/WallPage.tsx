@@ -438,6 +438,7 @@ function Wall({
               version={route.artifact.version}
               env={display}
               frameTenths={remoteState.frame_tenths}
+              app={route.artifact.app === true}
             />
           );
         }

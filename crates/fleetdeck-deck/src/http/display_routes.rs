@@ -35,7 +35,9 @@ use super::guard::{ApiError, DISPLAY_COOKIE, PENDING_COOKIE, cookie, owner_only}
 use super::settings_routes::{is_elevated, owner};
 use crate::board_fence;
 use crate::store::auth::LoginSession;
-use crate::store::displays::{DisplayChange, NewDisplay, check_quiet_hours, clean_name};
+use crate::store::displays::{
+    CheckedUpdate, DisplayChange, NewDisplay, check_quiet_hours, clean_name,
+};
 use crate::store::displays_binding::{BindError, check_monitor};
 use crate::store::displays_pairing::{Approval, Claim};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
@@ -121,13 +123,18 @@ fn require_elevation(
     if is_elevated(board, session, elevation) {
         return Ok(());
     }
+    Err(elevation_required())
+}
+
+/// The `400 elevation_required` of a display change.
+fn elevation_required() -> ApiError {
     let mut keys = serde_json::Map::new();
     keys.insert("keys".to_owned(), json!(["displays"]));
-    Err(bad(
+    bad(
         "elevation_required",
         "a recent sign-in is needed to give a display access",
     )
-    .with_details(keys))
+    .with_details(keys)
 }
 
 // ---------------------------------------------------------------- pairing
@@ -574,6 +581,9 @@ struct SettingsBody {
     show_diffs: Option<bool>,
     #[serde(default)]
     wake_on_needs_you: Option<bool>,
+    /// B17 wall apps. Turning it on needs elevation.
+    #[serde(default)]
+    allow_apps: Option<bool>,
     #[serde(default, deserialize_with = "some_option")]
     quiet_hours: Option<Option<String>>,
     /// `null` clears the binding (R13 §6D item 2).
@@ -584,8 +594,8 @@ struct SettingsBody {
 }
 
 /// `POST /api/displays/{id}/settings`: changes a display. Elevation is
-/// needed when `show_diffs` turns on, the ceiling gains a station, or the
-/// binding is set or changed (it gives station authority and the wake).
+/// needed when `show_diffs` or `allow_apps` turns on, the ceiling gains a
+/// station, or the binding is set or changed (it gives station authority and the wake).
 ///
 /// # Errors
 /// 400 `invalid_body`, `invalid_display`, `elevation_required`; 403
@@ -604,6 +614,7 @@ async fn settings(
         ("ceiling", body.ceiling.is_some()),
         ("show_diffs", body.show_diffs.is_some()),
         ("wake_on_needs_you", body.wake_on_needs_you.is_some()),
+        ("allow_apps", body.allow_apps.is_some()),
         ("quiet_hours", body.quiet_hours.is_some()),
         ("binding", body.binding.is_some()),
     ]
@@ -650,6 +661,7 @@ async fn change_display(
         .as_ref()
         .is_some_and(|c| c.iter().any(|s| !old.ceiling.contains(s)));
     let diffs_on = body.show_diffs == Some(true) && !old.show_diffs;
+    let apps_on = body.allow_apps == Some(true) && !old.allow_apps;
     let new_binding = match &body.binding {
         Some(Some(b)) => {
             check_monitor(&b.monitor).map_err(bind_error)?;
@@ -667,22 +679,31 @@ async fn change_display(
     };
     // Setting or changing the binding needs elevation; clearing it does not.
     let binding_set = new_binding.is_some() && new_binding != old.binding;
-    if more_stations || diffs_on || binding_set {
-        require_elevation(board, session, body.elevation.as_deref())?;
+    let elevated = is_elevated(board, session, body.elevation.as_deref());
+    if (more_stations || diffs_on || apps_on || binding_set) && !elevated {
+        return Err(elevation_required());
     }
     let change = DisplayChange {
         name,
         ceiling: body.ceiling,
         show_diffs: body.show_diffs,
         wake_on_needs_you: body.wake_on_needs_you,
+        allow_apps: body.allow_apps,
         quiet_hours: body.quiet_hours,
     };
-    let updated = board
+    // The store checks the elevation again against the row that it writes:
+    // `old` is a snapshot, and a concurrent change (an owner who turns
+    // `allow_apps` off) must not make this change a silent re-enable.
+    let updated = match board
         .store
-        .display_update(id.to_owned(), change)
+        .display_update_checked(id.to_owned(), change, elevated)
         .await
         .map_err(deck_error)?
-        .ok_or_else(unknown_display)?;
+    {
+        CheckedUpdate::Done(d) => d,
+        CheckedUpdate::Unknown => return Err(unknown_display()),
+        CheckedUpdate::NeedsElevation => return Err(elevation_required()),
+    };
     match body.binding {
         None => Ok(updated.view()),
         Some(_) => board

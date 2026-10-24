@@ -25,7 +25,7 @@ import {
   stateText,
   useDeletion,
 } from './DeleteArtifact';
-import { fileName, KIND_LABEL } from './kinds';
+import { fileName, KIND_LABEL, kindOfPath } from './kinds';
 import { SendToWall, type WallTarget } from '../wall/SendToWall';
 import { ShareDialog } from './ShareDialog';
 import { provenanceLine } from './video';
@@ -330,6 +330,9 @@ export function ArtifactViewerView({
     main === undefined
       ? null
       : rawPath(artifact.station_id, artifact.artifact_id, ready.version, main);
+  // The deck's rule for `app: true`: one file, and it is HTML.
+  const files = versionRow(ready.detail, ready.version)?.files ?? [];
+  const singleHtml = files.length === 1 && kindOfPath(files[0] ?? '') === 'html';
   const canDelete =
     deletion !== undefined && (deletion.phase.kind === 'idle' || deletion.phase.kind === 'error');
   const kind = (
@@ -375,6 +378,7 @@ export function ArtifactViewerView({
           station_id: artifact.station_id,
           artifact_id: artifact.artifact_id,
           version: ready.version,
+          single_html: singleHtml,
         }}
         download={
           main === undefined || rawUrl === null ? null : { url: rawUrl, name: fileName(main) }

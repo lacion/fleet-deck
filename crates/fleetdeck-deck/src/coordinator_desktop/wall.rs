@@ -55,6 +55,7 @@ fn body_of(args: &WallShowArguments) -> DirectiveBody {
         },
         WallContent::Artifact { artifact } => DirectiveBody::Artifact {
             artifact: artifact.clone(),
+            app: args.app,
             pin: args.pin,
             filter: Some(DirectiveFilter {
                 stations: vec![artifact.station_id.clone()],
@@ -344,5 +345,66 @@ pub(super) async fn run(
         Ok(Admission::Conflict) => this.refuse(code::REQUEST_ID_CONFLICT).await,
         Ok(Admission::Rejected { code, .. }) => this.refuse(code).await,
         Ok(Admission::Accepted(op)) => this.run(&op).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fleetdeck_proto::StationId;
+    use fleetdeck_proto::coordinator_desktop::DesktopCall;
+    use fleetdeck_proto::display_directive::{ArtifactRef, SessionRef};
+
+    use super::*;
+
+    fn artifact_call(app: bool) -> WallShowArguments {
+        WallShowArguments {
+            request_id: "r1".into(),
+            station: None,
+            display_id: "d1".into(),
+            content: WallContent::Artifact {
+                artifact: ArtifactRef {
+                    station_id: StationId::new("st1"),
+                    artifact_id: "a1".into(),
+                    version: 1,
+                },
+            },
+            pin: false,
+            app,
+        }
+    }
+
+    #[test]
+    fn wall_show_app_maps_to_the_directive_flag() {
+        for app in [false, true] {
+            match body_of(&artifact_call(app)) {
+                DirectiveBody::Artifact { app: flag, .. } => assert_eq!(flag, app),
+                other => panic!("not an artifact directive: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn wall_show_app_is_off_by_default_and_an_app_is_an_artifact_only() {
+        let json = r#"{"request_id":"r1","display_id":"d1","content":{"kind":"artifact",
+            "artifact":{"station_id":"st1","artifact_id":"a1","version":1}}}"#;
+        let args: WallShowArguments = serde_json::from_str(json).unwrap();
+        assert!(!args.app);
+        assert!(
+            DesktopCall::WallShow(artifact_call(true))
+                .validate()
+                .is_ok()
+        );
+        let session = WallShowArguments {
+            content: WallContent::Session {
+                session: SessionRef {
+                    station_id: StationId::new("st1"),
+                    session_id: "s1".into(),
+                },
+            },
+            app: true,
+            ..artifact_call(false)
+        };
+        let err = DesktopCall::WallShow(session).validate().unwrap_err();
+        assert_eq!(err.field, "app");
     }
 }

@@ -63,6 +63,7 @@ async fn direct(store: &DeckStore, display: &str, station: &StationId, id: &str)
             artifact_id: id.to_owned(),
             version: 1,
         },
+        app: false,
         pin: false,
         filter: None,
     };

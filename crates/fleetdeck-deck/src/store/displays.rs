@@ -12,8 +12,8 @@
 //! holds a plain cookie, link or secret value.
 
 use fleetdeck_core::Secret;
-use fleetdeck_proto::StationId;
 use fleetdeck_proto::display::{DisplayBinding, DisplayView};
+use fleetdeck_proto::{SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::auth::{random_token, secret_hash};
@@ -95,6 +95,8 @@ pub struct DisplayRecord {
     pub ceiling: Vec<StationId>,
     pub show_diffs: bool,
     pub wake_on_needs_you: bool,
+    /// B17 wall apps: the wall may run an HTML artifact as an app.
+    pub allow_apps: bool,
     pub quiet_hours: Option<String>,
     pub binding: Option<DisplayBinding>,
     pub created_at: i64,
@@ -117,6 +119,7 @@ impl DisplayRecord {
             ceiling: self.ceiling.clone(),
             show_diffs: self.show_diffs,
             wake_on_needs_you: self.wake_on_needs_you,
+            allow_apps: self.allow_apps,
             quiet_hours: self.quiet_hours.clone(),
             binding: self.binding.clone(),
             created_at: self.created_at,
@@ -140,7 +143,32 @@ pub struct DisplayChange {
     pub ceiling: Option<Vec<StationId>>,
     pub show_diffs: Option<bool>,
     pub wake_on_needs_you: Option<bool>,
+    pub allow_apps: Option<bool>,
     pub quiet_hours: Option<Option<String>>,
+}
+
+/// The answer of [`DeckStore::display_update_checked`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedUpdate {
+    Done(DisplayRecord),
+    /// The display does not exist or is revoked.
+    Unknown,
+    /// The change needs elevation against the row of this moment; nothing
+    /// changed.
+    NeedsElevation,
+}
+
+/// True when `change` gives the display more access than `old`: a station
+/// that the ceiling does not hold, or `show_diffs` or `allow_apps` from off
+/// to on.
+#[must_use]
+pub fn widens(old: &DisplayRecord, change: &DisplayChange) -> bool {
+    change
+        .ceiling
+        .as_ref()
+        .is_some_and(|c| c.iter().any(|s| !old.ceiling.contains(s)))
+        || (change.show_diffs == Some(true) && !old.show_diffs)
+        || (change.allow_apps == Some(true) && !old.allow_apps)
 }
 
 /// Deletes every session, every unused link and every pairing of a display.
@@ -241,13 +269,15 @@ fn row_record(r: &rusqlite::Row<'_>) -> rusqlite::Result<(DisplayRecord, String)
             last_seen: r.get(9)?,
             auth_generation: r.get(10)?,
             binding_revision: r.get(11)?,
+            allow_apps: r.get::<_, i64>(12)? != 0,
         },
         ceiling,
     ))
 }
 
 const COLUMNS: &str = "display_id, name, ceiling, show_diffs, wake_on_needs_you, quiet_hours,
-    binding_station, binding_monitor, created_at, last_seen, auth_generation, binding_revision";
+    binding_station, binding_monitor, created_at, last_seen, auth_generation, binding_revision,
+    allow_apps";
 
 fn parse_ceiling(text: &str) -> Result<Vec<StationId>> {
     let ids: Vec<String> = serde_json::from_str(text)?;
@@ -421,8 +451,8 @@ impl DeckStore {
         call(&self.inner.db, move |conn| load(conn, &display_id)).await
     }
 
-    /// Changes the settings of a display. `None` when it does not exist or is
-    /// revoked.
+    /// Changes the settings of a display with no elevation check (the caller
+    /// checked it). `None` when it does not exist or is revoked.
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a bad value; a database error.
@@ -431,6 +461,31 @@ impl DeckStore {
         display_id: String,
         change: DisplayChange,
     ) -> Result<Option<DisplayRecord>> {
+        Ok(
+            match self
+                .display_update_checked(display_id, change, true)
+                .await?
+            {
+                CheckedUpdate::Done(record) => Some(record),
+                CheckedUpdate::Unknown | CheckedUpdate::NeedsElevation => None,
+            },
+        )
+    }
+
+    /// Changes the settings of a display. The elevation check reads the row
+    /// in the same transaction as the write (B17 §3.4.2): a change that gives
+    /// the display more access than the stored row has (a new station,
+    /// `show_diffs` or `allow_apps` from off to on) needs `elevated`, else
+    /// nothing changes and the answer is [`CheckedUpdate::NeedsElevation`].
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad value; a database error.
+    pub async fn display_update_checked(
+        &self,
+        display_id: String,
+        change: DisplayChange,
+        elevated: bool,
+    ) -> Result<CheckedUpdate> {
         let name = change.name.as_deref().map(clean_name).transpose()?;
         if let Some(Some(q)) = &change.quiet_hours {
             check_quiet_hours(q)?;
@@ -438,17 +493,22 @@ impl DeckStore {
         let record = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(old) = load(&tx, &display_id)? else {
-                return Ok(None);
+                return Ok(CheckedUpdate::Unknown);
             };
+            if !elevated && widens(&old, &change) {
+                return Ok(CheckedUpdate::NeedsElevation);
+            }
             if let Some(ceiling) = &change.ceiling {
                 check_ceiling(&tx, ceiling)?;
             }
             let ceiling = change.ceiling.as_ref().unwrap_or(&old.ceiling);
             let ids: Vec<&str> = ceiling.iter().map(StationId::as_str).collect();
             let quiet = change.quiet_hours.unwrap_or(old.quiet_hours);
+            let allow_apps = change.allow_apps.unwrap_or(old.allow_apps);
             tx.execute(
                 "UPDATE displays SET name = ?2, ceiling = ?3, show_diffs = ?4,
-                     wake_on_needs_you = ?5, quiet_hours = ?6 WHERE display_id = ?1",
+                     wake_on_needs_you = ?5, quiet_hours = ?6, allow_apps = ?7
+                 WHERE display_id = ?1",
                 params![
                     display_id,
                     name.as_deref().unwrap_or(&old.name),
@@ -456,20 +516,25 @@ impl DeckStore {
                     i64::from(change.show_diffs.unwrap_or(old.show_diffs)),
                     i64::from(change.wake_on_needs_you.unwrap_or(old.wake_on_needs_you)),
                     quiet,
+                    i64::from(allow_apps),
                 ],
             )?;
             // A ceiling change deletes the stored directive: the display
             // returns to `mission` (R13 §5C item 2).
-            if change.ceiling.as_ref().is_some_and(|c| *c != old.ceiling) {
+            // A change of `allow_apps` does the same, in both directions
+            // (B17 §3.4.2).
+            if change.ceiling.as_ref().is_some_and(|c| *c != old.ceiling)
+                || allow_apps != old.allow_apps
+            {
                 invalidate_directive(&tx, &display_id)?;
             }
             let record = load(&tx, &display_id)?;
             tx.commit()?;
-            Ok(record)
+            Ok(record.map_or(CheckedUpdate::Unknown, CheckedUpdate::Done))
         })
         .await?;
         // The sockets of the wall take the new ceiling at once (R13 §5).
-        if record.is_some() {
+        if matches!(record, CheckedUpdate::Done(_)) {
             self.board_changed();
         }
         Ok(record)
@@ -616,6 +681,48 @@ impl DeckStore {
                 "DELETE FROM display_sessions WHERE session_hash = ?1",
                 [session_hash],
             )? == 1)
+        })
+        .await
+    }
+}
+
+impl DeckStore {
+    /// The sessions that the author session of a wall app started (B17
+    /// §3.4.3): the direct spawn lineage of every grant of the author, in any
+    /// state (a grant that ended does not remove a spawn). A session that a
+    /// child started is not in the set. Rows without a session id are
+    /// dropped; the answer has no duplicates.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_app_lineage(
+        &self,
+        station: StationId,
+        session: SessionId,
+    ) -> Result<Vec<(StationId, SessionId)>> {
+        call(&self.inner.db, move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT l.station_id,
+                        COALESCE(l.session_id, json_extract(c.receipt, '$.result.session_id'))
+                 FROM coordinator_lineage l
+                 JOIN tokens t ON t.grant_id = l.grant_id
+                 LEFT JOIN outbox o ON o.outbox_id = l.start_outbox_id
+                 LEFT JOIN commands c ON c.command_id = o.command_id
+                 WHERE t.station_id = ?1 AND t.session_id = ?2",
+            )?;
+            let rows = stmt.query_map(params![station.as_str(), session.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })?;
+            let mut out: Vec<(StationId, SessionId)> = Vec::new();
+            for row in rows {
+                let (station, session) = row?;
+                let Some(session) = session else { continue };
+                let pair = (StationId::new(station), SessionId::from(session));
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+            Ok(out)
         })
         .await
     }

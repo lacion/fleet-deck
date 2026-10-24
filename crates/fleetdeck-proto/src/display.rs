@@ -24,6 +24,8 @@ pub struct DisplayView {
     pub ceiling: Vec<StationId>,
     pub show_diffs: bool,
     pub wake_on_needs_you: bool,
+    /// B17 wall apps: the wall may run an HTML artifact as an app.
+    pub allow_apps: bool,
     /// `HH:MM-HH:MM`, or absent.
     pub quiet_hours: Option<String>,
     pub binding: Option<DisplayBinding>,

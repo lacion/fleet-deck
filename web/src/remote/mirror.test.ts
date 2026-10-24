@@ -212,6 +212,7 @@ describe('route_directive_is_the_inverse_of_directive_route', () => {
     {
       mode: 'artifact',
       artifact: { station_id: 'a', artifact_id: 'art', version: 3 },
+      app: false,
       pin: false,
       filter: null,
     },
