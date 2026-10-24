@@ -17,26 +17,105 @@ use crate::manager::fleet_control::{self, Refusal};
 use crate::manager::turns::SessionTurns;
 use crate::store::{Dispatch, Effect, EffectPayload, NewEvent};
 
+/// Why the starts of an instance are refused (B28 §3.8).
+pub(super) enum BrokenMark {
+    /// The probed version is on the deny list (R8.2, DL-162). A refresh sets
+    /// and clears it.
+    Denied(&'static str),
+    /// A failed update or an unfinished recovery (B28 §3.8.1). Only
+    /// `release_quarantine` clears it.
+    Quarantined(Arc<str>),
+}
+
 impl SessionTarget {
     /// Refuses the starts of `instance`: its probed version is on the deny
     /// list of its adapter (R8.2, DL-162).
     pub fn mark_broken(&self, instance: &ProviderInstanceId, kind: ProviderKind) {
+        self.set_denied(instance, kind, true);
+    }
+
+    /// Sets or clears the deny mark of `instance`. A clear removes only a
+    /// `Denied` mark, and a set never replaces a `Quarantined` mark.
+    pub fn set_denied(&self, instance: &ProviderInstanceId, kind: ProviderKind, denied: bool) {
         let name: &'static str = match kind {
             ProviderKind::Claude => "claude",
             ProviderKind::Codex => "codex",
             ProviderKind::Unknown => "provider",
         };
-        if let Ok(mut broken) = self.broken.lock() {
-            broken.insert(instance.clone(), name);
+        let Ok(mut broken) = self.broken.lock() else {
+            return;
+        };
+        if denied {
+            if !matches!(broken.get(instance), Some(BrokenMark::Quarantined(_))) {
+                broken.insert(instance.clone(), BrokenMark::Denied(name));
+            }
+        } else if matches!(broken.get(instance), Some(BrokenMark::Denied(_))) {
+            broken.remove(instance);
         }
     }
 
+    /// Quarantines every instance of `kind`: its starts are refused with
+    /// `text`. It replaces a `Denied` mark.
+    pub fn quarantine(&self, kind: ProviderKind, text: &str) {
+        let Ok(mut broken) = self.broken.lock() else {
+            return;
+        };
+        let text: Arc<str> = Arc::from(text);
+        for (instance, adapter) in &self.adapters {
+            if adapter.kind() == kind {
+                broken.insert(instance.clone(), BrokenMark::Quarantined(Arc::clone(&text)));
+            }
+        }
+    }
+
+    /// Removes the `Quarantined` marks of every instance of `kind`. A
+    /// `Denied` mark stays, and the next refresh sets it again when it
+    /// applies.
+    pub fn release_quarantine(&self, kind: ProviderKind) {
+        let Ok(mut broken) = self.broken.lock() else {
+            return;
+        };
+        broken.retain(|instance, mark| {
+            let of_kind = self
+                .adapters
+                .get(instance)
+                .is_some_and(|a| a.kind() == kind);
+            !(of_kind && matches!(mark, BrokenMark::Quarantined(_)))
+        });
+    }
+
     /// The refusal text of a start on a broken instance, if it is one.
-    pub(super) fn broken_reason(&self, instance: &ProviderInstanceId) -> Option<String> {
+    pub(in crate::manager) fn broken_reason(
+        &self,
+        instance: &ProviderInstanceId,
+    ) -> Option<String> {
         let broken = self.broken.lock().ok()?;
-        broken
-            .get(instance)
-            .map(|name| format!("this {name} version is known to break the protocol"))
+        broken.get(instance).map(|mark| match mark {
+            BrokenMark::Denied(name) => {
+                format!("this {name} version is known to break the protocol")
+            }
+            BrokenMark::Quarantined(text) => text.to_string(),
+        })
+    }
+
+    /// The refusal text of a start on an instance whose provider kind is
+    /// under an update (B28 §3.7.1), if it is.
+    pub(in crate::manager) fn updating_reason(
+        &self,
+        instance: &ProviderInstanceId,
+    ) -> Option<String> {
+        let kind = self.adapters.get(instance)?.kind();
+        if self.restart.updating() != Some(kind) {
+            return None;
+        }
+        let name = match kind {
+            ProviderKind::Claude => "claude",
+            ProviderKind::Codex => "codex",
+            ProviderKind::Unknown => "the provider",
+        };
+        Some(format!(
+            "the station was updating {name}; start the session again"
+        ))
     }
 
     /// True when the session has a base already, or when the summary cannot

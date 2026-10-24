@@ -48,6 +48,15 @@ impl super::Bindings {
         }
     }
 
+    /// Replaces the probed versions of one provider kind (B28: the report
+    /// follows an install).
+    pub fn replace_versions(&self, provider: ProviderKind, versions: Vec<String>) {
+        self.versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(provider, versions);
+    }
+
     /// The probed versions of one provider kind, in the order they were
     /// recorded (empty before the first probe).
     #[must_use]

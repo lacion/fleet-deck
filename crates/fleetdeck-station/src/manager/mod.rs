@@ -97,6 +97,7 @@ pub use target::{Adapters, SessionTarget};
 mod execution_checks;
 #[path = "manager_providers.rs"]
 mod providers_info;
+mod provider_update;
 
 use crate::store::{Caller, Decided, Result, Store};
 use crate::worker::EffectWorker;
@@ -122,8 +123,8 @@ pub struct SessionManager {
     ids: SharedIds,
     shutdown: watch::Sender<bool>,
     tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
-    /// The provider report of `station.info`, probed once per process.
-    providers: tokio::sync::OnceCell<Vec<StationProvider>>,
+    /// The provider report of `station.info`, probed at the first call and again by a refresh (B28).
+    providers: tokio::sync::Mutex<Option<Vec<StationProvider>>>,
     draining: std::sync::atomic::AtomicBool,
     /// The submits that create work and are not decided yet (NV-25).
     drain_submits: std::sync::atomic::AtomicUsize,
@@ -354,6 +355,9 @@ impl SessionManager {
         }
         let target = target.shared();
         target.adopt(restored, stop, restore_from).await;
+        // A quarantined provider refuses its starts from the first dispatch
+        // (B28 §3.8.1).
+        provider_update::load_quarantine(&store, &target).await?;
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
         let mut tasks = Vec::new();
@@ -393,7 +397,7 @@ impl SessionManager {
             ids,
             shutdown,
             tasks: std::sync::Mutex::new(tasks),
-            providers: tokio::sync::OnceCell::new(),
+            providers: tokio::sync::Mutex::new(None),
             draining: std::sync::atomic::AtomicBool::new(false),
             drain_submits: std::sync::atomic::AtomicUsize::new(0),
             restart,

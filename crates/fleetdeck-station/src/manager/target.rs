@@ -95,9 +95,9 @@ pub struct SessionTarget {
     /// The `fleetdeck` executable that confines provisioning Git (B9).
     confine_exe: std::sync::OnceLock<std::path::PathBuf>,
     artifacts_runtime: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
-    /// The instances whose probed version is on the adapter's deny list
-    /// (R8.2, DL-162): their starts are refused.
-    broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
+    /// The instances whose starts are refused: a probed version on the
+    /// adapter's deny list (R8.2, DL-162) or a quarantine (B28).
+    broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, target_base::BrokenMark>>>,
     /// The shells of the station, for the file work of the worktree trash.
     shells: ShellsSlot,
     /// The restart freeze (PRE-PR r1).
@@ -284,6 +284,10 @@ impl SessionTarget {
         if let Some(reason) = self.broken_reason(&spec.provider_instance) {
             self.start_failed(&session_id, &reason).await;
             return Dispatch::NotDispatched("provider_broken".into());
+        }
+        if let Some(reason) = self.updating_reason(&spec.provider_instance) {
+            self.start_failed(&session_id, &reason).await;
+            return Dispatch::NotDispatched("provider_updating".into());
         }
         let Some(adapter) = self.adapters.get(&spec.provider_instance).cloned() else {
             self.start_failed(&session_id, "the provider instance has no adapter")
