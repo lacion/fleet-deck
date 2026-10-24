@@ -357,6 +357,12 @@ pub enum Event {
     /// decode this kind as unknown.
     #[serde(rename = "session.execution_reconciled")]
     ExecutionReconciled { shim_id: String },
+    /// The station proved by its own check that the previous run of the
+    /// session (shim `shim_id`) ended after an unverified exit (DL-432). A
+    /// separate kind, so that a deck that knows only the owner's kind keeps
+    /// it as unknown and never stores it as the owner's reconciliation.
+    #[serde(rename = "session.execution_settled")]
+    ExecutionSettled { shim_id: String },
     /// The station's model help named the session (DL-167, R10.1). It
     /// follows the internal `session.renamed` that set `title`; the fold
     /// marks the title as generated while the title is still the same.
@@ -528,3 +534,7 @@ pub use tasks::{BackgroundTask, RunOrigin, input_text_of};
 #[cfg(test)]
 #[path = "event_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "event_reconciled_tests.rs"]
+mod reconciled_tests;

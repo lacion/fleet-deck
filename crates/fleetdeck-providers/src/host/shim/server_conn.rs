@@ -221,8 +221,11 @@ impl Shim {
                 None
             }
             ToShim::Kill { .. } => {
-                self.lock().cause = Some("killed");
-                signal_group(self.pid(), rustix::process::Signal::KILL);
+                // The cause changes only while the provider runs: a Kill
+                // after its end does not rename that exit (DL-431).
+                self.leader.signal(rustix::process::Signal::KILL, || {
+                    self.lock().cause = Some("killed")
+                });
                 None
             }
             ToShim::CloseStdin { .. } => {
@@ -230,7 +233,7 @@ impl Shim {
                 None
             }
             ToShim::Interrupt { .. } => {
-                signal_group(self.pid(), rustix::process::Signal::INT);
+                self.leader.signal(rustix::process::Signal::INT, || {});
                 None
             }
             ToShim::Status { .. } => {

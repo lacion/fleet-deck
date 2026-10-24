@@ -17,6 +17,8 @@
 //!   exits with code 0.
 //! - `exit-leaving-child <text>`: the same, and a child of the app-server
 //!   (`sleep 30`, in its process group) is still alive at the exit;
+//! - `exit-leaving-stubborn-child <text>`: as above, the child ignores TERM;
+//! - `exit-leaving-group-child <text>`: as above, in its own process group;
 //! - `slow <ms> <text>`: the turn runs `ms` without output, then answers
 //!   `echo: <text>` (a turn that ends while nobody reads stdout);
 //! - `bg ...`: a command that outlives its turn; the first
@@ -420,6 +422,19 @@ impl<W: Write> Sim<W> {
                 .stderr(std::process::Stdio::null())
                 .spawn()?;
             std::process::exit(0)
+        } else if let Some(said) = text.strip_prefix("exit-leaving-stubborn-child ") {
+            self.answer(&turn, &format!("echo: {said}"), "completed")?;
+            spawn_quiet(std::process::Command::new("sh").args(["-c", "trap \"\" TERM; sleep 30"]))?;
+            std::process::exit(0)
+        } else if let Some(said) = text.strip_prefix("exit-leaving-group-child ") {
+            use std::os::unix::process::CommandExt as _;
+            self.answer(&turn, &format!("echo: {said}"), "completed")?;
+            spawn_quiet(
+                std::process::Command::new("sleep")
+                    .arg("30")
+                    .process_group(0),
+            )?;
+            std::process::exit(0)
         } else if let Some(said) = text.strip_prefix("exit-after ") {
             // `exit-after <text>`: the turn answers and completes, then the
             // app-server exits with code 0 (a provider that ends after a
@@ -650,6 +665,15 @@ fn agent_message(id: &str, text: &str) -> Value {
         "delivery": null,
         "questions": null,
     })
+}
+
+/// Starts `command` with no stdio and leaves it running.
+fn spawn_quiet(command: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
 }
 
 fn command_item(id: &str, command: &str, cwd: &str, status: &str, process: Option<&str>) -> Value {

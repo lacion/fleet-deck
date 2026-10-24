@@ -44,6 +44,7 @@ import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { HoldNotice } from './HoldNotice';
 import { ExecutionDialog } from './ExecutionDialog';
+import { useResumeCheck } from './resumeRefusal';
 import { useFleetControl } from './FleetControlChip';
 import { LandPanel } from './LandPanel';
 import { MoveBanner } from './MoveBanner';
@@ -232,7 +233,7 @@ export function SessionView(props: SessionViewProps) {
     !shellsOff &&
     (s.provider === 'claude' || s.provider === 'codex');
   const hold = s.terminal ?? null;
-  const [checking, setChecking] = useState(false);
+  const check = useResumeCheck(actions);
   // FG-9: the newest move of the session (owner only) feeds the move banner.
   const integrations = useIntegrations();
   const moveOwner = guest === null && integrations?.actions.canAdmin === true;
@@ -394,7 +395,7 @@ export function SessionView(props: SessionViewProps) {
         session={session}
         stations={stations}
         controller={controller}
-        actions={actions ?? null}
+        actions={check.actions ?? null}
         {...(onBack ? { onBack } : {})}
         terminal={terminal}
         layout={layout}
@@ -402,9 +403,7 @@ export function SessionView(props: SessionViewProps) {
         {...(sidePanel ? { filesPanel: { open: filesOpen, toggle: toggleFiles } } : {})}
         propsPanel={propsRail ? { open: propsOpen, toggle: toggleProps } : undefined}
         models={s.models ?? sessionModels(events)}
-        onCheckExecution={
-          guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
-        }
+        onCheckExecution={guest === null && actions?.canAdmin === true ? check.open : undefined}
         onMoveStarted={move.reload}
         fleet={props.fleet}
         fleetControl={propsShown ? null : fleetControl.link}
@@ -424,9 +423,7 @@ export function SessionView(props: SessionViewProps) {
         files={filesReady ? (actions?.artifacts ?? null) : null}
       />
       {guest === null ? <LandPanel session={session} stations={stations} /> : null}
-      {checking && actions ? (
-        <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
-      ) : null}
+      {check.dialog && actions ? <ExecutionDialog actions={actions} {...check.dialog} /> : null}
       {fleetControl.dialog}
       {hold ? (
         <HoldNotice
@@ -603,6 +600,7 @@ export function SessionView(props: SessionViewProps) {
                             ? await resumeThenSend(
                                 {
                                   ...actions,
+                                  resume: check.resume,
                                   send: (k, t, i) => actions.send(k, t, i, results),
                                 },
                                 kind,
@@ -624,7 +622,7 @@ export function SessionView(props: SessionViewProps) {
                       resumeBusy={busy !== null}
                       onResume={
                         composerResume && actions
-                          ? () => controller.act('resume', () => actions.resume())
+                          ? () => controller.act('resume', check.resume)
                           : null
                       }
                       disabledReason={

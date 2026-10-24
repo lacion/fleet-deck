@@ -187,12 +187,38 @@ pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
 /// zombies do not count). `None` when the inspection is incomplete or the
 /// platform has no reader: the count then proves nothing (DL-182 §1a).
 pub(super) fn group_members(leader: u32) -> Option<u32> {
-    crate::host::shim::inspect::group_members_reaping(leader, &mut reap_orphans)
+    crate::host::shim::inspect::exit_census(leader, false, &mut reap_orphans)
 }
 
-/// Reaps orphaned descendants that came back to the subreaper shim.
+/// The live members of the provider's group or session with the leader
+/// pinned (a zombie that the shim keeps unreaped, `LeaderWait::Ended`). The
+/// census reaps every ended child except the leader between passes.
+pub(super) fn pinned_members(leader: u32) -> Option<Vec<crate::host::shim::inspect::ProcStat>> {
+    crate::host::shim::inspect::exit_members(leader, true, &mut || {
+        reap_orphans_except(Some(leader));
+    })
+}
+
+/// Signals the process group `pid` and nothing else: no fallback to the
+/// single process. For the exit sweep, while the leader is a pinned zombie
+/// (the number is allocated, so the group is this run's). `pid <= 1` is
+/// refused. `ESRCH` (the group is empty) is returned to the caller.
+pub(super) fn kill_group_only(pid: u32, sig: rustix::process::Signal) -> rustix::io::Result<()> {
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .filter(|p| *p > 1)
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return Err(rustix::io::Errno::INVAL);
+    };
+    rustix::process::kill_process_group(pid, sig)
+}
+
+/// Reaps every ended child of the shim (`waitpid(-1)`). Only for the exit
+/// path, after tokio has reaped the provider: the shim has no other child
+/// whose status another owner needs (DL-430).
 pub(super) fn reap_orphans() {
-    while let Ok(Some(_)) = rustix::process::waitpid(None, rustix::process::WaitOptions::NOHANG) {}
+    while let Ok(Some(_)) = rustix::process::wait(rustix::process::WaitOptions::NOHANG) {}
 }
 
 /// How often the shim reaps the ended orphans while the provider runs.
@@ -200,8 +226,9 @@ pub(super) const REAP_EVERY: Duration = Duration::from_secs(5);
 
 /// While the provider runs, reaps the ended orphans that came back to the
 /// subreaper shim, every `every`, on a blocking thread. It ends when
-/// `exited` is set (the exit path then reaps with [`reap_orphans`]). The
-/// provider (`provider`) is never reaped here: its status belongs to tokio.
+/// `exited` is set (the exit path then reaps every ended child with
+/// [`reap_orphans`], `waitpid(-1)`). The provider (`provider`) is never
+/// reaped here: its status belongs to tokio.
 pub(super) async fn reap_while_running(
     provider: u32,
     every: Duration,

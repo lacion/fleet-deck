@@ -302,6 +302,9 @@ fn samples() -> Vec<Event> {
         Event::ExecutionReconciled {
             shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
         },
+        Event::ExecutionSettled {
+            shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
+        },
         Event::WorkspaceBaseStale {
             code: "fetch_failed".into(),
             text: "Fetch failed; this session started from the local HEAD: timeout".into(),

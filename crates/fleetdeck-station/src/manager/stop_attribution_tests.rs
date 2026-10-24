@@ -83,6 +83,8 @@ fn row(identity: Option<ProviderIdentity>) -> ShimRow {
         launch_boot_id: Some(BOOT.to_owned()),
         native_target: None,
         created_at: 1,
+        station_proof: None,
+        station_proof_at: None,
     }
 }
 

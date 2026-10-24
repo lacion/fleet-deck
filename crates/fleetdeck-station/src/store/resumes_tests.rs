@@ -540,3 +540,62 @@ async fn the_own_exclusion_blocks_on_an_unproven_row_and_lists_the_reboot_rows()
     let found = s.own_execution_exclusion("none".into()).await.unwrap();
     assert_eq!((found.blocked, found.reboot_rows.len()), (None, 0));
 }
+
+#[tokio::test]
+async fn proves_end_accepts_a_station_proof() {
+    let det = Det::new();
+    let s = store(&det).await;
+    session(&s, "s", ProviderKind::Claude, "claude", None).await;
+    row(&s, "s", "a", ShimState::Exited, "exit_unverified", 1, None).await;
+    let before = s.shim_rows("s".into()).await.unwrap();
+    assert!(!proves_end(&before[0]));
+    assert!(settle_eligible(&before[0]));
+    assert!(s.shim_settle("s".into(), "a".to_owned()).await.unwrap());
+    // The second call finds the row settled.
+    assert!(!s.shim_settle("s".into(), "a".to_owned()).await.unwrap());
+    let after = s.shim_rows("s".into()).await.unwrap();
+    assert_eq!(after[0].station_proof.as_deref(), Some(PROOF_STATION));
+    assert!(after[0].station_proof_at.is_some());
+    assert!(proves_end(&after[0]));
+    assert!(!settle_eligible(&after[0]));
+    // A lost row and a row with descendants are never settled by the station.
+    row(&s, "s", "b", ShimState::Lost, "execution_unknown", 0, None).await;
+    row(
+        &s,
+        "s",
+        "c",
+        ShimState::Exited,
+        "exited_descendants_remaining",
+        1,
+        None,
+    )
+    .await;
+    for id in ["b", "c"] {
+        assert!(
+            !s.shim_settle("s".into(), id.to_owned()).await.unwrap(),
+            "{id}"
+        );
+    }
+    // A settle names the right session.
+    row(&s, "s", "d", ShimState::Exited, "exit_unverified", 1, None).await;
+    assert!(!s.shim_settle("other".into(), "d".to_owned()).await.unwrap());
+}
+
+#[tokio::test]
+async fn unresolved_skips_a_settled_row() {
+    let det = Det::new();
+    let s = store(&det).await;
+    session(&s, "s", ProviderKind::Claude, "claude", None).await;
+    row(&s, "s", "a", ShimState::Exited, "exit_unverified", 1, None).await;
+    row(&s, "s", "b", ShimState::Lost, "execution_unknown", 0, None).await;
+    let ids = |rows: Vec<ShimRow>| rows.into_iter().map(|r| r.shim_id).collect::<Vec<_>>();
+    assert_eq!(ids(s.shims_unresolved(None).await.unwrap()), ["a", "b"]);
+    assert!(s.shim_settle("s".into(), "a".to_owned()).await.unwrap());
+    assert_eq!(ids(s.shims_unresolved(None).await.unwrap()), ["b"]);
+    assert!(
+        !s.shim_prove_reboot("a".to_owned(), "boot-2".to_owned())
+            .await
+            .unwrap(),
+        "the boot pass skips a settled row"
+    );
+}

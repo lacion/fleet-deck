@@ -10,7 +10,7 @@ use fleetdeck_proto::{Event, EventBody, SessionId};
 use fleetdeck_providers::host::shim::wire::ProviderIdentity;
 use fleetdeck_testkit::Det;
 
-use super::{evaluate, recheck};
+use super::{evaluate, evaluate_settling, recheck};
 use crate::manager::policy::Policy;
 use crate::manager::shim_resume_rig::{Boot, dead_identity};
 use crate::store::{
@@ -377,4 +377,88 @@ async fn the_dispatch_checks_the_reboot_proof_again_and_skips_when_it_fails() {
     );
     assert_eq!(rig.state(&s).await, SessionState::Lost);
     assert_eq!(rig.skips(&s).await, vec!["execution_unknown".to_owned()]);
+}
+
+/// A station start with the boot reader of `boot`: recovery, then the
+/// evaluation that settles an unverified exit of the same boot (DL-432).
+async fn restart_settling(rig: &Rig, boot: &Boot) -> usize {
+    let head = rig.store.head();
+    rig.store.recover(Vec::new()).await.unwrap();
+    let reader = boot.reader();
+    evaluate_settling(&rig.store, &rig.policy(), head, Some(&reader))
+        .await
+        .unwrap()
+}
+
+async fn station_proof_of(rig: &Rig, s: &SessionId) -> Option<String> {
+    rig.store.shim_rows(s.clone()).await.unwrap()[0]
+        .station_proof
+        .clone()
+}
+
+#[tokio::test]
+async fn auto_continue_settles_an_unverified_exit_of_the_same_boot() {
+    let rig = Rig::new().await;
+    let s = rig.session("settle", "native-settle", true).await;
+    rig.row(
+        &s,
+        "shim-1",
+        (ShimState::Exited, "exit_unverified", 1),
+        Some(dead_identity("boot-now")),
+        None,
+    )
+    .await;
+    assert_eq!(restart_settling(&rig, &boot("boot-now")).await, 1);
+    assert!(rig.skips(&s).await.is_empty());
+    assert_eq!(
+        station_proof_of(&rig, &s).await.as_deref(),
+        Some("checked_after_exit")
+    );
+    let reconciled: Vec<_> = rig
+        .events(&s)
+        .await
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ExecutionReconciled { .. } | Event::ExecutionSettled { .. }
+            )
+        })
+        .collect();
+    assert_eq!(reconciled.len(), 1, "{reconciled:?}");
+    assert!(matches!(&reconciled[0], Event::ExecutionSettled { .. }));
+    assert_eq!(rig.resumes(&s).await.len(), 1);
+}
+
+#[tokio::test]
+async fn auto_continue_off_is_not_settled() {
+    let rig = Rig::new().await;
+    let s = rig.session("off", "native-off", false).await;
+    rig.row(
+        &s,
+        "shim-1",
+        (ShimState::Exited, "exit_unverified", 1),
+        Some(dead_identity("boot-now")),
+        None,
+    )
+    .await;
+    assert_eq!(restart_settling(&rig, &boot("boot-now")).await, 0);
+    assert_eq!(station_proof_of(&rig, &s).await, None);
+}
+
+#[tokio::test]
+async fn auto_continue_without_a_boot_reader_does_not_settle() {
+    let rig = Rig::new().await;
+    let s = rig.session("nobot", "native-nobot", true).await;
+    rig.row(
+        &s,
+        "shim-1",
+        (ShimState::Exited, "exit_unverified", 1),
+        Some(dead_identity("boot-now")),
+        None,
+    )
+    .await;
+    assert_eq!(rig.restart(&rig.policy()).await, 0);
+    rig.skipped(&s, "execution_unknown").await;
+    assert_eq!(station_proof_of(&rig, &s).await, None);
 }

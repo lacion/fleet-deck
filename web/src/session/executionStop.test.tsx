@@ -4,9 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ExecutionCheck, ExecutionStopOutcome, ExecutionStopPlan } from '../gen';
 import { ApiError } from '../runtime/api';
 import { sessionActions, STOP_TEXTS } from './commands';
+import { markAndResume, RESUME_TEXTS } from './resumeRefusal';
 import {
   type Clock,
   ExecutionStop,
+  mayMarkAfterStop,
   PlanPanel,
   planIsStale,
   planNotice,
@@ -380,5 +382,82 @@ describe('markup', () => {
       />,
     );
     expect(html).not.toContain('listed for information');
+  });
+});
+
+describe('stop them and resume (DL-433)', () => {
+  const done = (check: ExecutionCheck | null, extra: Partial<ExecutionStopOutcome> = {}) =>
+    ({
+      kind: 'done',
+      text: 'Fleet Deck stopped 3 processes. 1 needed a force stop.',
+      alert: typeof extra.code === 'string',
+      check,
+    }) as const;
+  const clean = check({ group_members: [], session_members: [] });
+
+  test('stop them and resume marks and resumes after a done outcome and a clean check', async () => {
+    expect(mayMarkAfterStop(done(clean))).toBe(true);
+    const calls: string[] = [];
+    const result = await markAndResume(
+      {
+        reconcileExecution: async (id) => {
+          calls.push(`reconcile ${id}`);
+          return { ok: true, text: 'Done.' };
+        },
+        resume: async () => {
+          calls.push('resume');
+          return { ok: true, text: 'Done.' };
+        },
+      },
+      'shim-1',
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(['reconcile shim-1', 'resume']);
+  });
+
+  test('a stop with processes_remain neither marks nor resumes', () => {
+    expect(mayMarkAfterStop(done(clean, { code: 'processes_remain' }))).toBe(false);
+    // The same for a stop that ended clean while a process of the run still lives or the check
+    // is incomplete or missing, and for a cancelled or failed stop.
+    expect(mayMarkAfterStop(done(check()))).toBe(false);
+    expect(mayMarkAfterStop(done(check({ group_members: [], complete: false })))).toBe(false);
+    expect(mayMarkAfterStop(done(null))).toBe(false);
+    expect(mayMarkAfterStop({ kind: 'cancelled' })).toBe(false);
+    expect(mayMarkAfterStop({ kind: 'failed', text: 'Refused: plan expired' })).toBe(false);
+  });
+
+  test('the confirmation names the mark and the resume', () => {
+    const html = (then: 'resume' | null) =>
+      renderToStaticMarkup(
+        <PlanPanel
+          plan={plan()}
+          busy={false}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+          then={then}
+        />,
+      );
+    expect(html('resume')).toContain(RESUME_TEXTS.stopConfirm);
+    expect(html('resume')).toContain(
+      'Unsaved work may be lost. Then Fleet Deck marks the run as ended',
+    );
+    expect(html(null)).not.toContain('Then Fleet Deck marks');
+  });
+
+  test('the action is named Stop them and resume only in resume mode', () => {
+    const actions = sessionActions(async () => ({}), key, ['admin']);
+    const render = (then: 'resume' | null) =>
+      renderToStaticMarkup(
+        <ExecutionStop
+          actions={actions}
+          shimId="shim-1"
+          stillRuns={true}
+          onCheck={() => {}}
+          then={then}
+        />,
+      );
+    expect(render('resume')).toContain('Stop them and resume');
+    expect(render('resume')).not.toContain('Stop these processes…');
+    expect(render(null)).toContain('Stop these processes…');
   });
 });

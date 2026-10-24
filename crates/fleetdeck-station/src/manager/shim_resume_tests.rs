@@ -495,6 +495,8 @@ fn a_reboot_proof_holds_only_while_the_boot_id_differs_and_no_process_has_the_id
             launch_boot_id: None,
             native_target: None,
             created_at: 1,
+            station_proof: None,
+            station_proof_at: None,
         }
     }
     let boot = Boot(Arc::new(Mutex::new(Some("boot-2".to_owned()))));

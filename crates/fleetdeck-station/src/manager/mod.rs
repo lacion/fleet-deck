@@ -319,10 +319,7 @@ impl SessionManager {
         }
         // Auto-continue intents of the sessions that this start lost, before
         // any command is admitted (ADR-007 §2.2, DL-127).
-        let continued = auto_continue::evaluate(&store, &policy, restore_from).await?;
-        if continued > 0 {
-            tracing::info!(continued, "stored auto-continue intents");
-        }
+        auto_continue::evaluate_at_start(&store, &policy, restore_from, shims.as_ref()).await?;
         // A trash operation that a restart interrupted goes on from its row
         // (DL-150); the effect of the earlier process is retired.
         let requeued = store.requeue_worktree_ops().await?;
@@ -625,7 +622,7 @@ impl SessionManager {
         // The process check of a reconciliation runs here, outside the
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
-        let check = self.reconcile_check(&command).await;
+        let check = self.pre_decision(&command).await;
         let after = coordinator_command::after_of(&command);
         let _session = coordinator_command::session_lock(&self.coordinator, &command).await;
         let decided = self

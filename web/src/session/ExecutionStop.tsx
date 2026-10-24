@@ -1,11 +1,14 @@
 // BG-4 (design `board-gaps.md` §5): "Stop these processes…" in the dialog of the previous run. The
 // owner reviews the stop plan of the station, confirms it with the elevation, and sees the result.
-// "Mark as ended" stays a separate action: nothing here presses it.
+// "Mark as ended" stays a separate action: nothing here presses it, except the combined "Stop them
+// and resume" of the resume mode (DL-433), which marks the run and resumes after a clean stop.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ExecutionCheck, ExecutionStopOutcome, ExecutionStopPlan } from '../gen';
 import { useSettings } from '../settings/context';
 import { useFleetElevation } from '../spawn/useFleetElevation';
+import { Loading } from '../ui/Loading';
 import { commandId, type SessionActions, STOP_TEXTS } from './commands';
+import { markAndResume, RESUME_TEXTS } from './resumeRefusal';
 
 /** The label of the elevation that the deck needs for the stop. */
 export const STOP_ELEVATION_LABEL = 'Stop previous run processes';
@@ -111,7 +114,7 @@ export type StopDeps = {
 
 /**
  * The confirmed stop: ask for the elevation (nothing is sent when the owner cancels), send the
- * command with its own id, then poll the check for the result. It never marks the run as ended.
+ * command with its own id, then poll the check for the result. It never marks the run as ended (the caller may, DL-433).
  */
 export async function sendStop(
   deps: StopDeps,
@@ -139,6 +142,16 @@ export async function sendStop(
   };
 }
 
+/**
+ * DL-433: after a stop in resume mode, the run is marked as ended and the session resumes only
+ * when the stop ended without a code and the fresh check is complete and shows nothing alive.
+ */
+export const mayMarkAfterStop = (outcome: StopResult): boolean =>
+  outcome.kind === 'done' &&
+  !outcome.alert &&
+  outcome.check?.complete === true &&
+  !stillRuns(outcome.check);
+
 const rowsOf = (list: ExecutionStopPlan['targets']): readonly string[] =>
   list.map((p) => `${p.pid} ${p.command}`);
 
@@ -147,10 +160,12 @@ type PanelProps = {
   readonly busy: boolean;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  /** Resume mode (DL-433): the confirmation names the mark and the resume. */
+  readonly then?: 'resume' | null;
 };
 
 /** The review of an eligible plan: the targets, the escaped note, the confirmation and its buttons. */
-export function PlanPanel({ plan, busy, onConfirm, onCancel }: PanelProps) {
+export function PlanPanel({ plan, busy, onConfirm, onCancel, then = null }: PanelProps) {
   return (
     <div className="fd-exec-stop">
       <h3 className="fd-label">Processes to stop</h3>
@@ -170,7 +185,9 @@ export function PlanPanel({ plan, busy, onConfirm, onCancel }: PanelProps) {
           <p className="fd-note">{STOP_ESCAPED_NOTE}</p>
         </>
       )}
-      <p className="fd-note">{STOP_CONFIRM}</p>
+      <p className="fd-note">
+        {then === 'resume' ? `${STOP_CONFIRM} ${RESUME_TEXTS.stopConfirm}` : STOP_CONFIRM}
+      </p>
       <button type="button" className="fd-danger" disabled={busy} onClick={onConfirm}>
         Stop processes
       </button>
@@ -181,7 +198,7 @@ export function PlanPanel({ plan, busy, onConfirm, onCancel }: PanelProps) {
   );
 }
 
-type Phase = 'idle' | 'loading' | 'review' | 'sending' | 'waiting';
+type Phase = 'idle' | 'loading' | 'review' | 'sending' | 'waiting' | 'resuming';
 
 type Props = {
   readonly actions: SessionActions;
@@ -190,12 +207,23 @@ type Props = {
   readonly stillRuns: boolean;
   /** The refreshed check after a stop (its lists replace the lists of the dialog). */
   readonly onCheck: (check: ExecutionCheck) => void;
+  /** `resume`: the stop also marks the run as ended and resumes the session (DL-433). */
+  readonly then?: 'resume' | null;
+  /** The session resumed after the stop (only with `then="resume"`). */
+  readonly onResumed?: () => void;
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
 
 /** "Stop these processes…": the plan, the confirmation, the elevation and the result. */
-export function ExecutionStop({ actions, shimId, stillRuns: runs, onCheck }: Props) {
+export function ExecutionStop({
+  actions,
+  shimId,
+  stillRuns: runs,
+  onCheck,
+  then = null,
+  onResumed,
+}: Props) {
   const { ask, node: elevationNode } = useFleetElevation(useSettings());
   const [phase, setPhase] = useState<Phase>('idle');
   const [plan, setPlan] = useState<ExecutionStopPlan | null>(null);
@@ -254,6 +282,14 @@ export function ExecutionStop({ actions, shimId, stillRuns: runs, onCheck }: Pro
       setResult({ text: outcome.text, alert: outcome.alert });
       setPhase('idle');
       if (outcome.check !== null) onCheck(outcome.check);
+      if (then === 'resume' && mayMarkAfterStop(outcome)) {
+        setPhase('resuming');
+        const resumed = await markAndResume(actions, shimId);
+        if (!alive.current) return;
+        setPhase('idle');
+        if (resumed.ok) onResumed?.();
+        else setError(resumed.text);
+      }
       return;
     }
     if (outcome.kind === 'failed') setError(outcome.text);
@@ -262,13 +298,14 @@ export function ExecutionStop({ actions, shimId, stillRuns: runs, onCheck }: Pro
 
   const eligible = plan?.eligible === true;
   const notice = plan === null ? null : planNotice(plan);
-  const working = phase === 'loading' || phase === 'sending' || phase === 'waiting';
+  const working =
+    phase === 'loading' || phase === 'sending' || phase === 'waiting' || phase === 'resuming';
   const offer = runs && !working && !(phase === 'review' && eligible);
   return (
     <div className="fd-exec-stop-area">
       {offer ? (
         <button type="button" className="fd-danger" onClick={() => void openPlan()}>
-          Stop these processes…
+          {then === 'resume' ? RESUME_TEXTS.stop : 'Stop these processes…'}
         </button>
       ) : null}
       {phase === 'loading' ? <p className="fd-note">Reading the stop plan…</p> : null}
@@ -277,6 +314,7 @@ export function ExecutionStop({ actions, shimId, stillRuns: runs, onCheck }: Pro
           Waiting for the result…
         </p>
       ) : null}
+      {phase === 'resuming' ? <Loading text={RESUME_TEXTS.busy} /> : null}
       {notice === null ? null : (
         <p className="fd-note" role="alert">
           {notice}
@@ -286,6 +324,7 @@ export function ExecutionStop({ actions, shimId, stillRuns: runs, onCheck }: Pro
         <PlanPanel
           plan={plan}
           busy={working}
+          then={then}
           onConfirm={() => void confirm()}
           onCancel={() => {
             setPlan(null);

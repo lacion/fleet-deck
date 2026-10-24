@@ -132,6 +132,27 @@ async fn a_clean_exit_reports_a_zero_count_with_the_inspection_and_an_older_stat
     drop(launched);
 }
 
+/// A child that ends with the provider comes back to the shim in another
+/// process group than the shim's: `waitpid(-1)` reaps its zombie, so the
+/// census is clean and the exit is a proven one (DL-430).
+#[tokio::test]
+async fn a_child_that_ends_with_the_provider_leaves_a_proven_exit() {
+    let rig = Rig::new("sh -c 'true &'; sleep 0.3; echo done");
+    let (launched, _) = rig.ready().await;
+    let (mut att, _) = rig.attach(1).await;
+    let seen = read_until(&mut att, |s| exited(s).is_some()).await;
+    let report = exited(&seen).unwrap();
+    assert_eq!(report.descendants_remaining, Some(0), "{report:?}");
+    assert_eq!(report.inspection, 1);
+    assert_eq!(
+        shims::exit_reason(Some(report)),
+        shims::reason::EXITED,
+        "the end is proven"
+    );
+    end_after_exit(&rig, 2).await;
+    drop(launched);
+}
+
 #[tokio::test]
 async fn a_station_of_the_newer_build_picks_the_highest_protocol_and_the_older_one_stays_possible()
 {
@@ -209,6 +230,8 @@ async fn a_detached_descendant_does_not_make_a_clean_exit_unproven_and_the_check
         launch_boot_id: Some(real_boot()),
         native_target: None,
         created_at: 1,
+        station_proof: None,
+        station_proof_at: None,
     };
     let reader: BootIdReader = Arc::new(|| Ok(real_boot()));
     let check = shims::check_row(&reader, &row);

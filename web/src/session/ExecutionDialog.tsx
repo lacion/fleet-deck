@@ -6,8 +6,11 @@ import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import type { ExecutionCheck } from '../gen';
 import { Icon, X } from '../ui/icons';
-import type { SessionActions } from './commands';
+import { Loading } from '../ui/Loading';
+import { ErrorNotice } from '../ui/page';
+import type { Outcome, SessionActions } from './commands';
 import { ESCAPED_TITLE, ExecutionStop, stillRuns } from './ExecutionStop';
+import { type CheckMode, markAndResume, RESUME_TEXTS } from './resumeRefusal';
 
 type ProcessList = { readonly title: string; readonly rows: readonly string[] };
 
@@ -58,15 +61,141 @@ export function executionView(check: ExecutionCheck): ExecutionView {
   };
 }
 
+/** Runs a step of the resume mode: `null` and `onResumed` when it is accepted, else its refusal text. */
+export async function finishResume(
+  step: () => Promise<Outcome>,
+  onResumed: () => void,
+): Promise<string | null> {
+  const outcome = await step();
+  if (!outcome.ok) return outcome.text;
+  onResumed();
+  return null;
+}
+
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
+
+type BodyProps = {
+  readonly check: ExecutionCheck;
+  readonly purpose: CheckMode;
+  readonly actions: SessionActions;
+  readonly busy: boolean;
+  readonly marked: boolean;
+  readonly markError: string | null;
+  /** `mark`: Mark as ended (menu). `both`: mark, then resume. `resume`: resume only. */
+  readonly onAct: (act: 'mark' | 'both' | 'resume', shimId: string) => void;
+  readonly onCheck: (check: ExecutionCheck) => void;
+  readonly onResumed?: () => void;
+};
+
+/** What the dialog shows of a check: the lines, the lists, the stop action and the mark. */
+export function ExecutionBody(p: BodyProps) {
+  const { check, busy, marked, markError, onAct } = p;
+  const resumeMode = p.purpose === 'resume';
+  const view = executionView(check);
+  const shimId = check.shim_id;
+  const alert =
+    markError === null ? null : (
+      <p className="fd-note" role="alert">
+        {markError}
+      </p>
+    );
+  return (
+    <div className="fd-exec-body">
+      {view.lines.map((line) => (
+        <p key={line} className={view.nothing ? 'fd-note' : undefined}>
+          {line}
+        </p>
+      ))}
+      {view.lists.map((list) => (
+        <div key={list.title}>
+          <h3 className="fd-label">{list.title}</h3>
+          <ul className="fd-exec-list" aria-label={list.title}>
+            {list.rows.map((row) => (
+              <li key={row}>{row}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {view.incomplete === null ? null : (
+        <p className="fd-note" role="alert">
+          {view.incomplete}
+        </p>
+      )}
+      {view.nothing || shimId === null || marked ? null : (
+        <ExecutionStop
+          actions={p.actions}
+          shimId={shimId}
+          stillRuns={stillRuns(check)}
+          onCheck={p.onCheck}
+          then={resumeMode ? 'resume' : null}
+          {...(p.onResumed ? { onResumed: p.onResumed } : {})}
+        />
+      )}
+      {view.nothing && resumeMode ? (
+        <>
+          <button
+            type="button"
+            className="fd-primary"
+            disabled={busy}
+            onClick={() => onAct('resume', '')}
+          >
+            {busy ? RESUME_TEXTS.busy : RESUME_TEXTS.resume}
+          </button>
+          {alert}
+        </>
+      ) : null}
+      {view.nothing || shimId === null ? null : resumeMode ? (
+        view.canMark ? (
+          <>
+            <p className="fd-note">{RESUME_TEXTS.nothingLives}</p>
+            <button
+              type="button"
+              className="fd-danger"
+              disabled={busy}
+              onClick={() => onAct('both', shimId)}
+            >
+              {busy ? RESUME_TEXTS.busy : RESUME_TEXTS.mark}
+            </button>
+            {alert}
+          </>
+        ) : null
+      ) : marked ? (
+        <p className="fd-note" role="status">
+          Marked as ended. You can resume the session now.
+        </p>
+      ) : (
+        <>
+          <p className="fd-note">
+            Mark it as ended only when you know that the previous run stopped. The station checks
+            the processes again and refuses while any of them lives.
+          </p>
+          <button
+            type="button"
+            className="fd-danger"
+            disabled={!view.canMark || busy}
+            onClick={() => onAct('mark', shimId)}
+          >
+            {busy ? 'Marking…' : 'Mark as ended'}
+          </button>
+          {alert}
+        </>
+      )}
+    </div>
+  );
+}
 
 type Props = {
   readonly actions: SessionActions;
   readonly onClose: () => void;
+  /** `menu`: the session menu entry (default). `resume`: a refused resume opened it (DL-433). */
+  readonly purpose?: CheckMode;
+  /** Resume mode: the run is marked as ended and the session resumed; the dialog closes. */
+  readonly onResumed?: () => void;
 };
 
 /** "Check the previous run" (owner only): the processes of the run, and "Mark as ended". */
-export function ExecutionDialog({ actions, onClose }: Props) {
+export function ExecutionDialog({ actions, onClose, purpose = 'menu', onResumed }: Props) {
+  const resumeMode = purpose === 'resume';
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useFocusReturn(root, close);
@@ -105,6 +234,19 @@ export function ExecutionDialog({ actions, onClose }: Props) {
     void load();
   }, [load]);
 
+  // Resume mode: a step that resumes (mark then resume, or resume only); a refusal keeps the
+  // dialog open and shows its text, an accepted resume closes it.
+  const resumeStep = async (step: () => Promise<Outcome>) => {
+    setBusy(true);
+    setMarkError(null);
+    const text = await finishResume(step, () => onResumed?.());
+    if (!alive.current) return;
+    setBusy(false);
+    setMarkError(text);
+  };
+  const markAndGo = (shimId: string) => resumeStep(() => markAndResume(actions, shimId));
+  const resumeOnly = () => resumeStep(() => actions.resume());
+
   const mark = async (shimId: string) => {
     setBusy(true);
     setMarkError(null);
@@ -116,9 +258,8 @@ export function ExecutionDialog({ actions, onClose }: Props) {
   };
 
   const view = check === null ? null : executionView(check);
-  const shimId = check?.shim_id ?? null;
   return (
-    // The overlay click is a mouse shortcut; the Close button and Escape serve the keyboard.
+    // The overlay click is a mouse shortcut; the Close X and Escape serve the keyboard.
     <div
       className="fd-overlay"
       onClick={(e) => {
@@ -138,72 +279,39 @@ export function ExecutionDialog({ actions, onClose }: Props) {
           } else trapTab(e, root.current);
         }}
       >
-        <h2>Previous run of this session</h2>
-        {loading ? <p className="fd-note">Checking the processes…</p> : null}
-        {error === null ? null : (
-          <p className="fd-note" role="alert">
-            {error}
-          </p>
+        <div className="fd-dialog-head">
+          <h2>{resumeMode ? RESUME_TEXTS.title : 'Previous run of this session'}</h2>
+          {resumeMode ? <p>{RESUME_TEXTS.description}</p> : null}
+          <button
+            ref={close}
+            type="button"
+            className="fd-iconbtn"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+          >
+            <Icon of={X} />
+          </button>
+        </div>
+        {loading ? <Loading text="Checking the processes…" /> : null}
+        {error === null ? null : <ErrorNotice text={error} onRetry={() => void load()} />}
+        {check === null || loading ? null : (
+          <ExecutionBody
+            check={check}
+            purpose={purpose}
+            actions={actions}
+            busy={busy}
+            marked={marked}
+            markError={markError}
+            onAct={(act, id) =>
+              void (act === 'mark' ? mark(id) : act === 'both' ? markAndGo(id) : resumeOnly())
+            }
+            onCheck={setCheck}
+            {...(onResumed ? { onResumed } : {})}
+          />
         )}
-        {view === null || loading ? null : (
-          <div className="fd-exec-body">
-            {view.lines.map((line) => (
-              <p key={line} className={view.nothing ? 'fd-note' : undefined}>
-                {line}
-              </p>
-            ))}
-            {view.lists.map((list) => (
-              <div key={list.title}>
-                <h3 className="fd-label">{list.title}</h3>
-                <ul className="fd-exec-list" aria-label={list.title}>
-                  {list.rows.map((row) => (
-                    <li key={row}>{row}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-            {view.incomplete === null ? null : (
-              <p className="fd-note" role="alert">
-                {view.incomplete}
-              </p>
-            )}
-            {view.nothing || shimId === null || marked ? null : (
-              <ExecutionStop
-                actions={actions}
-                shimId={shimId}
-                stillRuns={check !== null && stillRuns(check)}
-                onCheck={setCheck}
-              />
-            )}
-            {view.nothing || shimId === null ? null : marked ? (
-              <p className="fd-note" role="status">
-                Marked as ended. You can resume the session now.
-              </p>
-            ) : (
-              <>
-                <p className="fd-note">
-                  Mark it as ended only when you know that the previous run stopped. The station
-                  checks the processes again and refuses while any of them lives.
-                </p>
-                <button
-                  type="button"
-                  className="fd-danger"
-                  disabled={!view.canMark || busy}
-                  onClick={() => void mark(shimId)}
-                >
-                  {busy ? 'Marking…' : 'Mark as ended'}
-                </button>
-                {markError === null ? null : (
-                  <p className="fd-note" role="alert">
-                    {markError}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        )}
-        <div className="fd-exec-foot">
-          {view?.nothing === true ? null : (
+        {view?.nothing === true ? null : (
+          <div className="fd-exec-foot">
             <button
               type="button"
               className="fd-ghost"
@@ -212,11 +320,8 @@ export function ExecutionDialog({ actions, onClose }: Props) {
             >
               Check again
             </button>
-          )}
-          <button ref={close} type="button" className="fd-ghost" onClick={onClose}>
-            <Icon of={X} size={14} /> Close
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

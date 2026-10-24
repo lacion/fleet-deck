@@ -13,7 +13,9 @@
 //!   input (§2.3). An ineligible session stays `lost` with
 //!   `session.auto_continue_skipped { reason }`. A shim session is continued
 //!   only with the DL-182 proof that its run ended (the `execution_unknown`
-//!   and `not_resumable` checks of the chain; DL-188 step 3).
+//!   and `not_resumable` checks of the chain; DL-188 step 3). On a shim host,
+//!   an unverified exit of the same boot is settled before the decision
+//!   (DL-432).
 //! - The worker rechecks rules 2, 3, 5, 6 and 9 right before it spawns
 //!   (§2.4), and on a shim host the DL-182 proof again like a manual
 //!   resume. A claimed continuation that a crash interrupts is
@@ -189,6 +191,27 @@ async fn lost_after(store: &Store, after: u64) -> crate::store::Result<Vec<Sessi
     }
 }
 
+/// [`evaluate_settling`] for the station start: on a shim host (`shims` is
+/// the settings) the boot id reader of the host settles an unverified exit
+/// of the same boot before each decision (DL-432). It logs the number of
+/// intents.
+///
+/// # Errors
+/// A database error.
+pub async fn evaluate_at_start(
+    store: &Store,
+    policy: &Policy,
+    after: u64,
+    shims: Option<&super::target::ShimSettings>,
+) -> crate::store::Result<usize> {
+    let boot = shims.map(|s| std::sync::Arc::clone(&s.host.config().boot_id_reader));
+    let continued = evaluate_settling(store, policy, after, boot.as_ref()).await?;
+    if continued > 0 {
+        tracing::info!(continued, "stored auto-continue intents");
+    }
+    Ok(continued)
+}
+
 /// Evaluates every session that this station start lost after `after`
 /// (the store head before recovery) and stores at most one continuation
 /// intent per lost turn. A session with auto-continue off is not touched
@@ -197,6 +220,22 @@ async fn lost_after(store: &Store, after: u64) -> crate::store::Result<Vec<Sessi
 /// # Errors
 /// A database error.
 pub async fn evaluate(store: &Store, policy: &Policy, after: u64) -> crate::store::Result<usize> {
+    evaluate_settling(store, policy, after, None).await
+}
+
+/// [`evaluate`] with the boot id reader of a shim host: for each candidate
+/// that passes the pre-filter, an unverified exit of the same boot is
+/// settled before the decision (DL-432). The station start admits no
+/// command before this call, so no per-session lock is needed.
+///
+/// # Errors
+/// A database error.
+pub async fn evaluate_settling(
+    store: &Store,
+    policy: &Policy,
+    after: u64,
+    boot: Option<&BootIdReader>,
+) -> crate::store::Result<usize> {
     let mut stored = 0;
     for session_id in lost_after(store, after).await? {
         let Some(summary) = store.summary(session_id.clone()).await? else {
@@ -208,6 +247,9 @@ pub async fn evaluate(store: &Store, policy: &Policy, after: u64) -> crate::stor
         let Some(w) = store.lost_work(session_id.clone(), after).await? else {
             continue;
         };
+        if let Some(boot) = boot {
+            super::execution_checks::settle_unverified_exits(store, boot, &session_id).await;
+        }
         let turn = w
             .turn_id
             .as_ref()

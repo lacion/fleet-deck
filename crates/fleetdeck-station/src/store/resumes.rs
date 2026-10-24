@@ -11,6 +11,8 @@
 //!   row without the inspection version (an older shim) is `exit_unverified`.
 //! - a `proof` next to the row: [`PROOF_REBOOT`] (revalidated at dispatch)
 //!   or [`PROOF_OWNER`].
+//! - a `station_proof` next to the row: [`PROOF_STATION`], the station's own
+//!   check of an unverified exit (DL-432, [`settle_eligible`]).
 //!
 //! Every other row — open, or `lost` for any reason (`execution_unknown`,
 //! `attach_refused`, `shim_incompatible`, `identity_mismatch`, an
@@ -19,10 +21,11 @@
 //! provider, so a resume could run a second execution of one conversation.
 
 use fleetdeck_proto::SessionId;
-use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::event::{Event, ProviderKind};
 use rusqlite::{Connection, OptionalExtension as _};
 
 use super::Result;
+use super::log;
 use super::receipts::Decision;
 use super::session_holds;
 use super::shims::{ShimRow, ShimState, row as shim_row};
@@ -35,6 +38,9 @@ pub const PROOF_REBOOT: &str = "ended_by_reboot";
 pub const PROOF_OWNER: &str = "reconciled_by_owner";
 /// The `exited` reason of a report without a complete inspection.
 pub const EXIT_UNVERIFIED: &str = "exit_unverified";
+/// The station proof: a check after the exit found nothing of the run
+/// (DL-432).
+pub const PROOF_STATION: &str = "checked_after_exit";
 
 /// True when the clean exit of `row` is a complete, verified one.
 #[must_use]
@@ -51,9 +57,24 @@ pub fn clean_exit(row: &ShimRow) -> bool {
 pub fn proves_end(row: &ShimRow) -> bool {
     match row.state {
         ShimState::NeverStarted => true,
-        ShimState::Exited | ShimState::Lost => row.proof.is_some() || clean_exit(row),
+        ShimState::Exited | ShimState::Lost => {
+            row.proof.is_some() || row.station_proof.is_some() || clean_exit(row)
+        }
         ShimState::Starting | ShimState::Running => false,
     }
+}
+
+/// True when the station may settle `row` by its own check (DL-432): an
+/// `exited` row without any proof whose effective reason is
+/// `exit_unverified` (the raw reason, or a legacy exit without inspection)
+/// and that stored the identity of its provider.
+#[must_use]
+pub fn settle_eligible(row: &ShimRow) -> bool {
+    row.state == ShimState::Exited
+        && row.proof.is_none()
+        && row.station_proof.is_none()
+        && effective_reason(row) == EXIT_UNVERIFIED
+        && row.provider_identity.is_some()
 }
 
 /// The reason of `row` as a person reads it: a legacy clean exit without
@@ -483,7 +504,7 @@ pub(super) fn unended_execution(conn: &Connection, session: &SessionId) -> Resul
 
 /// The condition of a row whose end is not proven and that has ended
 /// itself: the rows the boot pass and the owner's check look at.
-const UNRESOLVED: &str = "proof IS NULL
+const UNRESOLVED: &str = "proof IS NULL AND station_proof IS NULL
     AND (state = 'lost'
          OR (state = 'exited' AND (COALESCE(reason, '') <> 'exited' OR inspection_version < 1)))";
 
@@ -560,6 +581,36 @@ impl super::Store {
             raws.into_iter().map(|r| r.decode()).collect()
         })
         .await
+    }
+
+    /// DL-432: records that the station checked an unverified exit and found
+    /// nothing of the run (`station_proof`), and appends the event
+    /// `session.execution_settled` (not the owner's kind) in the same
+    /// transaction. `false` when the row is not eligible any more.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_settle(&self, session: SessionId, shim_id: String) -> Result<bool> {
+        self.write(move |conn, now, out| {
+            let n = conn.execute(
+                &format!(
+                    "UPDATE shims SET station_proof = '{PROOF_STATION}', station_proof_at = ?3,
+                         updated_at = ?3
+                     WHERE shim_id = ?1 AND session_id = ?2 AND state = 'exited'
+                       AND proof IS NULL AND station_proof IS NULL
+                       AND (reason = '{EXIT_UNVERIFIED}'
+                            OR (reason = '{PROVEN_EXIT}' AND inspection_version < 1))"
+                ),
+                rusqlite::params![shim_id, session.as_str(), now],
+            )?;
+            if n == 1 {
+                let event = Event::ExecutionSettled { shim_id };
+                out.push(log::append_one(conn, &session, event.into(), now)?);
+            }
+            Ok(n == 1)
+        })
+        .await
+        .map(|(ok, _)| ok)
     }
 
     /// Records the proof `ended_by_reboot` next to an unresolved row, with
