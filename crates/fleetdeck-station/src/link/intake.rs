@@ -488,6 +488,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
                 taildrive: ctx.fleet_git.taildrive_report(),
                 fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
                 fleet_summary: Some(policy.fleet_summary()),
+                cli_update: None,
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,

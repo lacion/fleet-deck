@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use super::knobs_station_cfg::{RawCapture, RawStationLimits, RawStationRetention};
 use super::model_help_cfg::RawModelHelp;
+use super::provider_updates_cfg::RawProviderUpdates;
 use super::trackers_cfg::RawTracker;
 use super::{ConfigError, Driver, ProviderInstance, invalid, valid_env_key, valid_instance_id};
 use crate::paths::expand_path;
@@ -18,7 +19,8 @@ use crate::settings::refs;
 /// The keys of `station.toml` (`RawStation`). `model_help` is a table; its
 /// keys are in [`RAW_MODEL_HELP_KEYS`]. `limits`, `retention` and `capture`
 /// are tables too (`RAW_STATION_LIMITS_KEYS`, `RAW_STATION_RETENTION_KEYS`,
-/// `RAW_CAPTURE_KEYS`).
+/// `RAW_CAPTURE_KEYS`). `provider_updates` is a table too
+/// (`RAW_PROVIDER_UPDATES_KEYS`).
 #[cfg(test)]
 pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "name",
@@ -55,6 +57,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "limits",
     "retention",
     "capture",
+    "provider_updates",
 ];
 
 #[derive(Deserialize)]
@@ -94,6 +97,7 @@ pub(super) struct RawStation {
     pub(super) limits: Option<RawStationLimits>,
     pub(super) retention: Option<RawStationRetention>,
     pub(super) capture: Option<RawCapture>,
+    pub(super) provider_updates: Option<RawProviderUpdates>,
 }
 
 /// The keys of one `[[provider_instance]]` (`RawInstance`).

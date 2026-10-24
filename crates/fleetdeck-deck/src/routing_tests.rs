@@ -58,6 +58,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
             taildrive: None,
             fleet_git: None,
             fleet_summary: None,
+            cli_update: None,
         }),
         info_at: None,
         display_resources: None,

@@ -184,6 +184,7 @@ impl Holder for StationHolder {
         );
         m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
         insert_station_knobs(&mut m, c);
+        insert_provider_updates(&mut m, c);
         m.insert("clone_root".into(), tailscale_bin_text(&c.clone_root));
         m.insert("traits".into(), strings(c.traits.clone()));
         m.insert("allow_check_cmd".into(), json!(c.allow_check_cmd));
@@ -294,6 +295,20 @@ impl Holder for StationHolder {
         add(
             !old.allow_local_remotes && new.allow_local_remotes,
             "allow_local_remotes",
+        );
+        // B28: the update switch, a changed pin and a shorter wait let the
+        // station install code from the internet sooner or at another
+        // version.
+        let (ou, nu) = (&old.provider_updates, &new.provider_updates);
+        add(!ou.enabled && nu.enabled, "provider_updates.enabled");
+        add(
+            ou.claude_pin != nu.claude_pin,
+            "provider_updates.claude_pin",
+        );
+        add(ou.codex_pin != nu.codex_pin, "provider_updates.codex_pin");
+        add(
+            nu.min_age_hours < ou.min_age_hours,
+            "provider_updates.min_age_hours",
         );
         // A shorter session history deletes data; a longer raw log keeps more
         // text that can hold prompts (knobs design section 3).
@@ -453,6 +468,38 @@ fn insert_worker_grant(m: &mut Map<String, Value>, c: &DeckConfig) {
         json!(w.lifetime_hours),
     );
     m.insert("worker_grant.idle_minutes".into(), json!(w.idle_minutes));
+}
+
+/// The values of `[provider_updates]` (B28): the window start as `HH:MM`, the
+/// zone as `local`, `UTC` or `+HH:MM`, a missing pin as `""`.
+fn insert_provider_updates(m: &mut Map<String, Value>, c: &StationConfig) {
+    let u = &c.provider_updates;
+    m.insert("provider_updates.enabled".into(), json!(u.enabled));
+    m.insert(
+        "provider_updates.window_start".into(),
+        json!(u.window_start_text()),
+    );
+    m.insert(
+        "provider_updates.window_hours".into(),
+        json!(u.window_hours),
+    );
+    m.insert("provider_updates.timezone".into(), json!(u.timezone.text()));
+    m.insert(
+        "provider_updates.claude_channel".into(),
+        json!(u.claude_channel.text()),
+    );
+    m.insert(
+        "provider_updates.claude_pin".into(),
+        json!(u.claude_pin.clone().unwrap_or_default()),
+    );
+    m.insert(
+        "provider_updates.codex_pin".into(),
+        json!(u.codex_pin.clone().unwrap_or_default()),
+    );
+    m.insert(
+        "provider_updates.min_age_hours".into(),
+        json!(u.min_age_hours),
+    );
 }
 
 /// The values of the station knobs (knobs design section 3).

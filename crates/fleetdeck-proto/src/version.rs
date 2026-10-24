@@ -302,6 +302,10 @@ pub mod feature {
     /// artifact request.
     pub const WALL_APPS: &str = "wall_apps.v1";
 
+    /// B28: provider CLI updates by the station (`cli_update.status`,
+    /// `cli_update.run`, `cli_update.attempts`).
+    pub const CLI_UPDATE: &str = "cli_update.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -374,6 +378,7 @@ pub mod feature {
         SESSION_EFFORT,
         MCP_APPS,
         WALL_APPS,
+        CLI_UPDATE,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -604,9 +609,17 @@ mod tests {
     }
 
     #[test]
-    fn the_wall_apps_feature_has_its_name_follows_the_mcp_apps_and_is_the_last_in_all() {
+    fn the_cli_update_feature_has_its_name_follows_wall_apps_and_is_not_required() {
+        assert_eq!(feature::CLI_UPDATE, "cli_update.v1");
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::WALL_APPS) + 1, at(feature::CLI_UPDATE));
+        assert_eq!(feature::ALL.last(), Some(&feature::CLI_UPDATE));
+        assert!(!feature::REQUIRED.contains(&feature::CLI_UPDATE));
+    }
+
+    #[test]
+    fn the_wall_apps_feature_has_its_name_and_follows_the_mcp_apps() {
         assert_eq!(feature::WALL_APPS, "wall_apps.v1");
-        assert_eq!(feature::ALL.last(), Some(&feature::WALL_APPS));
         let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
         assert_eq!(at(feature::MCP_APPS) + 1, at(feature::WALL_APPS));
         assert!(!feature::REQUIRED.contains(&feature::WALL_APPS));

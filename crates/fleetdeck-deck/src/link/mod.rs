@@ -588,6 +588,7 @@ mod tests {
             taildrive: None,
             fleet_git: None,
             fleet_summary: None,
+            cli_update: None,
         }
     }
 

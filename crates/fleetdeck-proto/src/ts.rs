@@ -33,6 +33,7 @@ use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::capture::{
     CaptureCaller, CaptureKind, CaptureProvenance, CaptureResult, CaptureStatus, CaptureStatusQuery,
 };
+use crate::cli_update as cu;
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::coordinator_desktop as cd;
@@ -398,6 +399,16 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         wp::DisplayPage::export_all(&cfg),
         wa::WallAppCard::export_all(&cfg),
         wa::WallAppFeed::export_all(&cfg),
+        cu::InstallMethod::export_all(&cfg),
+        cu::UpdateTrigger::export_all(&cfg),
+        cu::UpdateOutcome::export_all(&cfg),
+        cu::CliUpdateAttempt::export_all(&cfg),
+        cu::ProviderUpdateState::export_all(&cfg),
+        cu::CliUpdateReport::export_all(&cfg),
+        cu::CliUpdateRun::export_all(&cfg),
+        cu::CliUpdateRunAnswer::export_all(&cfg),
+        cu::CliUpdateAttemptsQuery::export_all(&cfg),
+        cu::CliUpdateAttemptsPage::export_all(&cfg),
         DisplayChangesQuery::export_all(&cfg),
         DisplayFileChange::export_all(&cfg),
         DisplayChanges::export_all(&cfg),

@@ -45,7 +45,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 68] = [
+pub(crate) const TAIL: [MethodSpec; 71] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -337,4 +337,8 @@ pub(crate) const TAIL: [MethodSpec; 68] = [
     app_row("session.app_call", Scope::Drive),
     app_row("session.app_calls", Scope::Read),
     app_row("session.app_release", Scope::Drive),
+    // B28: provider CLI updates. Admin; the deck keeps its own audit.
+    p5a_row("cli_update.status", feature::CLI_UPDATE),
+    p5a_row("cli_update.run", feature::CLI_UPDATE),
+    p5a_row("cli_update.attempts", feature::CLI_UPDATE),
 ];

@@ -4,6 +4,7 @@
 use fleetdeck_proto::settings::{Apply, FieldKind, FieldMeta};
 
 use super::fields_knobs::{deck_knob_fields, station_knob_fields};
+use super::fields_updates::provider_update_fields;
 use crate::config::MAX_HIBERNATE_AFTER_MIN;
 
 /// The builder of one entry.
@@ -34,7 +35,7 @@ impl F {
         self
     }
 
-    fn options(mut self, options: &[&str]) -> Self {
+    pub(super) fn options(mut self, options: &[&str]) -> Self {
         self.0.options = options.iter().map(|o| (*o).to_owned()).collect();
         self
     }
@@ -346,6 +347,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
     .into_iter()
     .map(|f| f.0)
     .chain(station_knob_fields())
+    .chain(provider_update_fields())
     .collect()
 }
 
