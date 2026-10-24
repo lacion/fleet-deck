@@ -3,12 +3,17 @@
 
 #![allow(clippy::unwrap_used)]
 
+use std::collections::BTreeSet;
+
+use fleetdeck_core::identity::Identity;
+use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::wall_pages::{MAX_WALL_PAGES, NewWallPage, PageFit};
 use fleetdeck_testkit::Det;
 use rusqlite::Connection;
 
 use super::{BOARD_TEXT, CheckedPage, HTTP_TEXT, LABEL_TEXT, URL_TEXT, check_page, origin_host};
 use crate::store::displays::NewDisplay;
+use crate::store::stations::NewStation;
 use crate::store::{DeckStore, call, schema};
 
 const BOARD: &str = "https://board.example";
@@ -323,12 +328,23 @@ async fn page_delete_resets_only_the_displays_that_show_it() {
         .await
         .unwrap()
         .unwrap();
+    // A ceiling has 1-64 paired stations (DL-201).
+    let station = s
+        .pin_station(NewStation {
+            key: Identity::generate().unwrap().public_key(),
+            name: "alpha".to_owned(),
+            scopes: BTreeSet::from([Scope::Read]),
+            dial_url: None,
+        })
+        .await
+        .unwrap()
+        .station_id;
     let mut displays = Vec::new();
     for name in ["One", "Two", "Three"] {
         let d = s
             .create_display(NewDisplay {
                 name: name.to_owned(),
-                ceiling: Vec::new(),
+                ceiling: vec![station.clone()],
             })
             .await
             .unwrap();

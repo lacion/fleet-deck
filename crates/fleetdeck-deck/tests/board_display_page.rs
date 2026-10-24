@@ -105,7 +105,8 @@ impl Rig {
 
     /// A display and its login cookie.
     async fn display(&self, name: &str) -> (String, String) {
-        display_login(&self.c, name, &[]).await
+        // A ceiling has 1-64 paired stations (DL-201).
+        display_login(&self.c, name, &[&self.st]).await
     }
 
     async fn show(&self, display: &str, page_id: &str) {
