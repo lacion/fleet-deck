@@ -313,3 +313,5 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Cause (probable):** `shim_resume_rig.rs` `as_shim_station` reopens `station.db` while the old manager can still hold a connection.
 - **Wanted:** the rig waits for the old store to close before it reopens the database.
 - **Status:** open.
+
+- **Notes (2026-10-24):** the station store sets a 5 s busy timeout (`fleetdeck-core/src/db.rs` `BUSY_TIMEOUT_MS`), so the error is either a deferred transaction that cannot upgrade to a write while the old manager's connection writes (SQLite answers busy at once in that case), or a lock held longer than 5 s under the full workspace load. The rig `shim_resume_rig.rs` `as_shim_station` (7 tests) reopens the file while the old `SessionManager` is still referenced; drop the old manager and wait for its store tasks before the reopen, or open the migration with `BEGIN IMMEDIATE`.
