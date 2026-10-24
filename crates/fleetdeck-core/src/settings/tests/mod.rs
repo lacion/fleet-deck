@@ -5,6 +5,7 @@ mod fault;
 mod fields;
 mod knobs;
 mod p7b;
+mod posture;
 mod save;
 mod secrets;
 mod security;

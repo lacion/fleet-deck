@@ -100,11 +100,11 @@ pub async fn up(
         options.overrides = vec![("listen".to_owned(), "--listen".to_owned())];
     }
     let local_station = Arc::clone(&options.local_station);
-    let station_config = StationConfig::load_with_store(
+    let station_config = Arc::new(StationConfig::load_with_store(
         &dirs.station_config(),
         env,
         &dirs.station().join("secrets"),
-    )?;
+    )?);
     let deck = RunningDeck::start(dirs, &deck_config, BackoffPolicy::default(), options).await?;
     let deck_paths = Some((dirs.deck_config(), dirs.deck()));
     let station = match RunningStation::start(
@@ -185,7 +185,7 @@ mod tests {
             .unwrap();
         let station = RunningStation::start(
             home.dirs(),
-            &home.station_config().unwrap(),
+            &Arc::new(home.station_config().unwrap()),
             Some((home.dirs().deck_config(), home.dirs().deck())),
             None,
         )

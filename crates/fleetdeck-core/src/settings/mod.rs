@@ -9,6 +9,7 @@ mod fields_knobs;
 mod fields_security;
 mod fs;
 mod holder;
+mod posture;
 pub mod refs;
 mod store;
 mod view;
@@ -19,7 +20,8 @@ pub use error::SaveError;
 pub use fields::{deck_fields, station_fields};
 pub use fs::{Fs, RealFs};
 pub use holder::{DeckHolder, Holder, StationHolder};
-pub use view::{revision_of, view_deck, view_station};
+pub use posture::{DECK_NOT_POSTURE, STATION_NOT_POSTURE, STATION_POSTURE_KEYS, posture};
+pub use view::{revision_of, view_deck, view_deck_running, view_station, view_station_running};
 pub use writer::SettingsWriter;
 
 #[cfg(test)]

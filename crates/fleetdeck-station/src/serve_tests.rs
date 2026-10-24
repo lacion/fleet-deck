@@ -123,7 +123,7 @@ async fn the_station_does_not_open_its_database_when_the_live_marker_fails() {
         home: Some(tmp.path().to_owned()),
         ..Env::default()
     };
-    let config = StationConfig::load(&dirs.station_config(), &env).unwrap();
+    let config = Arc::new(StationConfig::load(&dirs.station_config(), &env).unwrap());
     let err = RunningStation::start(&dirs, &config, None, None)
         .await
         .unwrap_err();
@@ -176,7 +176,7 @@ async fn a_station_restart_marks_a_cloning_home_attempt_interrupted() {
         "allowed_roots = [\"{}\"]\nhost = \"direct\"\n",
         home.display()
     );
-    let config = StationConfig::parse(&text, &env).unwrap();
+    let config = Arc::new(StationConfig::parse(&text, &env).unwrap());
     let station = RunningStation::start(&dirs, &config, None, None)
         .await
         .unwrap();

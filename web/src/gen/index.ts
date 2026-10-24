@@ -653,6 +653,8 @@ export * from "./settings/Apply";
 export * from "./settings/Durability";
 export * from "./settings/FieldKind";
 export * from "./settings/FieldMeta";
+export * from "./settings/Relaxed";
+export * from "./settings/RelaxedState";
 export * from "./settings/RestartAnswer";
 export * from "./settings/RestartItem";
 export * from "./settings/RestartKind";

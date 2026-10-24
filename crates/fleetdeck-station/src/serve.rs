@@ -223,7 +223,7 @@ fn set_bridge_endpoint(
 /// [`ServeError`] at start; a running station only logs errors.
 pub async fn serve(
     dirs: &NodeDirs,
-    config: &StationConfig,
+    config: &Arc<StationConfig>,
     restart: Option<Arc<dyn Restart>>,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
@@ -298,7 +298,7 @@ impl RunningStation {
     /// [`ServeError`].
     pub async fn start(
         dirs: &NodeDirs,
-        config: &StationConfig,
+        config: &Arc<StationConfig>,
         deck: Option<(PathBuf, PathBuf)>,
         restart: Option<Arc<dyn Restart>>,
     ) -> Result<Self, ServeError> {
@@ -394,13 +394,16 @@ impl RunningStation {
             assist_instances(config),
         ));
         manager.set_assist(Arc::clone(&assist));
-        manager.set_settings(Arc::new(crate::settings_svc::StationSettings::new(
-            &dirs.station_config(),
-            &station_dir.join("secrets"),
-            Env::from_process(),
-            restart,
-            Arc::clone(&private),
-        )));
+        manager.set_settings(Arc::new(
+            crate::settings_svc::StationSettings::new(
+                &dirs.station_config(),
+                &station_dir.join("secrets"),
+                Env::from_process(),
+                restart,
+                Arc::clone(&private),
+            )
+            .with_running(Arc::clone(config)),
+        ));
         let (shutdown, rx) = watch::channel(false);
         let rescan = tokio::spawn(rescan_credentials(private, CREDENTIAL_RESCAN, rx.clone()));
         let prune = tokio::spawn(prune_history(

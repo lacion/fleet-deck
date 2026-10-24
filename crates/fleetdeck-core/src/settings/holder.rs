@@ -36,6 +36,11 @@ pub trait Holder: 'static {
     }
     /// The keys of the changes that need a recent sign-in (design 1.5).
     fn danger(old: &Self::Parsed, new: &Self::Parsed) -> Vec<String>;
+    /// The key and the text of each control of one config that is weaker than
+    /// its secure default (B27 §3.6).
+    fn relaxed(_parsed: &Self::Parsed) -> Vec<(String, String)> {
+        Vec::new()
+    }
     /// The ids of the provider instances that the config has (also the
     /// defaults that the file does not name).
     fn instance_ids(_parsed: &Self::Parsed) -> Vec<String> {
@@ -228,6 +233,10 @@ impl Holder for StationHolder {
         m
     }
 
+    fn relaxed(c: &StationConfig) -> Vec<(String, String)> {
+        super::posture::station_relaxed(c)
+    }
+
     fn danger(old: &StationConfig, new: &StationConfig) -> Vec<String> {
         let mut keys = Vec::new();
         let mut add = |cond: bool, key: &str| {
@@ -376,6 +385,10 @@ impl Holder for DeckHolder {
         insert_worker_grant(&mut m, c);
         insert_grant_limits(&mut m, c);
         m
+    }
+
+    fn relaxed(c: &DeckConfig) -> Vec<(String, String)> {
+        super::posture::deck_relaxed(c)
     }
 
     fn danger(old: &DeckConfig, new: &DeckConfig) -> Vec<String> {
@@ -605,7 +618,7 @@ fn tailscale_bin_text(path: &Option<std::path::PathBuf>) -> Value {
 /// The order of the offline policies, from the least to the most
 /// permissive: a shorter `deny_after` denies sooner than a longer one, and
 /// `wait` never denies.
-fn policy_rank(p: OfflineApprovalPolicy) -> u64 {
+pub(super) fn policy_rank(p: OfflineApprovalPolicy) -> u64 {
     match p {
         OfflineApprovalPolicy::Wait => u64::MAX,
         OfflineApprovalPolicy::DenyAfter(d) => d.as_secs(),

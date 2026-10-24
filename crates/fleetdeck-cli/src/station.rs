@@ -24,7 +24,11 @@ use crate::restart::{RestartHandle, stop_or_restart};
 /// restart is requested (DL-172).
 pub async fn serve(dirs: &NodeDirs, env: &Env, restart: &RestartHandle) -> anyhow::Result<()> {
     let path = dirs.station_config();
-    let config = StationConfig::load_with_store(&path, env, &dirs.station().join("secrets"))?;
+    let config = Arc::new(StationConfig::load_with_store(
+        &path,
+        env,
+        &dirs.station().join("secrets"),
+    )?);
     fleetdeck_station::serve::serve(
         dirs,
         &config,

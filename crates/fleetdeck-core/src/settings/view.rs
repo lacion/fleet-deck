@@ -10,7 +10,9 @@ use std::time::SystemTime;
 use fleetdeck_proto::settings::SettingsView;
 
 use super::holder::{DeckHolder, Holder, StationHolder};
+use super::posture::posture;
 use crate::config::ConfigError;
+use crate::config::{DeckConfig, StationConfig};
 use crate::paths::Env;
 
 /// The hex SHA-256 of `bytes`: the `revision` of a file.
@@ -57,6 +59,7 @@ fn view<H: Holder>(
     env: &Env,
     store: Option<&Path>,
     overrides: &[(&str, &str)],
+    running: Option<&H::Parsed>,
 ) -> Result<SettingsView, ConfigError> {
     let (bytes, _) = read_config(path).map_err(|e| config_io(path, e))?;
     let text = String::from_utf8(bytes.clone()).map_err(|_| ConfigError::Toml {
@@ -76,15 +79,19 @@ fn view<H: Holder>(
         .iter()
         .filter_map(|f| all.remove(&f.key).map(|v| (f.key.clone(), v)))
         .collect();
+    let overrides: Vec<String> = overrides
+        .iter()
+        .filter(|(k, _)| H::fields().iter().any(|f| f.key == *k))
+        .map(|(k, _)| (*k).to_owned())
+        .collect();
+    let override_keys: Vec<&str> = overrides.iter().map(String::as_str).collect();
+    let relaxed = Some(posture::<H>(&parsed, running, &override_keys));
     Ok(SettingsView {
         values,
         fields,
         revision: revision_of(&bytes),
-        overrides: overrides
-            .iter()
-            .filter(|(k, _)| H::fields().iter().any(|f| f.key == *k))
-            .map(|(k, _)| (*k).to_owned())
-            .collect(),
+        overrides,
+        relaxed,
     })
 }
 
@@ -99,7 +106,7 @@ pub fn view_station(
     store: &Path,
     overrides: &[(&str, &str)],
 ) -> Result<SettingsView, ConfigError> {
-    view::<StationHolder>(path, env, Some(store), overrides)
+    view::<StationHolder>(path, env, Some(store), overrides, None)
 }
 
 /// The settings of the deck.
@@ -107,5 +114,32 @@ pub fn view_station(
 /// # Errors
 /// [`ConfigError`] when the file cannot be read or does not parse.
 pub fn view_deck(path: &Path, overrides: &[(&str, &str)]) -> Result<SettingsView, ConfigError> {
-    view::<DeckHolder>(path, &Env::default(), None, overrides)
+    view::<DeckHolder>(path, &Env::default(), None, overrides, None)
+}
+
+/// The settings of a station whose process runs `running`: the posture
+/// merges the file with the running config (B27 §3.6).
+///
+/// # Errors
+/// [`ConfigError`] when the file cannot be read or does not parse.
+pub fn view_station_running(
+    path: &Path,
+    env: &Env,
+    store: &Path,
+    overrides: &[(&str, &str)],
+    running: &StationConfig,
+) -> Result<SettingsView, ConfigError> {
+    view::<StationHolder>(path, env, Some(store), overrides, Some(running))
+}
+
+/// The settings of the deck whose process runs `running`.
+///
+/// # Errors
+/// [`ConfigError`] when the file cannot be read or does not parse.
+pub fn view_deck_running(
+    path: &Path,
+    overrides: &[(&str, &str)],
+    running: &DeckConfig,
+) -> Result<SettingsView, ConfigError> {
+    view::<DeckHolder>(path, &Env::default(), None, overrides, Some(running))
 }

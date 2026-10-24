@@ -16,7 +16,10 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
-use fleetdeck_core::settings::{DeckHolder, SaveError, SettingsWriter, view_deck};
+use fleetdeck_core::config::DeckConfig;
+use fleetdeck_core::settings::{
+    DeckHolder, SaveError, SettingsWriter, view_deck, view_deck_running,
+};
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::settings::{
@@ -50,6 +53,10 @@ pub struct DeckSettings {
     /// Holds a save from its start to its publish, so that two saves
     /// publish in the order of their commits (PRE-PR r1). A clone shares it.
     pub gate: Arc<tokio::sync::Mutex<()>>,
+    /// The config that the process started with, command-line values
+    /// included: the posture compares the file with it (B27 §3.6). `None`:
+    /// the posture is the file alone.
+    pub running: Option<Arc<DeckConfig>>,
 }
 
 impl std::fmt::Debug for DeckSettings {
@@ -120,6 +127,22 @@ pub(super) async fn audit<T>(
             keys.join(",")
         )),
     };
+    board.store.audit_or_log(row.target(target)).await;
+}
+
+/// The second audit row of a save that relaxed a control (B27 §3.6): the
+/// keys that relaxed it, never the values. No row when nothing relaxed.
+pub(super) async fn audit_relaxed(
+    board: &Board,
+    target: &str,
+    result: &Result<SettingsSaved, ApiError>,
+) {
+    let Ok(saved) = result else { return };
+    if saved.relaxed.is_empty() {
+        return;
+    }
+    let row =
+        NewAudit::new("owner", "settings.relaxed", AuditResult::Ok).detail(saved.relaxed.join(","));
     board.store.audit_or_log(row.target(target)).await;
 }
 
@@ -355,6 +378,7 @@ pub async fn deck_set(
     let keys = change_keys(&change);
     let result = deck_save(&board, &session, change).await;
     audit(&board, ACTION, DECK_TARGET, &keys, &result).await;
+    audit_relaxed(&board, DECK_TARGET, &result).await;
     result.map(Json)
 }
 
@@ -500,12 +524,17 @@ fn clamp_before_write(
 pub async fn deck_view(settings: &DeckSettings) -> Result<SettingsView, String> {
     let path = settings.path.clone();
     let overrides = settings.overrides.clone();
+    let running = settings.running.clone();
     tokio::task::spawn_blocking(move || {
         let pairs: Vec<(&str, &str)> = overrides
             .iter()
             .map(|(k, f)| (k.as_str(), f.as_str()))
             .collect();
-        view_deck(&path, &pairs).map_err(|e| e.to_string())
+        match &running {
+            Some(running) => view_deck_running(&path, &pairs, running),
+            None => view_deck(&path, &pairs),
+        }
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -595,6 +624,7 @@ pub async fn station_set(
     }
     .await;
     audit(&board, ACTION, &name, &keys, &result).await;
+    audit_relaxed(&board, &name, &result).await;
     result.map(Json)
 }
 
