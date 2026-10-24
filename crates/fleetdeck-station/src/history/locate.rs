@@ -84,6 +84,31 @@ fn open_fail(e: Errno) -> Fail {
     }
 }
 
+/// The canonical provider home: a missing home is `not_found`; any other
+/// failure (no access, an I/O error) is `not_trusted`, so that a caller can
+/// tell a record that does not exist from one it cannot read (usage-cost
+/// build answer 1).
+fn canonical_home(home: &Path) -> Result<PathBuf, Fail> {
+    std::fs::canonicalize(home).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            unavailable(HistoryUnavailable::NotFound)
+        } else {
+            unavailable(HistoryUnavailable::NotTrusted)
+        }
+    })
+}
+
+/// The directory `name` below `dir`: `Ok(None)` when it does not exist.
+/// Any other failure (no access, a link, an I/O error) refuses with
+/// [`open_fail`]: a directory that cannot be read can hold the file.
+fn sub_dir(dir: &OwnedFd, name: &str) -> Result<Option<OwnedFd>, Fail> {
+    match descend(dir, &[name]) {
+        Ok(fd) => Ok(Some(fd)),
+        Err(e) if e == Errno::NOENT => Ok(None),
+        Err(e) => Err(open_fail(e)),
+    }
+}
+
 /// Finds the transcript of `native` below `home` and checks it.
 ///
 /// # Errors
@@ -121,8 +146,7 @@ fn locate_with(
     trust: &Trust<'_>,
     max: u64,
 ) -> Result<Opened, Fail> {
-    let home =
-        std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
+    let home = canonical_home(home)?;
     let root = open_root(&home).map_err(open_fail)?;
     let segments: Vec<String> = match kind {
         ProviderKind::Claude => vec![
@@ -184,8 +208,7 @@ pub fn locate_subagent(
     agent_id: &str,
     trust: &Trust<'_>,
 ) -> Result<Opened, Fail> {
-    let home =
-        std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
+    let home = canonical_home(home)?;
     let root = open_root(&home).map_err(open_fail)?;
     let name = format!("agent-{agent_id}.jsonl");
     let dirs: Vec<String> = vec![
@@ -288,27 +311,28 @@ fn codex_path(root: &OwnedFd, native: &str, limits: &Limits) -> Result<Vec<Strin
     let suffix = format!("-{native}.jsonl");
     let mut visited = 0_usize;
     let mut found: Vec<Vec<String>> = Vec::new();
-    // `sessions/YYYY/MM/DD/rollout-…`
-    if let Ok(sessions) = descend(root, &["sessions"]) {
+    // `sessions/YYYY/MM/DD/rollout-…`. A directory that is missing is
+    // skipped; one that cannot be opened refuses (it can hold the rollout).
+    if let Some(sessions) = sub_dir(root, "sessions")? {
         for year in entries(&sessions, &mut visited, limits)? {
             if year.1 != FileType::Directory {
                 continue;
             }
-            let Ok(year_dir) = descend(&sessions, &[year.0.as_str()]) else {
+            let Some(year_dir) = sub_dir(&sessions, &year.0)? else {
                 continue;
             };
             for month in entries(&year_dir, &mut visited, limits)? {
                 if month.1 != FileType::Directory {
                     continue;
                 }
-                let Ok(month_dir) = descend(&year_dir, &[month.0.as_str()]) else {
+                let Some(month_dir) = sub_dir(&year_dir, &month.0)? else {
                     continue;
                 };
                 for day in entries(&month_dir, &mut visited, limits)? {
                     if day.1 != FileType::Directory {
                         continue;
                     }
-                    let Ok(day_dir) = descend(&month_dir, &[day.0.as_str()]) else {
+                    let Some(day_dir) = sub_dir(&month_dir, &day.0)? else {
                         continue;
                     };
                     for file in entries(&day_dir, &mut visited, limits)? {
@@ -326,7 +350,7 @@ fn codex_path(root: &OwnedFd, native: &str, limits: &Limits) -> Result<Vec<Strin
             }
         }
     }
-    if let Ok(archived) = descend(root, &["archived_sessions"]) {
+    if let Some(archived) = sub_dir(root, "archived_sessions")? {
         for file in entries(&archived, &mut visited, limits)? {
             if is_rollout(&file, &suffix) {
                 found.push(vec!["archived_sessions".to_owned(), file.0]);

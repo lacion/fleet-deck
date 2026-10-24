@@ -3,7 +3,7 @@ import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import { formatHash } from '../app/routes';
 import { sessionTitle } from '../app/sessions';
-import { API_PRICES, apiPricesTitle, costText, tokens } from '../board/usage';
+import { API_PRICES, apiPricesTitle, costText, splitUsage, tokens } from '../board/usage';
 import { stationName } from '../board/fleet';
 import { Diff } from '../chat/Diff';
 import type { DeckSession, SessionDiff, SessionKey, StationView } from '../gen';
@@ -188,13 +188,21 @@ function Column({
   const title = sessionTitle(card);
   const message = timeline?.ready === true ? lastAgentMessage(timeline.events) : null;
   const digest = digestOf(s);
-  const cost = costText(s.usage);
+  // The new-rule usage only; an old count is not shown here (`null`: unknown).
+  const current = splitUsage(s).current;
+  const cost = current === null ? null : costText(current);
   // Only what the station reports (principle 7: no "unknown"); the cost is named as on every
   // surface, "at API prices" (§5 Cost).
-  const usage = [
-    s.usage.input_tokens === null ? null : `${tokens(s.usage.input_tokens)} in`,
-    s.usage.output_tokens === null ? null : `${tokens(s.usage.output_tokens)} out`,
-  ].filter((part) => part !== null);
+  const usage =
+    current === null
+      ? ['unknown']
+      : [
+          current.input_tokens === null ? null : `${tokens(current.input_tokens)} in`,
+          current.cache_read_tokens == null
+            ? null
+            : `${tokens(current.cache_read_tokens)} cache read`,
+          current.output_tokens === null ? null : `${tokens(current.output_tokens)} out`,
+        ].filter((part) => part !== null);
   return (
     <li
       className="fd-compare-col"

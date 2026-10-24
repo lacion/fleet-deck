@@ -289,3 +289,43 @@ async fn a_codex_home_with_more_than_5000_entries_is_busy() {
         HistoryUnavailable::Busy,
     );
 }
+
+#[tokio::test]
+async fn a_home_or_a_codex_directory_without_access_is_not_trusted() {
+    use std::os::unix::fs::PermissionsExt;
+    if rustix::process::geteuid().is_root() {
+        return;
+    }
+    let mode = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let rig = Rig::new(ProviderKind::Codex).await;
+    rig.write(NATIVE, &codex_lines());
+    let (private, limits) = (PrivatePaths::default(), Limits::default());
+    let t = trust(&private, &limits, my_uid());
+    let find = || locate::locate(&rig.home(), ProviderKind::Codex, "/w", NATIVE, &t);
+    // A year directory that cannot be opened can hold the rollout.
+    let year = rig.home().join("sessions/2026");
+    mode(&year, 0o000);
+    let unreadable = find();
+    mode(&year, 0o700);
+    expect(unreadable, HistoryUnavailable::NotTrusted);
+    // A home that cannot be resolved is not a missing home.
+    let parent = rig.home().parent().unwrap().to_path_buf();
+    mode(&parent, 0o600);
+    let unreadable = find();
+    mode(&parent, 0o700);
+    expect(unreadable, HistoryUnavailable::NotTrusted);
+    assert!(find().is_ok());
+    // A missing home is not found.
+    expect(
+        locate::locate(
+            &parent.join("missing"),
+            ProviderKind::Codex,
+            "/w",
+            NATIVE,
+            &t,
+        ),
+        HistoryUnavailable::NotFound,
+    );
+}

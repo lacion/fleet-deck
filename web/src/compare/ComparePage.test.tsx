@@ -4,6 +4,7 @@ import { FleetBoard } from '../board/FleetBoard';
 import type { DeckSession, Event } from '../gen';
 import { sessionActions } from '../session/commands';
 import { card, station } from '../testing/fleet';
+import { newUsage } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import type { Timeline } from '../runtime/state';
 import { batchRef } from './compare';
@@ -14,7 +15,12 @@ const member = (id: string, index: number, extra: Partial<DeckSession['summary']
     title: `Try ${id}`,
     batch: batchRef('B1', index, 3),
     model: 'claude-sonnet-4-5',
-    usage: { input_tokens: 1200, output_tokens: 300, cost_usd: 0.42, cost_inferred: false },
+    usage: newUsage({
+      input_tokens: 1200,
+      output_tokens: 300,
+      cost_usd: 0.42,
+      cache_read_tokens: 9000,
+    }),
     ...extra,
   });
 
@@ -65,9 +71,19 @@ describe('compare page (R1.4)', () => {
     expect(html).toContain('Waiting for a prompt');
     expect(html).toContain('1 of 3');
     expect(html).toContain('1,200 in');
+    expect(html).toContain('9,000 cache read');
     expect(html).toContain('300 out');
     expect(html).toContain('$0.42');
     expect(html).toContain('Sonnet 4.5');
+  });
+  test('a session with only an old count shows unknown, never the old numbers', () => {
+    const old = member('a', 1, {
+      usage: { input_tokens: 5000, output_tokens: 70, cost_usd: 9.99, cost_inferred: false },
+    });
+    const html = page({ sessions: [old, member('b', 2), member('c', 3)] });
+    expect(html).not.toContain('5,000 in');
+    expect(html).not.toContain('$9.99');
+    expect(html).toContain('<p class="fd-compare-usage">unknown</p>');
   });
   test('the last agent message shows when the timeline is loaded', () => {
     const html = page();

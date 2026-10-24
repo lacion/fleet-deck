@@ -1,5 +1,7 @@
 import type { DeckSession, StationView } from '../gen';
 import { useNow } from '../ui/useNow';
+import { UsageRecount } from './UsageRecount';
+import type { RecountCall } from './usageRecountCall';
 import {
   API_PRICES,
   apiPricesTitle,
@@ -19,12 +21,14 @@ type Props = {
   readonly stations: readonly StationView[];
   /** Unix ms of now; tests give it. */
   readonly now?: number | undefined;
+  /** The owner's recount of old counts (B20); absent for any other login. */
+  readonly recount?: RecountCall | undefined;
 };
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** Fleet usage totals and provider rate-limit meters (DL-303). */
-export function UsageMeters({ sessions, stations, now: given }: Props) {
+export function UsageMeters({ sessions, stations, now: given, recount }: Props) {
   const now = useNow(given, 30000);
   const usage = fleetUsage(sessions);
   const meters = rateMeters(sessions, stations);
@@ -34,8 +38,16 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
       <h2 className="fd-vh">Usage</h2>
       <dl className="fd-usage-stats">
         <div className="fd-usage-stat">
-          <dt className="fd-label">{`${sentence(inputLabel(sessions))} tokens`}</dt>
+          <dt className="fd-label">{`${sentence(inputLabel())} tokens`}</dt>
           <dd>{totalText(usage.input, tokens)}</dd>
+        </div>
+        <div className="fd-usage-stat">
+          <dt className="fd-label">Cache read tokens</dt>
+          <dd>{totalText(usage.cacheRead, tokens)}</dd>
+        </div>
+        <div className="fd-usage-stat">
+          <dt className="fd-label">Cache write tokens</dt>
+          <dd>{totalText(usage.cacheWrite, tokens)}</dd>
         </div>
         <div className="fd-usage-stat">
           <dt className="fd-label">Output tokens</dt>
@@ -48,6 +60,14 @@ export function UsageMeters({ sessions, stations, now: given }: Props) {
           <dd>{costTotalText(usage)}</dd>
         </div>
       </dl>
+      {usage.oldCounts === 0 ? null : (
+        <p className="fd-note">
+          {usage.oldCounts === 1
+            ? '1 session has an old count that is not in these totals.'
+            : `${usage.oldCounts} sessions have old counts that are not in these totals.`}
+        </p>
+      )}
+      {recount === undefined ? null : <UsageRecount sessions={sessions} recount={recount} />}
       {meters.length === 0 ? (
         <p className="fd-note">No provider reported a rate limit yet.</p>
       ) : (

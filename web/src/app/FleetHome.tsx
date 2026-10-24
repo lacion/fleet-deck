@@ -22,6 +22,7 @@ import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
 import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
 import { NeedsYouRail } from '../board/NeedsYouRail';
 import { UsageGlance } from '../board/UsageGlance';
+import type { RecountCall } from '../board/usageRecountCall';
 import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
@@ -59,6 +60,8 @@ type Props = {
   readonly onSpawnWith?: ((station: string | null, prompt: string) => void) | undefined;
   /** DL-141: loads `GET /api/fleet/extras` (the card chips); absent in tests without a deck. */
   readonly extras?: (() => Promise<FleetExtras>) | undefined;
+  /** B20: the owner's recount of old usage counts; shown in the Usage tab. */
+  readonly recount?: RecountCall | undefined;
 };
 
 /** How often the card extras load again while the home is open. */
@@ -277,6 +280,7 @@ export function FleetHome({
   onHelp,
   onSpawnWith,
   extras,
+  recount,
 }: Props) {
   const cardExtras = useExtras(extras);
   // R11.4: a guest has no new session and no mail; the owner can share the whole board.
@@ -637,6 +641,7 @@ export function FleetHome({
       wide={wide}
       waiting={waitingMail}
       lead={wide ? lead : undefined}
+      recount={recount}
     />
   );
   // The ops panel: the lead, then (wide) the scrolling sections and the fixed foot of Activity,

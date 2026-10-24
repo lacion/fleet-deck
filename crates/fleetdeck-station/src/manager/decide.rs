@@ -333,6 +333,8 @@ pub fn decide(
             super::land::move_session::decide_finish_undo(d, policy, bindings, origin, command)
         }
         command @ SessionCommand::MoveIn { .. } => decide_in(d, policy, bindings, origin, command),
+        // The session manager decides a usage recount (B20).
+        SessionCommand::UsageRecount { .. } => Err(super::usage_recount::refuse_direct()),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())

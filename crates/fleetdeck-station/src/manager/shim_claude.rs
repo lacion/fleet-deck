@@ -155,6 +155,7 @@ mod tests {
             cwd: "/w".to_owned(),
             capabilities: capabilities(false),
             resumed: None,
+            usage_base: fleetdeck_providers::claude::UsageBase::Zero,
         });
         assert!(DurableCore::is_idle(&core));
         core.prompt(&HostInput {
@@ -180,6 +181,7 @@ mod tests {
             cwd: "/w".to_owned(),
             capabilities: capabilities(false),
             resumed: None,
+            usage_base: fleetdeck_providers::claude::UsageBase::Zero,
         });
         let record = InputRecord {
             input_id: InputId::from("01J00000000000000000000002"),

@@ -106,6 +106,10 @@ pub struct CodexCore {
     /// older checkpoint has none.
     #[serde(default)]
     pub(super) emitted_skills: Option<Vec<String>>,
+    /// The per-thread token totals (B14, DL-445); an older checkpoint has
+    /// none (`restore` sets the legacy state).
+    #[serde(default)]
+    pub(super) usage: Option<super::thread_usage::ThreadUsage>,
 }
 
 impl CodexCore {
@@ -150,6 +154,7 @@ impl CodexCore {
             turns_ended: 0,
             skill_requests: HashMap::new(),
             emitted_skills: None,
+            usage: Some(super::thread_usage::ThreadUsage::default()),
         }
     }
 

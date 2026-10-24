@@ -28,6 +28,7 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{ClaudeCore, CoreConfig, Output};
+use super::process_usage::UsageBase;
 use super::{Launch, capabilities, cli_args, parse_auth_status, parse_version};
 use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
@@ -186,17 +187,31 @@ impl ClaudeAdapter {
             }
             None => None,
         };
+        let env = CoordinatorLaunch::env_for(
+            coordinator,
+            &env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+            &cwd,
+        )?;
+        // What the CLI restores from the transcript of a resume or a fork,
+        // read before the process starts (B21, DL-443).
+        let usage_base = match &origin {
+            Origin::New => UsageBase::Zero,
+            Origin::Resume(id) | Origin::Fork(id) => {
+                let (env, cwd, native) = (env.clone(), cwd.clone(), id.0.clone());
+                tokio::task::spawn_blocking(move || {
+                    super::cost_state::restored_base(&env, &cwd, &native)
+                })
+                .await
+                .unwrap_or(UsageBase::Unknown)
+            }
+        };
         let process = self
             .host
             .spawn(ProcessSpec {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: CoordinatorLaunch::env_for(
-                    coordinator,
-                    &env_with_extra(&self.config.env, spec.extra_env.as_deref()),
-                    &cwd,
-                )?,
+                env,
                 launch: pinned,
             })
             .await?;
@@ -205,6 +220,7 @@ impl ClaudeAdapter {
             cwd: cwd.to_string_lossy().into_owned(),
             capabilities: caps.clone(),
             resumed: matches!(origin, Origin::Resume(_)).then_some(true),
+            usage_base,
         });
         let init = core.initialize()?;
         let raw_dir = raw.as_ref().map(|r| r.dir().to_path_buf());

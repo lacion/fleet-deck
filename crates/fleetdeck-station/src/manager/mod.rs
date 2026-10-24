@@ -60,6 +60,7 @@ mod stop_exec;
 mod stop_plan;
 mod stop_signal;
 mod stop_state;
+mod submit_route;
 #[cfg(test)]
 #[path = "stop_tree.rs"]
 mod stop_tree;
@@ -68,6 +69,7 @@ mod task_stop;
 pub mod trash;
 mod turn_rows;
 pub mod turns;
+mod usage_recount;
 mod worker_grant;
 pub mod workspaces;
 pub use adapters::{adapters_from_config, setup_envs_from_config};
@@ -623,45 +625,26 @@ impl SessionManager {
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
         let check = self.pre_decision(&command).await;
+        // B20: the facts of a usage recount, read under the same lock.
+        let recount = self.recount_prepare(&command).await;
         let after = coordinator_command::after_of(&command);
         let _session = coordinator_command::session_lock(&self.coordinator, &command).await;
+        let ctx = submit_route::RouteCtx {
+            origin,
+            policy,
+            coordinator,
+            shells,
+            restarting,
+            root,
+            check,
+            stop,
+            recount,
+        };
         let decided = self
             .store
             .decide(envelope, caller, move |d| {
                 guard?;
-                match command {
-                    SessionCommand::ReconcileExecution {
-                        session_id,
-                        shim_id,
-                    } => shims::decide_reconcile(d, origin, &session_id, &shim_id, check.as_ref()),
-                    SessionCommand::StopExecution {
-                        session_id,
-                        shim_id,
-                        plan_id,
-                    } => stop_decide::decide(
-                        d,
-                        origin,
-                        (&session_id, &shim_id, &plan_id),
-                        stop.as_ref(),
-                    ),
-                    command @ (SessionCommand::WorktreeTrash { .. }
-                    | SessionCommand::WorktreeRestore { .. }
-                    | SessionCommand::WorktreePurge { .. }
-                    | SessionCommand::WorktreeRelease { .. }) => {
-                        trash::decide(d, &policy, origin, shells.as_deref(), command)
-                    }
-                    command @ (SessionCommand::Land { .. } | SessionCommand::MoveOut { .. }) => {
-                        land::decide(d, &policy, &coordinator, origin, shells.as_deref(), command)
-                    }
-                    command @ (SessionCommand::ShellCommand { .. }
-                    | SessionCommand::ReleaseShell { .. }) => {
-                        shell_decide::decide(d, &policy, restarting, root.as_deref(), command)
-                    }
-                    command => {
-                        shell_decide::check_root(d, root.as_deref(), &command)?;
-                        decide::decide(d, &policy, &coordinator, origin, restarting, command)
-                    }
-                }
+                submit_route::route(d, ctx, command)
             })
             .await;
         coordinator_command::after_commit(&self.store, &self.coordinator, after, &decided).await;

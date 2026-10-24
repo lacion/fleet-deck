@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { App } from '../App';
 import { artifactActions, artifactHttp } from '../artifacts/actions';
 import { stationActions, worktreeActor, worktreeLoader } from '../board/pairing';
+import { usageRecountCall } from '../board/usageRecountCall';
 import { conflictLoader } from '../board/conflicts';
 import { raceSummary } from '../compare/compare';
 import { workspaceFiles } from '../session/workspace';
@@ -131,8 +132,16 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       worktreeAction: canAdmin
         ? worktreeActor((path, body) => connection.post(path, body))
         : undefined,
+      // The recount of old usage counts is the owner's login only (B20).
+      usageRecount:
+        owner && canAdmin && !guest
+          ? usageRecountCall(
+              (path) => connection.get(path),
+              (path, body) => connection.post(path, body),
+            )
+          : undefined,
     }),
-    [connection, canAdmin],
+    [connection, canAdmin, owner, guest],
   );
   // A new login object with the same scopes keeps the same actions.
   const scopeText = (state.login?.scopes ?? []).join(' ');

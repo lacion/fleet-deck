@@ -20,6 +20,7 @@ fn claude_core() -> ClaudeCore {
         cwd: "/w".to_owned(),
         capabilities: claude::capabilities(false),
         resumed: None,
+        usage_base: claude::UsageBase::Zero,
     })
 }
 

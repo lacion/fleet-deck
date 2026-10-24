@@ -52,6 +52,7 @@ impl Process {
                 cwd: "/w".to_owned(),
                 capabilities: capabilities(false),
                 resumed: None,
+                usage_base: fleetdeck_providers::claude::UsageBase::Zero,
             }),
             ids: HashMap::new(),
             skipped: BTreeSet::new(),

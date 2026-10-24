@@ -66,7 +66,7 @@ export function UsageGlance({
   // the price at the provider's API rates (cached input included), named and explained as such.
   const priced = apiPricesTitle(sessions.length);
   const totals = [
-    { label: inputLabel(sessions), value: usage.input.known, text: compactCount, exact: tokens },
+    { label: inputLabel(), value: usage.input.known, text: compactCount, exact: tokens },
     { label: 'output', value: usage.output.known, text: compactCount, exact: tokens },
     {
       label: API_PRICES,

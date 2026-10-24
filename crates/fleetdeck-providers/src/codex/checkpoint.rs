@@ -64,6 +64,10 @@ impl CodexCore {
         let mut core: Self = serde_json::from_value(checkpoint.state.clone())
             .map_err(|e| CheckpointError::Corrupt(e.to_string()))?;
         core.config = config;
+        // A checkpoint of a build before the usage totals (DL-445).
+        if core.usage.is_none() {
+            core.usage = Some(super::thread_usage::ThreadUsage::legacy());
+        }
         Ok(core)
     }
 }

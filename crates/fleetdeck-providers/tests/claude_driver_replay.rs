@@ -62,6 +62,13 @@ fn core_events(records: &[Value], cwd: &str) -> Vec<Event> {
         capabilities: capabilities(launch.mode.as_deref() == Some(BYPASS_MODE)),
         // A fork is a new native session with a copied history.
         resumed: (launch.resume.is_some() && !launch.fork).then_some(true),
+        // The production adapter reads the transcript of a resume or a fork;
+        // the replay folder has none, so the base is not known.
+        usage_base: if launch.resume.is_some() {
+            fleetdeck_providers::claude::UsageBase::Unknown
+        } else {
+            fleetdeck_providers::claude::UsageBase::Zero
+        },
     });
     let mut events = Vec::new();
     let mut push = |out: Vec<Output>| {

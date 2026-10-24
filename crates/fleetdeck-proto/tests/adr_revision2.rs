@@ -130,6 +130,7 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "move_finish", "session_id": s, "move_id": "mv-1",
             "to_station": "bravo", "to_session": "01J0000000000000000000000T"}),
         json!({"op": "move_undo", "session_id": s, "move_id": "mv-1"}),
+        json!({"op": "usage_recount", "session_id": s}),
     ];
     let commands: Vec<SessionCommand> = samples
         .into_iter()
@@ -168,7 +169,8 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::MoveOut { .. }
             | SessionCommand::MoveIn { .. }
             | SessionCommand::MoveFinish { .. }
-            | SessionCommand::MoveUndo { .. } => {}
+            | SessionCommand::MoveUndo { .. }
+            | SessionCommand::UsageRecount { .. } => {}
         }
     }
     commands
@@ -178,7 +180,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 29);
+    assert_eq!(commands.len(), 30);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
@@ -190,6 +192,7 @@ fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table()
             || c.method() == "session.stop_execution"
             || c.method() == "session.shell_command"
             || c.method() == "session.release_shell"
+            || c.method() == "session.usage_recount"
             || c.method().starts_with("session.move_")
         {
             "admin"

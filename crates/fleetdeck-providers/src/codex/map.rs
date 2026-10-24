@@ -326,6 +326,9 @@ impl CodexCore {
     /// `turn/started` of the own thread: the turn runs, so a held interrupt
     /// can go out now (trap 3).
     fn on_turn_started(&mut self, native: &str) -> Vec<Output> {
+        if let Some(usage) = self.usage.as_mut() {
+            usage.turn_seen = true;
+        }
         let mut out = self.ensure_turn(native);
         if self.native_turn.as_deref() != Some(native) {
             return out;
@@ -370,14 +373,26 @@ impl CodexCore {
                 .map(|native_id| Output::NativeIdentity { native_id })
                 .into_iter()
                 .collect(),
-            "thread/tokenUsage/updated" if self.own_thread(p) => {
-                let last = p.pointer("/tokenUsage/last").cloned().unwrap_or_default();
-                vec![Output::Emit(Event::UsageUpdated {
-                    usage: super::prices::usage_of(self.thread_model.as_deref(), &last),
-                    rate_limits: Vec::new(),
-                })]
+            "thread/tokenUsage/updated" => {
+                let own = self.own_thread(p);
+                let thread = str_at(p, "threadId")
+                    .or(self.thread_id.as_deref())
+                    .unwrap_or_default()
+                    .to_owned();
+                let delta = self
+                    .usage
+                    .get_or_insert_with(Default::default)
+                    .delta(&thread, own, p);
+                delta
+                    .map(|d| {
+                        Output::Emit(Event::UsageUpdated {
+                            usage: d.usage(self.thread_model.as_deref()),
+                            rate_limits: Vec::new(),
+                        })
+                    })
+                    .into_iter()
+                    .collect()
             }
-            "thread/tokenUsage/updated" => Vec::new(),
             "account/rateLimits/updated" => match super::limits::rate_limits(p) {
                 limits if limits.is_empty() => Vec::new(),
                 rate_limits => vec![Output::Emit(Event::UsageUpdated {

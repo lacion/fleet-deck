@@ -99,6 +99,7 @@ pub(crate) fn replay_claude(scenario: &str) -> Replay {
                     cwd: "/w".to_owned(),
                     capabilities: claude::capabilities(bypass),
                     resumed: args.contains(&"--resume").then_some(true),
+                    usage_base: claude::UsageBase::Zero,
                 }));
                 processes.push(Vec::new());
             }

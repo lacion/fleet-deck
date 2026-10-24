@@ -87,6 +87,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.move_in",
     "session.move_finish",
     "session.move_undo",
+    "session.usage_recount",
     "approval.answer",
 ];
 

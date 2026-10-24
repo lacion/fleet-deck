@@ -1,7 +1,7 @@
 // M3 6-9 (DL-303): usage and rate-limit meters. A part that no session
 // reported is "unknown", never zero; a total over sessions with unknown
 // parts says how many sessions it leaves out.
-import type { DeckSession, StationView, Usage } from '../gen';
+import type { DeckSession, SessionSummary, StationView, Usage } from '../gen';
 import { countText, usdText } from '../ui/format';
 import { stationName } from './fleet';
 
@@ -11,42 +11,112 @@ export type UsageTotal = {
   readonly known: number | null;
   /** Sessions that did not report this part. */
   readonly unknown: number;
+  /** Sessions whose known part is a lower bound (a partial count, or an old count apart). */
+  readonly partial: number;
 };
 
 export type FleetUsage = {
   readonly input: UsageTotal;
   readonly output: UsageTotal;
+  readonly cacheRead: UsageTotal;
+  readonly cacheWrite: UsageTotal;
   readonly cost: UsageTotal;
   /** A part of `cost` is inferred from a price table (R4.6), not reported. */
   readonly costInferred: boolean;
+  /** Sessions with an old count that is not in these totals (DL-449). */
+  readonly oldCounts: number;
 };
 
-function total(values: readonly (number | null)[]): UsageTotal {
-  const known = values.filter((v): v is number => v !== null);
-  return {
-    known: known.length === 0 ? null : known.reduce((a, b) => a + b, 0),
-    unknown: values.length - known.length,
-  };
+/** The new-rule usage of a session and its old count (DL-449). */
+export type SplitUsage = {
+  /** The usage counted by the new rules; `null` when the whole total is an old count. */
+  readonly current: Usage | null;
+  /** The old count; `null` when there is none. */
+  readonly old: Usage | null;
+  /** Unix ms: the old count is the usage before it; `null` when the whole total is old. */
+  readonly oldUntil: number | null;
+};
+
+/** Any part of the usage is known (the same rule as `Usage::is_empty` in the protocol). */
+function hasKnownPart(u: Usage): boolean {
+  return [
+    u.input_tokens,
+    u.output_tokens,
+    u.cost_usd,
+    u.cache_read_tokens,
+    u.cache_write_tokens,
+  ].some((v) => v !== null && v !== undefined);
 }
 
-/** The usage of the shown sessions, summed per part. */
+/** Splits the usage of a session into its new-rule usage and its old count (DL-449). */
+export function splitUsage(summary: SessionSummary): SplitUsage {
+  const usage = summary.usage;
+  if (usage.scheme !== undefined) {
+    return {
+      current: usage,
+      old: summary.usage_legacy?.usage ?? null,
+      oldUntil: summary.usage_legacy?.until ?? null,
+    };
+  }
+  if (hasKnownPart(usage)) return { current: null, old: usage, oldUntil: null };
+  return { current: usage, old: null, oldUntil: null };
+}
+
+/** One part of every session; a session without `current` leaves it unknown. */
+function total(
+  sessions: readonly SplitUsage[],
+  part: (u: Usage) => number | null | undefined,
+  partial: (u: Usage) => boolean,
+): UsageTotal {
+  let known: number | null = null;
+  let unknown = 0;
+  let lower = 0;
+  for (const s of sessions) {
+    const value = s.current === null ? null : (part(s.current) ?? null);
+    if (value === null) {
+      unknown += 1;
+      continue;
+    }
+    known = (known ?? 0) + value;
+    if (s.current !== null && (partial(s.current) || s.old !== null)) lower += 1;
+  }
+  return { known, unknown, partial: lower };
+}
+
+/** The usage of the shown sessions, summed per part. Only new-rule usage is summed (DL-449). */
 export function fleetUsage(sessions: readonly DeckSession[]): FleetUsage {
-  const u = sessions.map((s) => s.summary.usage);
+  const split = sessions.map((s) => splitUsage(s.summary));
+  const tokensPartial = (u: Usage) => u.tokens_partial === true;
   return {
-    input: total(u.map((x) => x.input_tokens)),
-    output: total(u.map((x) => x.output_tokens)),
-    cost: total(u.map((x) => x.cost_usd)),
-    costInferred: u.some((x) => x.cost_usd !== null && x.cost_inferred),
+    input: total(split, (u) => u.input_tokens, tokensPartial),
+    output: total(split, (u) => u.output_tokens, tokensPartial),
+    cacheRead: total(split, (u) => u.cache_read_tokens, tokensPartial),
+    cacheWrite: total(split, (u) => u.cache_write_tokens, tokensPartial),
+    cost: total(
+      split,
+      (u) => u.cost_usd,
+      (u) => u.cost_partial === true,
+    ),
+    costInferred: split.some(
+      (s) => s.current !== null && s.current.cost_usd !== null && s.current.cost_inferred,
+    ),
+    oldCounts: split.filter((s) => s.old !== null).length,
   };
 }
 
-/** The text of a total: "unknown", the sum, or the sum and the gap. */
+/**
+ * The text of a total: "unknown", the sum, or the sum and its gaps: "at least 1,500 (2 sessions
+ * unknown)", "at least 1,500 (1 partial)", "at least 1,500 (2 unknown, 1 partial)".
+ */
 export function totalText(t: UsageTotal, format: (n: number) => string): string {
   if (t.known === null) return 'unknown';
   const sum = format(t.known);
-  return t.unknown === 0
-    ? sum
-    : `at least ${sum} (${t.unknown} ${t.unknown === 1 ? 'session' : 'sessions'} unknown)`;
+  if (t.unknown === 0 && t.partial === 0) return sum;
+  if (t.partial === 0) {
+    return `at least ${sum} (${t.unknown} ${t.unknown === 1 ? 'session' : 'sessions'} unknown)`;
+  }
+  if (t.unknown === 0) return `at least ${sum} (${t.partial} partial)`;
+  return `at least ${sum} (${t.unknown} unknown, ${t.partial} partial)`;
 }
 
 /** A token count with digit groups ("1,500"): `countText` of ui/format (DESIGN-SYSTEM §5). */
@@ -56,17 +126,11 @@ export const tokens = (n: number): string => countText(n);
 export const dollars = (n: number): string => usdText(n);
 
 /**
- * The word of the input token total: "input", as "output" (one word for one count on every
- * surface, DESIGN-SYSTEM §1). Claude reports only the input that the cache did not hold (its
- * cache reads and writes are other counts), so a fleet of Claude sessions says "new input";
- * Codex counts the cached input too.
+ * The word of the input token total: "new input", as "output" (one word for one count on every
+ * surface, DESIGN-SYSTEM §1). Both providers count the input that the prompt cache did not hold
+ * (cache reads and writes are other counts), and only new-rule usage is summed (DL-441, DL-449).
  */
-export function inputLabel(sessions: readonly DeckSession[]): string {
-  const known = sessions.filter((s) => s.summary.usage.input_tokens !== null);
-  return known.length > 0 && known.every((s) => s.summary.provider === 'claude')
-    ? 'new input'
-    : 'input';
-}
+export const inputLabel = (): string => 'new input';
 
 /**
  * The name of a session cost on every surface (the ops glance, Properties, the strip): the price
@@ -81,12 +145,30 @@ export function apiPricesTitle(sessions: number): string {
   return `What the tokens of ${whose} cost at the provider's API prices, cached input included. A subscription does not bill it.`;
 }
 
-/** The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); `null` when unknown. */
+/**
+ * The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); "at least " in front when the
+ * cost is a lower bound. `null` when unknown.
+ */
 export function costText(usage: Usage, format: (n: number) => string = dollars): string | null {
   if (usage.cost_usd === null) return null;
   const text = format(usage.cost_usd);
-  return usage.cost_inferred ? `≈ ${text} inferred` : text;
+  const base = usage.cost_inferred ? `≈ ${text} inferred` : text;
+  return usage.cost_partial === true ? `at least ${base}` : base;
 }
+
+/**
+ * The title of the cost of one session: what "at API prices" is, and for an inferred cost the
+ * version of the price table that made it.
+ */
+export function costTitle(usage: Usage): string {
+  const base = apiPricesTitle(1);
+  return usage.cost_inferred && usage.prices !== undefined
+    ? `${base} Fleet Deck inferred it from its price table of ${usage.prices}.`
+    : base;
+}
+
+/** A day as "2026-10-23" (UTC): the date in the titles of an old count and a recount. */
+export const dateText = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /** The fleet cost total: "≈" in front when any part is inferred (R4.6). */
 export function costTotalText(usage: FleetUsage): string {

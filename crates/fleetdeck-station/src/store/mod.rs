@@ -102,6 +102,7 @@ pub mod subagent_logs;
 pub mod terminal;
 pub mod transcripts;
 mod turn_checkpoints;
+pub mod usage_recount;
 pub mod workflow_agent_logs;
 pub mod workflow_pages;
 mod workflow_state;

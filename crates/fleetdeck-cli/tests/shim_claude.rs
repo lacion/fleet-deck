@@ -118,6 +118,7 @@ impl Rig {
             cwd: self.cwd(),
             capabilities: capabilities(false),
             resumed: None,
+            usage_base: fleetdeck_providers::claude::UsageBase::Zero,
         }
     }
 

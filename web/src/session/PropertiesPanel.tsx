@@ -14,14 +14,17 @@ import { stationName } from '../board/fleet';
 import { providerLabel } from '../board/lanes';
 import { SlotMeter } from '../board/StationTraits';
 import {
-  apiPricesTitle,
   costText,
-  inputLabel,
+  costTitle,
+  dateText,
+  dollars,
   rateMeters,
   SCOPE_TEXT,
+  splitUsage,
+  tokens,
   WARN_PERCENT,
 } from '../board/usage';
-import type { DeckSession, DiffSummary, StationView } from '../gen';
+import type { DeckSession, DiffSummary, StationView, Usage, UsageRecount } from '../gen';
 import type { Freshness } from '../runtime/state';
 import {
   addedText,
@@ -199,30 +202,74 @@ export type ModeControl = {
   readonly onSet: (mode: string) => void;
 };
 
-/** The title of the token count: the input that the station counts leaves the prompt cache out. */
-export const NEW_INPUT_TITLE = 'Input outside the prompt cache; the cached context is not counted';
+/** The title of the token count: the input that the prompt cache did not hold; cache parts are other counts. */
+export const NEW_INPUT_TITLE =
+  'Input that the prompt cache did not hold. Cache reads and cache writes are separate counts.';
 
 /** A part of a fact that keeps one line: its spaces do not break (the 280px row breaks at "·"). */
 const keep = (text: string): string => text.replaceAll(' ', '\u00a0');
 
-/** One part of the token fact: the count and its words (`316K`, `output`). */
-export type TokenPart = { readonly count: string; readonly word: string };
+/**
+ * One part of the token fact: the count and its words (`316K`, `output`). The first part of a
+ * partial count has a `lead` ("at least").
+ */
+export type TokenPart = {
+  readonly count: string;
+  readonly word: string;
+  readonly lead?: string;
+};
 
 /**
- * The token fact in the words of the ops usage glance (`inputLabel`): a Claude session counts the
- * input outside the prompt cache only, "new input" (a bare "682 in" next to a large cost read as a
- * bug); then the "output". The words keep one line (no-break spaces), so a narrow panel breaks the
- * fact at the "·", never inside a part.
+ * The token fact of the new-rule usage: four parts in this order, "new input", "cache read",
+ * "cache write", "output" (a bare "682 in" next to a large cost read as a bug). A part whose count
+ * is unknown is left out; "at least" leads a partial count. The words keep one line (no-break
+ * spaces), so a narrow panel breaks the fact at the "·", never inside a part.
  */
-export function tokensText(
-  input: number | null,
-  output: number | null,
-  inputWord = 'new input',
-): TokenPart[] {
+export function tokensText(usage: Usage): TokenPart[] {
+  const counts: readonly (readonly [number | null | undefined, string])[] = [
+    [usage.input_tokens, 'new input'],
+    [usage.cache_read_tokens, 'cache read'],
+    [usage.cache_write_tokens, 'cache write'],
+    [usage.output_tokens, 'output'],
+  ];
+  const parts: TokenPart[] = [];
+  for (const [count, word] of counts) {
+    if (count !== null && count !== undefined) {
+      parts.push({ count: compactCount(count), word: keep(word) });
+    }
+  }
+  const [first, ...rest] = parts;
+  return first === undefined || usage.tokens_partial !== true
+    ? parts
+    : [{ ...first, lead: keep('at least ') }, ...rest];
+}
+
+/** The old count of a session as one fact: "1,200 input · 5 output · $1.20" (the known parts). */
+export function oldCountText(old: Usage): string {
   return [
-    input === null ? null : { count: compactCount(input), word: keep(inputWord) },
-    output === null ? null : { count: compactCount(output), word: 'output' },
-  ].filter((part): part is TokenPart => part !== null);
+    old.input_tokens === null ? null : `${tokens(old.input_tokens)} input`,
+    old.output_tokens === null ? null : `${tokens(old.output_tokens)} output`,
+    old.cost_usd === null ? null : dollars(old.cost_usd),
+  ]
+    .filter((part) => part !== null)
+    .join(' · ');
+}
+
+/** The title of the recount aside of the cost row (design §4.4 item 8). */
+export function recountTitle(recount: UsageRecount): string {
+  if (recount.source === 'none') {
+    return `The provider has no record of this session. The total is unknown since ${dateText(recount.at)}.`;
+  }
+  const before =
+    recount.previous.cost_usd === null ? 'unknown' : dollars(recount.previous.cost_usd);
+  return `Recounted from the provider record on ${dateText(recount.at)}. A killed run and Codex sub-agent threads are not in that record, so the real total can be higher. The old count was ${before}.`;
+}
+
+/** The title of the "Old count" row (design §3.6 item 9). */
+export function oldCountTitle(oldUntil: number | null): string {
+  return oldUntil === null
+    ? 'Fleet Deck counted this with an older rule that was wrong. It is not in the fleet totals. "Recount from provider records" on the Usage tab can replace it.'
+    : `Fleet Deck counted this before ${dateText(oldUntil)} with an older rule that was wrong. It is not in the totals above or in the fleet totals.`;
 }
 
 /**
@@ -236,6 +283,7 @@ function TokensValue({ parts, title }: { readonly parts: TokenPart[]; readonly t
         <Fragment key={part.word}>
           {i === 0 ? null : ' · '}
           <span className="fd-props-tokpart">
+            {part.lead}
             <span className="fd-props-fuel">{part.count}</span>
             {`\u00a0${part.word}`}
           </span>
@@ -447,9 +495,10 @@ export function PropertiesPanel({
   const turnPaths = useTurnPaths(ref);
   const hasBase = Boolean(s.base);
   const opens = (path: string) => hasBase || turnForPath(turns, turnPaths, path) !== undefined;
-  const { input_tokens: input, output_tokens: output } = s.usage;
-  const inputWord = inputLabel([session]);
-  const cost = costText(s.usage);
+  const { current, old, oldUntil } = splitUsage(s);
+  const tokenParts = current === null ? [] : tokensText(current);
+  const cost = current === null ? null : costText(current);
+  const recount = s.usage_recount;
   const meters = rateMeters([session], stations);
   const provider = s.provider === null ? null : providerLabel(s.provider);
   const context = contextLabel(s.model);
@@ -543,18 +592,32 @@ export function PropertiesPanel({
             </span>
           </Row>
         )}
-        {input === null && output === null ? null : (
+        {current === null ? (
+          <Row label="Tokens">unknown</Row>
+        ) : tokenParts.length === 0 ? null : (
           <Row label="Tokens">
             <TokensValue
-              parts={tokensText(input, output, inputWord)}
-              {...(input === null || inputWord !== 'new input' ? {} : { title: NEW_INPUT_TITLE })}
+              parts={tokenParts}
+              {...(current.input_tokens === null ? {} : { title: NEW_INPUT_TITLE })}
             />
           </Row>
         )}
-        {cost === null ? null : (
+        {current === null || (cost === null && recount?.source !== 'none') ? null : (
           <Row label="At API prices">
-            <span className="fd-props-fuel" title={apiPricesTitle(1)}>
-              {cost}
+            <span className="fd-props-fuel" title={costTitle(current)}>
+              {cost ?? 'unknown'}
+            </span>
+            {recount === undefined ? null : (
+              <span className="fd-props-aside" title={recountTitle(recount)}>
+                {recount.source === 'none' ? 'no record' : 'recounted'}
+              </span>
+            )}
+          </Row>
+        )}
+        {old === null ? null : (
+          <Row label="Old count">
+            <span className="fd-props-fuel" title={oldCountTitle(oldUntil)}>
+              {oldCountText(old)}
             </span>
           </Row>
         )}

@@ -18,6 +18,7 @@ import type { TurnId } from "../ids/TurnId";
 import type { IssueRef } from "../integrations/IssueRef";
 import type { Activity } from "./Activity";
 import type { BatchRef } from "./BatchRef";
+import type { LegacyUsage } from "./LegacyUsage";
 import type { OpenRequest } from "./OpenRequest";
 import type { RepoInfo } from "./RepoInfo";
 import type { RunningTool } from "./RunningTool";
@@ -26,6 +27,7 @@ import type { SessionBase } from "./SessionBase";
 import type { SessionError } from "./SessionError";
 import type { SessionRevert } from "./SessionRevert";
 import type { TerminalHold } from "./TerminalHold";
+import type { UsageRecount } from "./UsageRecount";
 
 /**
  * The projection of one session.
@@ -108,6 +110,16 @@ running_tools: Array<RunningTool>,
  * Sum of the reported usage; `None` parts are unknown.
  */
 usage: Usage, 
+/**
+ * The old count of a session (DL-449): the total that the session had
+ * when the first usage of `USAGE_SCHEME` came, plus every later usage
+ * without a scheme. It is never added to `usage`.
+ */
+usage_legacy?: LegacyUsage, 
+/**
+ * The last recount of `usage` from the provider record (B20, design §4.1).
+ */
+usage_recount?: UsageRecount, 
 /**
  * The latest provider rate-limit windows, one per scope, sorted by
  * scope (M3 6-9, DL-303). Empty: no window reported (unknown, not

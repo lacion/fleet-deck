@@ -11,6 +11,8 @@ pub mod codex;
 pub mod coordinator;
 pub mod durable;
 pub mod host;
+/// The one dated price table of inferred costs (R4.6, DL-161, DL-444).
+pub mod prices;
 pub mod rawlog;
 mod stdio;
 pub mod version;

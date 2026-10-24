@@ -53,8 +53,8 @@ use crate::display_event::{
     DisplaySessionLoad,
 };
 use crate::event::{
-    Event, EventEnvelope, WorkflowAgent, WorkflowPhase, WorkflowRun, WorkflowUpdate,
-    WorkflowsCursor, WorkflowsPage, WorkflowsQuery,
+    Event, EventEnvelope, UsageRecount, UsageSource, WorkflowAgent, WorkflowPhase, WorkflowRun,
+    WorkflowUpdate, WorkflowsCursor, WorkflowsPage, WorkflowsQuery,
 };
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
 use crate::execution_stop::{
@@ -99,7 +99,7 @@ use crate::recording as rec;
 use crate::resources::{
     CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
 };
-use crate::session::{CardStatus, RunningWorkflow, SessionSummary};
+use crate::session::{CardStatus, LegacyUsage, RunningWorkflow, SessionSummary};
 use crate::settings::{
     Apply, Durability, FieldKind, FieldMeta, RestartAnswer, RestartItem, RestartKind,
     RestartRequest, SecretSet, SecretSetParams, SettingsChange, SettingsSaved, SettingsSetParams,
@@ -292,6 +292,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         BranchDiffQuery::export_all(&cfg),
         ToolResult::export_all(&cfg),
         SessionSummary::export_all(&cfg),
+        LegacyUsage::export_all(&cfg),
+        UsageRecount::export_all(&cfg),
+        UsageSource::export_all(&cfg),
         ReadMark::export_all(&cfg),
         ActivityItem::export_all(&cfg),
         ActivityKind::export_all(&cfg),

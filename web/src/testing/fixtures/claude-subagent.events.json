@@ -630,7 +630,10 @@
         "input_tokens": 18,
         "output_tokens": 517,
         "cost_usd": 0.0144198,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 68368,
+        "cache_write_tokens": 3984,
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -650,7 +653,10 @@
         "input_tokens": 18,
         "output_tokens": 517,
         "cost_usd": 0.0144198,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 68368,
+        "cache_write_tokens": 3984,
+        "scheme": 2
       }
     }
   },
@@ -822,10 +828,13 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 10,
-        "output_tokens": 57,
+        "input_tokens": 20,
+        "output_tokens": 142,
         "cost_usd": 0.029075650000000005,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 36544,
+        "cache_write_tokens": 19753,
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -842,10 +851,13 @@
       "turn_id": "turn-3",
       "status": "done",
       "usage": {
-        "input_tokens": 10,
-        "output_tokens": 57,
+        "input_tokens": 20,
+        "output_tokens": 142,
         "cost_usd": 0.029075650000000005,
-        "cost_inferred": false
+        "cost_inferred": false,
+        "cache_read_tokens": 36544,
+        "cache_write_tokens": 19753,
+        "scheme": 2
       }
     }
   },

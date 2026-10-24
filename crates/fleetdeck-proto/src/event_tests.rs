@@ -124,6 +124,17 @@ fn samples() -> Vec<Event> {
                 resets_at: Some(1),
             }],
         },
+        Event::UsageSet {
+            usage: Usage {
+                scheme: Some(USAGE_SCHEME),
+                tokens_partial: true,
+                cost_partial: true,
+                ..Usage::default()
+            },
+            previous: Box::new(Usage::default()),
+            source: UsageSource::ClaudeTranscript,
+            command_id: "cmd-1".into(),
+        },
         Event::TurnCompleted {
             turn_id: turn.clone(),
             status: TurnStatus::Done,
@@ -131,7 +142,7 @@ fn samples() -> Vec<Event> {
                 input_tokens: Some(1),
                 output_tokens: Some(2),
                 cost_usd: None,
-                cost_inferred: false,
+                ..Usage::default()
             }),
         },
         Event::TurnFinalized {

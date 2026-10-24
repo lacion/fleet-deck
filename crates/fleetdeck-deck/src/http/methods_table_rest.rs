@@ -514,6 +514,8 @@ pub const API_REST: &[ApiMethod] = &[
     // a folder (B8); the handler refuses a token and a member (`owner_only`).
     cmd("session.shell_command", Scope::Admin),
     cmd("session.release_shell", Scope::Admin),
+    // The owner recounts an old usage count (B20); owner login only, the station needs usage_recount.v1.
+    cmd("session.usage_recount", Scope::Admin),
     // `session.coordinator_renew` / `_revoke` have no generic route: only
     // the owner-checked grant routes send them (ADR-006 §3, DL-138).
     // A member answers a question as a collaborator and a tool approval as

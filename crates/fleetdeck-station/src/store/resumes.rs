@@ -201,7 +201,7 @@ impl Exclusion {
 /// True (as a SQL value) when session `s` has not ended: its state is not
 /// final, a process of it is live, or a start or resume effect of it is
 /// not settled.
-const BUSY: &str = "(s.state NOT IN ('exited', 'lost')
+pub(super) const BUSY: &str = "(s.state NOT IN ('exited', 'lost')
                  OR EXISTS (SELECT 1 FROM processes p
                             WHERE p.session_id = s.session_id AND p.state = 'live')
                  OR EXISTS (SELECT 1 FROM effects e

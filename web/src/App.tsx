@@ -492,6 +492,7 @@ export function App({
       feed={feed}
       layout={layout}
       sessionActions={sessionActions}
+      recount={actions?.usageRecount}
       onOpen={open}
       onSpawn={() => navigate({ name: 'new' })}
       panelRequest={panelRequest}

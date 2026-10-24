@@ -195,6 +195,18 @@ pub enum Event {
         #[serde(default)]
         rate_limits: Vec<RateLimit>,
     },
+    /// The station replaced the old count of the session with the provider's
+    /// own record (B20). The fold replaces, it does not add.
+    #[serde(rename = "usage.set")]
+    UsageSet {
+        /// Scheme 2, `tokens_partial` and `cost_partial` set (design §4.2 step 3).
+        usage: Usage,
+        /// The total that the summary had before. Boxed to keep the event
+        /// small (clippy `large_enum_variant`).
+        previous: Box<Usage>,
+        source: UsageSource,
+        command_id: CommandId,
+    },
     #[serde(rename = "turn.completed")]
     TurnCompleted {
         turn_id: TurnId,

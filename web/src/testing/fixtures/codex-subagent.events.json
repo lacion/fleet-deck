@@ -127,10 +127,14 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 12030,
+        "input_tokens": 2046,
         "output_tokens": 73,
         "cost_usd": 0.0045355,
-        "cost_inferred": true
+        "cost_inferred": true,
+        "cache_read_tokens": 9984,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -220,10 +224,14 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 20905,
+        "input_tokens": 9897,
         "output_tokens": 56,
         "cost_usd": 0.01430725,
-        "cost_inferred": true
+        "cost_inferred": true,
+        "cache_read_tokens": 11008,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
       },
       "rate_limits": []
     }
@@ -297,6 +305,28 @@
     "event": {
       "kind": "usage.updated",
       "usage": {
+        "input_tokens": 7087,
+        "output_tokens": 6,
+        "cost_usd": 0.01016675,
+        "cost_inferred": true,
+        "cache_read_tokens": 9984,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
+      },
+      "rate_limits": []
+    }
+  },
+  {
+    "station_seq": 216,
+    "session_id": "codex-subagent",
+    "session_seq": 16,
+    "at": 1760000016000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
         "input_tokens": null,
         "output_tokens": null,
         "cost_usd": null,
@@ -312,10 +342,10 @@
     }
   },
   {
-    "station_seq": 216,
+    "station_seq": 217,
     "session_id": "codex-subagent",
-    "session_seq": 16,
-    "at": 1760000016000,
+    "session_seq": 17,
+    "at": 1760000017000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -328,10 +358,10 @@
     }
   },
   {
-    "station_seq": 217,
+    "station_seq": 218,
     "session_id": "codex-subagent",
-    "session_seq": 17,
-    "at": 1760000017000,
+    "session_seq": 18,
+    "at": 1760000018000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -343,28 +373,32 @@
     }
   },
   {
-    "station_seq": 218,
+    "station_seq": 219,
     "session_id": "codex-subagent",
-    "session_seq": 18,
-    "at": 1760000018000,
+    "session_seq": 19,
+    "at": 1760000019000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
       "kind": "usage.updated",
       "usage": {
-        "input_tokens": 21019,
+        "input_tokens": 795,
         "output_tokens": 61,
         "cost_usd": 0.00413175,
-        "cost_inferred": true
+        "cost_inferred": true,
+        "cache_read_tokens": 20224,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
       },
       "rate_limits": []
     }
   },
   {
-    "station_seq": 219,
+    "station_seq": 220,
     "session_id": "codex-subagent",
-    "session_seq": 19,
-    "at": 1760000019000,
+    "session_seq": 20,
+    "at": 1760000020000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -382,20 +416,6 @@
           "resets_at": 1792149381000
         }
       ]
-    }
-  },
-  {
-    "station_seq": 220,
-    "session_id": "codex-subagent",
-    "session_seq": 20,
-    "at": 1760000020000,
-    "proto_version": 1,
-    "raw_ref": null,
-    "event": {
-      "kind": "message.delta",
-      "turn_id": "turn-1",
-      "parent_node_id": null,
-      "text": "sub"
     }
   },
   {
@@ -409,7 +429,7 @@
       "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "-ok"
+      "text": "sub"
     }
   },
   {
@@ -420,10 +440,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "message.completed",
+      "kind": "message.delta",
       "turn_id": "turn-1",
       "parent_node_id": null,
-      "text": "sub-ok"
+      "text": "-ok"
     }
   },
   {
@@ -434,14 +454,10 @@
     "proto_version": 1,
     "raw_ref": null,
     "event": {
-      "kind": "usage.updated",
-      "usage": {
-        "input_tokens": 21192,
-        "output_tokens": 6,
-        "cost_usd": 0.003798,
-        "cost_inferred": true
-      },
-      "rate_limits": []
+      "kind": "message.completed",
+      "turn_id": "turn-1",
+      "parent_node_id": null,
+      "text": "sub-ok"
     }
   },
   {
@@ -449,6 +465,28 @@
     "session_id": "codex-subagent",
     "session_seq": 24,
     "at": 1760000024000,
+    "proto_version": 1,
+    "raw_ref": null,
+    "event": {
+      "kind": "usage.updated",
+      "usage": {
+        "input_tokens": 968,
+        "output_tokens": 6,
+        "cost_usd": 0.003798,
+        "cost_inferred": true,
+        "cache_read_tokens": 20224,
+        "cache_write_tokens": 0,
+        "prices": "2026-10-23",
+        "scheme": 2
+      },
+      "rate_limits": []
+    }
+  },
+  {
+    "station_seq": 225,
+    "session_id": "codex-subagent",
+    "session_seq": 25,
+    "at": 1760000025000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -469,10 +507,10 @@
     }
   },
   {
-    "station_seq": 225,
+    "station_seq": 226,
     "session_id": "codex-subagent",
-    "session_seq": 25,
-    "at": 1760000025000,
+    "session_seq": 26,
+    "at": 1760000026000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -483,10 +521,10 @@
     }
   },
   {
-    "station_seq": 226,
+    "station_seq": 227,
     "session_id": "codex-subagent",
-    "session_seq": 26,
-    "at": 1760000026000,
+    "session_seq": 27,
+    "at": 1760000027000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -497,10 +535,10 @@
     }
   },
   {
-    "station_seq": 227,
+    "station_seq": 228,
     "session_id": "codex-subagent",
-    "session_seq": 27,
-    "at": 1760000027000,
+    "session_seq": 28,
+    "at": 1760000028000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {
@@ -511,10 +549,10 @@
     }
   },
   {
-    "station_seq": 228,
+    "station_seq": 229,
     "session_id": "codex-subagent",
-    "session_seq": 28,
-    "at": 1760000028000,
+    "session_seq": 29,
+    "at": 1760000029000,
     "proto_version": 1,
     "raw_ref": null,
     "event": {

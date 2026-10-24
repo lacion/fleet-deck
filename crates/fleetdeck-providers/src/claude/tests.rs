@@ -18,6 +18,7 @@ pub(super) fn config(allow_bypass: bool) -> CoreConfig {
         cwd: "/w".to_owned(),
         capabilities: capabilities(allow_bypass),
         resumed: None,
+        usage_base: crate::claude::UsageBase::Zero,
     }
 }
 
