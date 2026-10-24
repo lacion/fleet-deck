@@ -182,7 +182,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 30);
+    assert_eq!(commands.len(), 31);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
