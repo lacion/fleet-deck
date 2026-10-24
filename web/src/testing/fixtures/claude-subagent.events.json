@@ -102,6 +102,7 @@
         ],
         "set_mode": true,
         "set_model": true,
+        "set_effort": true,
         "plan_capture": true,
         "subagents": true,
         "background_work": "pushed",
@@ -204,167 +205,392 @@
         {
           "value": "default",
           "label": "Default (recommended)",
-          "description": "Use the default model (currently Opus 5.5) · $4/$20 per Mtok"
+          "description": "Use the default model (currently Opus 5.5) · $4/$20 per Mtok",
+          "resolved": "claude-opus-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "opus",
           "label": "Opus",
-          "description": "Opus 5.5 · Best for everyday, complex tasks · $4/$20 per Mtok"
+          "description": "Opus 5.5 · Best for everyday, complex tasks · $4/$20 per Mtok",
+          "resolved": "claude-opus-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5",
           "label": "Claude Fable 5",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-1",
           "label": "Claude Fable 5.1",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-1",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-artsa-6-tpg",
           "label": "GPT 6.0 Astra",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-artsa-6-tpg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-anul-6-tpg",
           "label": "GPT 6.0 Luna",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-anul-6-tpg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-los-6-tpg",
           "label": "GPT 6.0 Sol",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-los-6-tpg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-los-1.6-tpg",
           "label": "GPT 6.1 Sol",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-los-1.6-tpg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-6.4-korg",
           "label": "Grok 4.6",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-6.4-korg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-7.4-korg",
           "label": "Grok 4.7",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-7.4-korg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-tsaf-dliub-7.4-korg",
           "label": "Grok 4.7 Fast",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-tsaf-dliub-7.4-korg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-stt-korg",
           "label": "Grok TTS",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-stt-korg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-0.1-stt-eciov-korg",
           "label": "Grok Voice TTS 1.0",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-0.1-stt-eciov-korg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-hsalf-1.4v-keespeed",
           "label": "deepseek-v4.1-flash",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-hsalf-1.4v-keespeed",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-4ammeg",
           "label": "gemma4-26b-obliterus-custom@q6_k",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-4ammeg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-3.5-mlg",
           "label": "glm-5.3",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-3.5-mlg",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-3k-imik",
           "label": "kimi-k3",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-3k-imik",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-3m-xaminim",
           "label": "minimax-m3",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-3m-xaminim",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-fable-5-dd-xam-8.3newq",
           "label": "qwen3.8-max",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-fable-5-dd-xam-8.3newq",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "sonnet",
           "label": "Sonnet",
-          "description": "Sonnet 5.5 · Efficient for routine tasks · $2/$10 per Mtok"
+          "description": "Sonnet 5.5 · Efficient for routine tasks · $2/$10 per Mtok",
+          "resolved": "claude-sonnet-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "haiku",
           "label": "Haiku",
-          "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok"
+          "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok",
+          "resolved": "claude-haiku-4-5-20251001"
         },
         {
           "value": "claude-3-5-haiku-20241022",
           "label": "Claude 3.5 Haiku",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-3-5-haiku-20241022"
         },
         {
           "value": "claude-3-7-sonnet-20250219",
           "label": "Claude 3.7 Sonnet",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-3-7-sonnet-20250219"
         },
         {
           "value": "claude-sonnet-4-20250514",
           "label": "Claude 4 Sonnet",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-sonnet-4-20250514"
         },
         {
           "value": "claude-opus-4-5-20251101",
           "label": "Claude 4.5 Opus",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-opus-4-5-20251101",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
         },
         {
           "value": "claude-sonnet-4-5-20250929",
           "label": "Claude 4.5 Sonnet",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-sonnet-4-5-20250929"
         },
         {
           "value": "claude-opus-4-6",
           "label": "Claude 4.6 Opus",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-opus-4-6",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
         },
         {
           "value": "claude-sonnet-4-6",
           "label": "Claude 4.6 Sonnet",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-sonnet-4-6",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
         },
         {
           "value": "claude-haiku-5-5",
           "label": "Claude Haiku 5.5",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-haiku-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-opus-4-7",
           "label": "Claude Opus 4.7",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-opus-4-7",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-opus-4-8",
           "label": "Claude Opus 4.8",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-opus-4-8",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-opus-5",
           "label": "Claude Opus 5",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-opus-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         {
           "value": "claude-sonnet-5",
           "label": "Claude Sonnet 5",
-          "description": "From gateway"
+          "description": "From gateway",
+          "resolved": "claude-sonnet-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         }
       ]
     }
