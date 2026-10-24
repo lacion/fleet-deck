@@ -1,5 +1,5 @@
 //! Analytics (B29): the parsers of the provider transcripts and the scan.
-//! The query comes in a later task (design §3.4, §3.5).
+//! The query is in `query` (design §3.7).
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -8,6 +8,7 @@ use fleetdeck_proto::event::ProviderKind;
 
 pub mod claude;
 pub mod codex;
+pub mod query;
 pub mod scan;
 mod walk;
 
@@ -15,6 +16,8 @@ mod walk;
 mod claude_tests;
 #[cfg(test)]
 mod codex_tests;
+#[cfg(test)]
+mod query_tests;
 #[cfg(test)]
 mod scan_tests;
 
@@ -38,9 +41,20 @@ pub struct HomeStatus {
 
 /// The state of the scanner, in memory, written by the scan and read by the
 /// query. Before the first pass ends it holds no home.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScanStatus {
     homes: Mutex<Vec<HomeStatus>>,
+    /// One analytics query at a time per station (design section 3.7 step 2).
+    query: tokio::sync::Semaphore,
+}
+
+impl Default for ScanStatus {
+    fn default() -> Self {
+        Self {
+            homes: Mutex::new(Vec::new()),
+            query: tokio::sync::Semaphore::new(1),
+        }
+    }
 }
 
 impl ScanStatus {
@@ -60,6 +74,11 @@ impl ScanStatus {
     #[must_use]
     pub fn homes(&self) -> Vec<HomeStatus> {
         self.homes.lock().map(|h| h.clone()).unwrap_or_default()
+    }
+
+    /// The slot of the one running query.
+    pub(crate) fn query_gate(&self) -> &tokio::sync::Semaphore {
+        &self.query
     }
 
     pub(crate) fn set(&self, homes: Vec<HomeStatus>) {
