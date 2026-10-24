@@ -208,3 +208,58 @@ async fn the_barrier_reads_a_missing_generation_as_zero() {
     drop(turns);
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+#[tokio::test]
+async fn a_revert_across_an_app_call_is_refused_at_the_admission_with_the_app_reason() {
+    use crate::store::app_calls::{AppCallEnd, NewAppCall};
+    let mut st = Station::new(4).await;
+    let (s, turns) = codex_with_turns(&mut st).await;
+    let root = st.ws_root();
+    let store = st.manager.store().clone();
+    let generation = store
+        .app_call_begin(NewAppCall {
+            call_id: "call-1".to_owned(),
+            session_id: s.clone(),
+            app_id: "app-1".to_owned(),
+            worktree_root: root.clone(),
+            server: "demo".to_owned(),
+            tool: "bump".to_owned(),
+            read_only: false,
+            process: "p-1".to_owned(),
+            station_run: store.run_id().to_owned(),
+        })
+        .await
+        .unwrap();
+    assert!(generation.is_some());
+
+    // A running call refuses with the app reason, not the shell's "ran after".
+    let d = st.send(revert(&s, &turns[1])).await;
+    assert_eq!(
+        refused(&d),
+        pairs(
+            RejectCode::InvalidState,
+            "An app action is running in this folder, or may still run; wait for it or release it."
+        )
+    );
+    assert!(
+        store
+            .app_call_settle("call-1".to_owned(), AppCallEnd::Done)
+            .await
+            .unwrap()
+    );
+    store
+        .app_call_advance("call-1".to_owned(), root.clone())
+        .await
+        .unwrap();
+
+    // A finished call: refused across it with the app reason.
+    let d = st.send(revert(&s, &turns[1])).await;
+    assert_eq!(
+        refused(&d),
+        pairs(
+            RejectCode::InvalidState,
+            "An app action changed this folder after this turn; the files cannot be reverted across it."
+        )
+    );
+    st.manager.shutdown(StopMode::Kill).await;
+}

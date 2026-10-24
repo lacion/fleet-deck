@@ -325,6 +325,17 @@ fn barrier(conn: &Connection, root: &str, app_turn: &str) -> Result<Option<AppCa
     Ok(after.then_some(AppCallBarrier::RanAfterTurn))
 }
 
+impl super::Decision<'_> {
+    /// The app part of the revert barrier inside a command decision (see
+    /// [`Store::app_call_barrier`]).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn app_call_barrier(&self, root: &str, app_turn: &str) -> Result<Option<AppCallBarrier>> {
+        barrier(self.connection(), root, app_turn)
+    }
+}
+
 fn release(conn: &Connection, session: &SessionId, call_id: &str, now: i64) -> Result<Release> {
     let state: Option<String> = conn
         .query_row(

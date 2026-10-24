@@ -420,10 +420,20 @@ EOF
             "{\"op\":\"revert\",\"session_id\":\"$session\",\"turn_id\":\"$turn\"}")
         echo "$answer" >>"$REC/revert-answers.txt"
         # A refusal at the admission has no revert row and no revert.updated
-        # event: the command answer holds it.
+        # event: the command answer holds it, with the text of the reason
+        # (manager/shell_decide.rs APP_CALL_BUSY, APP_CALL_RAN_AFTER_TURN).
+        case $want in
+        app_call_running) text="An app action is running in this folder" ;;
+        app_call_ran_after_turn) text="An app action changed this folder after this turn" ;;
+        *) text="" ;;
+        esac
         case $answer in
         *rejected:*)
-            miss "$driver revert was refused at the admission, wanted '$want' (a revert.updated event): $answer"
+            if [ -n "$text" ] && [ "${answer#*"$text"}" != "$answer" ]; then
+                echo "ok: revert refused at the admission with $want"
+            else
+                miss "$driver revert was refused at the admission, wanted '$want': $answer"
+            fi
             return 0
             ;;
         esac

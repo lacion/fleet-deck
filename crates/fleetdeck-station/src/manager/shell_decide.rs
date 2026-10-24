@@ -17,6 +17,7 @@ use fleetdeck_proto::{RejectCode, SessionId};
 
 use super::decide::{reject, result};
 use super::policy::Policy;
+use crate::store::app_calls::AppCallBarrier;
 use crate::store::shell_runs::{Barrier, ShellState};
 use crate::store::{Caller, DecideError, Decision, EffectPayload, Store};
 use crate::workspace::{GitOptions, Worktree};
@@ -26,6 +27,14 @@ pub const BUSY: &str = "A shell command is running in this folder.";
 /// The refusal of a revert across a shell command.
 pub const RAN_AFTER_TURN: &str =
     "A shell command ran in this folder after this turn; the files cannot be reverted across it.";
+/// The refusal of a revert while an app action runs, or may still run, in the
+/// folder (B15, `app_call_running`).
+pub const APP_CALL_BUSY: &str =
+    "An app action is running in this folder, or may still run; wait for it or release it.";
+/// The refusal of a revert across a finished app action (B15,
+/// `app_call_ran_after_turn`).
+pub const APP_CALL_RAN_AFTER_TURN: &str =
+    "An app action changed this folder after this turn; the files cannot be reverted across it.";
 const BOARD_ONLY: &str = "Shell commands come only from the board.";
 const NO_COORDINATOR: &str = "A coordinator cannot run shell commands.";
 const OFF: &str = "Shells are off on this station (allow_shell = false).";
@@ -346,17 +355,29 @@ pub(super) fn interrupt(
     })
 }
 
-/// The revert barrier (B8): refuses while a shell row of `root` is
-/// unsettled, and when the start checkpoint of the target turn `app_turn`
-/// was taken at a lower folder generation than the root has now.
+/// The revert barrier (B8, B15): refuses while a shell row of `root` is
+/// unsettled; then while an app call of `root` runs or may still run; then
+/// when the start checkpoint of the target turn `app_turn` was taken at a
+/// lower folder generation than the root has now. A non-read-only app call
+/// also raises the generation, so the app reason comes before the shell's
+/// "ran after" (the same order as `revert_run::shell_block`).
 ///
 /// # Errors
 /// An `invalid_state` rejection.
 pub fn revert_barrier(d: &Decision<'_>, root: &str, app_turn: &str) -> Result<(), DecideError> {
-    match d.shell_barrier(root, app_turn)? {
+    let shell = d.shell_barrier(root, app_turn)?;
+    if shell == Some(Barrier::Running) {
+        return Err(reject(RejectCode::InvalidState, BUSY));
+    }
+    match d.app_call_barrier(root, app_turn)? {
+        Some(AppCallBarrier::Running) => Err(reject(RejectCode::InvalidState, APP_CALL_BUSY)),
+        Some(AppCallBarrier::RanAfterTurn) => {
+            Err(reject(RejectCode::InvalidState, APP_CALL_RAN_AFTER_TURN))
+        }
+        None if shell == Some(Barrier::RanAfterTurn) => {
+            Err(reject(RejectCode::InvalidState, RAN_AFTER_TURN))
+        }
         None => Ok(()),
-        Some(Barrier::Running) => Err(reject(RejectCode::InvalidState, BUSY)),
-        Some(Barrier::RanAfterTurn) => Err(reject(RejectCode::InvalidState, RAN_AFTER_TURN)),
     }
 }
 
