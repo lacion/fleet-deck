@@ -192,13 +192,15 @@ elif cmd == "wrappers":
     argv = ["-c", 'cd "$1" && exec python3 -I "$2"', "sh", ws, server]
     env = {"DEMO_LOG": log}
     toml = lambda v: json.dumps(v)
+    # The station passes "app-server -c ...": `codex app-server` ignores the
+    # -c flags before the subcommand, so the demo flags come after "$@".
     codex = [
         "exec codex",
+        '"$@"',
         "-c %s" % shlex.quote("mcp_servers.demo.command=" + toml("sh")),
         "-c %s" % shlex.quote("mcp_servers.demo.args=" + toml(argv)),
         "-c %s" % shlex.quote("mcp_servers.demo.env={DEMO_LOG=%s}" % toml(log)),
         "-c mcp_servers.demo.tool_timeout_sec=%s" % timeout,
-        '"$@"',
     ]
     claude_cfg = {"mcpServers": {"demo": {
         "type": "stdio", "command": "sh", "args": argv, "env": env,
