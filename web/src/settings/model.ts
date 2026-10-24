@@ -274,6 +274,8 @@ export function wire(meta: FieldMeta, value: unknown): unknown {
       return typeof value === 'boolean' ? value : null;
     case 'int':
       return asNumber(value);
+    case 'limit':
+      return value === 'none' ? value : asNumber(value);
     case 'text':
     case 'enum':
     case 'path':

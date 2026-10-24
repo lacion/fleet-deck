@@ -34,6 +34,7 @@ fn view(name: &str, live: u64) -> StationView {
                 auth: "signed_in".to_owned(),
                 capabilities: None,
                 version_status: Default::default(),
+                default_mode: None,
             }],
             assist_tokens_today: None,
             assist_cap: None,

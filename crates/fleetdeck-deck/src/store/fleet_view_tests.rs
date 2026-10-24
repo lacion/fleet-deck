@@ -119,6 +119,7 @@ pub(super) fn provider(instance: &str, version: &str) -> StationProvider {
         auth: "signed_in".to_owned(),
         capabilities: None,
         version_status: Default::default(),
+        default_mode: None,
     }
 }
 

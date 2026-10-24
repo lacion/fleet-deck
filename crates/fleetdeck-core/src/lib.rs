@@ -7,6 +7,7 @@ pub mod build;
 pub mod childenv;
 pub mod clock;
 pub mod config;
+pub mod config_grant_limits;
 pub mod config_worker_grant;
 pub mod db;
 mod db_backup;

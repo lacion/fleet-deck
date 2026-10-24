@@ -7,6 +7,7 @@ mod knobs;
 mod p7b;
 mod save;
 mod secrets;
+mod security;
 mod tailnet_auto;
 mod testfs;
 

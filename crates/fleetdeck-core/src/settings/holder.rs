@@ -184,6 +184,12 @@ impl Holder for StationHolder {
         );
         m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
         insert_station_knobs(&mut m, c);
+        for family in ["claude", "codex"] {
+            m.insert(
+                format!("default_mode.{family}"),
+                json!(c.default_mode.for_family(family)),
+            );
+        }
         m.insert("clone_root".into(), tailscale_bin_text(&c.clone_root));
         m.insert("traits".into(), strings(c.traits.clone()));
         m.insert("allow_check_cmd".into(), json!(c.allow_check_cmd));
@@ -305,6 +311,11 @@ impl Holder for StationHolder {
             new.retention.raw_log_mib > old.retention.raw_log_mib,
             "retention.raw_log_mib",
         );
+        keys.extend(
+            crate::config::default_mode_widens(&old.default_mode, &new.default_mode)
+                .into_iter()
+                .map(str::to_owned),
+        );
         keys
     }
 
@@ -363,6 +374,7 @@ impl Holder for DeckHolder {
         );
         insert_deck_knobs(&mut m, c);
         insert_worker_grant(&mut m, c);
+        insert_grant_limits(&mut m, c);
         m
     }
 
@@ -406,6 +418,11 @@ impl Holder for DeckHolder {
                 .into_iter()
                 .map(str::to_owned),
         );
+        keys.extend(
+            crate::config_grant_limits::raises(&old.grant_limits, &new.grant_limits)
+                .into_iter()
+                .map(str::to_owned),
+        );
         keys
     }
 }
@@ -445,14 +462,40 @@ fn insert_worker_grant(m: &mut Map<String, Value>, c: &DeckConfig) {
     let w = &c.worker_grant;
     m.insert("worker_grant.enabled".into(), json!(w.enabled));
     m.insert("worker_grant.stations".into(), json!(w.stations));
-    m.insert("worker_grant.spawn_cap".into(), json!(w.spawn_cap));
+    m.insert("worker_grant.spawn_cap".into(), limit_value(w.spawn_cap));
     m.insert("worker_grant.claude_mode".into(), json!(w.claude_mode));
     m.insert("worker_grant.codex_mode".into(), json!(w.codex_mode));
     m.insert(
         "worker_grant.lifetime_hours".into(),
         json!(w.lifetime_hours),
     );
-    m.insert("worker_grant.idle_minutes".into(), json!(w.idle_minutes));
+    m.insert(
+        "worker_grant.idle_minutes".into(),
+        limit_value(w.idle_minutes),
+    );
+    m.insert("worker_grant.allow_bypass".into(), json!(w.allow_bypass));
+}
+
+/// A limit as a settings value: a number, or the text `none` (B27 §3.2).
+fn limit_value(limit: crate::config_grant_limits::Limit) -> Value {
+    limit.map_or_else(
+        || json!(crate::config_grant_limits::NO_LIMIT_WORD),
+        |n| json!(n),
+    )
+}
+
+/// The values of `[grant_limits]` (B27 §3.2).
+fn insert_grant_limits(m: &mut Map<String, Value>, c: &DeckConfig) {
+    let g = &c.grant_limits;
+    for (key, limit) in [
+        ("grant_limits.worker_grants", g.worker_grants),
+        ("grant_limits.spawn_cap", g.spawn_cap),
+        ("grant_limits.worker_spawn_cap", g.worker_spawn_cap),
+        ("grant_limits.idle_hours", g.idle_hours),
+        ("grant_limits.answer_cap", g.answer_cap),
+    ] {
+        m.insert(key.into(), limit_value(limit));
+    }
 }
 
 /// The values of the station knobs (knobs design section 3).

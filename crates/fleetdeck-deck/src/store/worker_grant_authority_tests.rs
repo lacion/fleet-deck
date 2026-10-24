@@ -117,7 +117,7 @@ async fn fleet_control_approval_of_a_worker_spawn_stays_inside_the_worker_grant(
     let w = world().await;
     let narrow = WorkerGrantConfig {
         stations: vec!["alpha".to_owned()],
-        spawn_cap: 1,
+        spawn_cap: Some(1),
         ..on()
     };
     submit(&w, "w12", &narrow).await;

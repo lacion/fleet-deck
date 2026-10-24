@@ -30,4 +30,10 @@ capabilities: Capabilities | null,
  * How the probed version compares with the adapter's tested minimum and
  * its deny list (R8.2, DL-162). `unknown` from an older station.
  */
-version_status: VersionStatus, };
+version_status: VersionStatus, 
+/**
+ * The mode that a start without a mode gets on this station (B27
+ * §3.5): `[default_mode]` or the provider default. `None` from an
+ * older station.
+ */
+default_mode?: string, };

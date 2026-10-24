@@ -334,6 +334,12 @@ pub struct StationProvider {
     /// its deny list (R8.2, DL-162). `unknown` from an older station.
     #[serde(default)]
     pub version_status: VersionStatus,
+    /// The mode that a start without a mode gets on this station (B27
+    /// §3.5): `[default_mode]` or the provider default. `None` from an
+    /// older station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_mode: Option<String>,
 }
 
 /// The verdict of the provider version check (R8.2, DL-162).
@@ -730,6 +736,38 @@ mod tests {
         let back: StationProvider =
             serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
         assert_eq!(back, new);
+    }
+
+    #[test]
+    fn a_station_provider_without_default_mode_parses() {
+        let old =
+            json!({"instance": "codex", "provider": "codex", "version": null, "auth": "unknown"});
+        let p: StationProvider = serde_json::from_value(old).unwrap();
+        assert_eq!(p.default_mode, None);
+        let with = json!({
+            "instance": "codex", "provider": "codex", "version": null, "auth": "unknown",
+            "default_mode": "untrusted/workspace-write"
+        });
+        let p: StationProvider = serde_json::from_value(with).unwrap();
+        assert_eq!(p.default_mode.as_deref(), Some("untrusted/workspace-write"));
+    }
+
+    #[test]
+    fn default_mode_is_left_out_when_none() {
+        let old =
+            json!({"instance": "codex", "provider": "codex", "version": null, "auth": "unknown"});
+        let mut p: StationProvider = serde_json::from_value(old).unwrap();
+        assert!(
+            serde_json::to_value(&p)
+                .unwrap()
+                .get("default_mode")
+                .is_none()
+        );
+        p.default_mode = Some("default".into());
+        assert_eq!(
+            serde_json::to_value(&p).unwrap()["default_mode"],
+            json!("default")
+        );
     }
 
     #[test]

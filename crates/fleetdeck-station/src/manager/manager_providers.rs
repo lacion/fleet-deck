@@ -154,6 +154,7 @@ impl SessionManager {
             auth: auth.to_owned(),
             capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
             version_status,
+            default_mode: None,
         }
     }
 }

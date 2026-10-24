@@ -8,9 +8,10 @@ use serde_json::json;
 use super::{CANARY, CANARY_REF, Fixture};
 use crate::config::{
     DeckConfig, RAW_CAPTURE_KEYS, RAW_DECK_KEYS, RAW_DECK_LIMITS_KEYS, RAW_DECK_RETENTION_KEYS,
-    RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_SECURITY_KEYS, RAW_STATION_KEYS,
-    RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS, StationConfig,
+    RAW_DEFAULT_MODE_KEYS, RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_SECURITY_KEYS,
+    RAW_STATION_KEYS, RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS, StationConfig,
 };
+use crate::config_grant_limits::RAW_GRANT_LIMITS_KEYS;
 use crate::config_worker_grant::RAW_WORKER_GRANT_KEYS;
 use crate::paths::Env;
 use crate::settings::{deck_fields, revision_of, station_fields, view_deck, view_station};
@@ -33,7 +34,7 @@ fn sample(f: &FieldMeta) -> String {
         // The longest times take their ceiling: the minimum would break the
         // pair with the default idle time.
         FieldKind::Int if f.key.ends_with("_max_days") => f.max.unwrap_or(1).to_string(),
-        FieldKind::Int => f.min.unwrap_or(1).to_string(),
+        FieldKind::Int | FieldKind::Limit => f.min.unwrap_or(1).to_string(),
         FieldKind::Text if f.key == "tailnet_hostname" => "\"deck.example\"".to_owned(),
         FieldKind::Text if f.key == "tailscale_bin" => "\"/usr/bin/tailscale\"".to_owned(),
         FieldKind::Text if f.key == "clone_host" => "\"git.example.com\"".to_owned(),
@@ -52,7 +53,13 @@ fn sample(f: &FieldMeta) -> String {
 
 #[test]
 fn station_field_keys_equal_the_parser_keys() {
-    let tables = ["model_help", "limits", "retention", "capture"];
+    let tables = [
+        "model_help",
+        "limits",
+        "retention",
+        "capture",
+        "default_mode",
+    ];
     let mut expected: BTreeSet<String> = RAW_STATION_KEYS
         .iter()
         .filter(|k| !tables.contains(k))
@@ -63,6 +70,7 @@ fn station_field_keys_equal_the_parser_keys() {
         ("limits", RAW_STATION_LIMITS_KEYS),
         ("retention", RAW_STATION_RETENTION_KEYS),
         ("capture", RAW_CAPTURE_KEYS),
+        ("default_mode", RAW_DEFAULT_MODE_KEYS),
     ];
     for (table, list) in dotted {
         expected.extend(list.iter().map(|k| format!("{table}.{k}")));
@@ -74,7 +82,13 @@ fn station_field_keys_equal_the_parser_keys() {
 
 #[test]
 fn deck_field_keys_equal_the_parser_keys() {
-    let tables = ["security", "retention", "limits", "worker_grant"];
+    let tables = [
+        "security",
+        "retention",
+        "limits",
+        "worker_grant",
+        "grant_limits",
+    ];
     let mut expected: BTreeSet<String> = RAW_DECK_KEYS
         .iter()
         .filter(|k| !tables.contains(k))
@@ -85,6 +99,7 @@ fn deck_field_keys_equal_the_parser_keys() {
         ("retention", RAW_DECK_RETENTION_KEYS),
         ("limits", RAW_DECK_LIMITS_KEYS),
         ("worker_grant", RAW_WORKER_GRANT_KEYS),
+        ("grant_limits", RAW_GRANT_LIMITS_KEYS),
     ];
     for (table, list) in dotted {
         expected.extend(list.iter().map(|k| format!("{table}.{k}")));
@@ -159,7 +174,7 @@ fn the_tables_are_well_formed() {
     for f in station_fields().into_iter().chain(deck_fields()) {
         assert!(!f.label.is_empty() && !f.help.is_empty(), "{}", f.key);
         assert!(f.help.ends_with('.'), "{}: help is a sentence", f.key);
-        if f.kind == FieldKind::Int {
+        if matches!(f.kind, FieldKind::Int | FieldKind::Limit) {
             assert!(f.min.is_some() && f.max.is_some(), "{}", f.key);
         }
         if f.kind == FieldKind::Enum {

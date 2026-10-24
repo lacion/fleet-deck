@@ -21,7 +21,7 @@ use fleetdeck_proto::command::{
 use fleetdeck_proto::coordinator_desktop_text::limits;
 use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::version::feature;
-use fleetdeck_proto::{CommandEnvelope, CommandId, StationId};
+use fleetdeck_proto::{CommandEnvelope, CommandId, StationId, grant_limit::NO_LIMIT};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::coordinator::grant_narrowing::{self, Removal};
@@ -612,13 +612,14 @@ fn attach(
                 GrantClass::Spawn,
             ]);
             grant.stations = grant_stations(tx, &req.station, w)?;
-            grant.spawn_cap = w.spawn_cap;
+            grant.spawn_cap = w.spawn_cap.unwrap_or(NO_LIMIT);
             grant.max_modes = BTreeMap::from([
                 ("claude".to_owned(), w.claude_mode.clone()),
                 ("codex".to_owned(), w.codex_mode.clone()),
             ]);
-            grant.idle_ttl_ms = i64::from(w.idle_minutes) * 60_000;
             grant.ttl_ms = i64::from(w.lifetime_hours) * 3_600_000;
+            grant.idle_ttl_ms =
+                Option::map_or(w.idle_minutes, grant.ttl_ms, |m| i64::from(m) * 60_000);
             grant.start_command_id = Some(id.0.clone());
             let grant = prepare_grant(grant)?;
             let (g, changed) = create_grant_tx(tx, grant_id, &grant, now)?;

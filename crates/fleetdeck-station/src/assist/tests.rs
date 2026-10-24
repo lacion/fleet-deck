@@ -84,6 +84,7 @@ fn provider(id: &str, auth: &str) -> StationProvider {
         auth: auth.to_owned(),
         capabilities: None,
         version_status: fleetdeck_proto::link::VersionStatus::Unknown,
+        default_mode: None,
     }
 }
 

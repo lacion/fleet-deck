@@ -18,6 +18,8 @@ use ts_rs::TS;
 pub enum FieldKind {
     Bool,
     Int,
+    /// A whole number in `min..=max`, or the text `none` (no limit, B27).
+    Limit,
     Text,
     Enum,
     Path,

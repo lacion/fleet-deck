@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::config_grant_limits::{GrantLimits, RawGrantLimits};
 use crate::config_worker_grant::{RawWorkerGrant, WorkerGrantConfig};
 
 use super::clone_cfg::{valid_clone_host, valid_clone_org};
@@ -69,7 +70,7 @@ pub struct DeckConfig {
     pub tailnet_auto: bool,
     pub tailnet_auto_listen: Vec<SocketAddr>,
     pub tailnet_auto_link_listen: Vec<SocketAddr>,
-    /// `[security]`: sign-in lifetimes, password length and desktop rates (knobs K1; nothing reads them yet).
+    /// `[security]`: sign-in lifetimes, password length and desktop rates (knobs K1 and K2).
     pub security: DeckSecurity,
     /// `[retention]`: how long the deck keeps its audit rows.
     pub retention: DeckRetention,
@@ -77,6 +78,8 @@ pub struct DeckConfig {
     pub limits: DeckLimits,
     /// `[worker_grant]`: the default grant of an eligible session start (MCP P4a).
     pub worker_grant: WorkerGrantConfig,
+    /// `[grant_limits]`: the ceilings of every grant; "none" turns one off (B27).
+    pub grant_limits: GrantLimits,
 }
 
 /// The keys of `deck.toml` (`RawDeck`).
@@ -101,6 +104,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "retention",
     "limits",
     "worker_grant",
+    "grant_limits",
 ];
 
 #[derive(Deserialize)]
@@ -125,6 +129,7 @@ struct RawDeck {
     retention: Option<RawDeckRetention>,
     limits: Option<RawDeckLimits>,
     worker_grant: Option<RawWorkerGrant>,
+    grant_limits: Option<RawGrantLimits>,
 }
 
 impl DeckConfig {
@@ -188,8 +193,12 @@ impl DeckConfig {
             Some(raw) => raw.validate()?,
             None => DeckLimits::default(),
         };
-        let worker_grant = match raw.worker_grant {
+        let grant_limits = match raw.grant_limits {
             Some(raw) => raw.validate()?,
+            None => GrantLimits::default(),
+        };
+        let worker_grant = match raw.worker_grant {
+            Some(raw) => raw.validate(&grant_limits)?,
             None => WorkerGrantConfig::default(),
         };
         Ok(Self {
@@ -212,6 +221,7 @@ impl DeckConfig {
             retention,
             limits,
             worker_grant,
+            grant_limits,
         })
     }
 }

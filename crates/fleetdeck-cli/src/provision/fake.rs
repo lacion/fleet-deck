@@ -172,6 +172,7 @@ pub fn provider(
         auth: auth.to_owned(),
         capabilities: None,
         version_status: st,
+        default_mode: None,
     }
 }
 

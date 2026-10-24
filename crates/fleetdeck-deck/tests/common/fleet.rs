@@ -61,6 +61,7 @@ pub fn claude_info() -> StationInfo {
             auth: "signed_in".to_owned(),
             capabilities: None,
             version_status: Default::default(),
+            default_mode: None,
         }],
         assist_tokens_today: None,
         assist_cap: None,
