@@ -132,12 +132,12 @@ type LimitProps = {
   readonly label: string;
   readonly value: string;
   readonly min: number;
-  readonly max: number;
   readonly problem: string | null;
   readonly onChange: (value: string) => void;
 };
 
-function Limit({ label, value, min, max, problem, onChange }: LimitProps) {
+/** A limit input. No upper bound: the deck checks the configured limit (B27 §3.7). */
+function Limit({ label, value, min, problem, onChange }: LimitProps) {
   return (
     <div className="fd-access-field">
       <label>
@@ -146,7 +146,6 @@ function Limit({ label, value, min, max, problem, onChange }: LimitProps) {
           type="number"
           inputMode="numeric"
           min={min}
-          max={max}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -236,7 +235,6 @@ export function AccessFields({
                 label="Session limit"
                 value={fleet.spawnCap}
                 min={1}
-                max={50}
                 problem={spawnCapProblem(fleet)}
                 onChange={(spawnCap) => onFleet({ ...fleet, spawnCap })}
               />
@@ -262,7 +260,6 @@ export function AccessFields({
                 label="Answer limit"
                 value={fleet.answerCap}
                 min={0}
-                max={5000}
                 problem={answerCapProblem(fleet)}
                 onChange={(answerCap) => onFleet({ ...fleet, answerCap })}
               />

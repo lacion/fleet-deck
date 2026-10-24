@@ -258,7 +258,7 @@ describe('the dialog body', () => {
   });
 
   test('Give access is disabled for a limit problem', () => {
-    expect(html({ fleet: { ...START_LIVE, spawnCap: '99' } })).toMatch(
+    expect(html({ fleet: { ...START_LIVE, spawnCap: 'x' } })).toMatch(
       /type="submit" class="fd-primary" disabled="">Give access</,
     );
   });

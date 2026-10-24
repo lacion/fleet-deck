@@ -122,7 +122,9 @@ describe('the limits section', () => {
     expect(out).toContain('<h4 class="fd-label fd-access-h">Limits</h4>');
     expect(out).toContain('<div class="fd-access-grid">');
     expect(out).toContain('Session limit');
-    expect(out).toContain('min="1" max="50"');
+    // No upper bound: the deck checks the configured limit (B27 §3.7).
+    expect(out).toContain('min="1" value="3"');
+    expect(out).not.toContain('max="50"');
     expect(out).toContain('Highest Claude mode');
     expect(out).toContain('Highest Codex mode');
     // The options say the modes in words; the values stay the ids.
@@ -153,11 +155,11 @@ describe('the limits section', () => {
   });
 
   test('the limit problem shows under the field', () => {
-    const out = html({ fleet: { ...START_LIVE, spawnCap: '99' } });
+    const out = html({ fleet: { ...START_LIVE, spawnCap: 'x' } });
     expect(out).toContain('<p class="fd-note" role="alert">The session limit is a whole number');
     expect(html({ fleet: START_LIVE })).not.toContain('role="alert"');
     const answer = html({ fleet: { ...NO_FLEET, answer: true, answerCap: 'x' } });
-    expect(answer).toContain('The answer limit is a whole number from 0 to 5000.');
+    expect(answer).toContain('The answer limit is a whole number.');
   });
 
   test('the edit mode shows a limit only for a newly added class', () => {

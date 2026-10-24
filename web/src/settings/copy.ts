@@ -59,7 +59,7 @@ const UNIT_END = /^(.*\S) \(([A-Za-z]+)\)$/;
  * not in the label.
  */
 export function unitOf(meta: Pick<FieldMeta, 'key' | 'kind' | 'label'>): Unit | null {
-  if (meta.kind !== 'int') return null;
+  if (meta.kind !== 'int' && meta.kind !== 'limit') return null;
   const own = KEY_UNITS[meta.key];
   if (own !== undefined) return own;
   const m = UNIT_END.exec(meta.label);
