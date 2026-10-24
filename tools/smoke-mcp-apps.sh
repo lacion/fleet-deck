@@ -31,6 +31,8 @@
 #   FD_SMOKE_OUT           where the frames go (default
 #                          ~/fleetdeck-briefs/backlog/mcp-apps/smoke)
 #   FD_SMOKE_STEP          seconds to wait for one step (default 180)
+#   FD_SMOKE_KEEP          1: keep the temporary folder (the station and deck
+#                          data) after the run and print its path
 #
 # A failed check prints "FAIL: <what>" and the script exits 1. The records of
 # a run stay in $FD_SMOKE_OUT/<time>/<provider>/.
@@ -46,21 +48,106 @@ CODEX_MODE=${FD_SMOKE_CODEX_MODE:-never/read-only}
 CLAUDE_MODE=${FD_SMOKE_CLAUDE_MODE:-bypassPermissions}
 STEP=${FD_SMOKE_STEP:-180}
 OUT=${FD_SMOKE_OUT:-$HOME/fleetdeck-briefs/backlog/mcp-apps/smoke}/$(date +%Y%m%d-%H%M%S)
+KEEP=${FD_SMOKE_KEEP:-0}
 TMP=$(mktemp -d)
 PIDS=""
+# The node and the session of the provider that runs now (for the records
+# and the stop at the end).
+NODE=""
+REC=""
+session=""
 
 fail() {
     echo "FAIL: $*" >&2
     exit 1
 }
 
-cleanup() {
-    for pid in $PIDS; do
-        kill "$pid" 2>/dev/null || true
+# save_records: the station database and its events go into the record
+# folder (also after a failure).
+save_records() {
+    [ -n "$NODE" ] && [ -n "$REC" ] || return 0
+    db=$NODE/station/station/station.db
+    [ -f "$db" ] || return 0
+    for f in "$db" "$db-wal" "$db-shm"; do
+        [ -f "$f" ] && cp "$f" "$REC/" 2>/dev/null || true
     done
-    rm -rf "$TMP"
+    python3 -I - "$db" "$REC/all-events.jsonl" <<'PY' || true
+import json, sqlite3, sys
+con = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True, timeout=10)
+with open(sys.argv[2], "w") as f:
+    for row in con.execute(
+        "SELECT session_id, kind, payload FROM events ORDER BY station_seq"
+    ):
+        f.write(json.dumps({"session": row[0], "kind": row[1], "event": json.loads(row[2])}) + "\n")
+PY
+    # The raw provider frames (the provider's answer kind, fact 21).
+    cp -r "$NODE/station/station/raw" "$REC/raw" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+
+# The PIDs of the processes that belong to this run: their command line
+# names the temporary folder, or their working folder is in it (the provider
+# and the demo server run in the workspace).
+run_pids() {
+    for d in /proc/[0-9]*; do
+        pid=${d#/proc/}
+        [ "$pid" != "$$" ] || continue
+        cwd=$(readlink "$d/cwd" 2>/dev/null) || continue
+        case $cwd in
+        "$TMP" | "$TMP"/*) echo "$pid"; continue ;;
+        esac
+        if tr '\0' ' ' <"$d/cmdline" 2>/dev/null | grep -qF "$TMP"; then
+            echo "$pid"
+        fi
+    done
+    return 0
+}
+
+# stop_all: stops the session, then the station and the deck, then every
+# process of the run that is still there (TERM, a wait, then KILL). The
+# provider runs under the station's shim, which outlives the station by
+# design, so killing the station alone does not stop it.
+stop_all() {
+    if [ -n "$session" ] && [ -n "$NODE" ] && [ -d "$NODE/deck" ]; then
+        HOME="$NODE/home" timeout 20 "$FD" --data-dir "$NODE/deck" deck command smoke \
+            "{\"op\":\"stop\",\"session_id\":\"$session\",\"how\":\"kill\"}" \
+            >/dev/null 2>&1 || true
+    fi
+    for pid in $PIDS; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    left=$(run_pids)
+    [ -z "$left" ] || kill -TERM $left 2>/dev/null || true
+    i=0
+    while [ $i -lt 10 ]; do
+        alive=""
+        for pid in $PIDS $(run_pids); do
+            kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+        done
+        [ -n "$alive" ] || break
+        sleep 1
+        i=$((i + 1))
+    done
+    for pid in $PIDS $(run_pids); do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    PIDS=""
+}
+
+cleanup() {
+    status=$?
+    set +e
+    trap - EXIT INT TERM
+    [ "$status" -eq 0 ] || save_records
+    stop_all
+    if [ "$KEEP" = 1 ]; then
+        echo "kept: $TMP"
+    else
+        rm -rf "$TMP"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 [ -x "$FD" ] || fail "no fleetdeck binary at $FD (set FD_BIN)"
 [ -f "$SERVER" ] || fail "no demo server at $SERVER"
@@ -331,6 +418,7 @@ EOF
     revert_is app_call_ran_after_turn
 
     py dump "$DB" "$session" "$REC/events.jsonl"
+    save_records
     echo "PASS: $driver (records in $REC)"
 }
 
@@ -340,9 +428,7 @@ for provider in $PROVIDERS; do
     claude) smoke_one claude "$CLAUDE_MODE" ;;
     *) fail "unknown provider $provider" ;;
     esac
-    for pid in $PIDS; do
-        kill "$pid" 2>/dev/null || true
-    done
-    PIDS=""
+    stop_all
+    session=""
 done
 echo "All smoke checks passed. Frames: $OUT"
