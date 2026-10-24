@@ -78,9 +78,12 @@ pub mod reason {
 }
 
 /// The reason code of the shell barrier and of the app call barrier (B8,
-/// B15) for a revert row, if one holds. The app barrier is read when the
-/// shell barrier is clear, so every place that meets the shell barrier also
-/// meets the app barrier.
+/// B15) for a revert row, if one holds. A running shell row wins; else the
+/// app barrier is read before the "ran after the turn" of the shell barrier,
+/// because a non-read-only app call also advances the folder generation and
+/// its own reason (`app_call_running`, `app_call_ran_after_turn`) names the
+/// cause (design `mcp-apps.md` §4.6.1). Every place that meets the shell
+/// barrier also meets the app barrier.
 async fn shell_block(
     env: RevertEnv<'_>,
     row: &RevertRow,
@@ -91,15 +94,11 @@ async fn shell_block(
             row.revert.worktree_root.clone(),
             row.revert.app_turn.0.clone(),
         )
-        .await?
-        .map(|b| match b {
-            Barrier::Running => reason::SHELL_RUNNING,
-            Barrier::RanAfterTurn => reason::SHELL_RAN_AFTER_TURN,
-        });
-    if shell.is_some() {
-        return Ok(shell);
+        .await?;
+    if shell == Some(Barrier::Running) {
+        return Ok(Some(reason::SHELL_RUNNING));
     }
-    Ok(env
+    let app = env
         .store
         .app_call_barrier(
             row.revert.worktree_root.clone(),
@@ -109,7 +108,8 @@ async fn shell_block(
         .map(|b| match b {
             AppCallBarrier::Running => reason::APP_CALL_RUNNING,
             AppCallBarrier::RanAfterTurn => reason::APP_CALL_RAN_AFTER_TURN,
-        }))
+        });
+    Ok(app.or_else(|| shell.map(|_| reason::SHELL_RAN_AFTER_TURN)))
 }
 
 /// The conversation rollback of a revert: the direct driver's
