@@ -137,19 +137,25 @@ fn app_policy() -> String {
     app_csp::header(&AppCsp::default())
 }
 
-/// The policy header of the answer: the app policy only when the directive
-/// has `app: true`, the display allows apps, the file is HTML and the request
-/// declares `wall_apps.v1`; else the inert policy.
+/// True when the answer is a wall app: the directive has `app: true`, the
+/// display allows apps, the request declares `wall_apps.v1`, the file is HTML
+/// and the deck holds the bytes (`Cache::Cached`; a streamed version stays
+/// inert, fail closed).
+fn is_app(app_flag: bool, allow_apps: bool, declared: bool, path: &str, cache: Cache) -> bool {
+    app_flag
+        && allow_apps
+        && declared
+        && ArtifactKind::of_path(path) == ArtifactKind::Html
+        && cache == Cache::Cached
+}
+
+/// The policy header of the answer: the app policy for an app, else the
+/// inert policy.
 ///
 /// # Errors
 /// An internal error when the app policy is not a valid header value.
-fn policy_header(
-    app_flag: bool,
-    allow_apps: bool,
-    path: &str,
-    declared: bool,
-) -> Result<HeaderValue, ApiError> {
-    if app_flag && allow_apps && declared && ArtifactKind::of_path(path) == ArtifactKind::Html {
+fn policy_header(app: bool) -> Result<HeaderValue, ApiError> {
+    if app {
         HeaderValue::from_str(&app_policy()).map_err(ApiError::internal)
     } else {
         Ok(HeaderValue::from_static(INERT_CSP))
@@ -287,10 +293,6 @@ async fn artifact(
         .map_err(failure)?;
     let (app_flag, allow_apps) = authorize(&board, &login, &target).await?;
     let mut headers = display_headers(&path);
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        policy_header(app_flag, allow_apps, &path, declared)?,
-    );
     let gate: Gate = {
         let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
         Arc::new(move || {
@@ -299,6 +301,7 @@ async fn artifact(
         })
     };
     if cache == Cache::Stream {
+        headers.insert(header::CONTENT_SECURITY_POLICY, policy_header(false)?);
         return stream_with(
             &board,
             &rec,
@@ -317,11 +320,20 @@ async fn artifact(
             rec.station_id.clone(),
             target.artifact_id.clone(),
             version,
-            path,
+            path.clone(),
         )
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(miss)?;
+    // An app gets `APP_BOOTSTRAP` in its HTML (B17 C1b). A file that is not
+    // UTF-8 stays inert with its bytes unchanged (fail closed).
+    let wants_app = is_app(app_flag, allow_apps, declared, &path, cache);
+    let (app, bytes) = match (wants_app, String::from_utf8(bytes)) {
+        (true, Ok(text)) => (true, super::app_public::with_bootstrap(&text).into_bytes()),
+        (_, Ok(text)) => (false, text.into_bytes()),
+        (_, Err(e)) => (false, e.into_bytes()),
+    };
+    headers.insert(header::CONTENT_SECURITY_POLICY, policy_header(app)?);
     // The authority of this moment, right before the bytes leave; the body
     // then checks it again before each chunk.
     authorize(&board, &login, &target).await?;

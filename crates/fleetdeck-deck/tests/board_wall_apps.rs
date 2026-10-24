@@ -35,6 +35,7 @@ media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; 
 base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const PAGE: &str = "<h1>an app</h1>";
 const FEATURES: (&str, &str) = ("X-FleetDeck-Features", "wall_apps.v1");
+const HELLO: &str = "fleet-deck-app-hello";
 const LEAK: &str = "SENTINEL-LEAK-4711";
 
 struct Rig {
@@ -207,7 +208,11 @@ async fn app_policy_only_with_directive_flag_setting_html_and_feature() {
                         want,
                         "allow={allow} flag={flag} html={html} declared={declared}"
                     );
-                    assert_eq!(res.text, PAGE);
+                    if all_four {
+                        assert!(res.text.contains(HELLO) && res.text.ends_with(PAGE));
+                    } else {
+                        assert_eq!(res.text, PAGE);
+                    }
                 }
             }
         }
@@ -216,6 +221,49 @@ async fn app_policy_only_with_directive_flag_setting_html_and_feature() {
     assert!(APP.starts_with("sandbox allow-scripts;"));
     assert!(APP.contains("connect-src 'none'"));
     assert!(!APP.contains("allow-same-origin"));
+}
+
+#[tokio::test]
+async fn the_app_answer_carries_the_bootstrap_first() {
+    let r = rig().await;
+    r.seed("h1", Some("s1"), "page.html").await;
+    r.allow_apps(true).await;
+    r.direct("h1", 1, true).await;
+    let res = r.file("h1", "page.html", "", &[FEATURES]).await;
+    assert_eq!(csp(&res), APP);
+    let hello = res.text.find(HELLO).expect("the bootstrap is in the body");
+    let page = res
+        .text
+        .find(PAGE)
+        .expect("the original text is in the body");
+    assert!(res.text.starts_with("<script>"), "{}", res.text);
+    assert!(hello < page);
+    assert_eq!(
+        res.header("content-length").map(str::to_owned),
+        Some(res.text.len().to_string())
+    );
+}
+
+#[tokio::test]
+async fn the_inert_answer_has_no_bootstrap() {
+    let r = rig().await;
+    r.seed("h1", Some("s1"), "page.html").await;
+    r.seed("m1", Some("s1"), "page.md").await;
+    // Each of the four conditions off, the other three on.
+    for off in ["allow", "flag", "html", "declared"] {
+        r.allow_apps(off != "allow").await;
+        let (id, file) = if off == "html" {
+            ("m1", "page.md")
+        } else {
+            ("h1", "page.html")
+        };
+        r.direct(id, 1, off != "flag").await;
+        let headers: &[(&str, &str)] = if off == "declared" { &[] } else { &[FEATURES] };
+        let res = r.file(id, file, "", headers).await;
+        assert_eq!(csp(&res), INERT, "off={off}");
+        assert_eq!(res.text, PAGE, "off={off}");
+        assert!(!res.text.contains(HELLO), "off={off}");
+    }
 }
 
 #[tokio::test]
