@@ -159,6 +159,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Use the provider's running totals (Claude transcript, Codex `tokenUsage.total`) as the source and store the last value per process or thread, instead of adding deltas?
   - Show cache tokens separately (read, write) and use them in the cost.
   - Keep the price table current from one place (both providers), show its date, and say "estimate" on a subscription plan?
+- **Reference from the t3code clone (2026-10-24):** t3code keeps input in three disjoint parts (uncached input, cached input read, cache creation) and counts reasoning tokens as a subset of output (`packages/contracts/src/usage.ts`). It reads the usage from the provider transcripts, not from a live counter (`apps/server/src/usage/usageTranscriptReader.ts`). Fleet Deck's sum of `input_tokens` misses the cache parts, which fits the "too low" symptom above.
 - **Status:** done.
 - **Done (2026-10-24):** token counts and cost come from the provider totals (`result.modelUsage`, `tokenUsage.total`), the Claude resume baseline is counted, and old counts can be recounted (B14, B20, B21) (design `docs/v2/design/usage-cost.md`, merged into v2 by `3e8d26e0`)
 
@@ -183,6 +184,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Routing: the app's tool calls go from the board through the deck and the station to the live provider session. Which principals may call them (owner only; a shared-session approver)? This is a new command path: adversary DESIGN REVIEW.
   - Where is the app document stored (session attachment, artifact store), and what does the deck relay?
   - Can Fleet Deck's own MCP tools (the coordinator tools) ship apps, for example a fleet view or a task board inside a chat?
+- **Research (t3code clone at `~/research/t3code`, 2026-10-24; read only):**
+  - The MCP Apps code is in `apps/server/src/mcp/McpHttpServer.ts`, `apps/server/src/mcpApps/McpAppRequests.ts` (the request service) and `packages/shared/src/mcpApp.ts` (the shared types) and `packages/client-runtime/src/state/mcpApps.ts`. The host bridge is in `packages/client-runtime/src/mcpApps`, as the PR says.
+  - The shared types show the read-only rule and the approval rule. I did not read every file; the first step of the exploration is to read the request service and the bridge message list.
 - **Status:** done.
 - **Done (2026-10-24):** phase 1: MCP Apps show as interactive UIs in the chat for Codex and Claude, owner only (design `docs/v2/design/mcp-apps.md`, merged into v2 by `f9fb83f2`)
 - **Open:** phase 2 (full screen, `ui/update-model-context`, downloads) is not built.
@@ -322,3 +326,83 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Notes (2026-10-24):** the station store sets a 5 s busy timeout (`fleetdeck-core/src/db.rs` `BUSY_TIMEOUT_MS`), so the error is either a deferred transaction that cannot upgrade to a write while the old manager's connection writes (SQLite answers busy at once in that case), or a lock held longer than 5 s under the full workspace load. The rig `shim_resume_rig.rs` `as_shim_station` (7 tests) reopens the file while the old `SessionManager` is still referenced; drop the old manager and wait for its store tasks before the reopen, or open the migration with `BEGIN IMMEDIATE`.
 - **Update (2026-10-24):** after the wall-apps merge, `a_shim_hosted_session_binds_workflow_agents` and `an_adopted_session_binds_33_runs_before_its_observer_reads_them` fail on every run on Lighting (0.6 s, `DatabaseBusy` at `shim_resume_rig.rs:196`, the start of the new `SessionManager`, not the open). An immediate busy means a read-to-write upgrade conflict: most likely a B12 workflow task of the old manager still writes after `shutdown(StopMode::Kill)`. The owner said to ignore flaky tests for now, so both tests are `#[ignore]` with this reason; remove the attribute with the fix. The other 8659 Rust tests pass.
 - **Other flaky tests seen under the full load (2026-10-24, not chased, owner rule):** `fleetdeck-station desktop::input::exec_click_tests::a_click_runs_the_steps_in_order_with_the_fixed_argv` (the call log showed the steps twice), `desktop::input::exec_click_tests::an_old_observation_or_an_old_authority_answer_refuses_the_button` (`input_focus_unknown`; also seen 2026-10-23, a 90 ms limit), `fleetdeck-cli::fleet_git_land the_push_loop_never_pushes_the_old_tip_after_a_land` (3 pushes where 2 are expected). Each passed when run again or alone.
+
+## B26. Updating a station loses its grants (owner report, 2026-10-22)
+
+- **Observed:** after the owner updates a station, its grants are gone. The owner must grant them again. The owner accepts the secure default, but for a home network with good security the step is annoying.
+- **Wanted:** the grants survive a station update by default. The owner can also choose that an update clears them.
+- **Facts (code on `v2` 7333db5d):**
+  - Grants are rows of the deck (`crates/fleetdeck-deck/src/store/worker_grant.rs`, the `tokens` table with `grant_id`, `station_id`, `classes`, `spawn_cap`, `spawn_used`, `idle_ttl_m`). Station-side grant rows are in `crates/fleetdeck-station/src/store/session_grants.rs`.
+  - I did not find the code that clears the grants on an update. The likely cause is that an update changes the station's key or incarnation, so that the pairing and its grants are treated as new. This is the first research step: read the update path (`fleetdeck service start`, the station pairing store) and find the rule that drops the grant rows.
+- **Questions for the design:**
+  - Is the drop intended for a key change (a new station, or a changed key), and not for a plain version update? If so, keep the grants on a version change and drop them on a key change.
+  - Make it a setting: "keep grants on update" (default on), with a clear warning when it is off.
+  - The audit log records every grant that an update keeps or drops.
+- **Status:** open (noted only).
+
+## B27. Security defaults the owner can change: a default agent mode, unlimited grants, bypass permissions (owner request, 2026-10-22)
+
+- **Wanted:** the secure configuration stays the default. The owner can turn each security control off, and can set a default mode for the agents. Examples: a default agent mode for every spawn; grants with no limits (no spawn cap, no idle limit, no answer cap); and the bypass-permissions mode allowed for workers. All of this must be possible on a secure install, with a clear warning for each change.
+- **Facts (code on `v2` 7333db5d):**
+  - `allow_bypass_permissions` exists (default `false`, `crates/fleetdeck-core/src/config.rs` line 485). It offers the mode that skips every permission check (Claude `bypassPermissions`, Codex full access).
+  - The worker grant cannot use the bypass mode: its ceilings exclude it (`crates/fleetdeck-core/src/config_worker_grant.rs`, lines 21 to 31; a test asserts a `bypassPermissions` worker grant is refused, line 333).
+  - Grant limits are fixed in code: `WORKER_GRANT_CAP = 200` and `MAX_WORKER_SPAWN_CAP = 10` (`crates/fleetdeck-deck/src/store/worker_grant.rs`, lines 45 and 49); the answer cap and idle TTL have maximums too (`MAX_ANSWER_CAP`, `MAX_IDLE_TTL_MS`).
+  - The `[security]` config section holds sign-in lifetimes, password length and desktop rates (`crates/fleetdeck-core/src/config_deck.rs`). Its comment says "nothing reads them yet".
+- **Questions for the design:**
+  - Which controls become options, and which stay fixed? Candidates: the bypass mode for workers, the grant caps and limits, sign-in lifetimes, the password rules, the desktop rates, the member file deny list (DL-154), and the approval step for tool calls.
+  - One switch per control in `[security]`, or one "trusted home network" profile that sets many at once? The profile must show each value it sets.
+  - A default agent mode: a setting per station or per project, used when a spawn does not give a mode. It must never be more permissive than the station's allowed ceiling, unless the owner set that ceiling.
+  - Each relaxation changes the threat model, so each needs its own review (adversary DESIGN REVIEW for bypass and for the approval step).
+  - Show the active posture on the board (for example a "Relaxed: bypass allowed for workers" line in Settings).
+- **Status:** open (noted only).
+
+## B28. Update Claude and Codex automatically from the station service (owner request, 2026-10-22)
+
+- **Wanted:** the station service updates the Claude Code and Codex CLIs by itself, on a schedule or on request. The owner can set when it runs, and can turn it off. Each update is logged. A failed update leaves the old version in place.
+- **Facts (code and docs on `v2` 7333db5d):**
+  - Nothing in the code installs or updates a provider CLI. The station only probes the installed version: `codex/driver.rs` (about line 317, `--version`) and the drift report (`crates/fleetdeck-station/src/drift.rs`, `claude_version` and `codex_version`).
+  - The version rules are in `crates/fleetdeck-providers/src/version.rs`: an older CLI only warns, and a version on the deny list (`KNOWN_BROKEN`) is refused for starts. The tested minimum is `TESTED_MIN_VERSION`, in `claude/` and `codex/`. An automatic update must respect these rules, and it must not install a version that is on the deny list.
+  - The station upgrade (`docs/v2/operations.md` about line 1376, `fleetdeck station upgrade prepare / activate / rollback`) updates the Fleet Deck binary only. It does not touch the provider CLIs.
+  - The station runs as the owner's user. An update of a CLI is a write to the owner's install (npm or the vendor installer), so the station must know which install method was used.
+- **Risks to design for:**
+  - A new provider version can change the protocol. The adapter may then break in the middle of a running session. Update only when no session is running, or after the owner's approval for a running one.
+  - A supply-chain risk: the update source (the npm registry or the vendor download) must be checked (a pinned source, a checksum or signature where the vendor gives one).
+  - A failed or partial update must not leave the CLI unusable. Keep the previous version until the new one passes a probe.
+- **Questions for the design:**
+  - Which install method does the station detect (npm global, the vendor installer, a Homebrew or pacman package), and which methods does it update? The others are reported only.
+  - Schedule: on a timer, on the owner's click, or after the station starts? Which window (for example at night)?
+  - Pin or follow: follow "latest", or stay within the tested range, with the owner's choice of channel?
+  - Gate: run the probe and the handoff check (`coordinator/bindings_handoff.rs`) on the new version before it counts as updated.
+  - Each update is a high-risk change (it runs code from an external source as the owner). Adversary DESIGN REVIEW before the build.
+  - Settings: the schedule, the channel and the on/off switch in the station settings (B27 applies to the same settings).
+- **Status:** open (noted only).
+
+## B29. An analytics page: per station and for the whole fleet, backfilled from the sessions (owner idea, 2026-10-24)
+
+- **Wanted:** an analytics page, like the one in t3code, with two levels: one page per station, and one aggregated page for the whole fleet. It shows the metrics and the learnings that the sessions already hold (tokens, cost, turns, tool use, durations, failures, approvals, subagents). Where the data exists, it backfills the history from the sessions, so the page is not empty on the first day.
+- **Facts from t3code (research 2026-10-24):**
+  - t3code has an analytics option in its settings: "allow disabling usage analytics" (PR #13458, closed) and "anonymous analytics opt-out" (PR #16763, closed). A later change stops the analytics from flooding with successful MCP tool calls (PR #24287, merged 2026-10-24). I did not find the analytics page itself, so I do not know what it shows. The PR titles only suggest it is related to usage analytics. The first research step is to open the page in a t3code build and record what it shows.
+- **Facts (Fleet Deck on `v2` 7333db5d):**
+  - No analytics page exists (`web/src`, `crates/fleetdeck-deck/src`).
+  - Usage per turn: `Usage { input_tokens, output_tokens, cost_usd, cost_inferred }` in `crates/fleetdeck-proto/src/event_types.rs` (line 200). The known issues of the token count and cost are in B14. A repair of the stored totals is in B20.
+  - The station keeps the session log in the `events` table (`crates/fleetdeck-station/src/store/migrations.rs`, line 55: `session_id`, `session_seq`, `kind`, `payload`, `at`). Its retention is a window: "without a paired deck, nobody needs the events beyond the window" (`crates/fleetdeck-station/src/store/log.rs`, `prune`). So older events may be gone. I did not check the window value. The `sessions` table and the turn checkpoints are never pruned (same file, comment at line 349).
+  - The deck has a `sessions` table too (`crates/fleetdeck-deck/src/store/schema.rs`, line 47).
+  - The audit log has its own retention (`crates/fleetdeck-deck/src/store/audit.rs`, `audit_days` and `audit_max_rows`).
+- **Data that the sessions may hold (to check per source):**
+  - per session: provider, model, mode, start and end, the status of each turn, cost and tokens, cache tokens (not stored today, B14), the number of tool calls by kind, failures and errors, approvals asked and answered, subagents and workflows (B12), files changed and lines (the turn diffs), commits and branches, artifacts published, shell commands run (B8), resumes and handoffs (B13, B21);
+  - per station: the link time (B22), the build version (B5), the provider versions (B28), the grants in use.
+- **Questions for the design:**
+  - Backfill: how far back does each metric go? The station's `events` window may not cover the whole session history. The provider transcripts (Claude, Codex) hold more: a backfill can read them, as the import does (DL-189). Check the transcript for each metric first.
+  - Where to compute: the station (per station, from its own rows) and the deck (the fleet total, from the stations' summaries). Use summaries, not raw events, for the fleet view, so the page is cheap.
+  - Learnings: which ones are useful? For example the average turns to finish, the tools that fail most, the approval rate, the cost per merged change, the time to first answer. A "learnings" section needs a clear rule for each (no guesses shown as facts).
+  - Privacy: the fleet page shows the work of other people (shared members, B-series sharing). Apply the same visibility rules as the fleet view (B25), and never show a file, prompt text or secret here.
+  - Cost: label the cost as an estimate (B14), and show the price table date.
+  - Each metric needs a test that compares it with a known value from a recorded session.
+- **Research (t3code clone at `~/research/t3code`, commit d53873b6, 2026-10-24; read only, scripts not run):**
+  - The analytics page is the `usage` route: `apps/web/src/routes/usage.tsx` and `apps/web/src/components/usage/UsagePage.tsx` (1565 lines). It shows: processed tokens, cached input, uncached input, output, cache savings; tokens and cost by type (input, cache read, cache write, output); cost by speed (fast, ultrafast); a breakdown by model or by day or hour; a provider chart; a share bar; the pooled provider limits; and a view per environment (a station, in our words) with a merge across environments (`apps/web/src/state/usage.ts`, `packages/shared/src/usageMerge`).
+  - **The data is read from the provider's own transcript files, not from an event log.** The server walks the Claude and Codex transcript folders (`*.jsonl`, found through `CLAUDE_CONFIG_DIR` and `CODEX_HOME`), keeps only files newer than the window (`sinceMs`), and parses each line for its usage (`apps/server/src/usage/usageTranscriptReader.ts`). A scan cache stores the byte offset of each file, so the next scan reads only the new lines (`usageScanCache.ts`, file `usage-scan-cache-v9.json`). A dedupe key stops one API response from counting twice (`packages/provider-core/src/server/usage.ts`, `dedupeKey`).
+  - Aggregation is in `apps/server/src/usage/usageAggregation.ts` and pricing in `usagePricing.ts`. Records with no price are counted as unpriced, not as zero. There is a user price table with overrides (`UsagePriceOverrides.tsx`, `usagePriceTable.ts`). Cache savings are computed from the price difference.
+  - The t3code token contract (`packages/contracts/src/usage.ts`) splits the input into uncached, cached read and cache creation. It also says that reasoning tokens are a subset of output and must not be added again. That split is what B14 needs.
+- **Answer to the backfill question:** the history goes back as far as the provider transcripts on the station's disk. Fleet Deck's station already knows these folders (the native-session browse of B7 and the import of DL-189). The first research step is to measure, on a real station, which transcript files exist and how far back they go, and which fields they hold (usage, model, speed, cache).
+- **Scope rule from the owner (2026-10-24):** the metrics go as far as the data goes. Do not invent history, and do not estimate a missing period.
+- **Status:** open (noted only). Research first: check which metrics the events, the sessions and the transcripts really hold.
