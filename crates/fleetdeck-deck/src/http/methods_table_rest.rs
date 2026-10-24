@@ -580,6 +580,15 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Read),
         true,
     ),
+    // The analytics page (B29): the owner and members; a member gets the rows of proven runs of the covered sessions only.
+    m(
+        "analytics.read",
+        Method::GET,
+        "/api/analytics",
+        Some(Scope::Read),
+        false,
+    )
+    .member(),
     m(
         "spaces.create",
         Method::POST,

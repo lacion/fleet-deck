@@ -191,6 +191,7 @@ pub(super) fn append_at(
     super::effects::observe(conn, &envelope, now)?;
     super::shell_observe::observe(conn, &envelope, now)?;
     super::workflow_state::observe(conn, &envelope, now)?;
+    super::analytics_observe::observe(conn, &envelope)?;
     Ok(envelope)
 }
 
@@ -376,7 +377,10 @@ pub(super) fn prune(conn: &mut Connection, now: i64, config: StoreConfig) -> Res
         Some(seq) => to_u64(seq)?.saturating_sub(1),
         None => head,
     };
-    let through = acked.min(young_limit);
+    // The analytics cursor fence (B29): an event that the cursor did not count
+    // yet is never deleted.
+    let counted = super::analytics::next_seq(&tx)?.saturating_sub(1);
+    let through = acked.min(young_limit).min(counted);
     let pruned: i64 = tx.query_row("SELECT pruned_through FROM meta WHERE id = 1", [], |r| {
         r.get(0)
     })?;

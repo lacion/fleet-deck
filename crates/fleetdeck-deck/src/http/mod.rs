@@ -8,6 +8,7 @@ pub mod account_routes;
 pub mod account_secrets;
 pub mod activity_routes;
 pub mod admission;
+pub mod analytics_routes;
 mod app_csp;
 pub mod app_public;
 pub mod app_routes;
@@ -601,6 +602,7 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/sessions/{station}/{session}/workflow-agents/{agent_id}",
             get(session_work_routes::workflow_agent),
         )
+        .route("/api/analytics", get(analytics_routes::read))
         .route(
             "/api/stations/{station}/native-sessions",
             get(native_routes::list),

@@ -120,6 +120,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `subagent.v1` | `session.subagent` (DL-191; the log of one subagent of a session, from the provider's own transcript of that subagent) |
 | `workflows.v1` | `session.workflows`, `session.workflow_agent` and the event `workflow.updated` (B12; the workflow projection of a session in pages, and the transcript of one workflow agent) |
 | `native_sessions.v1` | `station.native_sessions`, `station.native_preview` (B7; list the native sessions of the station's provider homes, and preview one native session without importing it) |
+| `analytics.v1` | `station.analytics` (B29; the usage hour buckets of the station's provider transcripts and the Fleet Deck counters, in pages) |
 | `session_branches.v1` | `session.branches`, `files.branch_diff` (DL-191; the branches of the repository of a session and the committed diff of one) |
 | `assist.v1` | `assist.generate` (DL-167; model help on the station, R10) |
 | `settings.v1` | `settings.get`, `settings.set`, `settings.secret_set`, `station.restart` (DL-172; the settings of a station, the credential relay for a settings secret, and the restart of the station process) |
@@ -447,6 +448,7 @@ close             { reason, detail }
 | `session.workflow_agent` | deck → station | read | `workflows.v1` | no |
 | `station.native_sessions` | deck → station | read | `native_sessions.v1` | no |
 | `station.native_preview` | deck → station | read | `native_sessions.v1` | no |
+| `station.analytics` | deck → station | read | `analytics.v1` | no |
 | `session.branches`, `files.branch_diff` | deck → station | read | `session_branches.v1` | no |
 | `files.coordinator_diff` | deck → station | read | `coordinator.v2` | no |
 | `assist.generate` | deck → station | drive | `assist.v1` | no |

@@ -412,3 +412,66 @@ test('29 mcp app with an uncertain action', async ({ page }) => {
   await expect(page.getByText('The provider stopped waiting for an app action')).toBeVisible();
   await themed(page, '29', 'mcp-app-with-an-uncertain-action');
 });
+
+// B29: the Analytics page with the totals, the chart by day and the model table (one station).
+test('30 analytics', async ({ page }) => {
+  const deck = await setUp(page);
+  const hourMs = 3_600_000;
+  const now = Date.now();
+  const top = Math.floor(now / hourMs) * hourMs;
+  const usage = Array.from({ length: 20 }, (_, d) => ({
+    hour: top - (d + 1) * 24 * hourMs,
+    provider: 'claude',
+    model: d % 3 === 0 ? 'claude-sonnet-5-5' : 'claude-opus-5-5',
+    conversation: `c${d}`,
+    source: 0,
+    requests: 40 + d * 3,
+    input: 20_000 + d * 900,
+    cache_read: 900_000 + d * 20_000,
+    cache_write: 60_000,
+    output: 30_000 + d * 700,
+    reasoning: 0,
+    session_id: OTTER,
+    cost_usd: 2.5 + (d % 7) * 0.8,
+  }));
+  deck.on('/api/analytics', () => ({
+    status: 200,
+    body: {
+      read_at: now,
+      owner: true,
+      stations: [
+        {
+          station_id: LIGHTING,
+          name: 'Lighting',
+          state: 'ok',
+          answer: {
+            read_at: now,
+            price_table: '2026-10-24',
+            sources: [
+              {
+                provider: 'claude',
+                key: 'home-1',
+                state: 'ok',
+                verified: true,
+                complete: true,
+                first_at: top - 25 * 24 * hourMs,
+                scanned_at: now - 300_000,
+                files: 120,
+                pending_bytes: 0,
+                malformed: 0,
+                keeps_days: 30,
+              },
+            ],
+            coverage: { events_since: top - 7 * 24 * hourMs, kept_since: top - 40 * 24 * hourMs },
+            usage,
+            activity: [],
+          },
+        },
+      ],
+    },
+  }));
+  await goTo(page, '#/analytics');
+  await expect(page.getByRole('heading', { level: 1, name: 'Analytics' })).toBeVisible();
+  await expect(page.locator('.fd-bars')).toBeVisible();
+  await themed(page, '30', 'analytics');
+});

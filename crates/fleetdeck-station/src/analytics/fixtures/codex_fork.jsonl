@@ -1,0 +1,5 @@
+{"timestamp":"2026-10-20T10:00:00.000Z","type":"session_meta","payload":{"id":"th-fork","forked_from_id":"th-base","source":"vscode"}}
+{"timestamp":"2026-10-20T10:00:00.010Z","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}
+{"timestamp":"2026-10-20T10:00:00.010Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10}}}}
+{"timestamp":"2026-10-20T10:00:00.020Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":0,"output_tokens":30},"last_token_usage":{"input_tokens":150,"cached_input_tokens":0,"output_tokens":20}}}}
+{"timestamp":"2026-10-20T10:00:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":60},"last_token_usage":{"input_tokens":150,"cached_input_tokens":0,"output_tokens":30}}}}

@@ -1,14 +1,16 @@
 //! The one dated price table of inferred costs (R4.6, DL-161, DL-444).
 //! Codex reports tokens only, so the adapter infers a cost from this table
 //! and marks it `cost_inferred`. Claude reports its own cost, so the table
-//! has no Claude rows. A model that is not in the table has no cost
+//! has no Claude rows for the live cost; Claude rows serve the analytics
+//! estimate only (`estimate_price_of`; the live Claude cost stays the CLI's
+//! own). A model that is not in the table has no cost
 //! (unknown, never zero). Change a price or add a model together with
 //! [`PRICE_TABLE_VERSION`].
 
 use fleetdeck_proto::event::ProviderKind;
 
 /// The date of the rates below (R4.6, DL-161, DL-444).
-pub const PRICE_TABLE_VERSION: &str = "2026-10-23";
+pub const PRICE_TABLE_VERSION: &str = "2026-10-24";
 
 /// USD per 1M tokens.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +62,43 @@ pub fn price_of(provider: ProviderKind, model: &str) -> Option<Price> {
     })
 }
 
+/// The price of a model for an analytics estimate (B29): the Codex rows of
+/// `price_of` and the Claude rows fitted from the CLI's own `cost-state`
+/// records (design `analytics.md` §1.2). `None`: no price.
+#[must_use]
+pub fn estimate_price_of(provider: ProviderKind, model: &str) -> Option<Price> {
+    if provider != ProviderKind::Claude {
+        return price_of(provider, model);
+    }
+    let model = model.strip_suffix("[1m]").unwrap_or(model);
+    let (input, cache_read, cache_write, output) = match without_date(model) {
+        "claude-opus-5-5" => (4.0, 0.2, 5.0, 20.0),
+        "claude-sonnet-5-5" => (2.0, 0.1, 2.5, 10.0),
+        "claude-haiku-5-5" => (0.1, 0.01, 0.125, 0.5),
+        _ => return None,
+    };
+    Some(Price {
+        input,
+        cache_read,
+        cache_write,
+        output,
+    })
+}
+
+/// The estimate of one bucket; `None` when the model has no price.
+#[must_use]
+pub fn estimate_cost(
+    provider: ProviderKind,
+    model: &str,
+    new_input: u64,
+    cache_read: u64,
+    cache_write: u64,
+    output: u64,
+) -> Option<f64> {
+    let price = estimate_price_of(provider, model)?;
+    Some(cost(price, new_input, cache_read, cache_write, output))
+}
+
 /// The cost of new input, cache reads, cache writes and output.
 #[must_use]
 pub fn cost(price: Price, new_input: u64, cache_read: u64, cache_write: u64, output: u64) -> f64 {
@@ -69,6 +108,10 @@ pub fn cost(price: Price, new_input: u64, cache_read: u64, cache_write: u64, out
         + per_mtok(cache_write, price.cache_write)
         + per_mtok(output, price.output)
 }
+
+#[cfg(test)]
+#[path = "prices_tests.rs"]
+mod estimate_tests;
 
 #[cfg(test)]
 mod tests {

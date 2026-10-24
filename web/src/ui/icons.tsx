@@ -16,6 +16,7 @@ export {
   Bell,
   BellOff,
   Boxes,
+  ChartColumn,
   Check,
   ChevronDown,
   ChevronLeft,

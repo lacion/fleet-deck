@@ -47,10 +47,11 @@ pub use knobs_deck_cfg::{DeckLimits, DeckRetention, DeckSecurity};
 pub(crate) use knobs_deck_cfg::{RAW_DECK_LIMITS_KEYS, RAW_DECK_RETENTION_KEYS, RAW_SECURITY_KEYS};
 #[path = "config_knobs_station.rs"]
 mod knobs_station_cfg;
-pub use knobs_station_cfg::{CaptureLimits, StationLimits, StationRetention};
+pub use knobs_station_cfg::{CaptureLimits, StationAnalytics, StationLimits, StationRetention};
 #[cfg(test)]
 pub(crate) use knobs_station_cfg::{
-    RAW_CAPTURE_KEYS, RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS,
+    RAW_CAPTURE_KEYS, RAW_STATION_ANALYTICS_KEYS, RAW_STATION_LIMITS_KEYS,
+    RAW_STATION_RETENTION_KEYS,
 };
 #[path = "config_clone.rs"]
 mod clone_cfg;
@@ -331,6 +332,8 @@ pub struct StationConfig {
     pub capture: CaptureLimits,
     /// `[default_mode]`: the mode of a start that gives none (B27).
     pub default_mode: DefaultModes,
+    /// `[analytics]`: whether the station reads the provider transcripts (B29).
+    pub analytics: StationAnalytics,
 }
 
 impl StationConfig {
@@ -478,6 +481,10 @@ impl StationConfig {
             Some(raw) => raw.validate(allow_bypass_permissions)?,
             None => DefaultModes::default(),
         };
+        let analytics = match raw.analytics {
+            Some(raw) => raw.validate(),
+            None => StationAnalytics::default(),
+        };
         let capture_monitors = capture_cfg::capture_monitors(raw.capture_monitors)?;
         let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
         let fleet_git = fleet_git_cfg::parse(
@@ -527,6 +534,7 @@ impl StationConfig {
             retention,
             capture,
             default_mode,
+            analytics,
         })
     }
 

@@ -4,6 +4,7 @@ import type { DeckSession, StationView } from '../gen';
 import {
   Activity,
   Archive,
+  ChartColumn,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -451,6 +452,16 @@ function BoardLinks({
   useEffect(() => {
     if (inMore) setMore(true);
   }, [inMore]);
+  const analyticsLink = (
+    <a
+      href="#/analytics"
+      aria-current={route.name === 'analytics' ? 'page' : undefined}
+      className="fd-selbar"
+    >
+      <Icon of={ChartColumn} />
+      Analytics
+    </a>
+  );
   return (
     <nav className="fd-sidebar-links" aria-label="Board pages">
       {/* The home and the Fleet page are the same screen on a desktop. */}
@@ -480,6 +491,9 @@ function BoardLinks({
         <Icon of={Eye} />
         Watch
       </a>
+      {/* B29: Analytics is for the owner and for a member (the deck filters the rows). A member
+          sees it after Watch; the owner after Activity. */}
+      {guest ? analyticsLink : null}
       {guest ? null : (
         <>
           <a
@@ -490,6 +504,7 @@ function BoardLinks({
             <Icon of={Activity} />
             Activity
           </a>
+          {analyticsLink}
           {/* No total of machines (nothing to act on; the page header says it): only the stations
               that do not answer, as a hazard badge with its word, while there are any. */}
           <a

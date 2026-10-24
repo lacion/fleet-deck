@@ -9,7 +9,8 @@ use super::{CANARY, CANARY_REF, Fixture};
 use crate::config::{
     DeckConfig, RAW_CAPTURE_KEYS, RAW_DECK_KEYS, RAW_DECK_LIMITS_KEYS, RAW_DECK_RETENTION_KEYS,
     RAW_DEFAULT_MODE_KEYS, RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_SECURITY_KEYS,
-    RAW_STATION_KEYS, RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS, StationConfig,
+    RAW_STATION_ANALYTICS_KEYS, RAW_STATION_KEYS, RAW_STATION_LIMITS_KEYS,
+    RAW_STATION_RETENTION_KEYS, StationConfig,
 };
 use crate::config_grant_limits::RAW_GRANT_LIMITS_KEYS;
 use crate::config_worker_grant::RAW_WORKER_GRANT_KEYS;
@@ -59,6 +60,7 @@ fn station_field_keys_equal_the_parser_keys() {
         "retention",
         "capture",
         "default_mode",
+        "analytics",
     ];
     let mut expected: BTreeSet<String> = RAW_STATION_KEYS
         .iter()
@@ -71,6 +73,7 @@ fn station_field_keys_equal_the_parser_keys() {
         ("retention", RAW_STATION_RETENTION_KEYS),
         ("capture", RAW_CAPTURE_KEYS),
         ("default_mode", RAW_DEFAULT_MODE_KEYS),
+        ("analytics", RAW_STATION_ANALYTICS_KEYS),
     ];
     for (table, list) in dotted {
         expected.extend(list.iter().map(|k| format!("{table}.{k}")));

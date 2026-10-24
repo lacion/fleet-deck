@@ -250,6 +250,8 @@ pub struct RunningStation {
     rescan: tokio::task::JoinHandle<()>,
     /// The periodic prune of the event log and the history (NV-26).
     prune: tokio::task::JoinHandle<()>,
+    /// The scanner of the provider transcripts and the event cursor (B29).
+    analytics: tokio::task::JoinHandle<()>,
     /// The sampler of the per-session load (R13 §10).
     loads: tokio::task::JoinHandle<()>,
     /// The screensaver tick of the Omarchy service (a finished task when the
@@ -412,6 +414,11 @@ impl RunningStation {
             PRUNE_EVERY,
             rx.clone(),
         ));
+        let analytics = tokio::spawn(crate::analytics::scan::run(
+            Arc::clone(&manager),
+            config.analytics.transcripts,
+            rx.clone(),
+        ));
         let loads = tokio::spawn(crate::resources::resources_sessions::run(
             Arc::clone(&manager),
             crate::resources::resources_sessions::SESSION_LOAD_EVERY,
@@ -502,6 +509,7 @@ impl RunningStation {
             assist: assist_task,
             rescan,
             prune,
+            analytics,
             loads,
             omarchy_tick,
             fleet_git,
@@ -525,6 +533,8 @@ impl RunningStation {
         step("rescan");
         let _ = self.prune.await;
         step("prune");
+        let _ = self.analytics.await;
+        step("analytics");
         let _ = self.loads.await;
         step("loads");
         let _ = self.omarchy_tick.await;

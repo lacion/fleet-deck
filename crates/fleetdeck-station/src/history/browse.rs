@@ -53,15 +53,15 @@ const PROMPT_MAX: usize = 200;
 // ---------------------------------------------------------------- homes
 
 /// The homes of the configured instances, before the filesystem is asked.
-struct HomePlan {
-    kind: ProviderKind,
-    instances: Vec<ProviderInstanceId>,
+pub(crate) struct HomePlan {
+    pub(crate) kind: ProviderKind,
+    pub(crate) instances: Vec<ProviderInstanceId>,
     /// The absolute home of the launch environment; `None` when it is
     /// missing or relative.
-    raw: Option<PathBuf>,
+    pub(crate) raw: Option<PathBuf>,
 }
 
-fn plan_homes(policy: &Policy) -> Vec<HomePlan> {
+pub(crate) fn plan_homes(policy: &Policy) -> Vec<HomePlan> {
     let mut plans: Vec<HomePlan> = Vec::new();
     for (instance, kind) in policy.instances() {
         if *kind == ProviderKind::Unknown {
@@ -104,14 +104,14 @@ fn unavailable(reason: &str) -> HomeState {
 
 /// One plan, resolved against the filesystem (B7 PRE-PR r1: a home resolves
 /// through links that only the station user or root own).
-struct Resolved {
-    canon: Option<PathBuf>,
-    state: HomeState,
-    exists: bool,
-    verified: bool,
+pub(crate) struct Resolved {
+    pub(crate) canon: Option<PathBuf>,
+    pub(crate) state: HomeState,
+    pub(crate) exists: bool,
+    pub(crate) verified: bool,
 }
 
-fn resolve_plan(plan: &HomePlan, uid: u32, mounts: &Mounts) -> Resolved {
+pub(crate) fn resolve_plan(plan: &HomePlan, uid: u32, mounts: &Mounts) -> Resolved {
     let resolved = |canon: &PathBuf, state, exists, verified| Resolved {
         canon: Some(canon.clone()),
         state,

@@ -30,7 +30,7 @@ const fn drive(name: &'static str) -> MethodSpec {
 use Callers::DeckToStation;
 
 /// The first rows of [`METHODS`].
-const HEAD: [MethodSpec; 93] = [
+const HEAD: [MethodSpec; 94] = [
     m("station.info", DeckToStation, Scope::Read, None, false),
     m("session.list", DeckToStation, Scope::Read, None, false),
     m("events.replay", DeckToStation, Scope::Read, None, false),
@@ -317,6 +317,14 @@ const HEAD: [MethodSpec; 93] = [
         DeckToStation,
         Scope::Read,
         Some(feature::NATIVE_SESSIONS),
+        false,
+    ),
+    // The analytics of a station: usage hour buckets and Fleet Deck counters (B29).
+    m(
+        "station.analytics",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::ANALYTICS),
         false,
     ),
     // The branches of the repository of a session, and the committed diff of

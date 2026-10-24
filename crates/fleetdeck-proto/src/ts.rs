@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::accounts as acc;
+use crate::analytics as an;
 use crate::apps as ap;
 use crate::artifacts::{
     Artifact, ArtifactDeleteParams, ArtifactDeleted, ArtifactDeletedState, ArtifactDetail,
@@ -288,6 +289,17 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TranscriptPin::export_all(&cfg),
         NativePreviewQuery::export_all(&cfg),
         NativePreview::export_all(&cfg),
+        an::Audience::export_all(&cfg),
+        an::AnalyticsQuery::export_all(&cfg),
+        an::UsageHour::export_all(&cfg),
+        an::ActivityHour::export_all(&cfg),
+        an::SourceState::export_all(&cfg),
+        an::AnalyticsSource::export_all(&cfg),
+        an::AnalyticsCoverage::export_all(&cfg),
+        an::AnalyticsAnswer::export_all(&cfg),
+        an::StationAnalyticsState::export_all(&cfg),
+        an::StationAnalytics::export_all(&cfg),
+        an::FleetAnalytics::export_all(&cfg),
         BranchesQuery::export_all(&cfg),
         RepoBranches::export_all(&cfg),
         RepoBranch::export_all(&cfg),

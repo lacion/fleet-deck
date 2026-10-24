@@ -1,5 +1,5 @@
-//! The owner knobs of `station.toml`: the tables `[limits]`, `[retention]`
-//! and `[capture]` (knobs design section 3). The station reads them through
+//! The owner knobs of `station.toml`: the tables `[limits]`, `[retention]`,
+//! `[capture]` and `[analytics]` (knobs design section 3). The station reads them through
 //! its policy (live values) or at its start (restart values).
 
 use serde::Deserialize;
@@ -56,6 +56,19 @@ impl Default for StationRetention {
     }
 }
 
+/// The `[analytics]` table of `station.toml` (analytics design 3.13).
+/// `transcripts = false` stops the reading of the provider transcripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StationAnalytics {
+    pub transcripts: bool,
+}
+
+impl Default for StationAnalytics {
+    fn default() -> Self {
+        Self { transcripts: true }
+    }
+}
+
 /// The `[capture]` table of `station.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureLimits {
@@ -93,6 +106,10 @@ pub(crate) const RAW_STATION_LIMITS_KEYS: &[&str] = &[
 #[cfg(test)]
 pub(crate) const RAW_STATION_RETENTION_KEYS: &[&str] =
     &["history_days", "event_days", "raw_log_mib"];
+
+/// The keys of `[analytics]` (`RawStationAnalytics`).
+#[cfg(test)]
+pub(crate) const RAW_STATION_ANALYTICS_KEYS: &[&str] = &["transcripts"];
 
 /// The keys of `[capture]` (`RawCapture`).
 #[cfg(test)]
@@ -212,6 +229,20 @@ impl RawStationRetention {
                 (0, 256),
             )?,
         })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawStationAnalytics {
+    transcripts: Option<bool>,
+}
+
+impl RawStationAnalytics {
+    pub(super) fn validate(self) -> StationAnalytics {
+        StationAnalytics {
+            transcripts: self.transcripts.unwrap_or(true),
+        }
     }
 }
 

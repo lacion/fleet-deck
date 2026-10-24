@@ -31,6 +31,9 @@ use super::StationLink;
 // `link/mod.rs` is not changed).
 #[path = "intake_native.rs"]
 mod intake_native;
+// B29: `station.analytics`.
+#[path = "intake_analytics.rs"]
+mod intake_analytics;
 // B12: `session.workflows` and `session.workflow_agent`.
 #[path = "intake_workflows.rs"]
 mod intake_workflows;
@@ -513,6 +516,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "session.workflow_agent" => intake_workflows::workflow_agent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
+        "station.analytics" => intake_analytics::analytics(ctx, req.params).await,
         "desktop.info" => intake_desktop::info(ctx, control, req.params).await,
         "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
         "desktop.capture_status" => intake_capture::status(ctx, control, req.params).await,

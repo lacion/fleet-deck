@@ -242,6 +242,13 @@ pub(super) fn station_knob_fields() -> Vec<FieldMeta> {
         .range(0, 256)
         .danger(),
         field(
+            "analytics.transcripts",
+            "Read provider transcripts for Analytics",
+            K::Bool,
+            Restart,
+            "The station reads the token counts of the Claude and Codex transcripts in its provider homes. It stores numbers and model names, never text. Default on.",
+        ),
+        field(
             "capture.quota_gib",
             "Capture storage (GiB)",
             K::Int,

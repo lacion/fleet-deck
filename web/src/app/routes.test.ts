@@ -211,6 +211,19 @@ describe('routes', () => {
   });
 });
 
+describe('the analytics routes (B29)', () => {
+  test('routes_parse_analytics_and_a_station', () => {
+    expect(parseHash('#/analytics')).toEqual({ name: 'analytics', station: null });
+    expect(formatHash({ name: 'analytics', station: null })).toBe('#/analytics');
+    const one: Route = { name: 'analytics', station: 'Light ing' };
+    expect(formatHash(one)).toBe('#/analytics/Light%20ing');
+    expect(parseHash('#/analytics/Light%20ing')).toEqual(one);
+    expect(parseHash('#/analytics/')).toEqual({ name: 'home' });
+    expect(parseHash('#/analytics/a/b')).toEqual({ name: 'home' });
+    expect(parseHash('#/analytics/%E0%A4%A')).toEqual({ name: 'home' });
+  });
+});
+
 describe('the wall route (R13 P1)', () => {
   test('a bare #/wall has the defaults', () => {
     expect(parseHash('#/wall')).toEqual(wallDefaults);
