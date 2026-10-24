@@ -115,7 +115,12 @@ pub(crate) fn kill_marked(var: &str, id: &str, wait: Duration) -> Result<usize, 
 
 /// [`kill_marked`] with the process group of the run, which is also killed
 /// when all of its processes carry the marker.
-fn kill_marked_in(var: &str, id: &str, pgid: i32, wait: Duration) -> Result<usize, String> {
+pub(crate) fn kill_marked_in(
+    var: &str,
+    id: &str,
+    pgid: i32,
+    wait: Duration,
+) -> Result<usize, String> {
     let deadline = std::time::Instant::now() + wait;
     loop {
         let found = scan(var, id, pgid).map_err(|e| e.to_string())?;

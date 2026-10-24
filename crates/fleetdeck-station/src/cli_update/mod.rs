@@ -4,9 +4,12 @@
 //! any byte of a new version runs: the install detection (§3.3), the gate
 //! (§3.4) and the target with its signature verification (§3.5).
 
+pub mod activate;
 pub mod channel;
 pub mod detect;
+pub mod fence;
 pub mod gate;
+pub mod stage;
 pub mod staged;
 pub mod tree_digest;
 pub mod verify;
