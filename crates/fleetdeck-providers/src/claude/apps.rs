@@ -294,6 +294,18 @@ impl ClaudeCore {
         self.app_requests.answers.remove(id);
     }
 
+    /// Moves the state that the checkpoint does not keep (the app requests in
+    /// flight and their answers, the MCP server hints, the time of the last
+    /// usage ask) from `old` into this core. A rollback of a refused command
+    /// rebuilds the core from the checkpoint of the time before the command
+    /// (the station's durable driver); this keeps a pending app request
+    /// across it, so its answer still reaches its wait.
+    pub fn keep_runtime_of(&mut self, old: &mut Self) {
+        self.app_requests = std::mem::take(&mut old.app_requests);
+        self.mcp_server_hints = std::mem::take(&mut old.mcp_server_hints);
+        self.usage_asked = old.usage_asked;
+    }
+
     /// Takes the `control_response` of an app request. An answer of an id that
     /// is not pending (a late answer after a timeout or a restart) is dropped.
     /// Returns `false` when the id is not an app request id.

@@ -205,4 +205,14 @@ pub trait ProcessControl: Send + Sync + fmt::Debug {
     async fn wait(&self) -> ExitReport;
     /// The exit report, if the process ended.
     fn exit(&self) -> Option<ExitReport>;
+    /// A watch of the exit report that does not hold the process (dropping
+    /// the last control still kills the group). `None` when this host has
+    /// no such watch.
+    fn exit_watch(&self) -> Option<ExitWatch> {
+        None
+    }
 }
+
+/// The exit report of one process: `None` until the host observed the exit
+/// (it reaped the child). A closed sender without a report observed nothing.
+pub type ExitWatch = tokio::sync::watch::Receiver<Option<ExitReport>>;

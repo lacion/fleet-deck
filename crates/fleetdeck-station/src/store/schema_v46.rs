@@ -32,7 +32,7 @@ CREATE INDEX mcp_apps_session ON mcp_apps(session_id, created_at);
 -- not need its mcp_apps row (list and release use the call row only).
 --   read_only        1: the tool is read-only; no generation advance
 --   process          the ProcessIncarnation text of the session's process
---   incarnation      store.incarnation() of the station process that started it
+--   incarnation      store.run_id() of the station process that started it (new at each open)
 --   state            running | uncertain | done | failed | ended | released
 --   cause            why uncertain: station_restart | provider_error; else NULL
 --   generation       the folder generation after the start advance; NULL when read_only

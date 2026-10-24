@@ -49,7 +49,7 @@ fn new_call(s: &Store, call_id: &str, session: &str, root: &str, read_only: bool
         tool: "bump".to_owned(),
         read_only,
         process: "proc-1".to_owned(),
-        incarnation: s.incarnation().as_str().to_owned(),
+        station_run: s.run_id().to_owned(),
     }
 }
 
@@ -382,20 +382,20 @@ async fn app_calls_uncertain_of_process_filters_by_process() {
 }
 
 #[tokio::test]
-async fn app_calls_of_older_incarnations_lists_only_running_rows() {
+async fn app_calls_of_older_runs_lists_only_running_rows() {
     let det = Det::new();
     let s = store(&det).await;
     begin(&s, "now", S1, ROOT, false).await;
     let mut old = new_call(&s, "old", S1, ROOT, false);
-    old.incarnation = "an-older-incarnation".to_owned();
+    old.station_run = "an-older-run".to_owned();
     s.app_call_begin(old).await.unwrap();
     let mut old_unc = new_call(&s, "old-unc", S1, ROOT, false);
-    old_unc.incarnation = "an-older-incarnation".to_owned();
+    old_unc.station_run = "an-older-run".to_owned();
     s.app_call_begin(old_unc).await.unwrap();
     s.app_call_mark_uncertain("old-unc".to_owned(), UncertainCause::StationRestart)
         .await
         .unwrap();
-    let rows = s.app_calls_of_older_incarnations().await.unwrap();
+    let rows = s.app_calls_of_older_runs().await.unwrap();
     assert_eq!(
         rows.into_iter().map(|r| r.call_id).collect::<Vec<_>>(),
         ["old"]
@@ -503,4 +503,60 @@ async fn app_call_open_count_counts_running_and_uncertain() {
         .unwrap();
     assert_eq!(s.app_call_open_count(S1.into()).await.unwrap(), (1, 1));
     assert_eq!(s.app_call_open_count(S2.into()).await.unwrap(), (1, 0));
+}
+
+/// Review blocker 1: a normal restart reopens the same database, and its
+/// incarnation stays. The `running` rows of the last station process have no
+/// task any more: the start-up makes them `uncertain` (`station_restart`),
+/// the barrier holds, and only the owner's release or the observed exit of
+/// their process ends them.
+#[tokio::test]
+async fn start_up_after_a_reopen_of_the_same_database_keeps_running_calls_behind_the_barrier() {
+    use crate::apps::calls::{process_ended, start_up};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let det = Det::new();
+    let path = tmp.path().join("station.db");
+    let first = Store::open(&path, det.clock(), det.ids(), StoreConfig::default())
+        .await
+        .unwrap();
+    first.recover(Vec::new()).await.unwrap();
+    session(&first, S1).await;
+    begin(&first, "to-release", S1, ROOT, false).await;
+    begin(&first, "to-exit", S1, ROOT, false).await;
+    // The start-up of the process that started the calls changes nothing.
+    start_up(&first).await.unwrap();
+    assert_eq!(state(&first, "to-release").await, CallState::Running);
+    let (incarnation, run) = (first.incarnation().clone(), first.run_id().to_owned());
+    drop(first);
+
+    let second = Store::open(&path, det.clock(), det.ids(), StoreConfig::default())
+        .await
+        .unwrap();
+    second.recover(Vec::new()).await.unwrap();
+    assert_eq!(second.incarnation(), &incarnation);
+    assert_ne!(second.run_id(), run);
+    start_up(&second).await.unwrap();
+    for id in ["to-release", "to-exit"] {
+        let row = second.app_call(id.to_owned()).await.unwrap().unwrap();
+        assert_eq!(row.state, CallState::Uncertain, "{id}");
+        assert_eq!(row.cause, Some(UncertainCause::StationRestart), "{id}");
+    }
+    let barrier = || second.app_call_barrier(ROOT.to_owned(), "no-turn".to_owned());
+    assert_eq!(barrier().await.unwrap(), Some(AppCallBarrier::Running));
+    // The owner's release ends one row; the other still holds the barrier.
+    assert_eq!(
+        second
+            .app_call_release(S1.into(), "to-release".to_owned())
+            .await
+            .unwrap(),
+        Release::Released
+    );
+    assert_eq!(barrier().await.unwrap(), Some(AppCallBarrier::Running));
+    // The observed exit of its process ends the other row.
+    assert_eq!(
+        process_ended(&second, &S1.into(), "proc-1").await.unwrap(),
+        1
+    );
+    assert_eq!(state(&second, "to-exit").await, CallState::Ended);
 }

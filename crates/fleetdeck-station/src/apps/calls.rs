@@ -479,7 +479,7 @@ async fn tools_call(call: Call<'_>, permit: Permit) -> Result<AppCallReply, AppF
                     tool: name.clone(),
                     read_only,
                     process: host.process.as_str().to_owned(),
-                    incarnation: env.store.incarnation().as_str().to_owned(),
+                    station_run: env.store.run_id().to_owned(),
                 })
                 .await;
             drop(fence);
@@ -618,8 +618,10 @@ async fn shim_proves_end(store: &Store, session: &SessionId) -> StoreResult<bool
         .is_some_and(proves_end))
 }
 
-/// The station start, before the advance: a `running` row of an older station
-/// process has no task. When the session's newest shim row proves the end of
+/// The station start, before the advance and before the app admission opens:
+/// a `running` row of an older station process (its `station_run` is not
+/// [`Store::run_id`], also after a reopen of the same database) has no task
+/// in this process. When the session's newest shim row proves the end of
 /// its execution the row ends (`ended`); else it becomes `uncertain` with the
 /// cause `station_restart` (a station crash does not stop a direct host's
 /// provider). An `uncertain` row of the last station process stays as it is.
@@ -627,7 +629,7 @@ async fn shim_proves_end(store: &Store, session: &SessionId) -> StoreResult<bool
 /// # Errors
 /// A database error.
 pub async fn start_up(store: &Store) -> StoreResult<()> {
-    for row in store.app_calls_of_older_incarnations().await? {
+    for row in store.app_calls_of_older_runs().await? {
         if shim_proves_end(store, &row.session_id).await? {
             store
                 .app_call_settle(row.call_id, AppCallEnd::Ended)

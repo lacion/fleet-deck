@@ -132,6 +132,10 @@ pub trait DurableCore: Send + Sync + Sized + 'static {
     /// # Errors
     /// An unsupported or corrupt checkpoint.
     fn load(config: Self::Config, checkpoint: &AdapterCheckpoint) -> Result<Self, CheckpointError>;
+    /// Moves the state that the checkpoint does not keep (B15: the app
+    /// requests in flight) from `old` into this core, which a rollback
+    /// rebuilt from a checkpoint of `old`.
+    fn keep_runtime_of(&mut self, old: &mut Self);
     /// Feeds one complete stdout line (without its newline).
     fn line(&mut self, line: &str) -> Steps;
     /// Reports the provider's exit.
@@ -177,6 +181,21 @@ fn rebuild<C: DurableCore>(
     checkpoint: &AdapterCheckpoint,
 ) -> Result<C, DriverError> {
     C::load(config.clone(), checkpoint).map_err(|e| DriverError::Checkpoint(e.to_string()))
+}
+
+/// Rolls back a refused command: the core of `before` (the checkpoint taken
+/// under the same core lock before the command) with the state that the
+/// checkpoint does not keep. A pending app request survives it, so its answer
+/// still reaches the call task (review blocker 2).
+pub(super) fn roll_back<C: DurableCore>(
+    config: &C::Config,
+    core: &mut C,
+    before: &AdapterCheckpoint,
+) -> Result<(), DriverError> {
+    let mut restored: C = rebuild(config, before)?;
+    restored.keep_runtime_of(core);
+    *core = restored;
+    Ok(())
 }
 
 impl<C: DurableCore> DurableDriver<C> {
@@ -496,7 +515,7 @@ impl<C: DurableCore> DurableDriver<C> {
         let Steps { events, frames, .. } = match core.command(effect) {
             Ok(steps) => steps,
             Err(e) => {
-                *core = rebuild(&self.config, &before)?;
+                roll_back(&self.config, &mut *core, &before)?;
                 return Err(e.into());
             }
         };
@@ -509,11 +528,11 @@ impl<C: DurableCore> DurableDriver<C> {
                     | EffectPayload::FollowUp { .. }
                     | EffectPayload::Steer { .. }
             ) {
-                *core = rebuild(&self.config, &before)?;
+                roll_back(&self.config, &mut *core, &before)?;
                 return Ok(Dispatch::NotDispatched(REASON_PROVIDER_BUSY.to_owned()));
             }
             if !answer_gated && let Some(refused) = gate().await {
-                *core = rebuild(&self.config, &before)?;
+                roll_back(&self.config, &mut *core, &before)?;
                 return Ok(refused);
             }
         }
@@ -533,7 +552,7 @@ impl<C: DurableCore> DurableDriver<C> {
             )
             .await?
         else {
-            *core = rebuild(&self.config, &before)?;
+            roll_back(&self.config, &mut *core, &before)?;
             if self
                 .store
                 .shim_has_adapter_gap(self.shim_id.clone())
@@ -562,7 +581,7 @@ impl<C: DurableCore> DurableDriver<C> {
             Delivery::Done(dispatch) => return Ok(dispatch),
             Delivery::Undone(dispatch) => dispatch,
         };
-        *core = rebuild(&self.config, &before)?;
+        roll_back(&self.config, &mut *core, &before)?;
         self.store
             .shim_drop_transition(self.shim_id.clone(), seq)
             .await?;

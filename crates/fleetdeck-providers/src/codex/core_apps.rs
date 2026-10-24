@@ -69,6 +69,18 @@ impl CodexCore {
         self.app_requests.answers.remove(id);
     }
 
+    /// Moves the state that the checkpoint does not keep (the app requests in
+    /// flight and their answers, the skill requests, the count of ended
+    /// turns) from `old` into this core. A rollback of a refused command
+    /// rebuilds the core from the checkpoint of the time before the command
+    /// (the station's durable driver); this keeps a pending app request
+    /// across it, so its answer still reaches its wait.
+    pub fn keep_runtime_of(&mut self, old: &mut Self) {
+        self.app_requests = std::mem::take(&mut old.app_requests);
+        self.skill_requests = std::mem::take(&mut old.skill_requests);
+        self.turns_ended = old.turns_ended;
+    }
+
     /// Takes the answer of an app request. An answer of an id that is not
     /// pending (a late answer after a timeout or a restart) is dropped
     /// without an unknown-frame count. Returns `false` when `id` is not an

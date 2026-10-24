@@ -295,6 +295,9 @@ struct Inner {
     clock: SharedClock,
     ids: SharedIds,
     incarnation: IncarnationId,
+    /// A fresh id at each open: the station process that opened the store
+    /// (B15 app call recovery). Unlike `incarnation`, a reopen changes it.
+    run: String,
     config: StoreConfig,
     head: watch::Sender<u64>,
     /// Wakes the effect worker after a commit that queued effects.
@@ -381,6 +384,8 @@ impl Store {
         history: crate::history::History,
     ) -> Result<Self> {
         let fresh: IncarnationId = new_id(ids.as_ref());
+        // Every open draws `fresh`; a kept database uses it only as the run id.
+        let run = fresh.0.clone();
         let ids_kept = Arc::clone(&ids);
         let now = now_ms(&clock);
         let (incarnation, head) = call(&db, move |conn| {
@@ -415,6 +420,7 @@ impl Store {
                 clock,
                 ids: ids_kept,
                 incarnation,
+                run,
                 config,
                 head: head_tx,
                 outbox: outbox_tx,
@@ -449,6 +455,13 @@ impl Store {
     #[must_use]
     pub fn incarnation(&self) -> &IncarnationId {
         &self.inner.incarnation
+    }
+
+    /// The id of this open of the store: new at each open, also of the same
+    /// database. The app call rows name the station process with it (B15).
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.inner.run
     }
 
     /// The committed head `station_seq`; it changes only after a commit.

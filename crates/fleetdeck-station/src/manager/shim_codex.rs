@@ -58,6 +58,10 @@ impl DurableCore for CodexCore {
         Self::restore(config, checkpoint)
     }
 
+    fn keep_runtime_of(&mut self, old: &mut Self) {
+        Self::keep_runtime_of(self, old);
+    }
+
     fn line(&mut self, line: &str) -> Steps {
         match rpc::parse_line(line) {
             Ok(frame) => split(self.on_frame(frame)),
@@ -297,5 +301,79 @@ impl AppBridge for DurableDriver<CodexCore> {
         };
         let result = self.codex_app(op, None).await?;
         result.map(tool_answer).map_err(AppError::Answered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use fleetdeck_proto::InputId;
+    use fleetdeck_proto::command::UserInput;
+    use fleetdeck_proto::event::RunOrigin;
+    use fleetdeck_providers::adapter::HostInput;
+    use fleetdeck_providers::codex::{ClientInfo, capabilities};
+    use serde_json::json;
+
+    use super::*;
+
+    /// The id of the last request that `out` writes.
+    fn last_id(out: &[Output]) -> Value {
+        out.iter()
+            .rev()
+            .find_map(|o| match o {
+                Output::Write(v) => Some(v["id"].clone()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn input(n: u8, text: &str) -> HostInput {
+        HostInput {
+            id: InputId::from(format!("01J0000000000000000000000{n}")),
+            origin: RunOrigin::Coordinator,
+            input: UserInput::new(text.to_owned()),
+            context: Vec::new(),
+        }
+    }
+
+    /// Review blocker 2: a delayed app call races a coordinator follow-up
+    /// that the running turn only queues. The durable driver refuses it
+    /// (`provider_busy`) and rolls the core back from the checkpoint of the
+    /// time before it; the app request still waits, and its later answer
+    /// reaches the call.
+    #[test]
+    fn a_delayed_app_call_survives_the_rollback_of_a_refused_follow_up() {
+        let config = CoreConfig {
+            provider_instance: "codex".into(),
+            cwd: "/w".to_owned(),
+            capabilities: capabilities(false),
+            resumed: None,
+            client: ClientInfo::fleetdeck(),
+            request_models: false,
+        };
+        let mut core = <CodexCore as DurableCore>::create(config.clone());
+        let out = core.initialize().unwrap();
+        let reply =
+            json!({"id": last_id(&out), "result": {"userAgent": "fleetdeck/0.160.0 (Linux)"}});
+        DurableCore::line(&mut core, &reply.to_string());
+        let out = core.open_thread(&SessionSpec::default()).unwrap();
+        let reply =
+            json!({"id": last_id(&out), "result": {"thread": {"id": "thr-1"}, "model": "m"}});
+        DurableCore::line(&mut core, &reply.to_string());
+        // A turn is requested: a later input only waits in the core.
+        assert!(!core.prompt(&input(1, "hello")).unwrap().is_empty());
+        let op = CodexAppOp::Call {
+            server: "demo".to_owned(),
+            tool: "bump".to_owned(),
+            arguments: json!({}),
+        };
+        let (id, _) = core.app_request(&op).unwrap();
+        let before = DurableCore::save(&core).unwrap();
+        assert!(core.prompt(&input(2, "later")).unwrap().is_empty());
+        super::super::durable::roll_back(&config, &mut core, &before).unwrap();
+        let answer = json!({"id": id, "result": {"content": []}});
+        DurableCore::line(&mut core, &answer.to_string());
+        assert_eq!(core.take_app_answer(&id), Some(Ok(json!({"content": []}))));
     }
 }

@@ -8,8 +8,10 @@
 //!   capture service ([`crate::apps::Capture`]).
 //! - **Bridge registry.** One [`AppHost`] per live session with a process: the
 //!   bridge, the turns and the process incarnation. The entry leaves with its
-//!   process: [`HostEnd::Exited`] where the process ends, [`HostEnd::Detached`]
-//!   in the station-shutdown detach. A newer process keeps its entry.
+//!   process: [`HostEnd::Exited`] only where the host observed the exit of
+//!   that process, [`HostEnd::Lost`] where the station stops observing it
+//!   without an exit proof, [`HostEnd::Detached`] in the station-shutdown
+//!   detach. A newer process keeps its entry.
 //!   **The absence of an entry is never proof that a process or a tool call
 //!   ended** (design §4.6.1, "End proof").
 
@@ -19,6 +21,7 @@ use std::sync::{Arc, Mutex as StdMutex, MutexGuard, OnceLock, PoisonError};
 use fleetdeck_proto::{ProviderInstanceId, SessionId};
 use fleetdeck_providers::LiveSession;
 use fleetdeck_providers::apps::AppBridge;
+use fleetdeck_providers::host::ExitWatch;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -38,6 +41,11 @@ pub enum HostEnd {
     /// The station detached from a session under a shim at its shutdown: the
     /// shim and the provider go on.
     Detached,
+    /// The station stopped observing the process without an exit proof (no
+    /// exit watch after the end of a direct session's event pump, or a shim
+    /// report that does not prove the end): the provider and its tools may
+    /// still run. Like a detach, it records nothing and changes no row.
+    Lost,
 }
 
 /// The app side of one live session.
@@ -95,8 +103,8 @@ impl AppHosts {
     /// (also when the entry belongs to a newer process) and settles the
     /// `uncertain` app calls of that process in a task, in this order:
     /// the record comes first, so a call task that marks its row later reads
-    /// it. [`HostEnd::Detached`] records nothing and changes no row: the shim
-    /// and its provider go on (§4.6.1, "End proof").
+    /// it. [`HostEnd::Detached`] and [`HostEnd::Lost`] record nothing and
+    /// change no row: the provider may go on (§4.6.1, "End proof").
     pub(super) fn drop_host(
         &self,
         session: &SessionId,
@@ -214,9 +222,12 @@ impl SessionTarget {
 
     /// The app path of a direct session: the host in the registry, a
     /// forwarder from the session's candidate receiver to the capture
-    /// service, and the removal of the host when the pump ends (the process
-    /// is gone). A session without a bridge gets none of them and its
-    /// receiver is dropped.
+    /// service, and the removal of the host at the end of the process. Only
+    /// the host's exit watch proves that end ([`HostEnd::Exited`]); the end of
+    /// the event pump proves nothing (a store failure or a panic ends it while
+    /// the provider can still run). A session without an exit watch drops its
+    /// host as [`HostEnd::Lost`] when the pump ends. A session without a
+    /// bridge gets none of them and its receiver is dropped.
     pub(super) fn attach_direct_apps(
         &self,
         session_id: &SessionId,
@@ -226,6 +237,7 @@ impl SessionTarget {
         pump: JoinHandle<()>,
     ) {
         let candidates = session.take_app_candidates();
+        let exit = session.exit_watch();
         let Some(bridge) = session.app_bridge() else {
             return;
         };
@@ -248,9 +260,8 @@ impl SessionTarget {
         }
         let (hosts, session, process) = (self.apps.hosts(), session_id.clone(), process.clone());
         tokio::spawn(async move {
-            // The pump ends when the process ends; a panic ends it too.
-            let _ended = pump.await;
-            hosts.drop_host(&session, &process, HostEnd::Exited);
+            let end = direct_end(exit, pump).await;
+            hosts.drop_host(&session, &process, end);
         });
     }
 
@@ -308,6 +319,24 @@ impl SessionTarget {
             Durable::Claude(d) => d.close_app_sink(session_id),
             Durable::Codex(d) => d.close_app_sink(session_id),
         }
+    }
+}
+
+/// How the app host of a direct session ends: [`HostEnd::Exited`] when the
+/// host observed the exit of the process (it reaped the child and killed its
+/// group); else [`HostEnd::Lost`]. Without a watch it waits for the pump.
+pub(super) async fn direct_end(exit: Option<ExitWatch>, pump: JoinHandle<()>) -> HostEnd {
+    let Some(mut exit) = exit else {
+        // The pump ends at the process end, a store failure or a panic.
+        let _ended = pump.await;
+        return HostEnd::Lost;
+    };
+    // A closed watch without a report (the supervisor stopped) proves nothing.
+    let observed = exit.wait_for(Option::is_some).await.is_ok();
+    if observed {
+        HostEnd::Exited
+    } else {
+        HostEnd::Lost
     }
 }
 

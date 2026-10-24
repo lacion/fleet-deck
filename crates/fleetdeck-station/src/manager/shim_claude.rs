@@ -58,6 +58,10 @@ impl DurableCore for ClaudeCore {
         Self::restore(config, checkpoint)
     }
 
+    fn keep_runtime_of(&mut self, old: &mut Self) {
+        Self::keep_runtime_of(self, old);
+    }
+
     fn line(&mut self, line: &str) -> Steps {
         match parse_line(line) {
             Ok(frame) => split(self.on_frame(frame)),
@@ -292,5 +296,40 @@ mod tests {
             "<bash-stdout>a&lt;b\n</bash-stdout><bash-stderr></bash-stderr>"
         );
         assert_eq!(blocks[2]["text"], "go");
+    }
+
+    /// Review blocker 2: the durable driver rolls a refused command back by a
+    /// rebuild from the checkpoint of the time before it. An app request that
+    /// waits survives the rollback: its later answer reaches the wait.
+    #[test]
+    fn a_pending_app_request_survives_the_rollback_of_a_refused_command() {
+        let config = CoreConfig {
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            capabilities: capabilities(false),
+            resumed: None,
+        };
+        let mut core = <ClaudeCore as DurableCore>::create(config.clone());
+        let init = serde_json::json!({"type": "system", "subtype": "init", "session_id": "s-1",
+            "model": "claude-haiku-5-5", "permissionMode": "default",
+            "claude_code_version": "2.1.308", "capabilities": ["mcp_read_resource_v1",
+            "mcp_tool_ui_meta_v1", "mcp_call_result_not_for_model_v1"]});
+        DurableCore::line(&mut core, &init.to_string());
+        let (id, _) = core.app_request(&ClaudeAppOp::Tools).unwrap();
+        let before = DurableCore::save(&core).unwrap();
+        let _refused = core.prompt(&HostInput {
+            id: InputId::from("01J00000000000000000000003"),
+            origin: RunOrigin::Coordinator,
+            input: UserInput::new("later".to_owned()),
+            context: Vec::new(),
+        });
+        super::super::durable::roll_back(&config, &mut core, &before).unwrap();
+        let answer = serde_json::json!({"type": "control_response", "response":
+            {"subtype": "success", "request_id": id, "response": {"mcpServers": []}}});
+        DurableCore::line(&mut core, &answer.to_string());
+        assert_eq!(
+            core.take_app_answer(&id),
+            Some(Ok(serde_json::json!({"mcpServers": []})))
+        );
     }
 }

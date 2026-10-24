@@ -659,6 +659,10 @@ impl LiveSession for CodexSession {
         Some(self.control.pid())
     }
 
+    fn exit_watch(&self) -> Option<crate::host::ExitWatch> {
+        self.control.exit_watch()
+    }
+
     async fn prompt(&mut self, input: HostInput) -> Result<()> {
         require(&self.caps, Operation::Prompt)?;
         self.run(move |c| c.prompt(&input)).await
@@ -761,19 +765,6 @@ impl LiveSession for CodexSession {
             }
         }
         self.join().await
-    }
-}
-
-impl Drop for CodexSession {
-    /// The tasks hold the process control: abort them so that the last
-    /// reference drops and the host kills the group.
-    fn drop(&mut self) {
-        for task in [self.reader.take(), self.writer.take(), self.poller.take()]
-            .into_iter()
-            .flatten()
-        {
-            task.abort();
-        }
     }
 }
 

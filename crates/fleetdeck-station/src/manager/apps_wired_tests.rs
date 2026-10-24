@@ -24,7 +24,9 @@ use fleetdeck_proto::{Capabilities, CommandEnvelope, CommandId, Event, EventBody
 use fleetdeck_providers::adapter::{NativeSessionId, ProviderProbe};
 use fleetdeck_providers::apps::{AppBridge, AppCandidate, AppError, AppTool, ToolAnswer};
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig};
-use fleetdeck_providers::host::{DirectChildHost, StopPolicy};
+use fleetdeck_providers::host::{
+    DirectChildHost, EndCause, ExitReport, ExitWatch, StopPolicy, Termination,
+};
 use fleetdeck_providers::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, PermissionMode, ProviderAdapter,
 };
@@ -33,10 +35,11 @@ use fleetdeck_testkit::{Det, FakeAgent};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{AppHost, HostEnd};
+use super::{AppHost, HostEnd, direct_end};
 use crate::manager::policy::Policy;
 use crate::manager::turns::{Fences, SessionTurns};
 use crate::manager::{Adapters, SessionManager, SessionTarget};
+use crate::store::app_calls::{AppCallBarrier, CallState, NewAppCall, UncertainCause};
 use crate::store::{Caller, OfflineApprovalPolicy, ProcessIncarnation, Store, StoreConfig};
 use crate::workspace::{GitOptions, Limits, PrivatePaths};
 
@@ -141,6 +144,9 @@ struct AppSession {
 impl LiveSession for AppSession {
     fn capabilities(&self) -> &Capabilities {
         self.inner.capabilities()
+    }
+    fn exit_watch(&self) -> Option<ExitWatch> {
+        self.inner.exit_watch()
     }
     fn app_bridge(&self) -> Option<Arc<dyn AppBridge>> {
         Some(Arc::clone(&self.bridge) as Arc<dyn AppBridge>)
@@ -414,4 +420,111 @@ async fn direct_candidates_reach_capture() {
     })
     .await;
     rig.manager.shutdown(StopMode::Kill).await;
+}
+
+/// A non-read-only row of `s1` and `proc-1` at `/w` that a provider error
+/// made `uncertain`.
+async fn uncertain_row(store: &Store, id: &str) {
+    store
+        .app_call_begin(NewAppCall {
+            call_id: id.to_owned(),
+            session_id: "s1".into(),
+            app_id: "app-1".to_owned(),
+            worktree_root: "/w".to_owned(),
+            server: "demo".to_owned(),
+            tool: "bump".to_owned(),
+            read_only: false,
+            process: "proc-1".to_owned(),
+            station_run: store.run_id().to_owned(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .app_call_mark_uncertain(id.to_owned(), UncertainCause::ProviderError)
+            .await
+            .unwrap()
+    );
+}
+
+async fn call_state(store: &Store, id: &str) -> CallState {
+    store.app_call(id.to_owned()).await.unwrap().unwrap().state
+}
+
+async fn barrier(store: &Store) -> Option<AppCallBarrier> {
+    store
+        .app_call_barrier("/w".to_owned(), "no-turn".to_owned())
+        .await
+        .unwrap()
+}
+
+/// Review blocker 3: the end of a direct session's event pump (here a panic;
+/// a store failure ends it the same way) is no exit proof. While the
+/// provider process lives, the `uncertain` call stays, the barrier holds and
+/// the host stays; the host's observed exit then settles the call.
+#[tokio::test]
+async fn a_failed_pump_keeps_the_call_uncertain_until_the_observed_exit() {
+    let (target, turns, _det) = target_rig().await;
+    let (session, store) = (SessionId::from("s1"), target.app_env().store);
+    uncertain_row(&store, "c1").await;
+    target.register_app_host(&session, host("proc-1", &turns));
+    let (exit_tx, exit_rx) = tokio::sync::watch::channel(None);
+    let pump = tokio::spawn(async {
+        panic!("the event pump failed");
+    });
+    let watcher = {
+        let (target, session) = (Arc::clone(&target), session.clone());
+        tokio::spawn(async move {
+            let end = direct_end(Some(exit_rx), pump).await;
+            target.drop_app_host(&session, &proc("proc-1"), end);
+            end
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!watcher.is_finished(), "the process still runs");
+    assert_eq!(call_state(&store, "c1").await, CallState::Uncertain);
+    assert_eq!(barrier(&store).await, Some(AppCallBarrier::Running));
+    assert!(target.app_host(&session).is_some());
+    assert!(!target.app_env().exits.has(&session, "proc-1"));
+    // The real exit: the host reaped the child.
+    exit_tx.send_replace(Some(ExitReport {
+        termination: Termination::Code(0),
+        cause: EndCause::Exited,
+        stderr_tail: String::new(),
+    }));
+    assert_eq!(watcher.await.unwrap(), HostEnd::Exited);
+    assert!(target.app_host(&session).is_none());
+    assert!(target.app_env().exits.has(&session, "proc-1"));
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while call_state(&store, "c1").await != CallState::Ended {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the call did not end"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Without an exit watch, or when the watch closes without a report, the end
+/// is a lost observation: the host leaves, no exit is recorded, and the
+/// `uncertain` call keeps the barrier.
+#[tokio::test]
+async fn a_lost_observation_settles_no_call() {
+    let (target, turns, _det) = target_rig().await;
+    let (session, store) = (SessionId::from("s1"), target.app_env().store);
+    uncertain_row(&store, "c1").await;
+    assert_eq!(
+        direct_end(None, tokio::spawn(async {})).await,
+        HostEnd::Lost
+    );
+    let (exit_tx, exit_rx) = tokio::sync::watch::channel(None);
+    drop(exit_tx);
+    let end = direct_end(Some(exit_rx), tokio::spawn(async {})).await;
+    assert_eq!(end, HostEnd::Lost);
+    target.register_app_host(&session, host("proc-1", &turns));
+    assert!(target.drop_app_host(&session, &proc("proc-1"), end));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(call_state(&store, "c1").await, CallState::Uncertain);
+    assert_eq!(barrier(&store).await, Some(AppCallBarrier::Running));
+    assert!(!target.app_env().exits.has(&session, "proc-1"));
 }

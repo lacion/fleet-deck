@@ -354,9 +354,9 @@ impl Rig {
         .await
     }
 
-    /// Plants a row of `session` (state `running`), as an older incarnation
-    /// when `incarnation` is given.
-    pub(crate) async fn plant(&self, id: &str, process: &str, incarnation: Option<&str>) {
+    /// Plants a row of `session` (state `running`), as a row of an older
+    /// station process when `station_run` is given.
+    pub(crate) async fn plant(&self, id: &str, process: &str, station_run: Option<&str>) {
         self.store
             .app_call_begin(NewAppCall {
                 call_id: id.to_owned(),
@@ -367,10 +367,8 @@ impl Rig {
                 tool: "bump".to_owned(),
                 read_only: false,
                 process: process.to_owned(),
-                incarnation: incarnation.map_or_else(
-                    || self.store.incarnation().as_str().to_owned(),
-                    str::to_owned,
-                ),
+                station_run: station_run
+                    .map_or_else(|| self.store.run_id().to_owned(), str::to_owned),
             })
             .await
             .unwrap();

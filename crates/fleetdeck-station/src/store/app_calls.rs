@@ -101,8 +101,10 @@ pub struct NewAppCall {
     pub read_only: bool,
     /// The `ProcessIncarnation` text of the session's process.
     pub process: String,
-    /// `store.incarnation()` of the station process that starts the call.
-    pub incarnation: String,
+    /// [`Store::run_id`] of the station process that starts the call (the
+    /// column `incarnation`). Not the database incarnation: that one stays
+    /// the same across a restart.
+    pub station_run: String,
 }
 
 /// One `mcp_app_calls` row.
@@ -116,7 +118,8 @@ pub struct AppCallRow {
     pub tool: String,
     pub read_only: bool,
     pub process: String,
-    pub incarnation: String,
+    /// See [`NewAppCall::station_run`].
+    pub station_run: String,
     pub state: CallState,
     pub cause: Option<UncertainCause>,
     pub advance_pending: bool,
@@ -199,7 +202,7 @@ fn decode(raw: Raw) -> Result<AppCallRow> {
         tool,
         read_only,
         process,
-        incarnation,
+        station_run,
         state,
         cause,
         advance_pending,
@@ -216,7 +219,7 @@ fn decode(raw: Raw) -> Result<AppCallRow> {
         tool,
         read_only: read_only != 0,
         process,
-        incarnation,
+        station_run,
         state: CallState::parse(&state)?,
         cause: cause.as_deref().map(parse_cause).transpose()?,
         advance_pending: advance_pending != 0,
@@ -267,7 +270,7 @@ fn begin(conn: &Connection, new: &NewAppCall, now: i64) -> Result<Option<i64>> {
             new.tool,
             i64::from(new.read_only),
             new.process,
-            new.incarnation,
+            new.station_run,
             now,
         ],
     )?;
@@ -437,12 +440,14 @@ impl Store {
         .await
     }
 
-    /// The rows in `running` whose `incarnation` is not this store's.
+    /// The rows in `running` that an older station process started: their
+    /// `station_run` is not [`Store::run_id`]. A reopen of the same database
+    /// (a normal restart) has a new run id, so its rows are listed too.
     ///
     /// # Errors
     /// A database error.
-    pub async fn app_calls_of_older_incarnations(&self) -> Result<Vec<AppCallRow>> {
-        let current = self.inner.incarnation.as_str().to_owned();
+    pub async fn app_calls_of_older_runs(&self) -> Result<Vec<AppCallRow>> {
+        let current = self.inner.run.clone();
         call(&self.inner.db, move |conn| {
             select(
                 conn,

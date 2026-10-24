@@ -738,8 +738,15 @@ async fn end_observed(
     if let Ok(mut map) = sessions.lock() {
         map.remove(session_id);
     }
-    // The process ended (observed): its app host leaves (B15 §4.3 item 2).
-    apps.drop_host(session_id, &process, HostEnd::Exited);
+    // The app host leaves (B15 §4.3 item 2). Only a shim report that proves
+    // the end (no surviving member of the provider's group) is an observed
+    // exit; else the provider's tools may still run (`Lost`).
+    let end = if shims::exit_reason(exit.as_ref()) == reason::EXITED {
+        HostEnd::Exited
+    } else {
+        HostEnd::Lost
+    };
+    apps.drop_host(session_id, &process, end);
     if let Err(e) = store
         .process_ended(process, REASON_PROCESS_EXIT.to_owned())
         .await

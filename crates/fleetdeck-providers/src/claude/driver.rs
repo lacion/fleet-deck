@@ -545,6 +545,10 @@ impl LiveSession for ClaudeSession {
         Some(self.control.pid())
     }
 
+    fn exit_watch(&self) -> Option<crate::host::ExitWatch> {
+        self.control.exit_watch()
+    }
+
     fn app_bridge(&self) -> Option<Arc<dyn crate::apps::AppBridge>> {
         Some(self.apps.bridge(&self.shared, &self.writes, &self.frames))
     }

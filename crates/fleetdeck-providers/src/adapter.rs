@@ -339,6 +339,11 @@ pub trait LiveSession: Send {
     fn pid(&self) -> Option<u32> {
         None
     }
+    /// The host's watch of the provider process's exit (B15: the only proof
+    /// that ends the app calls of a direct session); `None` without one.
+    fn exit_watch(&self) -> Option<crate::host::ExitWatch> {
+        None
+    }
     /// The app operations of this session (B15); `None` when the provider has none.
     fn app_bridge(&self) -> Option<Arc<dyn AppBridge>> {
         None
