@@ -100,15 +100,21 @@ pub async fn prune_history(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
-            _ = tick.tick() => match store.prune().await {
-                Ok(report) => tracing::debug!(
-                    events = report.events,
-                    receipts = report.receipts,
-                    history = report.history,
-                    "the history prune ran"
-                ),
-                Err(e) => tracing::warn!(error = %e, "the history prune failed"),
-            },
+            _ = tick.tick() => {
+                match store.prune().await {
+                    Ok(report) => tracing::debug!(
+                        events = report.events,
+                        receipts = report.receipts,
+                        history = report.history,
+                        "the history prune ran"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "the history prune failed"),
+                }
+                // B28 §3.11: the update attempts keep the newest 500.
+                if let Err(e) = store.cli_update_prune(500).await {
+                    tracing::warn!(error = %e, "the update attempts prune failed");
+                }
+            }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     return;
@@ -255,6 +261,8 @@ pub struct RunningStation {
     /// The screensaver tick of the Omarchy service (a finished task when the
     /// service is off).
     omarchy_tick: tokio::task::JoinHandle<()>,
+    /// The provider update schedule (B28).
+    cli_update_task: tokio::task::JoinHandle<()>,
     /// The Fleet Git writer, push trigger task, push loop (FG-2) and cleanup loop (FG-3).
     fleet_git: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -349,6 +357,10 @@ impl RunningStation {
             deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
             &PrivateEnv::from_process(),
         ));
+        // B28 §3.7.2: finish an interrupted provider update before anything
+        // can start a provider.
+        crate::cli_update::service::recover_at_start(&store, config, &station_dir, &ids).await;
+        let service_ids = Arc::clone(&ids);
         let manager = Arc::new(match host_choice {
             HostChoice::Direct => {
                 SessionManager::start(store, policy, adapters, ids, Arc::clone(&private)).await?
@@ -401,7 +413,22 @@ impl RunningStation {
             restart,
             Arc::clone(&private),
         )));
+        let cli_update =
+            crate::cli_update::service::CliUpdates::new(crate::cli_update::service::ServiceParts {
+                manager: &manager,
+                config,
+                source: Arc::new(crate::cli_update::service::FileConfig::new(
+                    dirs.station_config(),
+                    station_dir.join("secrets"),
+                    config.provider_updates.clone(),
+                )),
+                station_dir: &station_dir,
+                ids: service_ids,
+                shim_host: host_choice == HostChoice::Shim,
+            });
+        manager.set_cli_update(Arc::clone(&cli_update));
         let (shutdown, rx) = watch::channel(false);
+        let cli_update_task = cli_update.start_schedule(rx.clone());
         let rescan = tokio::spawn(rescan_credentials(private, CREDENTIAL_RESCAN, rx.clone()));
         let prune = tokio::spawn(prune_history(
             manager.store().clone(),
@@ -501,6 +528,7 @@ impl RunningStation {
             prune,
             loads,
             omarchy_tick,
+            cli_update_task,
             fleet_git,
         })
     }
@@ -526,6 +554,8 @@ impl RunningStation {
         step("loads");
         let _ = self.omarchy_tick.await;
         step("omarchy tick");
+        let _ = self.cli_update_task.await;
+        step("cli update");
         for mut task in self.fleet_git {
             if tokio::time::timeout(FLEET_GIT_STOP_WAIT, &mut task)
                 .await
@@ -563,7 +593,7 @@ fn assist_instances(config: &StationConfig) -> Vec<crate::assist::AssistInstance
     let base = fleetdeck_core::childenv::ChildEnv::from_process();
     let mut out = Vec::new();
     for instance in &config.provider_instances {
-        match fleetdeck_core::childenv::ChildEnv::for_instance(base.clone(), instance) {
+        match crate::manager::instance_env(config, base.clone(), instance) {
             Ok(env) => out.push(crate::assist::AssistInstance {
                 id: instance.id.clone(),
                 driver: instance.driver,

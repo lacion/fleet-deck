@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fleetdeck_core::ChildEnv;
-use fleetdeck_core::config::{Driver, StationConfig};
+use fleetdeck_core::config::{Driver, ProviderInstance, StationConfig};
 use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
@@ -29,7 +29,7 @@ pub fn adapters_from_config(
     let stop = super::policy_limits::stop_policy(&config.limits);
     let raw_log = || raw_log_settings(config, raw_root.as_deref());
     for instance in &config.provider_instances {
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
+        let env = instance_env(config, ChildEnv::from_process(), instance)?;
         let adapter: Arc<dyn ProviderAdapter> = match instance.driver {
             Driver::Claude => {
                 let mut cfg =
@@ -51,6 +51,28 @@ pub fn adapters_from_config(
         out.insert(instance.id.clone(), adapter);
     }
     Ok(out)
+}
+
+/// The child environment of a provider instance: `base` plus the instance
+/// settings, and `DISABLE_AUTOUPDATER=1` for a Claude instance when
+/// `provider_updates.enabled`, unless the instance `env` table sets the name
+/// (B28 §3.10).
+///
+/// # Errors
+/// An instance `env` table that cannot go into a child environment.
+pub fn instance_env(
+    config: &StationConfig,
+    base: ChildEnv,
+    instance: &ProviderInstance,
+) -> std::result::Result<ChildEnv, fleetdeck_core::childenv::ChildEnvError> {
+    let mut env = ChildEnv::for_instance(base, instance)?;
+    if config.provider_updates.enabled
+        && instance.driver == Driver::Claude
+        && !instance.env.contains_key("DISABLE_AUTOUPDATER")
+    {
+        env.set("DISABLE_AUTOUPDATER", "1")?;
+    }
+    Ok(env)
 }
 
 /// The raw-frame log of the provider adapters: `None` when there is no
@@ -116,6 +138,42 @@ mod tests {
         assert_eq!(small.limits.max_files, 4);
         let big = settings("[retention]\nraw_log_mib = 256\n").unwrap();
         assert_eq!(big.limits.max_file_bytes, 64 * 1024 * 1024);
+    }
+
+    fn claude_env(extra: &str) -> ChildEnv {
+        let root = tempfile::tempdir().unwrap();
+        let config = test_config(root.path(), extra);
+        let instance = ProviderInstance::default_for(Driver::Claude);
+        instance_env(&config, ChildEnv::empty(), &instance).unwrap()
+    }
+
+    #[test]
+    fn a_claude_env_has_disable_autoupdater_only_when_updates_are_on() {
+        let on = claude_env("[provider_updates]\nenabled = true\n");
+        assert_eq!(on.get("DISABLE_AUTOUPDATER").unwrap(), "1");
+        assert!(claude_env("").get("DISABLE_AUTOUPDATER").is_none());
+    }
+
+    #[test]
+    fn an_instance_env_value_wins_over_disable_autoupdater() {
+        let root = tempfile::tempdir().unwrap();
+        let config = test_config(root.path(), "[provider_updates]\nenabled = true\n");
+        let mut instance = ProviderInstance::default_for(Driver::Claude);
+        instance.env.insert(
+            "DISABLE_AUTOUPDATER".to_owned(),
+            fleetdeck_core::secret::Secret::new("0".to_owned()),
+        );
+        let env = instance_env(&config, ChildEnv::empty(), &instance).unwrap();
+        assert_eq!(env.get("DISABLE_AUTOUPDATER").unwrap(), "0");
+    }
+
+    #[test]
+    fn a_codex_env_never_has_disable_autoupdater() {
+        let root = tempfile::tempdir().unwrap();
+        let config = test_config(root.path(), "[provider_updates]\nenabled = true\n");
+        let instance = ProviderInstance::default_for(Driver::Codex);
+        let env = instance_env(&config, ChildEnv::empty(), &instance).unwrap();
+        assert!(env.get("DISABLE_AUTOUPDATER").is_none());
     }
 
     #[test]

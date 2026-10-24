@@ -72,7 +72,7 @@ pub mod turns;
 mod usage_recount;
 mod worker_grant;
 pub mod workspaces;
-pub use adapters::{adapters_from_config, setup_envs_from_config};
+pub use adapters::{adapters_from_config, instance_env, setup_envs_from_config};
 pub use shim_configs::durable_configs;
 pub use stop_plan::StopPlanError;
 
@@ -95,9 +95,9 @@ pub use target::{Adapters, SessionTarget};
 
 #[path = "manager_execution.rs"]
 mod execution_checks;
+mod provider_update;
 #[path = "manager_providers.rs"]
 mod providers_info;
-mod provider_update;
 
 use crate::store::{Caller, Decided, Result, Store};
 use crate::worker::EffectWorker;
@@ -138,6 +138,8 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The provider update service, once the station process set it (B28).
+    cli_update: std::sync::OnceLock<Arc<crate::cli_update::service::CliUpdates>>,
     /// The Fleet Git runtime of the station, once the link node set it
     /// (FG-12): the artifact share of a start and of a resume reads it.
     fleet_git: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
@@ -404,6 +406,7 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            cli_update: std::sync::OnceLock::new(),
             fleet_git: std::sync::OnceLock::new(),
             land: std::sync::OnceLock::new(),
             moves,

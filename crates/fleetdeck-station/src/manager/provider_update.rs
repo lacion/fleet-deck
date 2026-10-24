@@ -103,6 +103,37 @@ pub(super) async fn load_quarantine(store: &Store, target: &SessionTarget) -> Re
     Ok(())
 }
 
+impl SessionManager {
+    /// Gives the manager the provider update service. The first call wins.
+    pub fn set_cli_update(&self, service: Arc<crate::cli_update::service::CliUpdates>) {
+        let _ = self.cli_update.set(service);
+    }
+
+    /// The provider update service, once the station process set it.
+    #[must_use]
+    pub fn cli_update(&self) -> Option<Arc<crate::cli_update::service::CliUpdates>> {
+        self.cli_update.get().cloned()
+    }
+
+    /// The `cli_update` value of `station.info`; `None` without a service.
+    pub async fn cli_update_report(&self) -> Option<fleetdeck_proto::cli_update::CliUpdateReport> {
+        match self.cli_update() {
+            Some(service) => Some(service.report().await),
+            None => None,
+        }
+    }
+
+    /// Refuses the starts of every instance of `kind` with `text` (§3.8.1).
+    pub fn quarantine_provider(&self, kind: ProviderKind, text: &str) {
+        self.target.quarantine(kind, text);
+    }
+
+    /// Lets the instances of `kind` start again (§3.8.1).
+    pub fn release_provider_quarantine(&self, kind: ProviderKind) {
+        self.target.release_quarantine(kind);
+    }
+}
+
 #[cfg(test)]
 #[path = "provider_update_tests.rs"]
 mod tests;
