@@ -221,7 +221,14 @@ async fn the_router_holds_grant_work_until_the_return_check() {
     let mut second = up(&mut f).await;
     no_request(&mut second.station, Duration::from_millis(500)).await;
     second.answer_info("v1").await;
-    let req = next_request(&mut second.station).await;
+    // The first `station.info` answer also sends the Fleet Git snapshot
+    // (`fleet_git.projects_set`); it is not grant work.
+    let req = loop {
+        let req = next_request(&mut second.station).await;
+        if req.method != "fleet_git.projects_set" {
+            break req;
+        }
+    };
     assert_eq!(req.method, "session.interrupt");
     assert_eq!(req.command_id, Some(held.command_id));
 }

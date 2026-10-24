@@ -396,7 +396,9 @@ async fn an_unbound_grant_or_a_grant_of_an_online_station_is_not_held() {
     new.stations.insert(w.a.clone());
     let names = w.s.create_grant(new).await.unwrap();
     assert!(w.s.bind_grant(binding(&names, 1)).await.unwrap());
-    for g in [&online, &names] {
+    // An unbound coordinator grant starts its idle time at its first use:
+    // a use here shows that the hold does not touch it.
+    for g in [&unbound, &online, &names] {
         set_used(&w, g, w.s.now_ms()).await;
     }
     let now = w.s.now_ms();
