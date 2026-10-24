@@ -77,6 +77,7 @@ describe('the posture line', () => {
 /** One case per row of the hazard table: [key, a value that shows it, a value that does not]. */
 const CASES: readonly [string, unknown, unknown][] = [
   ['allow_bypass_permissions', true, false],
+  ['keep_grants_on_update', false, true],
   ['worker_grant.allow_bypass', true, false],
   ['worker_grant.claude_mode', 'bypassPermissions', 'acceptEdits'],
   ['worker_grant.codex_mode', 'never/danger-full-access', 'on-request/workspace-write'],
@@ -93,6 +94,8 @@ const CASES: readonly [string, unknown, unknown][] = [
 
 const TEXTS: Readonly<Record<string, string>> = {
   allow_bypass_permissions: 'Sessions on this station can run every tool without asking.',
+  keep_grants_on_update:
+    'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.',
   'worker_grant.allow_bypass': 'Workers can start sessions that run every tool without asking.',
   'worker_grant.claude_mode': 'Sessions that a worker starts can skip every permission check.',
   'worker_grant.codex_mode': 'Sessions that a worker starts can skip every permission check.',
