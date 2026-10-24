@@ -34,6 +34,26 @@ use crate::store::cli_updates::{AttemptEnd, NewAttempt};
 pub const STAGE_PHASE: Duration = Duration::from_secs(12 * 60);
 /// Step 17: the hold (up to 3 min).
 pub const HOLD_PHASE: Duration = Duration::from_secs(3 * 60);
+/// After a phase limit: the wait for the file system tasks of the phase.
+pub const SETTLE_LIMIT: Duration = Duration::from_secs(30);
+
+/// The limits of an attempt. Tests make them short.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub stage: Duration,
+    pub hold: Duration,
+    pub settle: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            stage: STAGE_PHASE,
+            hold: HOLD_PHASE,
+            settle: SETTLE_LIMIT,
+        }
+    }
+}
 
 /// What a hold is: dropping it ends the hold.
 pub type Hold = Box<dyn Send>;
@@ -122,14 +142,17 @@ pub trait Installer: Send + Sync {
         target: &str,
         env: &ChildEnv,
     ) -> Result<(), Failure>;
-    /// §3.6.2.
+    /// §3.6.2 on the install that the journal row names (never a new
+    /// detection; pre-PR review finding 1).
     async fn restore(
         &self,
         ctx: &Ctx<'_>,
         rec: &RecoveryRecord,
-        tool: &Tool,
         env: &ChildEnv,
     ) -> Result<(), Failure>;
+    /// Waits until no file system task of this installer runs (pre-PR
+    /// review finding 2). `false` when one still runs after `limit`.
+    async fn settle(&self, limit: Duration) -> bool;
 }
 
 /// One configured provider instance: its binary and its environment.
@@ -230,6 +253,7 @@ pub struct Engine {
     pub(super) curl: PathBuf,
     pub(super) running: Mutex<Option<String>>,
     pub(super) checks: Mutex<HashMap<ProviderKind, Check>>,
+    pub(super) limits: Mutex<Limits>,
 }
 
 /// `stable`, `latest` or `pin` (the channel text of a row).
@@ -311,6 +335,7 @@ impl Engine {
             curl: p.curl,
             running: Mutex::new(None),
             checks: Mutex::new(HashMap::new()),
+            limits: Mutex::new(Limits::default()),
         }
     }
 

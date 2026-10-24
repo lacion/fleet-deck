@@ -9,6 +9,7 @@ pub mod channel;
 pub mod detect;
 pub mod fence;
 pub mod gate;
+pub mod mutations;
 pub mod recover;
 pub mod run;
 pub mod schedule;

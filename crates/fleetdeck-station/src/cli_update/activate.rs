@@ -278,6 +278,62 @@ pub async fn verify_codex(
 
 // ---- The way back (§3.6.2) ----------------------------------------------
 
+/// The folder `n` levels above `p`.
+fn up(p: &Path, n: usize) -> Option<&Path> {
+    (0..n).try_fold(p, |at, _| at.parent())
+}
+
+/// The install of the journal row, from its `method` and `dest` only: no
+/// launcher, no `PATH` (pre-PR review finding 1). A crash in A2 can leave
+/// the launcher dangling, and another CLI on `PATH` can shadow the install,
+/// so the way back never detects. `dest` is `versions/<target>` (native) or
+/// `modules` (npm, Bun), as §3.7 step 10 wrote it. `None` when `dest` has
+/// not the layout of the method.
+#[must_use]
+pub fn journal_tool(rec: &RecoveryRecord) -> Option<Tool> {
+    use fleetdeck_proto::cli_update::InstallMethod;
+    let dest = rec.dest.as_path();
+    match rec.method {
+        InstallMethod::Native => {
+            let versions = dest.parent()?;
+            if !versions.ends_with(".local/share/claude/versions") {
+                return None;
+            }
+            let home = up(versions, 4)?;
+            Some(Tool::Native {
+                link: home.join(".local/bin/claude"),
+                versions: versions.to_path_buf(),
+                gpgv: None,
+            })
+        }
+        InstallMethod::Npm => {
+            if !dest.ends_with("lib/node_modules") {
+                return None;
+            }
+            let prefix = up(dest, 2)?;
+            Some(Tool::Npm {
+                prefix: prefix.to_path_buf(),
+                npm: prefix.join("bin/npm"),
+                modules: dest.to_path_buf(),
+                bin_link: prefix.join("bin/codex"),
+            })
+        }
+        InstallMethod::Bun => {
+            if !dest.ends_with("install/global/node_modules") {
+                return None;
+            }
+            let bun_install = up(dest, 3)?;
+            Some(Tool::Bun {
+                bun_install: bun_install.to_path_buf(),
+                bun: bun_install.join("bin/bun"),
+                modules: dest.to_path_buf(),
+                bin_link: bun_install.join("bin/codex"),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// The way back from the local rollback copy. No network. `env` comes from
 /// `probe_env`. `tool` is the detected install (`Native` for Claude, `Npm`
 /// or `Bun` for Codex).

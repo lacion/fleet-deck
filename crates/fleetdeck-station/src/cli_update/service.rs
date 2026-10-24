@@ -24,11 +24,12 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::activate::{
-    RealFs, activate_codex, activate_native, remove_path, restore, rollback_codex, rollback_native,
-    verify_codex, verify_native,
+    RESTORE_FAILED, RealFs, activate_codex, activate_native, journal_tool, remove_path, restore,
+    rollback_codex, rollback_native, verify_codex, verify_native,
 };
 use super::channel::{resolve_claude, resolve_codex};
 use super::detect::{Install, Tool};
+use super::mutations::Mutations;
 use super::recover::{Recovery, recover};
 use super::run::{
     Channel, ConfigSource, Engine, Hold, Host, Installer, Parts, ProviderTarget, Staged,
@@ -53,6 +54,8 @@ fn io_failed<T>(_: T) -> Failure {
 pub struct RealInstaller {
     /// The environment of the station process (the proxy and CA names).
     station: Vec<(OsString, OsString)>,
+    /// Every blocking task that changes files (pre-PR review finding 2).
+    mutations: Mutations,
 }
 
 impl RealInstaller {
@@ -60,6 +63,7 @@ impl RealInstaller {
     pub fn new() -> Self {
         Self {
             station: std::env::vars_os().collect(),
+            mutations: Mutations::new(),
         }
     }
 }
@@ -102,7 +106,9 @@ impl Installer for RealInstaller {
             ) => {
                 let file = download_native(ctx, versions, target, platform).await?;
                 let (v, t, e) = (versions.clone(), target.clone(), expected_sha256.clone());
-                let placed = tokio::task::spawn_blocking(move || bind_native(&file, &v, &t, &e))
+                let placed = self
+                    .mutations
+                    .run(move || bind_native(&file, &v, &t, &e))
                     .await
                     .map_err(io_failed)??;
                 if let Err(f) =
@@ -121,7 +127,9 @@ impl Installer for RealInstaller {
                 let sm =
                     stage_codex(ctx, &install.tool, &root, target, instance, &self.station).await?;
                 let (tool, r, s) = (install.tool.clone(), root.clone(), set.clone());
-                let moved = tokio::task::spawn_blocking(move || bind_codex(&tool, &r, &s))
+                let moved = self
+                    .mutations
+                    .run(move || bind_codex(&tool, &r, &s))
                     .await
                     .map_err(io_failed)??;
                 probe_staged(ctx, ProviderKind::Codex, &staged_entry(&sm), &env, target).await?;
@@ -148,18 +156,18 @@ impl Installer for RealInstaller {
                     ctx.attempt_id.to_owned(),
                     install.real.clone(),
                 );
-                tokio::task::spawn_blocking(move || {
-                    rollback_native(&RealFs, &dir, &id, &real, &sum)
-                })
-                .await
-                .map_err(io_failed)?
+                self.mutations
+                    .run(move || rollback_native(&RealFs, &dir, &id, &real, &sum))
+                    .await
+                    .map_err(io_failed)?
             }
             (
                 Tool::Npm { modules, .. } | Tool::Bun { modules, .. },
                 Staged::Codex { root, moved, .. },
             ) => {
                 let (m, r, mv) = (modules.clone(), root.clone(), moved.clone());
-                tokio::task::spawn_blocking(move || rollback_codex(&m, &r, &mv))
+                self.mutations
+                    .run(move || rollback_codex(&m, &r, &mv))
                     .await
                     .map_err(io_failed)?
                     .map_err(io_failed)
@@ -187,7 +195,8 @@ impl Installer for RealInstaller {
                 Staged::Codex { root, sm, .. },
             ) => {
                 let (m, s, r, mv) = (modules.clone(), sm.clone(), root.clone(), act.moved.clone());
-                tokio::task::spawn_blocking(move || activate_codex(&m, &s, &r, &mv))
+                self.mutations
+                    .run(move || activate_codex(&m, &s, &r, &mv))
                     .await
                     .map_err(io_failed)?
                     .map_err(io_failed)?;
@@ -201,10 +210,14 @@ impl Installer for RealInstaller {
         &self,
         ctx: &Ctx<'_>,
         rec: &RecoveryRecord,
-        tool: &Tool,
         env: &ChildEnv,
     ) -> Result<(), Failure> {
-        restore(ctx, rec, tool, env).await
+        let tool = journal_tool(rec).ok_or(Failure::Failed(RESTORE_FAILED))?;
+        restore(ctx, rec, &tool, env).await
+    }
+
+    async fn settle(&self, limit: std::time::Duration) -> bool {
+        self.mutations.settle(limit).await
     }
 }
 

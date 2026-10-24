@@ -108,6 +108,9 @@ pub(in crate::cli_update) struct FakeInstaller {
     pub flips: AtomicBool,
     pub restore_err: Mutex<Option<Failure>>,
     pub restore_sleep: Mutex<Option<Duration>>,
+    /// A2 runs this long in a blocking task, then logs `activate_end`.
+    pub activate_sleep: Mutex<Option<Duration>>,
+    pub mutations: crate::cli_update::mutations::Mutations,
     pub log: Log,
     pub store: Store,
     pub host: Arc<FakeHost>,
@@ -172,6 +175,8 @@ impl Installer for FakeInstaller {
         if let Some(f) = *self.rollback_err.lock().unwrap() {
             return Err(f);
         }
+        let dir = crate::cli_update::activate::rollback_dir(ctx.station_dir, ctx.attempt_id);
+        std::fs::create_dir_all(dir).unwrap();
         Ok(Activation {
             rollback_path: ctx.station_dir.join("rollback-copy"),
             rollback_sha256: rollback_sha256.map(str::to_owned),
@@ -193,6 +198,15 @@ impl Installer for FakeInstaller {
     ) -> Result<(), Failure> {
         push(&self.log, "activate");
         *self.calls_at_activate.lock().unwrap() = Some(self.channel_calls.load(Ordering::SeqCst));
+        let sleep = *self.activate_sleep.lock().unwrap();
+        if let Some(d) = sleep {
+            let log = Arc::clone(&self.log);
+            let slow = move || {
+                std::thread::sleep(d);
+                push(&log, "activate_end");
+            };
+            self.mutations.run(slow).await.unwrap();
+        }
         let err = *self.activate_err.lock().unwrap();
         if err.is_none() || self.flips.load(Ordering::SeqCst) {
             self.versions
@@ -207,7 +221,6 @@ impl Installer for FakeInstaller {
         &self,
         _ctx: &Ctx<'_>,
         rec: &RecoveryRecord,
-        _tool: &Tool,
         _env: &ChildEnv,
     ) -> Result<(), Failure> {
         push(&self.log, "restore");
@@ -223,6 +236,10 @@ impl Installer for FakeInstaller {
             .unwrap()
             .insert(rec.provider, rec.from_version.clone());
         Ok(())
+    }
+
+    async fn settle(&self, limit: Duration) -> bool {
+        self.mutations.settle(limit).await
     }
 }
 
@@ -361,6 +378,8 @@ pub(in crate::cli_update) async fn rig_with(kind: ProviderKind, enabled: bool) -
         flips: AtomicBool::new(false),
         restore_err: Mutex::new(None),
         restore_sleep: Mutex::new(None),
+        activate_sleep: Mutex::new(None),
+        mutations: crate::cli_update::mutations::Mutations::new(),
         log: Arc::clone(&log),
         store: store.clone(),
         host: Arc::clone(&host),

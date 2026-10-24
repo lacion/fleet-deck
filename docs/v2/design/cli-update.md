@@ -612,7 +612,7 @@ pub async fn check(
 
 #### 3.6.2 The way back (local, no network; finding 2)
 
-`restore(record: &RecoveryRecord)` uses only local files and is idempotent: the start recovery can run it again after a second crash.
+`restore(record: &RecoveryRecord)` uses only local files and is idempotent: the start recovery can run it again after a second crash. It finds the install from the journal row only (`method` and `dest`: `L`, `versions`, `modules`), never by a new detection: a crash in A2 can leave the launcher dangling, and another CLI on `PATH` can shadow the install (Build answers, B1).
 
 | Method | Restore | Verify |
 | --- | --- | --- |
@@ -689,8 +689,16 @@ run_attempt(kind, trigger, check_only, force) -> CliUpdateRunAnswer
              write the quarantine row (rollback_failed, hint).
     Then the quarantine mark (when written), refresh_providers(), release the hold.
 17. Limits: step 12 at most 12 min; steps 13-16 (the hold) at most 3 min.
-    Past a limit → SIGKILL to the group, the fence, then step 12's failure
-    (before A2) or step 16 (from A2 on), with reason timeout.
+    Past a limit → SIGKILL to the group, a wait of at most 30 s until every
+    blocking file system task of the phase ended, the fence, then step 12's
+    failure (before A2) or step 16 (from A2 on), with reason timeout. A task
+    that still runs after 30 s counts as a failed fence (§3.6.3).
+18. The quarantine of a failure (process_left, rollback_failed) is written,
+    durable and in memory, before the hold ends.
+19. A result transaction of steps 12 to 16 that fails (after 3 tries) keeps
+    the journal row, the stage and the rollback copy for §3.7.2; nothing is
+    removed. From step 14 on, the provider also gets the `recovery_pending`
+    quarantine in memory before the hold ends.
 ```
 
 - `Failed` versus `RolledBack`: `Failed` means that nothing in the install changed (a failure in step 12). `RolledBack` and `RollbackFailed` come only after A2.
@@ -1402,3 +1410,10 @@ Other changes that follow from these:
 - The build plan has eleven tasks in six waves (§7): the store and the manager parts are split (T3, T4); the pure binding (T6) and the stage/activate/fence engine (T7) are new tasks; the docs task is T11.
 - Owner questions 9 and 10 (§8).
 - Residuals: the station trusts the local package manager's tarball check for the extracted bytes (§6 T5); Bun's own records keep the old Codex version (§6 T13); `verify_current` has no integrity check for an owner's npm or Bun reinstall (§6 T14).
+
+## Build answers
+
+- B1 (pre-PR review, finding 1, 2026-10-25): §3.6.2 restores the install that the journal row names (`method` and `dest`), not a new detection. The start recovery takes only the environment of the probe from the instance. Tests: `recover_crash_tests.rs` (the start recovery after each rename of A2, with and without another Codex first on `PATH`).
+- B2 (pre-PR review, finding 2): every blocking task of the installer that changes files holds a guard until it ends (`cli_update/mutations.rs`). After a phase limit the attempt waits for it (at most 30 s) before the fence, the way back, the clean-up and the end of the hold; a task that still runs then ends the attempt `process_left` (§3.7 step 17). Tests: `mutations_tests.rs`, `recover_order_tests.rs`.
+- B3 (pre-PR review, finding 3): a result transaction that fails keeps the journal row, the stage and the rollback copy; after step 14 the provider gets the `recovery_pending` quarantine in memory until the next station start (§3.7 step 19). The start recovery also keeps the stage when its result is not written. Tests: `recover_order_tests.rs`.
+- B4 (pre-PR review, finding 4): the quarantine of `process_left` (from A2, and after a hold limit with a failed fence) is written and applied before the hold ends (§3.6.3, §3.7 step 18). Tests: `recover_order_tests.rs`.

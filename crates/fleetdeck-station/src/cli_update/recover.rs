@@ -6,6 +6,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use fleetdeck_core::config::ProviderUpdatesConfig;
@@ -16,8 +17,8 @@ use fleetdeck_proto::event::ProviderKind;
 use super::activate::{clean_stale, remove_path, rollback_dir};
 use super::detect::{Tool, detect};
 use super::run::{
-    Engine, Flight, HOLD_PHASE, Installer, Job, JournalSink, ProviderTarget, STAGE_PHASE, Staged,
-    channel_text, end_of, new_attempt,
+    Engine, Flight, Hold, Installer, Job, JournalSink, ProviderTarget, Staged, channel_text,
+    end_of, new_attempt,
 };
 use super::stage::{Ctx, Failure, probe_env, run_fence};
 use crate::store::Store;
@@ -28,6 +29,9 @@ use crate::store::cli_updates::AttemptEnd;
 
 /// The limit of the whole recovery (§3.7.2 step 2).
 pub const RECOVER_LIMIT: Duration = Duration::from_secs(5 * 60);
+/// The writes of the result of an attempt (pre-PR review finding 3).
+const FINISH_TRIES: u32 = 3;
+const FINISH_PAUSE: Duration = Duration::from_millis(500);
 
 fn name_of(kind: ProviderKind) -> &'static str {
     match kind {
@@ -159,9 +163,22 @@ impl Recovery<'_> {
         }
     }
 
-    async fn finish(&self, id: &str, end: AttemptEnd, j: JournalAction, q: QuarantineAction) {
-        if let Err(e) = self.store.cli_update_finish(id.to_owned(), end, j, q).await {
-            tracing::warn!(error = %e, "the update recovery result is not written");
+    /// `true` when the result is written. When it is not, the caller keeps
+    /// the stage and the rollback copy: the journal row still names them
+    /// (pre-PR review finding 3).
+    async fn finish(
+        &self,
+        id: &str,
+        end: AttemptEnd,
+        j: JournalAction,
+        q: QuarantineAction,
+    ) -> bool {
+        match self.store.cli_update_finish(id.to_owned(), end, j, q).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(error = %e, "the update recovery result is not written");
+                false
+            }
         }
     }
 
@@ -209,14 +226,17 @@ impl Recovery<'_> {
         // b
         if j.phase == JournalPhase::Staging {
             let end = end_of(UpdateOutcome::Interrupted, None, Some(&j.from_version));
-            self.finish(
-                &j.attempt_id,
-                end,
-                JournalAction::Delete,
-                QuarantineAction::Keep,
-            )
-            .await;
-            self.clean(&j, &j.attempt_id);
+            let done = self
+                .finish(
+                    &j.attempt_id,
+                    end,
+                    JournalAction::Delete,
+                    QuarantineAction::Keep,
+                )
+                .await;
+            if done {
+                self.clean(&j, &j.attempt_id);
+            }
             return;
         }
         // c
@@ -254,14 +274,17 @@ impl Recovery<'_> {
         match restored {
             Ok(()) => {
                 let end = end_of(UpdateOutcome::RolledBack, None, Some(&rec.from_version));
-                self.finish(
-                    &successor,
-                    end,
-                    JournalAction::Delete,
-                    QuarantineAction::Clear,
-                )
-                .await;
-                self.clean(&rec, &successor);
+                let done = self
+                    .finish(
+                        &successor,
+                        end,
+                        JournalAction::Delete,
+                        QuarantineAction::Clear,
+                    )
+                    .await;
+                if done {
+                    self.clean(&rec, &successor);
+                }
             }
             Err(Failure::ProcessLeft) => {
                 let mut left = rec;
@@ -284,16 +307,18 @@ impl Recovery<'_> {
         }
     }
 
+    /// The way back on the install that the journal row names. No
+    /// detection: a crash in A2 can leave the launcher dangling, and another
+    /// CLI on `PATH` can shadow the install (pre-PR review finding 1). The
+    /// instance gives only the environment of the probe.
     async fn restore(&self, ctx: &Ctx<'_>, rec: &RecoveryRecord) -> Result<(), Failure> {
-        let failed = Failure::Failed(reason::ROLLBACK_FAILED);
-        let t = self
+        let base = self
             .targets
             .iter()
             .find(|t| t.kind == rec.provider)
-            .ok_or(failed)?;
-        let install = detect(rec.provider, &t.binary, &t.env).map_err(|_| failed)?;
-        let env = probe_env(&t.env, &rec.marker).ok_or(failed)?;
-        self.installer.restore(ctx, rec, &install.tool, &env).await
+            .map_or_else(ChildEnv::from_process, |t| t.env.clone());
+        let env = probe_env(&base, &rec.marker).ok_or(Failure::Failed(reason::ROLLBACK_FAILED))?;
+        self.installer.restore(ctx, rec, &env).await
     }
 }
 
@@ -302,6 +327,7 @@ impl Engine {
     #[allow(clippy::too_many_lines)]
     pub(super) async fn execute(self: &Arc<Self>, flight: Flight, job: Job) {
         let _flight = flight;
+        let limits = self.limits.lock().map(|l| *l).unwrap_or_default();
         let sink = JournalSink {
             store: self.store.clone(),
             kind: job.kind,
@@ -320,7 +346,7 @@ impl Engine {
         };
         // 12
         let staged = tokio::time::timeout(
-            STAGE_PHASE,
+            limits.stage,
             self.installer
                 .stage(&ctx, &job.install, &job.verified, &job.instance),
         )
@@ -330,7 +356,7 @@ impl Engine {
             Ok(Err(Failure::ProcessLeft)) => return self.process_left(&job).await,
             Ok(Err(f)) => return self.end_failure(&job, f).await,
             Err(_) => {
-                if self.fence_job(&ctx, job.kind).await.is_err() {
+                if !self.quiet(&ctx, job.kind, limits.settle).await {
                     return self.process_left(&job).await;
                 }
                 return self
@@ -359,36 +385,21 @@ impl Engine {
                 .end_early(&job, UpdateOutcome::SkippedBusy, reason::SESSIONS_RUNNING)
                 .await;
         }
-        // 14
-        let phase =
-            tokio::time::timeout(HOLD_PHASE, self.activate_phase(&ctx, &job, &staged, &env)).await;
+        // 14. `activated` is set when the journal row has the phase
+        // `activating`, before A2 starts.
+        let activated = AtomicBool::new(false);
+        let phase = tokio::time::timeout(
+            limits.hold,
+            self.activate_phase(&ctx, &job, &staged, &env, &activated),
+        )
+        .await;
+        // The quarantine of a failure is in place before the hold ends
+        // (pre-PR review finding 4).
         match phase {
-            Ok(Ok(())) => {
-                // 15
-                let end = end_of(UpdateOutcome::Updated, None, Some(&job.target));
-                let done = self
-                    .store
-                    .cli_update_finish(
-                        job.id.clone(),
-                        end,
-                        JournalAction::Delete,
-                        QuarantineAction::Clear,
-                    )
-                    .await;
-                if let Err(e) = done {
-                    tracing::warn!(error = %e, "the update result is not written");
-                }
-                self.host.release_quarantine(job.kind);
-                if let Ok(mut c) = self.checks.lock() {
-                    c.remove(&job.kind);
-                }
-                self.host.refresh().await;
-                drop(hold);
-                self.clean(&job);
-            }
+            Ok(Ok(())) => self.updated(&job, hold).await,
             Ok(Err((Failure::ProcessLeft, _))) => {
-                drop(hold);
                 self.process_left(&job).await;
+                drop(hold);
             }
             Ok(Err((f, false))) => {
                 drop(hold);
@@ -399,20 +410,10 @@ impl Engine {
                 drop(hold);
             }
             Err(_) => {
-                if self.fence_job(&ctx, job.kind).await.is_err() {
+                if !self.quiet(&ctx, job.kind, limits.settle).await {
+                    self.process_left(&job).await;
                     drop(hold);
-                    return self.process_left(&job).await;
-                }
-                let activating = self
-                    .store
-                    .cli_update_journals()
-                    .await
-                    .ok()
-                    .and_then(|rows| rows.into_iter().find(|j| j.provider == job.kind))
-                    .is_some_and(|j| {
-                        j.phase == crate::store::cli_update_journal::JournalPhase::Activating
-                    });
-                if activating {
+                } else if activated.load(Ordering::SeqCst) {
                     self.roll_back(&ctx, &job, &env, reason::TIMEOUT).await;
                     drop(hold);
                 } else {
@@ -424,6 +425,38 @@ impl Engine {
         }
     }
 
+    /// After a phase limit: every file system task of the phase ended
+    /// (pre-PR review finding 2), then the fence passed. `false`: the caller
+    /// ends the attempt `process_left` and changes no file.
+    async fn quiet(&self, ctx: &Ctx<'_>, kind: ProviderKind, settle: Duration) -> bool {
+        if !self.installer.settle(settle).await {
+            tracing::warn!("a file system task of the update still runs");
+            return false;
+        }
+        self.fence_job(ctx, kind).await.is_ok()
+    }
+
+    /// Step 15. The release of the quarantine and the clean-up come only
+    /// after the result is written (pre-PR review finding 3).
+    async fn updated(&self, job: &Job, hold: Hold) {
+        let end = end_of(UpdateOutcome::Updated, None, Some(&job.target));
+        let done = self
+            .finish(job, end, JournalAction::Delete, QuarantineAction::Clear)
+            .await;
+        if !done {
+            self.keep_for_recovery(job).await;
+            drop(hold);
+            return;
+        }
+        self.host.release_quarantine(job.kind);
+        if let Ok(mut c) = self.checks.lock() {
+            c.remove(&job.kind);
+        }
+        self.host.refresh().await;
+        drop(hold);
+        self.clean(job);
+    }
+
     /// A1 (journal phase `activating`), A2 and V. The flag tells whether A2
     /// started.
     async fn activate_phase(
@@ -432,6 +465,7 @@ impl Engine {
         job: &Job,
         staged: &Staged,
         env: &ChildEnv,
+        activated: &AtomicBool,
     ) -> Result<(), (Failure, bool)> {
         let act = self
             .installer
@@ -442,6 +476,7 @@ impl Engine {
             .cli_update_journal_activate(job.kind, act.clone())
             .await
             .map_err(|_| (Failure::Failed(reason::INSTALL_FAILED), false))?;
+        activated.store(true, Ordering::SeqCst);
         self.installer
             .activate(ctx, &job.install, staged, &act, &job.target, env)
             .await
@@ -453,27 +488,29 @@ impl Engine {
         if self.fence_job(ctx, job.kind).await.is_err() {
             return self.process_left(job).await;
         }
-        let rec = self
-            .store
-            .cli_update_journals()
-            .await
-            .ok()
-            .and_then(|rows| rows.into_iter().find(|j| j.provider == job.kind));
-        let restored = match &rec {
-            Some(rec) => {
-                self.installer
-                    .restore(ctx, rec, &job.install.tool, env)
-                    .await
+        let rec = match self.store.cli_update_journals().await {
+            Ok(rows) => rows.into_iter().find(|j| j.provider == job.kind),
+            Err(e) => {
+                tracing::warn!(error = %e, "the update journal is not readable");
+                return self.keep_for_recovery(job).await;
             }
+        };
+        let restored = match &rec {
+            Some(rec) => self.installer.restore(ctx, rec, env).await,
             None => Err(Failure::Failed(reason::ROLLBACK_FAILED)),
         };
         match restored {
             Ok(()) => {
                 let end = end_of(UpdateOutcome::RolledBack, Some(first), Some(&job.from));
-                self.finish(job, end, JournalAction::Delete, QuarantineAction::Keep)
+                let done = self
+                    .finish(job, end, JournalAction::Delete, QuarantineAction::Keep)
                     .await;
-                self.host.refresh().await;
-                self.clean(job);
+                if done {
+                    self.host.refresh().await;
+                    self.clean(job);
+                } else {
+                    self.keep_for_recovery(job).await;
+                }
             }
             Err(Failure::ProcessLeft) => self.process_left(job).await,
             Err(_) => {
@@ -496,7 +533,7 @@ impl Engine {
     }
 
     /// `RollbackFailed (process_left)`: the quarantine, and the journal row
-    /// stays (§3.6.3).
+    /// stays (§3.6.3). The caller ends the hold after it.
     async fn process_left(&self, job: &Job) {
         let text = left_text(job.kind);
         let end = end_of(
@@ -513,14 +550,40 @@ impl Engine {
         self.host.refresh().await;
     }
 
-    async fn finish(&self, job: &Job, end: AttemptEnd, j: JournalAction, q: QuarantineAction) {
-        if let Err(e) = self
-            .store
-            .cli_update_finish(job.id.clone(), end, j, q)
-            .await
-        {
-            tracing::warn!(error = %e, "the update result is not written");
+    /// A result that is not written (pre-PR review finding 3): the journal
+    /// row, the stage and the rollback copy stay for the start recovery, and
+    /// the provider is quarantined in memory until then.
+    async fn keep_for_recovery(&self, job: &Job) {
+        let text = pending_text(job.kind, job.install.method, &job.from);
+        self.host.quarantine(job.kind, &text);
+        self.host.refresh().await;
+    }
+
+    /// `true` when the result is written. A failed write is tried twice
+    /// more (pre-PR review finding 3).
+    async fn finish(
+        &self,
+        job: &Job,
+        end: AttemptEnd,
+        j: JournalAction,
+        q: QuarantineAction,
+    ) -> bool {
+        for n in 1..=FINISH_TRIES {
+            let done = self
+                .store
+                .cli_update_finish(job.id.clone(), end.clone(), j, q.clone())
+                .await;
+            match done {
+                Ok(()) => return true,
+                Err(e) => {
+                    tracing::warn!(error = %e, try_number = n, "the update result is not written")
+                }
+            }
+            if n < FINISH_TRIES {
+                tokio::time::sleep(FINISH_PAUSE).await;
+            }
         }
+        false
     }
 
     /// A failure before the activation: `Refused` or `Failed`, the journal
@@ -535,9 +598,12 @@ impl Engine {
 
     async fn end_early(&self, job: &Job, outcome: UpdateOutcome, why: &str) {
         let end = end_of(outcome, Some(why), Some(&job.from));
-        self.finish(job, end, JournalAction::Delete, QuarantineAction::Keep)
+        let done = self
+            .finish(job, end, JournalAction::Delete, QuarantineAction::Keep)
             .await;
-        self.clean(job);
+        if done {
+            self.clean(job);
+        }
     }
 
     /// Removes the stage, the rollback copy and the probe folder of the job.
@@ -562,3 +628,11 @@ impl Engine {
 #[cfg(test)]
 #[path = "recover_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "recover_crash_tests.rs"]
+mod crash_tests;
+
+#[cfg(test)]
+#[path = "recover_order_tests.rs"]
+mod order_tests;
