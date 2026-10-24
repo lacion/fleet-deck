@@ -127,6 +127,8 @@ impl Checker {
                     (None, Some(schema)) if schema.is_object() => {
                         self.check(val, schema, &at, errs)
                     }
+                    // An explicit open map (`config` of a thread request, B18) takes any member.
+                    (None, Some(Value::Bool(true))) => {}
                     (None, _) if self.strict => {
                         errs.push(format!("{path}: undeclared member `{k}`"))
                     }
