@@ -17,6 +17,8 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
       'host',
       'shim_buffer_mib',
       'allow_bypass_permissions',
+      'default_mode.claude',
+      'default_mode.codex',
     ],
   },
   { title: 'Folders', keys: ['allowed_roots', 'repo_groups'] },
@@ -57,8 +59,19 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
       'worker_grant.spawn_cap',
       'worker_grant.claude_mode',
       'worker_grant.codex_mode',
+      'worker_grant.allow_bypass',
       'worker_grant.lifetime_hours',
       'worker_grant.idle_minutes',
+    ],
+  },
+  {
+    title: 'Grant limits',
+    keys: [
+      'grant_limits.worker_grants',
+      'grant_limits.spawn_cap',
+      'grant_limits.worker_spawn_cap',
+      'grant_limits.idle_hours',
+      'grant_limits.answer_cap',
     ],
   },
   {

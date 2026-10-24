@@ -1,5 +1,5 @@
 // Settings views for the tests: one field of each kind, with the values that the deck shows.
-import type { FieldMeta, SettingsView } from '../gen';
+import type { FieldMeta, Relaxed, SettingsView } from '../gen';
 
 export const meta = (
   key: string,
@@ -91,3 +91,19 @@ export function view(extra: Partial<SettingsView> = {}): SettingsView {
     ...extra,
   };
 }
+
+/** A `limit` field (B27): a number from `min` to `max`, or the word "none". */
+export const limitMeta = (
+  key: string,
+  label: string,
+  min: number,
+  max: number,
+  extra: Partial<FieldMeta> = {},
+): FieldMeta => meta(key, label, 'limit', { min, max, danger: true, ...extra });
+
+/** One relaxed control of the posture (B27 §3.6). */
+export const relaxedItem = (
+  key: string,
+  text: string,
+  state: Relaxed['state'] = 'active',
+): Relaxed => ({ key, text, state });

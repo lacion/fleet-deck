@@ -5,6 +5,7 @@ import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { monitorLabel, monitorRaw, shortModel } from '../ui/format';
 import { Icon, Plus, X } from '../ui/icons';
 import { defaultOptionLabel, fieldLabel, optionLabel, unitOf } from './copy';
+import { LimitEditor } from './LimitEditor';
 import { asNumber, asPairs, asStrings, asText } from './model';
 import { OffMinutes, PolicyEditor, StationsEditor } from './SpecialEditors';
 
@@ -462,6 +463,8 @@ export function FieldEditor({
         </span>
       );
     }
+    case 'limit':
+      return <LimitEditor meta={meta} value={value} disabled={disabled} onChange={onChange} />;
     case 'enum': {
       const text = asText(value);
       return (

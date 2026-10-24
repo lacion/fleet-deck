@@ -18,6 +18,7 @@ import type { OmarchyActions } from './omarchy';
 import { asInstances, changedKeys, changesOf, labelOf, sectionId, type Values } from './model';
 import { NO_PENDING, nextPending, type Pending } from './restartPending';
 import { SectionIndex } from './SectionIndex';
+import { PostureLine } from './PostureLine';
 import { type SectionSlot, SettingsFields } from './SettingsFields';
 
 export type NoticeItem = {
@@ -483,6 +484,7 @@ export function SettingsTab({
             />
           ))}
         </div>
+        <PostureLine relaxed={view.relaxed} target={stationId === null ? 'deck' : 'station'} />
         <SettingsFields
           view={view}
           edits={edits}
