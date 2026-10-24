@@ -1,0 +1,56 @@
+import { useState } from 'react';
+import type { SessionKey } from '../gen';
+import { clock, FEED_FILTERS, type FeedItem, type FeedKind } from './feed';
+
+type Props = {
+  readonly items: readonly FeedItem[];
+  readonly onOpen: (key: SessionKey) => void;
+};
+
+/** How many feed items the board shows at a time (newest first). */
+export const FEED_SHOWN = 50;
+
+/** The event feed of the fleet (v0 `Feed.tsx` parity, DL-095). */
+export function Feed({ items, onOpen }: Props) {
+  const [kind, setKind] = useState<'all' | FeedKind>('all');
+  const shown = items
+    .filter((i) => kind === 'all' || i.kind === kind)
+    .slice(-FEED_SHOWN)
+    .reverse();
+  return (
+    <section className="fd-feed" aria-label="Event feed">
+      <h2 className="fd-vh">Event feed</h2>
+      <div className="fd-feed-filters" role="group" aria-label="Feed filter">
+        {FEED_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className="fd-chip fd-sm"
+            aria-pressed={kind === f.id}
+            onClick={() => setKind(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      {shown.length === 0 ? (
+        <p className="fd-empty">Quiet so far.</p>
+      ) : (
+        <ol className="fd-feedlines">
+          {shown.map((i) => (
+            <li key={i.id} className="fd-feedline" data-feed-kind={i.kind}>
+              <time className="fd-feed-t" dateTime={new Date(i.at).toISOString()}>
+                {clock(i.at)}
+              </time>
+              <span className="fd-feed-tag">{i.kind}</span>
+              <button type="button" className="fd-namebtn" onClick={() => onOpen(i.key)}>
+                {i.name}
+              </button>
+              <span className="fd-feed-m">{i.text}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}

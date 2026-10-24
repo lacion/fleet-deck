@@ -1,0 +1,186 @@
+/* The compare page of an `Nx` batch (R1.4, DL-170): one column for each session, side by side
+   ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.7). Tokens only. */
+.fd-screen.fd-compare {
+  display: grid;
+  gap: var(--sp-4);
+  max-width: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-compare .fd-screen-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-page);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+.fd-compare-cols {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0 0 var(--sp-2);
+  overflow-x: auto;
+  list-style: none;
+}
+/* A column: a --surface panel with the status holder at its left edge. */
+.fd-compare-col {
+  position: relative;
+  display: flex;
+  flex: 0 0 min(340px, 85vw);
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) 19px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-panel);
+  box-shadow: inset 3px 0 0 var(--faint-decor);
+}
+.fd-compare-col[data-status="working"] {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.fd-compare-col[data-status="needs_you"] {
+  box-shadow: inset 3px 0 0 var(--act);
+}
+.fd-compare-col[data-status="verifying"],
+.fd-compare-col[data-status="queued"] {
+  box-shadow: inset 3px 0 0 var(--focus);
+}
+.fd-compare-col[data-status="lost"],
+.fd-compare-col[data-status="unreachable"] {
+  box-shadow: inset 3px 0 0 var(--hazard);
+}
+/* The kept one: a green edge (the batch kept it). */
+.fd-compare-col[data-kept="true"] {
+  outline: 1px solid var(--ok);
+  outline-offset: -1px;
+}
+.fd-compare-col header {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-compare-col h2 {
+  margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 640;
+  line-height: 1.15;
+}
+.fd-compare-col h2 a {
+  color: var(--text);
+  text-decoration: none;
+}
+.fd-compare-col h2 a:hover {
+  text-decoration: underline;
+}
+.fd-compare-col section {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-compare-col h3 {
+  margin: 0;
+}
+.fd-compare-col p {
+  margin: 0;
+}
+.fd-compare-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-compare-meta > .fd-dot {
+  margin-right: 2px;
+}
+.fd-compare-kept {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--ok);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-compare-files {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-compare-files li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-compare-message,
+.fd-compare-digest {
+  max-height: 14em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.fd-compare-usage {
+  color: var(--fuel);
+  font-size: var(--fs-meta);
+}
+.fd-compare-col footer {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+  margin-top: auto;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-compare-progress {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-compare-progress[data-step="failed"] {
+  color: var(--hazard);
+}
+.fd-compare-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-compare-confirm p {
+  flex: 1 0 100%;
+}
+.fd-compare-summary {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+  max-width: var(--chat-w);
+}
+.fd-compare-summary h2 {
+  margin: 0;
+}
+.fd-compare-summary-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.fd-overlay .fd-compare-diff {
+  width: min(960px, 96vw);
+}
+/* The "Compare N" chip of a batch card sits under the card; the card itself is a link. */
+.fd-card-compare {
+  display: inline-block;
+  margin: 4px 0 0 12px;
+  font-size: var(--fs-meta);
+  color: var(--dim);
+  text-decoration: none;
+}
+.fd-card-compare:hover {
+  color: var(--text);
+  text-decoration: underline;
+}

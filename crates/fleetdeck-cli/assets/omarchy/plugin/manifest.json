@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "fleetdeck.fleet",
+  "name": "Fleet Deck",
+  "version": "1.0.0",
+  "author": "Fleet Deck",
+  "description": "Fleet counts, the list of sessions that need you, and wall navigation from Fleet Deck.",
+  "kinds": ["bar-widget", "panel"],
+  "keepLoaded": true,
+  "entryPoints": { "barWidget": "Widget.qml", "panel": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Fleet Deck",
+    "description": "Counts of sessions and the ones that need you.",
+    "category": "Agents",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}

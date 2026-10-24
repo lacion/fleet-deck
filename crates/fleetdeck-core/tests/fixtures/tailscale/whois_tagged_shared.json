@@ -1,0 +1,9 @@
+{
+  "Node": {
+    "Name": "build-server.other.ts.net.",
+    "Addresses": ["100.64.0.12/32"],
+    "Tags": ["tag:ci"],
+    "Sharer": 77
+  },
+  "UserProfile": {"ID": 2002, "LoginName": "tagged-devices"}
+}

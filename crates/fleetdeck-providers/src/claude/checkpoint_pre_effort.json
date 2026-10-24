@@ -1,0 +1,34 @@
+{
+  "background": [],
+  "closed_order": [],
+  "early": [],
+  "ended": false,
+  "host_ids": 0,
+  "host_requests": {
+    "fd-usage-1": "Usage"
+  },
+  "ids": {
+    "plans": 0,
+    "runs": 0,
+    "shared": 0
+  },
+  "inputs": [],
+  "interrupt_requested": false,
+  "last_total_cost": null,
+  "lifecycle_seen": false,
+  "mode": "default",
+  "model": "claude-haiku-4-5",
+  "models": null,
+  "native_session_id": "s-1",
+  "native_to_app": {},
+  "pending_models": [],
+  "requests": {},
+  "run": null,
+  "started": true,
+  "tasks": {},
+  "tools": {},
+  "turn": null,
+  "unknown_frames": 0,
+  "usage_seq": 1,
+  "usage_stopped": false
+}

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>otter-n1rr · Fleet Deck</title>
+<script>
+  const q = new URLSearchParams(location.search).get('theme');
+  if (q === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wdth,wght@0,75..125,200..900&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="ph">
+  <header class="ph-sess-top">
+    <a href="#" class="back" aria-label="Back"><i data-lucide="chevron-left"></i></a>
+    <div class="who">
+      <span class="cs">otter-n1rr</span>
+      <span class="tt">Fix flaky shim test</span>
+    </div>
+    <span class="stat2"><i class="dot y"></i>Needs you</span>
+  </header>
+
+  <div class="ph-tabs" role="tablist">
+    <a href="#" class="tab on">Chat</a>
+    <a href="#" class="tab">Changes<span class="badge">2</span></a>
+    <a href="#" class="tab">Files</a>
+    <a href="#" class="tab">Artifacts</a>
+  </div>
+
+  <div class="ph-feed">
+    <div class="turn">
+      <div class="tool"><i class="node"></i><i data-lucide="search"></i><b>Search</b><code>waitpid</code><span class="res">7 matches</span></div>
+
+      <p class="prose">The test races the reaper: the child can exit before <code>install_reaper()</code> returns, so the <code>SIGCHLD</code> is lost. Here is the fix:</p>
+
+      <div class="codeblock">
+        <header><span>rust</span><button class="btn ghost icon" aria-label="Copy"><i data-lucide="copy"></i></button></header>
+<pre><span class="k">pub fn</span> install_reaper() -&gt; io::Result&lt;Reaper&gt; {
+    <span class="k">let</span> mask = block_sigchld()?; <span class="c">// block first</span>
+    <span class="k">let</span> reaper = Reaper::new(mask)?; <span class="c">// then install</span>
+    reaper.drain_exited(); <span class="c">// reap what exited before</span>
+    Ok(reaper)
+}</pre>
+      </div>
+
+      <table class="tbl">
+        <thead><tr><th style="width:34%">File</th><th style="width:36%">Problem</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>shim/reaper.rs</code></td><td>SIGCHLD lost before install</td><td>block, install, drain</td></tr>
+          <tr><td><code>shim/tests.rs</code></td><td>test waits 50 ms</td><td>wait for the exit event</td></tr>
+        </tbody>
+      </table>
+
+      <div class="tool"><i class="node"></i><i data-lucide="pencil-line"></i><b>Edit</b><code>shim/reaper.rs</code><span class="res"><span class="g">+9</span> <span class="r">−3</span></span></div>
+      <div class="tool wait"><i class="node wait"></i><i data-lucide="terminal"></i><b>Bash</b><code>cargo nextest run…</code><span class="res">waiting</span></div>
+    </div>
+  </div>
+
+  <section class="sheet-a" aria-label="Permission request">
+    <div class="hd"><i data-lucide="shield-alert"></i><span>Permission request</span><span class="mute" style="font-weight:500">Bash</span><span class="when">2 min</span></div>
+    <code class="pcmd">cargo nextest run -p fleetdeck-station -E 'test(shim)'</code>
+    <p class="why">Run the shim tests 20 times to confirm the fix</p>
+    <div class="stack">
+      <button class="btn yellow">Allow</button>
+      <button class="btn neutral">Allow for this session</button>
+      <button class="btn ghost danger">Deny</button>
+    </div>
+  </section>
+
+  <div class="pcomp">
+    <div class="txt">Message otter-n1rr…</div>
+    <div class="row">
+      <button class="btn ghost icon" aria-label="Attach image"><i data-lucide="paperclip"></i></button>
+      <button class="btn neutral">Steer now</button>
+      <button class="btn solid">Queue follow-up</button>
+    </div>
+  </div>
+</div>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "fc279f6d-3f0d-4485-9a07-a161052fbe46"
+    }
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "origin": "provider",
+      "session_id": "fc279f6d-3f0d-4485-9a07-a161052fbe46"
+    }
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "ok"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "ok"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 68,
+      "cost_usd": 0.0110448
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 68,
+      "cost_usd": 0.0110448
+    }
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-2",
+    "provider_refs": {
+      "origin": "provider",
+      "session_id": "fc279f6d-3f0d-4485-9a07-a161052fbe46"
+    }
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-2",
+    "text": "42"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-2",
+    "text": "42"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 56,
+      "cost_usd": 0.07764080000000001
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-2",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 56,
+      "cost_usd": 0.07764080000000001
+    }
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

@@ -1,0 +1,216 @@
+// R3.3 and R3.7 (DL-164): one project (`#/project/<id>`) with the tabs "Sessions" (DL-176),
+// "Issues", "Pull requests" and "Setup" (the homes, the secret files and the lands of the project).
+import { type CSSProperties, useEffect, useState } from 'react';
+import { usePhoneTitle } from '../app/Layout';
+import type { DeckSession, StationView } from '../gen';
+import { stationName } from '../board/fleet';
+import { PathTail } from '../chat/PathTail';
+import { homeShort } from '../ui/format';
+import { FolderGit2 } from '../ui/icons';
+import { Loading } from '../ui/Loading';
+import { EmptyState, ErrorNotice, Page } from '../ui/page';
+import { useNow } from '../ui/useNow';
+import { useIntegrations } from './context';
+import { IssuesTab } from './IssuesTab';
+import { ProjectChips } from './ProjectBadges';
+import { HOMES_POLL_MS, homesCloning, ProjectHomes } from './ProjectHomes';
+import { ProjectLands } from './ProjectLands';
+import { SameRepository } from './SameRepository';
+import { SecretFiles } from './SecretFiles';
+import { PrsTab } from './PrsTab';
+import { ProjectSessions } from './ProjectSessions';
+import type { Freshness } from '../runtime/state';
+import type { ListWorkspaces } from '../ui/FolderPicker';
+
+type Tab = 'sessions' | 'issues' | 'prs' | 'setup';
+
+/** The way back from a project to the list (§4.3), in every state of the page. */
+const ALL_PROJECTS = { href: '#/projects', label: 'All projects' } as const;
+
+type Props = {
+  readonly id: string;
+  readonly stations: readonly StationView[];
+  readonly sessions: readonly DeckSession[];
+  /** "Fix checks": opens the spawn form with the project's station and path. */
+  readonly onFixChecks: (station: string, cwd: string, prompt: string) => void;
+  /** DL-176: "New session in this project": the station, the project path (worktree on). */
+  readonly onNewSession?: ((station: string, cwd: string) => void) | undefined;
+  readonly freshness?: Freshness | undefined;
+  /** Unix ms of "now" (tests). */
+  readonly now?: number;
+  readonly initialTab?: Tab;
+  /** Reads the folders of a station, for "Browse…" in "Add home". */
+  readonly list?: ListWorkspaces | undefined;
+};
+
+export function ProjectPage({
+  id,
+  stations,
+  sessions,
+  onFixChecks,
+  onNewSession,
+  freshness = 'live',
+  now: givenNow,
+  initialTab = 'sessions',
+  list,
+}: Props) {
+  const env = useIntegrations();
+  const now = useNow(givenNow, 30_000);
+  const [tab, setTab] = useState<Tab>(initialTab);
+  const project = env?.projects?.find((p) => p.project_id === id);
+  // §4.8: the phone top bar names the project ("Project" while it loads).
+  usePhoneTitle(project?.name);
+  // A home that is cloning changes state on the station: read the list again while the page is
+  // open, whichever tab shows (the Setup tab alone would stop it when the owner leaves).
+  const cloning = homesCloning(project);
+  const reload = env?.reload;
+  useEffect(() => {
+    if (!cloning || reload === undefined) return undefined;
+    const timer = setInterval(reload, HOMES_POLL_MS);
+    return () => clearInterval(timer);
+  }, [cloning, reload]);
+  if (env === undefined) {
+    return (
+      <Page title="Project" back={ALL_PROJECTS}>
+        <p className="fd-note">Projects need a live board.</p>
+      </Page>
+    );
+  }
+  if (project === undefined) {
+    // The states of a page (§4.7): the loading line, the load error with Try again, or the empty
+    // state of a project that is gone, with the way back as its one button.
+    return (
+      <Page title="Project" back={ALL_PROJECTS}>
+        {env.projects !== null ? (
+          <EmptyState
+            icon={FolderGit2}
+            title="This project does not exist"
+            body="It was deleted, or the link is old."
+            action={
+              <a className="fd-btn" href="#/projects">
+                All projects
+              </a>
+            }
+          />
+        ) : env.error !== null ? (
+          <ErrorNotice text={env.error} onRetry={env.reload} />
+        ) : env.actions.canAdmin ? (
+          <Loading text="Loading the project…" />
+        ) : (
+          <p className="fd-note">Projects need the owner’s login.</p>
+        )}
+      </Page>
+    );
+  }
+  // The header says where the project lives (§4.3: the summary under the title): the station, the
+  // folder, then the badges of its forge (a link to the repository) and its trackers. The sessions
+  // come first under it; the configuration of the project (Same repository, Homes, Secret files,
+  // Lands) is the Setup tab.
+  const path = homeShort(project.path);
+  const where = (
+    <span className="fd-int-where">
+      <span className="fd-int-place">
+        <span>{stationName(project.station_id, stations)}</span>
+        <span className="fd-int-sep" aria-hidden="true">
+          ·
+        </span>
+        {/* The folder box is as wide as its whole path (mono: one `ch` per character), so that
+            `PathTail` measures the room it has, not its cut text, and the badges follow it. */}
+        <code
+          className="fd-int-path"
+          title={project.path}
+          style={{ '--fd-int-path-ch': `${[...path].length}ch` } as CSSProperties}
+        >
+          <PathTail path={path} />
+        </code>
+      </span>
+      {project.forge === null && project.trackers.length === 0 ? null : (
+        <ProjectChips project={project} link />
+      )}
+    </span>
+  );
+  return (
+    <Page
+      title={project.name}
+      back={ALL_PROJECTS}
+      label={`Project ${project.name}`}
+      description={where}
+      wide
+      className="fd-int fd-int-project"
+    >
+      <div className="fd-pane-tabs" role="tablist" aria-label="Project views">
+        <button
+          type="button"
+          role="tab"
+          id="fd-int-tab-sessions"
+          aria-selected={tab === 'sessions'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('sessions')}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="fd-int-tab-issues"
+          aria-selected={tab === 'issues'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('issues')}
+        >
+          Issues
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="fd-int-tab-prs"
+          aria-selected={tab === 'prs'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('prs')}
+        >
+          Pull requests
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="fd-int-tab-setup"
+          aria-selected={tab === 'setup'}
+          aria-controls="fd-int-panel"
+          onClick={() => setTab('setup')}
+        >
+          Setup
+        </button>
+      </div>
+      <div id="fd-int-panel" role="tabpanel" aria-labelledby={`fd-int-tab-${tab}`}>
+        {tab === 'sessions' ? (
+          <ProjectSessions
+            project={project}
+            sessions={sessions}
+            stations={stations}
+            freshness={freshness}
+            now={now}
+            onNewSession={onNewSession ?? (() => {})}
+            canDrive={env.actions.canDrive && onNewSession !== undefined}
+          />
+        ) : tab === 'issues' ? (
+          <IssuesTab project={project} actions={env.actions} stations={stations} now={now} />
+        ) : tab === 'setup' ? (
+          <div className="fd-int-tab fd-int-setup" data-tab="setup">
+            <SameRepository project={project} stations={stations} />
+            <ProjectHomes project={project} stations={stations} list={list} />
+            <SecretFiles project={project} stations={stations} />
+            <ProjectLands project={project} stations={stations} sessions={sessions} />
+          </div>
+        ) : (
+          <PrsTab
+            project={project}
+            actions={env.actions}
+            stations={stations}
+            sessions={sessions}
+            now={now}
+            onFixChecks={onFixChecks}
+          />
+        )}
+      </div>
+    </Page>
+  );
+}

@@ -1,0 +1,263 @@
+/* Fleet Deck design tokens: "Flight Deck" v3 (docs/v2/DESIGN-SYSTEM.md §2).
+   The token names of DL-141 stay the public API of every area style sheet and of
+   ui/palette.ts (Omarchy palettes). This is the only file with raw values. */
+
+/* ── color · dark (default): the night deck ───────────────────────── */
+/* .fd-scope-dark: a part that stays dark in every theme (the wall ambient mode). */
+:root,
+.fd-scope-dark {
+  color-scheme: dark;
+
+  /* surfaces and ink (§2.1) */
+  --bg: #111821; /* page canvas ("deck") */
+  --surface: #161e29; /* sidebar, side panels, panels, dock ("bay") */
+  --raised: #1c2532; /* strips, rows, inputs, buttons, cards ("strip") */
+  --raised-hi: #232e3d; /* hover, selected row, pressed segment */
+  --code: #0e141c; /* code blocks, diffs, terminal frame */
+  --code-chat: var(--code); /* a code block in the chat prose (on --bg) */
+  --border: #2a3545; /* strip field rules, section rules, input edge */
+  --border-soft: #212b39; /* the faintest divider (list separators) */
+  --text: #e9eef4; /* primary text */
+  --dim: #a5b0bf; /* secondary text */
+  --faint: #8896a7; /* tertiary text: at least 4.5:1 on --bg, --surface, --raised, --raised-hi, --badge-bg and the add/del diff fills */
+  --faint-decor: #5b6779; /* decoration only (hollow rings, ticks), never text */
+  --ink-fill: #e9eef4; /* fill of the general primary button */
+  --ink-on: #111821; /* text on --ink-fill */
+  --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
+  /* a neutral count or key hint on a selected row: --badge-bg is the dark --selected-bg (1:1);
+     one step up (#313b4a, 1.2:1 on --raised-hi, --dim 5.1:1 on it) */
+  --badge-on-selected: color-mix(in srgb, var(--text) 7%, var(--raised-hi));
+  --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
+  /* edge of a plain button on a --raised surface (a dialog, a strip): the button has the same
+     fill there (#3a4556, 1.6:1; it follows an Omarchy palette through --ctl-edge and --border) */
+  --btn-edge-raised: color-mix(in srgb, var(--ctl-edge) 25%, var(--border));
+  --ctl-edge: #6b778a; /* edge of a form control (input, select, checkbox, radio, off switch): 3:1 */
+  --pressed-bg: var(--raised-hi); /* fill of a pressed segment of .fd-seg */
+  --switch-knob: var(--text); /* knob of an off switch (#e9eef4) */
+  --knob-shadow: 0 0 0 0 transparent; /* shadow of the switch knob (the light theme only) */
+  --selected-bg: var(--raised-hi); /* fill of the selected nav row, session row or channel */
+  --selected-lift: 0 0 0 0 transparent; /* lift of the selected row (the light theme only) */
+  /* hover of a nav or index row on --bg or --surface: one step under --selected-bg (#1c2532) */
+  --hover-bg: var(--raised);
+  --seg-track: var(--surface); /* track of a .fd-seg segmented control */
+  --panel-bg: var(--surface); /* fill of a .fd-panel (with --shadow-lift, the zero shadow here) */
+
+  /* semantic colors: the jersey colors (§2.2) */
+  --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
+  --act-fill: #ffd43b; /* fill of the decision primary (Allow), the needs-you badge */
+  --act-ink: #1b1600; /* text on --act-fill */
+  --act-bg: #2a2410; /* tint behind a needs-you row */
+  --act-line: #ffd43b; /* outline of a needs-you strip or card */
+  --act-glow: rgba(255, 212, 59, 0.18); /* the needs-you glow (only there) */
+  --ok: #3ddc97; /* green: working, ok, online, additions */
+  --ok-bg: #10291f; /* tint behind ok */
+  --hazard: #ff6257; /* red: errors, deny, deletions, offline, conflicts, bypass */
+  --hazard-bg: #2c1517; /* tint behind hazard */
+  --fuel: #b79cff; /* purple: usage, tokens, cost, rate limits, model help */
+  --fuel-bg: #2a2348; /* track of a fuel meter (visible on --surface and --raised) */
+  --focus: #66b8ff; /* blue: focus ring, selection marker, links, queued, verifying */
+  --focus-bg: #13253a; /* selected tab or row tint */
+  /* diff line fill: addition; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1) */
+  --add-bg: rgba(61, 220, 151, 0.1);
+  /* diff line fill: deletion; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1, --hazard 4.27:1) */
+  --del-bg: rgba(255, 98, 87, 0.1);
+  --free-bg: #10291f; /* free slot / allowed tint */
+  --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
+  --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
+  /* the rest of the terminal ANSI palette (Terminal.tsx termTheme; blue = --focus, magenta = --fuel) */
+  --term-black: var(--bg); /* #111821; the aliases follow an Omarchy palette */
+  --term-white: var(--text); /* #e9eef4 */
+  --term-bright-black: var(--faint); /* #8896a7 */
+  --term-bright-red: #ff8a76;
+  --term-bright-green: #7bd3a6;
+  --term-bright-yellow: #f6be6a;
+  --term-bright-blue: #aecffa;
+  --term-bright-magenta: #d8cbff;
+  --term-bright-cyan: #9ae4dd;
+  --term-bright-white: #ffffff;
+  --scrim: rgba(6, 10, 15, 0.6); /* dims the page behind a dialog, the drawer and a sheet */
+
+  /* elevation (§2.5) */
+  --shadow-pop:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 40px rgba(0, 0, 0, 0.45); /* floating layers only */
+  /* A shadow token is never `none`: area rules put it in a box-shadow list
+     (`inset 3px 0 0 var(--ok), var(--shadow-lift)`), and `…, none` is invalid, so the
+     browser drops the whole declaration. "No shadow" is the zero shadow `0 0 0 0 transparent`. */
+  --shadow-lift: 0 0 0 0 transparent; /* strips and cards (the light theme only) */
+}
+
+/* ── color · light: the day deck ──────────────────────────────────── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #eef2f6;
+  --surface: #f6f8fb;
+  --raised: #ffffff;
+  --raised-hi: #eef4fb;
+  --code: #f1f5f9;
+  --code-chat: var(--raised); /* --code is about 1.02:1 on the light --bg */
+  --border: #d8e0e9;
+  --border-soft: #e4e9f0;
+  --text: #111821;
+  --dim: #4a5666;
+  --faint: #596575; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --faint-decor: #9aa5b4;
+  --ink-fill: #111821;
+  --ink-on: #ffffff;
+  --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
+  --badge-on-selected: var(--badge-bg); /* the light selected row is white: the pill shows */
+  --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
+  --btn-edge-raised: var(--border); /* a white button on a white --raised surface */
+  --ctl-edge: #788496;
+  --pressed-bg: var(--raised); /* a white segment, lifted, on the --surface track */
+  --switch-knob: var(--raised); /* a white knob (#ffffff) */
+  --knob-shadow: 0 1px 2px rgba(17, 24, 33, 0.25);
+  --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
+  --selected-lift: var(--shadow-lift);
+  /* a grey tint (#e4e9f0) a step under --bg: the selected row is white and lifted, so a hover in
+     --raised looked selected */
+  --hover-bg: var(--border-soft);
+  /* a visible grey track (#e4e9f0): the white pressed segment with --shadow-lift stands on it
+     (--surface was 1.04:1 on --bg) */
+  --seg-track: var(--badge-bg);
+  --panel-bg: var(--raised); /* a white panel with --shadow-lift (--surface was 1.04:1 on --bg) */
+
+  --act: #7f5c00; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --act-fill: #ffd43b;
+  --act-ink: #1b1600;
+  --act-bg: #fff6d6;
+  --act-line: #a67c00; /* 3:1 on --bg, --raised and --act-bg */
+  --act-glow: rgba(232, 185, 0, 0.22);
+  --ok: #0a7048; /* 4.5:1 also on the --add-bg diff line */
+  --ok-bg: #e3f5ec;
+  --hazard: #b52a22; /* 4.5:1 also on the --del-bg diff line */
+  --hazard-bg: #fde8e6;
+  --fuel: #6447d6; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --fuel-bg: #e6dffc; /* a visible meter track on --surface and --raised; --fuel (4.78:1) and --faint (4.61:1) text on it */
+  --focus: #1a5fbf;
+  --focus-bg: #e5effc;
+  --add-bg: rgba(10, 112, 72, 0.1);
+  --del-bg: rgba(181, 42, 34, 0.08);
+  --free-bg: #e3f5ec;
+  --term-selection: rgba(26, 95, 191, 0.22);
+  --term-cyan: #0e7490;
+  /* every ANSI color is 4.5:1 on the light --code: white and the bright colors are dark here */
+  --term-black: var(--text); /* #111821 */
+  --term-white: var(--dim); /* #4a5666 */
+  --term-bright-black: var(--faint); /* #596575 */
+  --term-bright-red: #8f1d17;
+  --term-bright-green: #075c3b;
+  --term-bright-yellow: #6e5000;
+  --term-bright-blue: #154c99;
+  --term-bright-magenta: #5a3cc4;
+  --term-bright-cyan: #0b5f75;
+  --term-bright-white: var(--text); /* #111821 */
+  --scrim: rgba(17, 24, 33, 0.28);
+
+  --shadow-pop: 0 12px 32px rgba(17, 24, 33, 0.12);
+  --shadow-lift: 0 1px 2px rgba(17, 24, 33, 0.07);
+}
+
+/* ── retired color tokens: aliases only (§2.2) ────────────────────── */
+/* Models and providers are never colored. The family (--m-*) and provider (--p-*)
+   tokens stay as neutral aliases so that old CSS keeps working; new CSS never
+   uses them (tools/design-check.sh fails on them). */
+:root {
+  --m-fable: var(--dim);
+  --m-fable-bg: var(--raised);
+  --m-quill: var(--dim);
+  --m-quill-bg: var(--raised);
+  --m-comet: var(--dim);
+  --m-comet-bg: var(--raised);
+  --m-opus: var(--dim);
+  --m-opus-bg: var(--raised);
+  --m-sonnet: var(--dim);
+  --m-sonnet-bg: var(--raised);
+  --m-haiku: var(--dim);
+  --m-haiku-bg: var(--raised);
+  --p-claude: var(--dim);
+  --p-claude-bg: var(--raised);
+  --p-codex: var(--dim);
+  --p-codex-bg: var(--raised);
+  --p-unknown: var(--dim);
+  --p-unknown-bg: var(--raised);
+}
+
+/* ── type (§2.3) ──────────────────────────────────────────────────── */
+:root {
+  --font-ui:
+    "Mona Sans Variable", system-ui, sans-serif; /* words: prose, titles, buttons, labels */
+  --font-data: "JetBrains Mono Variable", ui-monospace, monospace; /* code-like values only */
+  --font-callsign: var(--font-ui); /* retired: use it with .fd-callsign */
+  --fs-micro: 11px; /* kbd hints, tiny captions */
+  --fs-meta: 12px; /* metadata, timestamps, counts, chips */
+  --fs-data: 12px; /* mono values in rows (paths, branches) */
+  --fs-ui: 13px; /* interface text, rows, buttons (the default) */
+  --fs-field: 13px; /* the text of a field (input, select, textarea); 16px on a touch screen */
+  --fs-body: 13px;
+  --fs-chat: 14px; /* chat prose, line-height 1.6 */
+  --fs-title: 14px; /* card and strip titles (weight 600) */
+  --fs-heading: 15px; /* section and station headings (wide) */
+  --fs-strip-title: 17px; /* the session header title (weight 640, §4.5) */
+  --fs-code: 12.5px; /* code blocks and inline code in chat prose (§4.5) */
+  --fs-page: 20px; /* page title (wide, weight 640) */
+  --fs-hero: 26px; /* phone large title */
+  --fs-display: 56px; /* display numbers read across a room: wall ambient counts, the pairing code */
+  --fs-sheet-title: 18px; /* the title field of the New session sheet (§4.6) */
+  --fs-sheet-task: 15px; /* the task field of the New session sheet (§4.6): max(it, --fs-field) */
+  --fs-12: 12px; /* kept for old CSS */
+  --fs-13: 13px;
+  --fs-15: 15px;
+  --fs-18: 18px;
+  --fs-24: 24px;
+  --ls-label: 0; /* labels are in sentence case: no tracking */
+}
+
+/* ── space, shape, size (§2.4) ────────────────────────────────────── */
+:root {
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --r-chip: 5px; /* chips, badges, kbd */
+  --r-ctl: 6px; /* buttons, inputs, segments */
+  --r-card: 8px; /* strips, rows, cards */
+  --r-panel: 12px; /* panels, the approval card, menus, dialogs */
+  --r-sheet: 16px; /* the composer, bottom sheets, the New session sheet */
+  --r-pill: 999px;
+  --ctl-h: 28px; /* control height, fine pointer */
+  --ctl-h-sm: 24px;
+  --row-h: 36px; /* one-line list row, sidebar session row */
+  --row-h-touch: 44px; /* a list row on a touch screen (pointer: coarse): the row is the tap target */
+  --strip-h: 44px; /* a fleet strip */
+  --header-h: 48px; /* page header bar */
+  --sidebar-w: 248px;
+  --rail-w: 300px; /* right panels (ops panel, properties panel) */
+  --chat-w: 720px;
+  --tap-min: 44px; /* minimum touch target */
+  --bp-phone: 640px; /* reference only; media queries use the literal value */
+}
+:root[data-density="compact"] {
+  --row-h: 30px;
+}
+@media (pointer: coarse) {
+  :root {
+    --ctl-h: 44px;
+    --ctl-h-sm: 44px;
+    /* iOS Safari zooms the page into a field under 16px, and the page stays zoomed */
+    --fs-field: 16px;
+  }
+}
+
+/* ── motion (§2.5) ────────────────────────────────────────────────── */
+:root {
+  --t-fast: 120ms ease-out; /* hover, press */
+  --t-move: 200ms ease; /* expand, slide */
+  --t-drawer: 220ms ease-out; /* drawer slide */
+  --pulse-needs: 2400ms; /* the needs-you glow breathes */
+  --pulse-working: 2400ms; /* the working glyph arc turns */
+  --ripple-conflict: 900ms; /* one iteration, never loops */
+  --ring-tick: 1s linear; /* countdown ring stroke */
+}

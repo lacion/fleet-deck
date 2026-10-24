@@ -1,0 +1,790 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { ArtifactActions } from './artifacts/actions';
+import { ArtifactPage } from './artifacts/ArtifactViewer';
+import { ArtifactsPage } from './artifacts/ArtifactsPage';
+import { ArtifactsProvider } from './artifacts/context';
+import type { AssignActions } from './assign/assign';
+import { AutomationsPage } from './automations/AutomationsPage';
+import type { AutomationActions } from './automations/automations';
+import type { FeedItem } from './board/feed';
+import type { ConflictLoader } from './board/conflicts';
+import { BOARD_ARRIVALS, rememberArrivals, stationName } from './board/fleet';
+import { markOnStart, type PlanActions } from './board/plans';
+import type { StationActions } from './board/pairing';
+import { PlanLibrary } from './board/PlanLibrary';
+import type { RaceSummary } from './compare/compare';
+import { ComparePage } from './compare/ComparePage';
+import { StationsPanel } from './board/StationsPanel';
+import { ActivityPage } from './activity/ActivityPage';
+import type { FleetActions } from './fleet/fleet';
+import type { IntegrationActions } from './integrations/actions';
+import { IntegrationsProvider } from './integrations/context';
+import { ProjectPage } from './integrations/ProjectPage';
+import { ProjectsPage } from './integrations/ProjectsPage';
+import type {
+  DeckPlan,
+  DeckSession,
+  FleetExtras,
+  SessionKey,
+  StationView,
+  WorkspaceListing,
+} from './gen';
+import type { Chrome, Notice } from './app/chrome';
+import { startFailures } from './app/failures';
+import { FilesPage } from './app/FilesPage';
+import { FleetHome } from './app/FleetHome';
+import { HelpNotice, useHelpNotice } from './app/HelpNotice';
+import { HelpOverlay } from './app/HelpOverlay';
+import { useGlobalKeys } from './app/keys';
+import { noteNavigation, startBackNav } from './app/backNav';
+import { type FrameNotice, Layout } from './app/Layout';
+import { More, TerminalsEmpty } from './app/More';
+import { Palette } from './app/Palette';
+import { formatHash, type Navigate, parseHash, type Route, useRoute } from './app/routes';
+import { SessionRoute } from './app/SessionRoute';
+import { basename, sidebarModel, sidebarOrder } from './app/sessions';
+import { Sidebar } from './app/Sidebar';
+import { type Layout as LayoutName, useLayout, useTouch } from './app/viewport';
+import type { Freshness, Timeline } from './runtime/state';
+import type { ViewsActions } from './runtime/views';
+import type { Outcome, SessionActions } from './session/commands';
+import type { FileActions } from './session/workspace';
+import type { SpawnActions } from './spawn/spawn';
+import { SpawnForm } from './spawn/SpawnForm';
+import type { Watch } from './terminal/handover';
+import { TerminalDock } from './terminal/TerminalDock';
+import { type TermTab, type TerminalStore, tabId } from './terminal/store';
+import { useTabCount } from './terminal/tabCount';
+import { archived } from './ui/archive';
+import { priority } from './ui/localSet';
+import { useNow } from './ui/useNow';
+import { useMarkRead } from './views/markRead';
+import { unreadOf } from './views/marks';
+import { usePeople } from './sharing/context';
+import { useOmarchyTheme } from './app/OmarchyTheme';
+import { GUEST_HIDDEN_ROUTES } from './sharing/member';
+import { ShareHost } from './sharing/ShareDialog';
+import { SharesPage } from './sharing/SharesPage';
+import { SpacesPage } from './sharing/SpacesPage';
+import { SettingsProvider, type SettingsEnv } from './settings/context';
+import { SettingsPage } from './settings/SettingsPage';
+import { RemotePage } from './remote/RemotePage';
+import { WallPage } from './wall/WallPage';
+import { WatchPage } from './watch/WatchPage';
+
+type Props = {
+  readonly sessions?: readonly DeckSession[];
+  readonly stations?: readonly StationView[];
+  readonly freshness?: Freshness;
+  readonly actions?: StationActions | undefined;
+  readonly timelines?: Readonly<Record<string, Timeline>>;
+  /** Opens the live timeline of a session; returns the cancel function. */
+  readonly watch?: ((key: SessionKey) => () => void) | undefined;
+  readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  /** DL-141: the file service of any folder of a station (the Files page). */
+  readonly filesFor?: ((station: string, workspace: string) => FileActions) | undefined;
+  readonly spawn?: SpawnActions | undefined;
+  /** `assign auto` (M3 6-3). */
+  readonly assign?: AssignActions | undefined;
+  /** Fleet mail and tasks (M3 6-2 / 6-4). */
+  readonly fleet?: FleetActions | undefined;
+  /** The route at the first render when there is no window (tests). */
+  readonly initialRoute?: Route;
+  /** The layout; overrides the window width (tests). */
+  readonly initialLayout?: LayoutName;
+  /** The spawn form's directory listing at the first render (tests). */
+  readonly initialListing?: WorkspaceListing | null;
+  /** The event feed since the page opened (DL-095). */
+  readonly feed?: readonly FeedItem[];
+  /** The artifact calls (R12, DL-165); absent in tests without a deck. */
+  readonly artifacts?: ArtifactActions | undefined;
+  /** The projects, issues and pull requests (R3, DL-164); absent in tests without a deck. */
+  readonly integrations?: IntegrationActions | undefined;
+  /** The plan library (DL-301). */
+  readonly plans?: PlanActions | undefined;
+  /** The automations (R5, DL-168); absent without the owner login. */
+  readonly automations?: AutomationActions | undefined;
+  /** The conflict radar (M3 6-7); absent in tests without a deck. */
+  readonly conflicts?: ConflictLoader | undefined;
+  /** The fleet card extras (DL-141); absent in tests without a deck. */
+  readonly extras?: (() => Promise<FleetExtras>) | undefined;
+  /** The plan library at the first render (tests). */
+  readonly initialPlans?: readonly DeckPlan[] | null;
+  /** The connection state, the log out button and the notices of the runtime. */
+  readonly chrome?: Chrome | undefined;
+  /** The terminals of the board (DL-140). */
+  readonly terminals?: TerminalStore | undefined;
+  /** The newest summary of one session and a way to hear about changes. */
+  readonly summaryWatch?: ((key: SessionKey) => Watch) | undefined;
+  /** "Return to board control" of a TUI tab. */
+  readonly onReturnTerminal?: ((tab: TermTab) => Promise<Outcome>) | undefined;
+  /** The race summary of the compare page (R10.5); absent: the page has no summary slot. */
+  readonly race?: ((keys: readonly SessionKey[]) => Promise<RaceSummary>) | undefined;
+  /** The read cursor and the activity stream (R6, DL-169); absent in tests without a deck. */
+  readonly views?: ViewsActions | undefined;
+  /** The settings and account calls (DL-172, DL-173); only for the owner's login. */
+  readonly settings?: SettingsEnv | undefined;
+};
+
+const message = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
+
+const NO_TERMINALS: Notice = {
+  text: 'No terminal is open. Open a session and select Terminal to start one.',
+  tone: 'info',
+};
+
+const sessionRoute = (key: SessionKey): Route => ({
+  name: 'session',
+  station: key.station_id,
+  session: key.session_id,
+  tab: 'chat',
+});
+
+/** Screens read the same runtime snapshot; filters never open another connection. */
+export function App({
+  sessions = [],
+  stations = [],
+  freshness = 'stale',
+  actions,
+  timelines = {},
+  watch,
+  sessionActions,
+  filesFor,
+  spawn,
+  assign,
+  fleet,
+  initialRoute,
+  initialLayout,
+  initialListing = null,
+  feed = [],
+  artifacts,
+  integrations,
+  plans,
+  automations,
+  conflicts,
+  extras,
+  initialPlans = null,
+  chrome,
+  terminals,
+  summaryWatch,
+  onReturnTerminal,
+  race,
+  views,
+  settings,
+}: Props) {
+  const [urlRoute, navigate] = useRoute(initialRoute);
+  // R13 P4: the palette of the chosen Omarchy station shows on every page.
+  useOmarchyTheme(chrome?.getPalette);
+  // The phone's Back of a session goes back in the history only while the current entry is not the
+  // first one of this board start.
+  useEffect(() => {
+    startBackNav();
+    const onHashChange = () => noteNavigation();
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  const artifactsEnv = useMemo(
+    () => (artifacts === undefined ? undefined : { actions: artifacts }),
+    [artifacts],
+  );
+  const measured = useLayout();
+  const layout = initialLayout ?? measured;
+  const touch = useTouch();
+  const phone = layout === 'phone';
+  // 'more' and 'terminals' are phone screens: elsewhere they show the home (see the effect).
+  // R11.4: a guest of the owner's deck opens the pages that the deck allows; the others are home.
+  const people = usePeople();
+  const guest = people.member !== null;
+  const route: Route =
+    (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) ||
+    (guest && GUEST_HIDDEN_ROUTES.includes(urlRoute.name))
+      ? { name: 'home' }
+      : urlRoute;
+  const routeKey = formatHash(route);
+  const tabCount = useTabCount(terminals);
+
+  // '#/terminals' on a desktop opens the dock; without a terminal the dock does not show, so the
+  // home says why nothing opened (until the owner leaves the home or a terminal opens).
+  const [noTerminals, setNoTerminals] = useState(false);
+  useEffect(() => {
+    // The dock body is hidden while the store is closed: the terminals screen opens it.
+    if (urlRoute.name === 'terminals') terminals?.setOpen(true);
+    if (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) {
+      navigate({ name: 'home' }, { replace: true });
+      if (urlRoute.name === 'terminals' && tabCount === 0) setNoTerminals(true);
+    }
+  }, [phone, urlRoute.name, terminals, navigate, tabCount]);
+  useEffect(() => {
+    if (route.name !== 'home' || tabCount > 0) setNoTerminals(false);
+  }, [route.name, tabCount]);
+
+  // The open session; a new route object with the same ids must not reopen the timeline.
+  const openStation = route.name === 'session' ? route.station : null;
+  const openSession = route.name === 'session' ? route.session : null;
+  useEffect(() => {
+    if (openStation === null || openSession === null || watch === undefined) return undefined;
+    return watch({ station_id: openStation, session_id: openSession });
+  }, [openStation, openSession, watch]);
+  const selected =
+    route.name === 'session'
+      ? sessions.find(
+          (s) => s.station_id === route.station && s.summary.session_id === route.session,
+        )
+      : undefined;
+
+  // R6.1: the deck keeps a read cursor for this login; it moves while the chat shows the timeline end.
+  const openTimeline =
+    route.name === 'session'
+      ? timelines[JSON.stringify([route.station, route.session])]
+      : undefined;
+  useMarkRead({
+    key:
+      selected === undefined
+        ? null
+        : { station_id: selected.station_id, session_id: selected.summary.session_id },
+    ready: openTimeline?.ready === true && freshness === 'live',
+    events: openTimeline?.events ?? [],
+    unread: selected === undefined ? 0 : unreadOf(selected),
+    visible: route.name === 'session' && route.tab === 'chat',
+    send: views?.markRead,
+  });
+
+  // The first prompt of the spawn form when a plan starts a session.
+  const [planPrompt, setPlanPrompt] = useState('');
+  // The plan that the spawn form starts; the plan is marked executed after a start that worked (R7.2).
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [spawnStation, setSpawnStation] = useState<string | null>(null);
+  // R3: the directory that "Fix checks" of a project gives the spawn form.
+  const [spawnCwd, setSpawnCwd] = useState<string | null>(null);
+  // DL-176: "New session in this project" opens the form with a new worktree.
+  const [spawnWorktree, setSpawnWorktree] = useState(false);
+  useEffect(() => {
+    if (route.name !== 'new') {
+      setPlanPrompt('');
+      setPlanId(null);
+      setSpawnStation(null);
+      setSpawnCwd(null);
+      setSpawnWorktree(false);
+    }
+  }, [route.name]);
+  // The `c` key asks the fleet home to open its panel on Mail & tasks.
+  const [panelRequest, setPanelRequest] = useState<
+    { readonly tab: 'mail'; readonly seq: number } | undefined
+  >(undefined);
+  const starred = priority.use();
+  const cleared = archived.use();
+
+  // Overlays. The drawer belongs to the route it was opened on: navigation closes it.
+  const [drawerAt, setDrawerAt] = useState<string | null>(null);
+  const drawerOpen = layout === 'tablet' && drawerAt === routeKey;
+  const [help, setHelp] = useState(false);
+  const [palette, setPalette] = useState(false);
+  // DL-171: the help never opens by itself; a first visit shows a one-time notice that points to it.
+  const helpNotice = useHelpNotice(chrome?.freshness === 'live');
+  const openHelp = () => {
+    if (helpNotice.show) helpNotice.dismiss();
+    setHelp(true);
+  };
+
+  // A notice of this screen (a shell that did not open, the outcome of "Return …").
+  const [local, setLocal] = useState<{ notice: Notice; at: string } | null>(null);
+  const notify = (notice: Notice, at: Route) => setLocal({ notice, at: formatHash(at) });
+  // The terminals notice has a Dismiss X: it says why nothing opened, and then it may go.
+  const notices: readonly FrameNotice[] = [
+    ...(chrome?.notices ?? []),
+    ...(local !== null && local.at === routeKey ? [local.notice] : []),
+    ...(noTerminals && route.name === 'home'
+      ? [{ ...NO_TERMINALS, onDismiss: () => setNoTerminals(false) }]
+      : []),
+  ];
+
+  // R7.1: a session that ended before it started gets a banner until the owner dismisses it.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const failureNow = useNow(undefined, 30_000);
+  const failures = startFailures(sessions, failureNow, dismissed);
+
+  const open = (key: SessionKey) => navigate(sessionRoute(key));
+  const toTerminals = () => navigate({ name: 'terminals' });
+  // The board record of arrivals (board/fleet.ts): the sidebar rows, the j/k keys and the lanes
+  // keep their places while a session works; a render reads it, this effect writes it.
+  useEffect(() => {
+    rememberArrivals(sessions, BOARD_ARRIVALS);
+  }, [sessions]);
+  const order = sidebarOrder(sidebarModel(sessions, stations, '', { starred, archived: cleared }));
+  const step = (by: 1 | -1) => {
+    if (order.length === 0) return;
+    // The URL, not the last render: a fast second key press comes before React renders the
+    // route of the first one, and would step from the old session.
+    const now: Route =
+      typeof window === 'undefined' || initialRoute !== undefined
+        ? route
+        : parseHash(window.location.hash);
+    const at =
+      now.name === 'session'
+        ? order.findIndex(
+            (c) => c.station_id === now.station && c.summary.session_id === now.session,
+          )
+        : -1;
+    const next =
+      at < 0 ? (by === 1 ? 0 : order.length - 1) : (at + by + order.length) % order.length;
+    const card = order[next];
+    if (card !== undefined) {
+      open({ station_id: card.station_id, session_id: card.summary.session_id });
+    }
+  };
+  const toggleDock = () => {
+    if (phone) toTerminals();
+    else if (terminals !== undefined) terminals.setOpen(!terminals.getState().open);
+  };
+  // The board hotkeys are off while any overlay is open (`useOverlay`, see `keys.ts`).
+  useGlobalKeys({
+    next: () => step(1),
+    prev: () => step(-1),
+    focus: () => {
+      const composer = document.getElementById('fd-composer-text');
+      if (composer !== null) {
+        composer.focus();
+        return;
+      }
+      // The fleet home has one search, the filter of its header (the sidebar hides its own there).
+      if (route.name === 'fleet' || (route.name === 'home' && !phone)) {
+        document.querySelector<HTMLInputElement>('.fd-home-search input')?.focus();
+        return;
+      }
+      // The search box lives in the list: show the list first (phone home, tablet drawer).
+      if (phone && route.name !== 'home') navigate({ name: 'home' });
+      if (layout === 'tablet') setDrawerAt(routeKey);
+      setTimeout(() => document.getElementById('fd-sidebar-search')?.focus(), 0);
+    },
+    new: () => navigate({ name: 'new' }),
+    fleet: () => navigate({ name: 'fleet' }),
+    compose: () => {
+      navigate({ name: 'fleet' });
+      setPanelRequest((r) => ({ tab: 'mail', seq: (r?.seq ?? 0) + 1 }));
+    },
+    terminals: toggleDock,
+    help: openHelp,
+    palette: () => {
+      setHelp(false);
+      setPalette(!palette);
+    },
+    // The topmost overlay closes first (UI-DESIGN "Esc and overlay order").
+    escape: () => {
+      if (palette) setPalette(false);
+      else if (help) setHelp(false);
+      else if (drawerOpen) setDrawerAt(null);
+    },
+  });
+
+  const shells = actions?.shells;
+  const returnTerminal = (tab: TermTab) => {
+    const target: Route | null = tab.session === null ? null : sessionRoute(tab.session);
+    if (onReturnTerminal === undefined) {
+      notify(
+        { text: 'Open the session to return it to board control.', tone: 'info' },
+        target ?? route,
+      );
+      if (target !== null) navigate(target);
+      return;
+    }
+    onReturnTerminal(tab).then(
+      (outcome) => {
+        notify({ text: outcome.text, tone: outcome.ok ? 'info' : 'error' }, route);
+        // G4: a refused resume after a pending one is shown too (the follow ends by itself after 120 s).
+        void outcome.later?.(new AbortController().signal).then((final) => {
+          if (final !== null && !final.ok) notify({ text: final.text, tone: 'error' }, route);
+        });
+      },
+      (e: unknown) => notify({ text: message(e), tone: 'error' }, route),
+    );
+  };
+  // R1.4: "Keep this one" moves the other worktrees to the trash; the trash is owner only.
+  const worktreeAction = actions?.worktreeAction;
+  const compareTrash =
+    worktreeAction === undefined
+      ? undefined
+      : (key: SessionKey) => worktreeAction(key.station_id, 'trash', key.session_id);
+  const cwd = selected?.summary.cwd ?? null;
+  // DL-141: a station that reports `allow_shell = false` refuses every shell; offer none.
+  const shellsOff =
+    selected !== undefined &&
+    stations.find((st) => st.station_id === selected.station_id)?.info?.allow_shell === false;
+  const newShell =
+    terminals !== undefined &&
+    shells !== undefined &&
+    selected !== undefined &&
+    cwd !== null &&
+    freshness === 'live' &&
+    !shellsOff
+      ? () => {
+          shells.open(selected.station_id, cwd, 120, 32).then(
+            (shellId) => {
+              terminals.add({
+                id: tabId(selected.station_id, shellId),
+                station: selected.station_id,
+                shellId,
+                kind: 'shell',
+                title: basename(cwd),
+                session: null,
+              });
+              if (phone) toTerminals();
+            },
+            (e: unknown) => notify({ text: `Not opened: ${message(e)}`, tone: 'error' }, route),
+          );
+        }
+      : undefined;
+  const dock =
+    terminals !== undefined && shells !== undefined ? (
+      <TerminalDock
+        store={terminals}
+        actions={shells}
+        stationName={(id) => stationName(id, stations)}
+        layout={phone ? 'full' : 'dock'}
+        touch={touch}
+        onReturn={returnTerminal}
+        {...(newShell === undefined ? {} : { onNewShell: newShell })}
+      />
+    ) : null;
+  const terminalsOpen = tabCount > 0 && dock !== null;
+
+  const sidebar = (variant: 'full' | 'list') => (
+    <Sidebar
+      sessions={sessions}
+      stations={stations}
+      route={route}
+      variant={variant}
+      chrome={chrome}
+      terminalCount={tabCount}
+      onNavigate={(next) => {
+        setPlanPrompt('');
+        setPlanId(null);
+        setSpawnStation(null);
+        navigate(next);
+      }}
+      onOpenTerminals={() => {
+        if (phone) toTerminals();
+        else {
+          terminals?.setOpen(true);
+          setDrawerAt(null);
+        }
+      }}
+    />
+  );
+  const fleetHome = (
+    <FleetHome
+      sessions={sessions}
+      stations={stations}
+      freshness={freshness}
+      assign={assign}
+      fleet={fleet}
+      conflicts={conflicts}
+      extras={extras}
+      feed={feed}
+      layout={layout}
+      sessionActions={sessionActions}
+      recount={actions?.usageRecount}
+      onOpen={open}
+      onSpawn={() => navigate({ name: 'new' })}
+      panelRequest={panelRequest}
+      onHelp={openHelp}
+      onSpawnWith={(station, prompt) => {
+        setPlanPrompt(prompt);
+        setPlanId(null);
+        setSpawnStation(station);
+        navigate({ name: 'new' });
+      }}
+    />
+  );
+
+  // R7.2: a plan is `executed` only after its start returned ok; a failed start keeps it `proposed`.
+  const planSpawn: SpawnActions | undefined =
+    spawn === undefined || plans === undefined || planId === null
+      ? spawn
+      : markOnStart(spawn, plans, planId, (e) =>
+          notify(
+            { text: `The plan was not marked executed: ${message(e)}`, tone: 'error' },
+            { name: 'plans' },
+          ),
+        );
+
+  const back: Navigate = navigate;
+  const board = { sessions, stations, timelines, watch, sessionActions, views, artifacts };
+  // The folder picker of the Projects and Automations forms: only with the drive scope.
+  const folderList = spawn?.canDrive === true && freshness === 'live' ? spawn.list : undefined;
+  const content = (() => {
+    switch (route.name) {
+      case 'home':
+        return phone ? sidebar('list') : fleetHome;
+      case 'fleet':
+        return fleetHome;
+      case 'new':
+        return (
+          <div className="fd-screen">
+            <SpawnForm
+              key={`${planPrompt}|${spawnStation ?? ''}|${spawnCwd ?? ''}|${spawnWorktree}`}
+              initialPrompt={planPrompt}
+              initialStation={spawnStation ?? undefined}
+              initialCwd={spawnCwd ?? undefined}
+              initialPlace={spawnWorktree ? 'worktree' : 'here'}
+              sessions={sessions}
+              stations={stations}
+              freshness={freshness}
+              actions={planSpawn}
+              initialListing={initialListing}
+              onOpen={open}
+            />
+          </div>
+        );
+      case 'plans':
+        return (
+          <PlanLibrary
+            stations={stations}
+            sessions={sessions}
+            actions={plans}
+            live={freshness === 'live'}
+            initial={initialPlans}
+            onOpen={open}
+            onAssign={
+              fleet === undefined ? undefined : (target, text) => fleet.mail(target, text, false)
+            }
+            onExecute={(plan) => {
+              setPlanPrompt(plan.markdown);
+              setPlanId(plan.id);
+              setSpawnStation(null);
+              navigate({ name: 'new' });
+            }}
+          />
+        );
+      case 'automations':
+        return (
+          <AutomationsPage
+            stations={stations}
+            actions={automations}
+            live={freshness === 'live'}
+            list={folderList}
+            sessions={sessions}
+          />
+        );
+      case 'stations':
+        return (
+          <StationsPanel
+            stations={stations}
+            sessions={sessions}
+            freshness={freshness}
+            actions={actions}
+          />
+        );
+      case 'watch':
+        return (
+          <WatchPage
+            sessions={sessions}
+            stations={stations}
+            freshness={freshness}
+            timelines={timelines}
+            watch={watch}
+            sessionActions={sessionActions}
+          />
+        );
+      case 'wall':
+        // R13 P1: the wall replaces the whole layout (see `layoutNode`).
+        return null;
+      case 'remote':
+        return <RemotePage id={route.id} freshness={freshness} board={board} />;
+      case 'activity':
+        return (
+          <ActivityPage
+            sessions={sessions}
+            stations={stations}
+            live={freshness === 'live'}
+            views={views}
+            fleet={fleet}
+          />
+        );
+      case 'files':
+        return <FilesPage stations={stations} sessions={sessions} filesFor={filesFor} />;
+      case 'compare':
+        return (
+          <ComparePage
+            batchId={route.batch}
+            sessions={sessions}
+            stations={stations}
+            timelines={timelines}
+            freshness={freshness}
+            watch={watch}
+            sessionActions={sessionActions}
+            trash={compareTrash}
+            race={race}
+            onOpen={open}
+          />
+        );
+      case 'shares':
+        return <SharesPage sessions={sessions} stations={stations} />;
+      case 'spaces':
+        return <SpacesPage sessions={sessions} stations={stations} />;
+      case 'artifacts':
+        return <ArtifactsPage actions={artifacts} stations={stations} sessions={sessions} />;
+      case 'artifact':
+        return (
+          <ArtifactPage
+            actions={artifacts}
+            station={route.station}
+            id={route.id}
+            version={route.version}
+            sessions={sessions}
+            onVersion={(version) => navigate({ ...route, version }, { replace: true })}
+          />
+        );
+      case 'projects':
+        return <ProjectsPage stations={stations} list={folderList} sessions={sessions} />;
+      case 'project':
+        return (
+          <ProjectPage
+            id={route.id}
+            stations={stations}
+            sessions={sessions}
+            list={folderList}
+            onFixChecks={(station, cwd, prompt) => {
+              setPlanPrompt(prompt);
+              setPlanId(null);
+              setSpawnStation(station);
+              setSpawnCwd(cwd);
+              navigate({ name: 'new' });
+            }}
+            onNewSession={(station, cwd) => {
+              setPlanPrompt('');
+              setPlanId(null);
+              setSpawnStation(station);
+              setSpawnCwd(cwd);
+              setSpawnWorktree(true);
+              navigate({ name: 'new' });
+            }}
+            freshness={freshness}
+          />
+        );
+      case 'settings':
+        return (
+          <SettingsPage
+            route={route}
+            stations={stations}
+            navigate={navigate}
+            live={freshness === 'live'}
+            list={folderList}
+            sessions={sessions}
+          />
+        );
+      case 'more':
+        return (
+          <More
+            stations={stations}
+            terminalCount={tabCount}
+            chrome={chrome}
+            onPalette={() => setPalette(true)}
+            onHelp={() => setHelp(true)}
+          />
+        );
+      case 'terminals':
+        return terminalsOpen ? dock : <TerminalsEmpty />;
+      case 'session': {
+        if (selected === undefined) {
+          return (
+            <div className="fd-screen">
+              <p>This session is not on the board.</p>
+              <a href="#/">Back to the fleet</a>
+            </div>
+          );
+        }
+        return (
+          <SessionRoute
+            session={selected}
+            stations={stations}
+            timeline={timelines[JSON.stringify([route.station, route.session])]}
+            freshness={freshness}
+            actions={sessionActions?.({ station_id: route.station, session_id: route.session })}
+            shells={shells}
+            terminals={terminals}
+            summaryWatch={summaryWatch}
+            layout={layout}
+            route={route}
+            navigate={back}
+            onTerminalOpened={phone ? toTerminals : undefined}
+            onNewShell={newShell}
+            fleet={fleet}
+          />
+        );
+      }
+    }
+  })();
+
+  // R13 P1: the wall is a full-screen route with no sidebar and no top bar.
+  const layoutNode =
+    route.name === 'wall' ? (
+      <WallPage
+        route={route}
+        navigate={navigate}
+        owner={people.member === null && people.self === 'owner'}
+        sessions={sessions}
+        stations={stations}
+        freshness={freshness}
+        timelines={timelines}
+        watch={watch}
+        sessionActions={sessionActions}
+        views={views}
+        artifacts={artifacts}
+      />
+    ) : (
+      <Layout
+        layout={layout}
+        route={route}
+        sidebar={sidebar('full')}
+        drawerOpen={drawerOpen}
+        onDrawer={(next) => setDrawerAt(next ? routeKey : null)}
+        notices={notices}
+        banner={helpNotice.show ? <HelpNotice onDismiss={helpNotice.dismiss} /> : null}
+        failures={failures}
+        onOpenFailure={(f) => open(f.key)}
+        onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
+        dock={dock}
+        chrome={chrome}
+        terminalsOpen={terminalsOpen}
+        onTerminalsBack={() => {
+          if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
+          else navigate({ name: 'home' });
+        }}
+        overlays={
+          <>
+            <ShareHost />
+            {help ? <HelpOverlay onClose={() => setHelp(false)} /> : null}
+            {palette ? (
+              <Palette
+                sessions={sessions}
+                stations={stations}
+                onOpen={open}
+                onClose={() => setPalette(false)}
+                onStart={(prompt) => {
+                  setPlanPrompt(prompt);
+                  setPlanId(null);
+                  setSpawnStation(null);
+                  navigate({ name: 'new' });
+                }}
+              />
+            ) : null}
+          </>
+        }
+      >
+        {content}
+      </Layout>
+    );
+  const framed =
+    artifactsEnv === undefined ? (
+      layoutNode
+    ) : (
+      <ArtifactsProvider value={artifactsEnv}>{layoutNode}</ArtifactsProvider>
+    );
+  const withSettings =
+    settings === undefined ? framed : <SettingsProvider env={settings}>{framed}</SettingsProvider>;
+  return integrations === undefined ? (
+    withSettings
+  ) : (
+    <IntegrationsProvider actions={integrations}>{withSettings}</IntegrationsProvider>
+  );
+}

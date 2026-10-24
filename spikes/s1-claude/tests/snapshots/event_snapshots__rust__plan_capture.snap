@@ -1,0 +1,140 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "plan",
+    "provider_refs": {
+      "session_id": "c7190100-d704-4de8-880f-0208eb9a2dc8"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-4814-8000-55ec5648d68e",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0003-4814-8000-55ec5648d68e"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-4814-8000-55ec5648d68e",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "edit",
+    "title": "Write",
+    "provider_refs": {
+      "tool_use_id": "toolu_01Gp5hSD994KD4ze1gb2Aofs"
+    }
+  },
+  {
+    "kind": "file.changed",
+    "path": "<home>/.claude/plans/plan-how-to-create-cryptic-pond.md",
+    "change": "modified"
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "ok"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-3",
+    "parent_node_id": null,
+    "tool_kind": "other",
+    "title": "ExitPlanMode",
+    "provider_refs": {
+      "tool_use_id": "toolu_01CR5if6yVsVXap5Fro3xmvM"
+    }
+  },
+  {
+    "kind": "plan.proposed",
+    "markdown": "Create `<workdir>/fd-plan.txt` containing the word `hello`.\n"
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-4",
+    "node_id": "node-3",
+    "request_kind": "tool",
+    "title": "ExitPlanMode",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "3096d888-649d-4339-bf14-bcf7fe2644e8",
+      "tool_use_id": "toolu_01CR5if6yVsVXap5Fro3xmvM"
+    }
+  },
+  {
+    "kind": "approval.resolved",
+    "request_id": "req-4",
+    "option_id": "deny"
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-3",
+    "status": "denied"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "plan-denied"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "plan-denied"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 6,
+      "output_tokens": 282,
+      "cost_usd": 0.0418978
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 6,
+      "output_tokens": 282,
+      "cost_usd": 0.0418978
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-4814-8000-55ec5648d68e",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

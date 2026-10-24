@@ -1,0 +1,349 @@
+// M3 6-2 / 6-4 (DL-205, DL-206): fleet mail and tasks. The deck stores a
+// mail or a task once and its outbox delivers the framed text to the target
+// session; a task stays open until the session (or the owner) completes it.
+import { stationName } from '../board/fleet';
+import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
+import { commandId } from '../session/commands';
+
+type Get = (path: string) => Promise<unknown>;
+type Post = (path: string, body: unknown, headers?: Record<string, string>) => Promise<unknown>;
+
+export type FleetTarget = { readonly stationId: string; readonly sessionId: string };
+
+/** The statuses of a session that the board cannot reach. */
+export const NOT_LIVE: readonly DeckSession['status'][] = ['ended', 'lost', 'unreachable'];
+
+export type FleetResult = { readonly ok: boolean; readonly text: string };
+
+/** The body of a live give (MCP P4b-4): the coordinator request of a start without the desktop fields. */
+export type GrantBody = {
+  classes: string[];
+  scope?: 'fleet';
+  answer_cap?: number;
+  stations?: string[];
+  spawn_cap?: number;
+  max_modes?: { [key in string]: string };
+};
+
+export type FleetActions = {
+  /** `mailId` is the `mail_id` of the request; a retry sends the id of its first try. */
+  mail(target: FleetTarget, text: string, steer: boolean, mailId?: string): Promise<FleetResult>;
+  task(target: FleetTarget, title: string): Promise<FleetResult>;
+  tasks(): Promise<readonly TaskView[]>;
+  grants(): Promise<readonly GrantView[]>;
+  revoke(grantId: string): Promise<FleetResult>;
+  /** Renews an idle-expired grant (ADR-006 test 25b). */
+  renew(grantId: string): Promise<FleetResult>;
+  /** Changes the desktop and recording limits of a grant (R13 P6); `elevation` is needed when a value grows. */
+  caps(
+    grantId: string,
+    caps: {
+      desktop_cap?: number;
+      capture_cap?: number;
+      image_byte_cap?: number;
+      recording_cap?: number;
+      recording_second_cap?: number;
+      input_cap?: number;
+      input_character_cap?: number;
+      spawn_cap?: number;
+      max_modes?: { [key in string]: string };
+    },
+    elevation?: string,
+  ): Promise<FleetResult>;
+  /** The recent desktop operations of a grant, newest first (R13 P6). */
+  desktopOps(grantId: string): Promise<readonly DesktopOpRow[]>;
+  /** Gives fleet access to a running session without a live grant (MCP P4b-4); `elevation` is needed when the deck asks. */
+  give(
+    stationId: string,
+    sessionId: string,
+    body: GrantBody,
+    elevation?: string,
+  ): Promise<FleetResult>;
+  /** Changes the classes of a live grant (MCP P4b-4); `elevation` is needed for a widening. */
+  changeAccess(
+    grantId: string,
+    body: {
+      classes: string[];
+      spawn_cap?: number;
+      max_modes?: { [key in string]: string };
+      answer_cap?: number;
+    },
+    elevation?: string,
+  ): Promise<FleetResult>;
+};
+
+/** One recent desktop operation of a grant (`GET .../desktop-ops`). */
+export type DesktopOpRow = {
+  readonly operation_id: string;
+  readonly tool: string;
+  readonly target_station: string;
+  readonly state: string;
+  readonly code: string | null;
+  readonly created_at: number;
+  readonly updated_at: number;
+};
+
+/** One target of a mail send: its session ref and where the mail goes. */
+export type SendTarget = { readonly ref: string; readonly target: FleetTarget };
+
+/** A target of the last send with its own `mail_id`; a `failed` one is sent again on a retry. */
+export type SendEntry = SendTarget & {
+  readonly mailId: string;
+  readonly state: 'sent' | 'failed';
+  readonly error?: string;
+};
+
+/** What a send means: the text (trimmed), the steer flag, who is addressed and the chosen one. */
+export type SendIntent = {
+  readonly text: string;
+  readonly steer: boolean;
+  readonly audience: 'one' | 'station' | 'repo' | 'all';
+  /** The session ref, station id or repository name that was chosen; empty for everyone. */
+  readonly selection: string;
+};
+
+/** The last send: its intent and the entries of the recipients that the first send took. */
+export type SendRecord = {
+  readonly intent: SendIntent;
+  readonly entries: readonly SendEntry[];
+};
+
+/** A new `mail_id`, the generator `fleetActions` uses by default. */
+export const newMailId = (): string => commandId();
+
+const intentKey = (i: SendIntent): string =>
+  JSON.stringify([i.text, i.steer, i.audience, i.selection]);
+
+/** Whether two sends have the same text, steer flag, audience and selection. */
+export const sameIntent = (a: SendIntent, b: SendIntent): boolean => intentKey(a) === intentKey(b);
+
+/**
+ * What to send now. The same intent as the record: only its failed entries, with their
+ * own ids; the current `targets` are ignored, so a session that came or left since the
+ * first send changes nothing. Any other intent: a new record with a new id for each
+ * target. An entry starts `failed` until its mail is sent.
+ */
+export function nextSends(
+  record: SendRecord | null,
+  intent: SendIntent,
+  targets: readonly SendTarget[],
+  newId: () => string = newMailId,
+): { readonly record: SendRecord; readonly todo: readonly SendEntry[] } {
+  if (record !== null && sameIntent(record.intent, intent)) {
+    return { record, todo: record.entries.filter((e) => e.state === 'failed') };
+  }
+  const entries = targets.map((t): SendEntry => ({ ...t, mailId: newId(), state: 'failed' }));
+  return { record: { intent, entries }, todo: entries };
+}
+
+const record = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const failed = (what: string, error: unknown): FleetResult => ({
+  ok: false,
+  text: `${what}: ${error instanceof Error ? error.message : String(error)}`,
+});
+
+/** The tasks of a `GET /api/tasks` answer; anything else is no task. */
+export function taskList(v: unknown): readonly TaskView[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (t): t is TaskView =>
+      record(t) && typeof t['task_id'] === 'string' && typeof t['title'] === 'string',
+  );
+}
+
+/** The grants of a `GET /api/coordinator/grants` answer (M3 6-5). */
+export function grantList(v: unknown): readonly GrantView[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (g): g is GrantView =>
+      record(g) && typeof g['grant_id'] === 'string' && typeof g['state'] === 'string',
+  );
+}
+
+/** The words of a grant row: its classes, spawn use and state. */
+export function grantStatus(g: GrantView): string {
+  const spawn = g.classes.includes('spawn') ? `, spawned ${g.spawn_used} of ${g.spawn_cap}` : '';
+  const state = g.state === 'active' && g.generation === null ? 'waiting for its session' : g.state;
+  const desktop =
+    g.desktop_cap === undefined ? '' : `, desktop actions ${g.desktop_used} of ${g.desktop_cap}`;
+  const capture =
+    g.capture_cap === undefined ? '' : `, screenshots ${g.capture_used} of ${g.capture_cap}`;
+  const image =
+    g.image_byte_cap === undefined
+      ? ''
+      : `, image reads ${mib(g.image_byte_used)} of ${mib(g.image_byte_cap)} MiB`;
+  const recording =
+    g.recording_cap === undefined
+      ? ''
+      : `, recordings ${g.recording_used ?? 0} of ${g.recording_cap}, recording time ${g.recording_second_used ?? 0} s of ${g.recording_second_cap ?? 0} s`;
+  const input =
+    g.input_cap === undefined
+      ? ''
+      : `, input actions ${g.input_used ?? 0} of ${g.input_cap}, typed characters ${g.input_character_used ?? 0} of ${g.input_character_cap ?? 0}`;
+  const click = g.allow_click === true ? ', clicks allowed' : '';
+  const anyWindow = g.input_scope === 'any_window' ? ', input in other application windows' : '';
+  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}${input}${click}${anyWindow}: ${state}`;
+}
+
+/** MiB of a byte count with at most one decimal and no trailing `.0`. */
+export function mib(bytes: number | undefined): string {
+  return ((bytes ?? 0) / 1_048_576).toFixed(1).replace(/\.0$/, '');
+}
+
+/** The rows of a `GET .../desktop-ops` answer; anything malformed is no row. */
+export function desktopOpList(v: unknown): readonly DesktopOpRow[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (r): r is DesktopOpRow =>
+      record(r) &&
+      typeof r['operation_id'] === 'string' &&
+      typeof r['tool'] === 'string' &&
+      typeof r['target_station'] === 'string' &&
+      typeof r['state'] === 'string' &&
+      (r['code'] === null || typeof r['code'] === 'string') &&
+      typeof r['created_at'] === 'number' &&
+      typeof r['updated_at'] === 'number',
+  );
+}
+
+/**
+ * The stations of a grant by name, the coordinator's own station first (ADR-006 "Creation");
+ * empty when the grant names only its own station.
+ */
+export function grantStations(g: GrantView, stations: readonly StationView[]): string {
+  const targets = g.stations.filter((id) => id !== g.station_id);
+  if (targets.length === 0) return '';
+  const names = [g.station_id, ...targets].map((id) => stationName(id, stations));
+  return `Stations: ${names.join(', ')}`;
+}
+
+/** The words of a task row: its state, then its delivery while open. */
+export function taskStatus(t: TaskView): string {
+  if (t.state === 'done') return t.result === null ? 'Done' : `Done: ${t.result}`;
+  if (t.state === 'failed') return t.result === null ? 'Failed' : `Failed: ${t.result}`;
+  if (t.state === 'blocked') {
+    return t.completion_reason === null ? 'Blocked' : `Blocked: ${t.completion_reason}`;
+  }
+  if (t.state === 'question') {
+    return t.question === null ? 'Asks a question' : `Asks: ${t.question}`;
+  }
+  if (t.delivery === 'dead') return `Not delivered${t.reason === null ? '' : `: ${t.reason}`}`;
+  return t.delivery === 'delivered' ? 'Open' : 'Open, not yet delivered';
+}
+
+export function fleetActions(get: Get, post: Post, newId: () => string = commandId): FleetActions {
+  return {
+    mail: async (target, text, steer, mailId) => {
+      try {
+        await post('/api/mail', {
+          mail_id: mailId ?? newId(),
+          station: target.stationId,
+          session_id: target.sessionId,
+          text,
+          delivery: steer ? 'steer' : 'follow_up',
+        });
+        return { ok: true, text: 'Mail queued.' };
+      } catch (error) {
+        return failed('Mail not sent', error);
+      }
+    },
+    task: async (target, title) => {
+      try {
+        await post('/api/tasks', {
+          task_id: newId(),
+          title,
+          station: target.stationId,
+          session_id: target.sessionId,
+        });
+        return { ok: true, text: 'Task created.' };
+      } catch (error) {
+        return failed('Task not created', error);
+      }
+    },
+    tasks: async () => {
+      try {
+        return taskList(await get('/api/tasks'));
+      } catch {
+        return [];
+      }
+    },
+    grants: async () => {
+      try {
+        return grantList(await get('/api/coordinator/grants'));
+      } catch {
+        return [];
+      }
+    },
+    revoke: async (grantId) => {
+      try {
+        await post(`/api/coordinator/grants/${encodeURIComponent(grantId)}/revoke`, {});
+        return { ok: true, text: 'Grant revoked.' };
+      } catch (error) {
+        return failed('Grant not revoked', error);
+      }
+    },
+    renew: async (grantId) => {
+      try {
+        await post(`/api/coordinator/grants/${encodeURIComponent(grantId)}/renew`, {});
+        return { ok: true, text: 'Renewal sent; the grant is active when its station confirms.' };
+      } catch (error) {
+        return failed('Grant not renewed', error);
+      }
+    },
+    caps: async (grantId, caps, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/grants/${encodeURIComponent(grantId)}/caps`,
+          caps,
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Limits changed.' };
+      } catch (error) {
+        return failed('Change limits', error);
+      }
+    },
+    give: async (stationId, sessionId, body, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/sessions/${encodeURIComponent(stationId)}/${encodeURIComponent(sessionId)}/grant`,
+          // The deck reads a `CoordinatorSpec` and fills in the grant id, the
+          // expiry and the control skill (as for a start); 0 means its default.
+          {
+            grant_id: '',
+            ...body,
+            idle_ttl_ms: 0,
+            expires_at: 0,
+            control_skill: { version: '', text: '' },
+          },
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Fleet access given.' };
+      } catch (error) {
+        return failed('Give fleet access', error);
+      }
+    },
+    changeAccess: async (grantId, body, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/grants/${encodeURIComponent(grantId)}/classes`,
+          body,
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Access changed.' };
+      } catch (error) {
+        return failed('Change access', error);
+      }
+    },
+    desktopOps: async (grantId) => {
+      try {
+        return desktopOpList(
+          await get(`/api/coordinator/grants/${encodeURIComponent(grantId)}/desktop-ops`),
+        );
+      } catch {
+        return [];
+      }
+    },
+  };
+}

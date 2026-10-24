@@ -1,15 +1,13 @@
 version: 2
 updates:
-  # 0.16.0: no more grouped bumps. A single "minor-and-patch" PR bundling many
-  # packages is an unreviewable diff — and this repo's build toolchain (esbuild,
-  # vite/rolldown) IS the artifact pipeline, so a dependency bump is a
-  # security-sensitive change that must arrive one small PR at a time.
+  # One small PR per dependency: the board toolchain and the Rust crates are
+  # the artifact pipeline, so each bump is a security-sensitive change.
   - package-ecosystem: npm
-    directory: "/"
+    directory: "/web"
     schedule:
       interval: weekly
-  - package-ecosystem: npm
-    directory: "/board"
+  - package-ecosystem: cargo
+    directory: "/"
     schedule:
       interval: weekly
   - package-ecosystem: github-actions

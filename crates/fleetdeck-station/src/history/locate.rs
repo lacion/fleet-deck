@@ -1,0 +1,400 @@
+//! Finding and trusting a provider transcript (DL-189 §3.2).
+//!
+//! The input is the station's own session row: provider, provider home,
+//! working directory and native id. The caller gives no path. Directories
+//! are walked with the no-follow descriptor walk of `workspace/files.rs`, and
+//! the file is opened with `O_NOFOLLOW`; the checks run on the open file.
+
+use std::ffi::CStr;
+use std::fs::File;
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use fleetdeck_core::ChildEnv;
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::history::HistoryUnavailable;
+use rustix::fs::{Dir, FileType, Mode};
+use rustix::io::Errno;
+
+use super::lines::{Line, Lines};
+use super::parse;
+use super::{Fail, Limits};
+use crate::workspace::PrivatePaths;
+use crate::workspace::files::{descend, file_flags, open_root};
+
+/// How many records of the head of a file may pass before one names a
+/// session.
+const HEAD_RECORDS: usize = 1000;
+
+/// An open, trusted transcript.
+#[derive(Debug)]
+pub struct Opened {
+    pub file: File,
+    pub size: u64,
+    /// The canonical provider home.
+    pub home: PathBuf,
+    /// The path of the file below the home.
+    pub path: PathBuf,
+}
+
+/// What the trust checks need.
+pub struct Trust<'a> {
+    pub private: &'a PrivatePaths,
+    /// The user id that must own the file.
+    pub uid: u32,
+    pub limits: &'a Limits,
+    pub deadline: Instant,
+}
+
+/// The provider home of a launch environment: `CLAUDE_CONFIG_DIR` or
+/// `CODEX_HOME`, else `HOME` with `.claude` or `.codex`.
+#[must_use]
+pub fn resolve_home(env: &ChildEnv, kind: ProviderKind) -> Option<PathBuf> {
+    let (var, dir) = match kind {
+        ProviderKind::Claude => ("CLAUDE_CONFIG_DIR", ".claude"),
+        ProviderKind::Codex => ("CODEX_HOME", ".codex"),
+        ProviderKind::Unknown => return None,
+    };
+    let set = |name: &str| env.get(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    set(var).or_else(|| set("HOME").map(|home| home.join(dir)))
+}
+
+/// Claude's directory name of a working directory: every character that is
+/// not ASCII alphanumeric becomes `-`.
+#[must_use]
+pub fn encode_cwd(cwd: &str) -> String {
+    cwd.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+fn unavailable(reason: HistoryUnavailable) -> Fail {
+    Fail::Unavailable(reason)
+}
+
+/// The failure of an `openat` step: a missing name is `not_found`, anything
+/// else (a link, a wrong kind, no access) is `not_trusted`.
+fn open_fail(e: Errno) -> Fail {
+    if e == Errno::NOENT {
+        unavailable(HistoryUnavailable::NotFound)
+    } else {
+        unavailable(HistoryUnavailable::NotTrusted)
+    }
+}
+
+/// The canonical provider home: a missing home is `not_found`; any other
+/// failure (no access, an I/O error) is `not_trusted`, so that a caller can
+/// tell a record that does not exist from one it cannot read (usage-cost
+/// build answer 1).
+fn canonical_home(home: &Path) -> Result<PathBuf, Fail> {
+    std::fs::canonicalize(home).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            unavailable(HistoryUnavailable::NotFound)
+        } else {
+            unavailable(HistoryUnavailable::NotTrusted)
+        }
+    })
+}
+
+/// The directory `name` below `dir`: `Ok(None)` when it does not exist.
+/// Any other failure (no access, a link, an I/O error) refuses with
+/// [`open_fail`]: a directory that cannot be read can hold the file.
+fn sub_dir(dir: &OwnedFd, name: &str) -> Result<Option<OwnedFd>, Fail> {
+    match descend(dir, &[name]) {
+        Ok(fd) => Ok(Some(fd)),
+        Err(e) if e == Errno::NOENT => Ok(None),
+        Err(e) => Err(open_fail(e)),
+    }
+}
+
+/// Finds the transcript of `native` below `home` and checks it.
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate(
+    home: &Path,
+    kind: ProviderKind,
+    cwd: &str,
+    native: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    locate_with(home, kind, cwd, native, trust, trust.limits.file_max)
+}
+
+/// [`locate`] without the size cap: the check of a Codex child thread reads
+/// only the first record (B7 PRE-PR r1).
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_any_size(
+    home: &Path,
+    kind: ProviderKind,
+    cwd: &str,
+    native: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    locate_with(home, kind, cwd, native, trust, u64::MAX)
+}
+
+fn locate_with(
+    home: &Path,
+    kind: ProviderKind,
+    cwd: &str,
+    native: &str,
+    trust: &Trust<'_>,
+    max: u64,
+) -> Result<Opened, Fail> {
+    let home = canonical_home(home)?;
+    let root = open_root(&home).map_err(open_fail)?;
+    let segments: Vec<String> = match kind {
+        ProviderKind::Claude => vec![
+            "projects".to_owned(),
+            encode_cwd(cwd),
+            format!("{native}.jsonl"),
+        ],
+        ProviderKind::Codex => codex_path(&root, native, trust.limits)?,
+        ProviderKind::Unknown => return Err(unavailable(HistoryUnavailable::UnsupportedFormat)),
+    };
+    let (name, dirs) = segments.split_last().ok_or(Fail::Io)?;
+    let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let dir = descend(&root, &dir_refs).map_err(open_fail)?;
+    let fd =
+        rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
+    let file = File::from(fd);
+    let size = check_file(&file, kind, native, trust, max)?;
+    Ok(Opened {
+        file,
+        size,
+        home,
+        path: segments.iter().collect(),
+    })
+}
+
+/// The metadata checks on the open file; returns its size: a regular file,
+/// the owner's, with one hard link, not private, not too large (`max`). Split
+/// from the transcript scan so that [`locate_subagent`] uses it alone
+/// (DL-191).
+pub(crate) fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
+    let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
+    let meta = file.metadata().map_err(|_| Fail::Io)?;
+    if !meta.is_file() || meta.uid() != trust.uid || meta.nlink() != 1 {
+        return Err(not_trusted());
+    }
+    if trust.private.is_private_file(&meta) {
+        return Err(not_trusted());
+    }
+    if meta.len() > max {
+        return Err(unavailable(HistoryUnavailable::TooLarge));
+    }
+    Ok(meta.len())
+}
+
+/// The largest subagent transcript (DL-191).
+pub const SUBAGENT_FILE_MAX: u64 = 64 * 1024 * 1024;
+
+/// Finds the transcript of one subagent below `home` and checks its
+/// metadata only; every record is checked by the reader (DL-191). The path
+/// is `projects/<encoded cwd>/<native>/subagents/agent-<agent id>.jsonl`,
+/// opened one segment at a time without following a link.
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_subagent(
+    home: &Path,
+    cwd: &str,
+    native: &str,
+    agent_id: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    let home = canonical_home(home)?;
+    let root = open_root(&home).map_err(open_fail)?;
+    let name = format!("agent-{agent_id}.jsonl");
+    let dirs: Vec<String> = vec![
+        "projects".to_owned(),
+        encode_cwd(cwd),
+        native.to_owned(),
+        "subagents".to_owned(),
+    ];
+    let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let dir = descend(&root, &dir_refs).map_err(open_fail)?;
+    let fd =
+        rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
+    let file = File::from(fd);
+    let size = check_meta(&file, trust, SUBAGENT_FILE_MAX)?;
+    let mut path: PathBuf = dirs.iter().collect();
+    path.push(name);
+    Ok(Opened {
+        file,
+        size,
+        home,
+        path,
+    })
+}
+
+/// Finds the transcript of one workflow agent below `home` and checks its
+/// metadata only; every record is checked by the reader (B12). The path is
+/// `projects/<encoded cwd>/<native>/subagents/workflows/<run id>/agent-<agent id>.jsonl`,
+/// opened one segment at a time without following a link.
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_workflow_agent(
+    home: &Path,
+    cwd: &str,
+    native: &str,
+    run_id: &str,
+    agent_id: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    let home =
+        std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
+    let root = open_root(&home).map_err(open_fail)?;
+    let name = format!("agent-{agent_id}.jsonl");
+    let dirs: Vec<String> = vec![
+        "projects".to_owned(),
+        encode_cwd(cwd),
+        native.to_owned(),
+        "subagents".to_owned(),
+        "workflows".to_owned(),
+        run_id.to_owned(),
+    ];
+    let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let dir = descend(&root, &dir_refs).map_err(open_fail)?;
+    let fd =
+        rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
+    let file = File::from(fd);
+    let size = check_meta(&file, trust, SUBAGENT_FILE_MAX)?;
+    let mut path: PathBuf = dirs.iter().collect();
+    path.push(name);
+    Ok(Opened {
+        file,
+        size,
+        home,
+        path,
+    })
+}
+
+/// The trust checks on the open file; returns its size.
+fn check_file(
+    file: &File,
+    kind: ProviderKind,
+    native: &str,
+    trust: &Trust<'_>,
+    max: u64,
+) -> Result<u64, Fail> {
+    let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
+    let size = check_meta(file, trust, max)?;
+    // The first record that names a session must name this one.
+    let mut lines = Lines::new(file, 0, size, trust.limits.line_max).with_deadline(trust.deadline);
+    for _ in 0..HEAD_RECORDS {
+        let next = lines.next_line().map_err(|e| match e {
+            super::lines::ReadError::Deadline => Fail::Busy,
+            super::lines::ReadError::Io(_) => Fail::Io,
+        })?;
+        let Some((_, line)) = next else { break };
+        let Line::Record(bytes) = line else { continue };
+        if let Some(named) = parse::embedded_session(kind, bytes) {
+            return if named == native {
+                Ok(size)
+            } else {
+                Err(not_trusted())
+            };
+        }
+    }
+    Err(not_trusted())
+}
+
+/// The path segments of the single Codex rollout of `native`.
+fn codex_path(root: &OwnedFd, native: &str, limits: &Limits) -> Result<Vec<String>, Fail> {
+    let suffix = format!("-{native}.jsonl");
+    let mut visited = 0_usize;
+    let mut found: Vec<Vec<String>> = Vec::new();
+    // `sessions/YYYY/MM/DD/rollout-…`. A directory that is missing is
+    // skipped; one that cannot be opened refuses (it can hold the rollout).
+    if let Some(sessions) = sub_dir(root, "sessions")? {
+        for year in entries(&sessions, &mut visited, limits)? {
+            if year.1 != FileType::Directory {
+                continue;
+            }
+            let Some(year_dir) = sub_dir(&sessions, &year.0)? else {
+                continue;
+            };
+            for month in entries(&year_dir, &mut visited, limits)? {
+                if month.1 != FileType::Directory {
+                    continue;
+                }
+                let Some(month_dir) = sub_dir(&year_dir, &month.0)? else {
+                    continue;
+                };
+                for day in entries(&month_dir, &mut visited, limits)? {
+                    if day.1 != FileType::Directory {
+                        continue;
+                    }
+                    let Some(day_dir) = sub_dir(&month_dir, &day.0)? else {
+                        continue;
+                    };
+                    for file in entries(&day_dir, &mut visited, limits)? {
+                        if is_rollout(&file, &suffix) {
+                            found.push(vec![
+                                "sessions".to_owned(),
+                                year.0.clone(),
+                                month.0.clone(),
+                                day.0.clone(),
+                                file.0,
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(archived) = sub_dir(root, "archived_sessions")? {
+        for file in entries(&archived, &mut visited, limits)? {
+            if is_rollout(&file, &suffix) {
+                found.push(vec!["archived_sessions".to_owned(), file.0]);
+            }
+        }
+    }
+    match found.len() {
+        0 => Err(unavailable(HistoryUnavailable::NotFound)),
+        1 => Ok(found.remove(0)),
+        _ => Err(unavailable(HistoryUnavailable::Ambiguous)),
+    }
+}
+
+/// A rollout file name: a regular file or a link (the open then refuses it).
+fn is_rollout(entry: &(String, FileType), suffix: &str) -> bool {
+    let (name, kind) = entry;
+    matches!(kind, FileType::RegularFile | FileType::Symlink)
+        && name.starts_with("rollout-")
+        && name.len() > "rollout-".len() + suffix.len()
+        && name.ends_with(suffix)
+}
+
+/// The entries of a directory with their kinds; the count of all entries
+/// visited is limited.
+pub(crate) fn entries(
+    dir: &OwnedFd,
+    visited: &mut usize,
+    limits: &Limits,
+) -> Result<Vec<(String, FileType)>, Fail> {
+    let reader = Dir::read_from(dir.as_fd()).map_err(open_fail)?;
+    let mut out = Vec::new();
+    for entry in reader {
+        let entry = entry.map_err(open_fail)?;
+        let name: &CStr = entry.file_name();
+        if name == c"." || name == c".." {
+            continue;
+        }
+        *visited += 1;
+        if *visited > limits.dir_entries {
+            return Err(unavailable(HistoryUnavailable::Busy));
+        }
+        if let Ok(name) = name.to_str() {
+            out.push((name.to_owned(), entry.file_type()));
+        }
+    }
+    Ok(out)
+}

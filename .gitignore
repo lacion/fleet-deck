@@ -1,10 +1,21 @@
 node_modules/
-board/node_modules/
 *.db
 *.db-wal
 *.db-shm
-.fleetdeck-test/
-demo/demo-logs/
-demo/project/.claude/settings.json
-board/dist/
 ideas/
+# Rust (Fleet Deck v2)
+/target/
+spikes/**/node_modules/
+/.pi/
+
+# Local agent skills of the owner (not part of the project).
+/.agents/
+/.claude/skills/*
+# The design system skill is part of the project (docs/v2/DESIGN-SYSTEM.md).
+!/.claude/skills/fleet-design-system/
+/skills-lock.json
+
+# Local secrets (Fleet Sync secret files): never tracked.
+.env
+.env.*
+!.env.example

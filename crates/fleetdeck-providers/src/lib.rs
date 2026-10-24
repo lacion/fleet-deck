@@ -1,0 +1,25 @@
+//! Fleet Deck v2 provider adapters (PLAN §6.2): the [`ProviderAdapter`] and
+//! [`LiveSession`] traits, one adapter per provider (Claude per ADR-001,
+//! Codex per ADR-002), and the [`host::SessionHost`] boundary that starts
+//! their processes (PLAN §6.1, A9).
+
+pub mod adapter;
+/// MCP Apps for the adapters (B15, design `mcp-apps.md` §4.2).
+pub mod apps;
+pub mod checkpoint;
+pub mod claude;
+pub mod codex;
+/// The coordinator credential handoff (M3 6-5, ADR-006 §5.4).
+pub mod coordinator;
+pub mod durable;
+pub mod host;
+/// The one dated price table of inferred costs (R4.6, DL-161, DL-444).
+pub mod prices;
+pub mod rawlog;
+mod stdio;
+pub mod version;
+
+pub use adapter::{
+    Answer, AuthState, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId,
+    NativeSessionId, PermissionMode, ProviderAdapter, ProviderError, ProviderProbe, ShellContext,
+};

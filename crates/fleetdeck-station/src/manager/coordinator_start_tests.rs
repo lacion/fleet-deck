@@ -1,0 +1,768 @@
+//! The coordinator start wiring (ADR-006 §5.4, §8.2 test 10; DL-216): a
+//! deck start with a grant mints the credential, adds a pending binding
+//! under its digest and hands the credential to the real provider child
+//! through its environment only. Nothing in the station store holds it.
+
+#![allow(clippy::unwrap_used)]
+
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use fleetdeck_core::ChildEnv;
+use fleetdeck_proto::command::{
+    CommandOrigin, RETRY_WINDOW_MS, ReceiptState, SessionCommand, SessionSpec, StopMode,
+};
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::{CommandEnvelope, CommandId, SessionId};
+use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig};
+use fleetdeck_providers::host::DirectChildHost;
+use fleetdeck_testkit::fake::{LAUNCH_LOG_ENV, SCENARIO_ENV};
+use fleetdeck_testkit::{Det, FakeAgent};
+
+use super::coordinator_spec_tests::coordinator_spec;
+use super::*;
+use crate::coordinator::{BindingState, Bindings, digest};
+use crate::store::{Caller, OfflineApprovalPolicy, ReadResult, StoreConfig};
+use fleetdeck_proto::{Event, EventBody};
+
+const URL: &str = "http://127.0.0.1:41234/mcp";
+
+fn verified(_: ProviderKind, _: Option<&str>) -> Result<(), &'static str> {
+    Ok(())
+}
+
+/// Every byte of every file under `dir`.
+fn bytes_under(dir: &Path) -> Vec<u8> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(bytes_under(&path));
+        } else {
+            out.extend(std::fs::read(&path).unwrap());
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment_only() {
+    let det = Det::new();
+    let root = tempfile::tempdir().unwrap();
+    let ws = root.path().join("projects/app");
+    std::fs::create_dir_all(&ws).unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let launch_log = root.path().join("launch.log");
+
+    let store = Store::open(
+        &data.join("station.db"),
+        det.clock(),
+        det.ids(),
+        StoreConfig::default(),
+    )
+    .await
+    .unwrap();
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    let policy = Policy::new(
+        vec![root.path().join("projects")],
+        2,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
+    );
+    let mut env = ChildEnv::from_process();
+    env.set(SCENARIO_ENV, "sim").unwrap();
+    env.set(LAUNCH_LOG_ENV, &launch_log).unwrap();
+    let config =
+        ClaudeAdapterConfig::new("claude".into(), FakeAgent::Claude.locate().unwrap(), env);
+    let adapter: Arc<dyn fleetdeck_providers::ProviderAdapter> =
+        Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())));
+    let holders = Holders {
+        coordinator: bindings.clone(),
+        ..Holders::default()
+    };
+    let manager = SessionManager::start_with_holders(
+        store,
+        policy.clone(),
+        holders,
+        Adapters::from([("claude".into(), adapter)]),
+        det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
+
+    // An owner start from the deck (origin board).
+    let mut spec = SessionSpec {
+        effort: None,
+        provider_instance: "claude".into(),
+        cwd: ws.to_string_lossy().into_owned(),
+        mode: Some("default".to_owned()),
+        model: None,
+        title: None,
+        coordinator: Some(Box::new(coordinator_spec())),
+        launch: None,
+        extra_env: None,
+    };
+    spec.title = Some("coordinator".to_owned());
+    let envelope = CommandEnvelope {
+        authority: None,
+        command_id: CommandId::from("cmd-coord".to_owned()),
+        target_incarnation: None,
+        retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Start {
+            spec,
+            prompt: Some(super::tests::text("hello")),
+            workspace: None,
+            setup_cmd: None,
+            batch: None,
+            issue: None,
+            origin_text: false,
+            fleet_git: None,
+        },
+    };
+    let command = envelope.command.clone();
+    let decide_policy = policy.clone();
+    let decide_bindings = bindings.clone();
+    let decided = manager
+        .store()
+        .decide(envelope, Caller::deck("k"), move |d| {
+            decide::decide(
+                d,
+                &decide_policy,
+                &decide_bindings,
+                CommandOrigin::Board,
+                false,
+                command,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        decided.receipt.state,
+        ReceiptState::Accepted,
+        "{:?}",
+        decided.receipt
+    );
+    let session: SessionId = decided.receipt.result.unwrap().session_id.unwrap();
+
+    // The real child wrote its argv and the credential of its environment.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let log = loop {
+        if let Ok(log) = std::fs::read_to_string(&launch_log)
+            && log.contains("env:")
+        {
+            break log;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the child did not start"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let (argv, token) = log.split_once("env:").unwrap();
+    let token = token.trim().to_owned();
+    assert!(
+        token.starts_with("fdc1_"),
+        "the child environment holds the credential"
+    );
+    assert!(!argv.contains(&token), "argv never holds the credential");
+    assert!(argv.contains("--mcp-config"));
+    assert!(argv.contains("Bearer ${FLEETDECK_COORDINATOR_TOKEN}"));
+    assert!(argv.contains(URL));
+
+    // The binding is under the digest of the credential: pending at
+    // generation 0 until `session.started` names the native identity.
+    assert!(bindings.has_digest(&digest(&token)));
+    let binding = bindings.find(&session, "grant-1").unwrap();
+    assert!(matches!(
+        (binding.state, binding.generation),
+        (BindingState::Pending, 0) | (BindingState::Active, 1)
+    ));
+    assert_eq!(binding.control_skill, "You coordinate the fleet.");
+
+    // DL-217: the native identity of `session.started` binds it
+    // (generation 1, `coordinator.bound`); the process end revokes it.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let bound = loop {
+        let b = bindings.find(&session, "grant-1").unwrap();
+        if b.state == BindingState::Active {
+            break b;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the binding never became active"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(bound.generation, 1);
+    let native = bound.native_id.clone().unwrap();
+    let lifecycle = |events: Vec<fleetdeck_proto::EventEnvelope>| -> Vec<Event> {
+        events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                EventBody::Known(
+                    e @ (Event::CoordinatorBound { .. } | Event::CoordinatorEnded { .. }),
+                ) => Some(e),
+                _ => None,
+            })
+            .collect()
+    };
+    let read = || async {
+        match manager.store().read_after(0, 100_000).await.unwrap() {
+            ReadResult::Events { events, .. } => events,
+            ReadResult::SnapshotRequired { .. } => panic!("snapshot required"),
+        }
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let facts = loop {
+        let facts = lifecycle(read().await);
+        if !facts.is_empty() {
+            break facts;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no coordinator.bound"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(matches!(
+        &facts[0],
+        Event::CoordinatorBound { grant_id, generation: 1, native_id, .. }
+            if grant_id == "grant-1" && native_id == &native
+    ));
+
+    let stop = CommandEnvelope {
+        authority: None,
+        command_id: CommandId::from("cmd-stop".to_owned()),
+        target_incarnation: None,
+        retry_until: i64::try_from(det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+        origin: CommandOrigin::Board,
+        command: SessionCommand::Stop {
+            session_id: session.clone(),
+            how: StopMode::Kill,
+        },
+    };
+    let command = stop.command.clone();
+    let decide_policy = policy.clone();
+    let decide_bindings = bindings.clone();
+    manager
+        .store()
+        .decide(stop, Caller::deck("k"), move |d| {
+            decide::decide(
+                d,
+                &decide_policy,
+                &decide_bindings,
+                CommandOrigin::Board,
+                false,
+                command,
+            )
+        })
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let facts = lifecycle(read().await);
+        if facts.iter().any(|e| {
+            matches!(e, Event::CoordinatorEnded { reason, generation: 1, .. }
+                if reason == coordinator_start::REASON_PROCESS_EXIT)
+        }) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no coordinator.ended"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        bindings.find(&session, "grant-1").unwrap().state,
+        BindingState::Revoked
+    );
+
+    manager.shutdown(StopMode::Kill).await;
+    // No station store file holds the credential (database, WAL).
+    let stored = bytes_under(&data);
+    assert!(!stored.is_empty());
+    assert!(
+        !stored.windows(token.len()).any(|w| w == token.as_bytes()),
+        "the station store never holds the credential"
+    );
+}
+
+/// Without a verified handoff the start effect itself refuses too: a
+/// grant that passed an older decision never runs without its check.
+#[test]
+fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
+    let spec = SessionSpec {
+        effort: None,
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+        launch: None,
+        extra_env: None,
+    };
+    let grant = coordinator_spec();
+    let session: SessionId = "s-1".into();
+    let unverified = Bindings::default();
+    unverified.set_endpoint(URL.to_owned());
+    let err = coordinator_start::prepare(
+        &unverified,
+        ProviderKind::Claude,
+        &session,
+        &spec,
+        &grant,
+        false,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err, fleetdeck_providers::coordinator::UNVERIFIED);
+    let no_endpoint = Bindings::default().with_handoff(verified);
+    assert!(
+        coordinator_start::prepare(
+            &no_endpoint,
+            ProviderKind::Claude,
+            &session,
+            &spec,
+            &grant,
+            false,
+            None
+        )
+        .is_err()
+    );
+    let ok = Bindings::default().with_handoff(verified);
+    ok.set_endpoint(URL.to_owned());
+    assert!(
+        coordinator_start::prepare(
+            &ok,
+            ProviderKind::Claude,
+            &session,
+            &spec,
+            &grant,
+            true,
+            None
+        )
+        .is_err(),
+        "a resume or a shim-hosted start is refused"
+    );
+    assert!(!ok.has_digest("x"));
+    assert!(
+        ok.find(&session, "grant-1").is_none(),
+        "a refusal adds no binding"
+    );
+}
+
+/// DL-165: a session without a grant gets a fleet-only binding when the
+/// provider can take the handoff; it never reaches the deck as a
+/// coordinator binding; a resume, a missing endpoint or an unverified
+/// provider start without it.
+#[test]
+fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() {
+    let spec = SessionSpec {
+        effort: None,
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+        launch: None,
+        extra_env: None,
+    };
+    let session: SessionId = "s-1".into();
+    let ok = Bindings::default().with_handoff(verified);
+    ok.set_endpoint(URL.to_owned());
+    let launch =
+        coordinator_start::prepare_fleet(&ok, ProviderKind::Claude, &session, &spec, false)
+            .expect("a fleet handoff");
+    assert!(launch.args.iter().all(|a| !a.contains("fdc1_")));
+    let binding = ok.get("s-1:fleet").expect("the binding");
+    assert!(binding.is_fleet_only());
+    assert_eq!(
+        binding.classes.iter().copied().collect::<Vec<_>>(),
+        [crate::coordinator::ToolClass::Own]
+    );
+    // The deck never sees it: not in the projection, no lifecycle event.
+    assert!(ok.projection().is_empty());
+    let started = Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::Capabilities::minimal()),
+        resumed: None,
+        title: None,
+        branch: None,
+        repo: None,
+        provider_refs: serde_json::json!({"session_id": "native-1"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
+    assert!(
+        coordinator_start::bound_events(&ok, &session, &[started], None)
+            .events
+            .is_empty()
+    );
+    assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Active);
+    assert!(coordinator_start::ended_events(&ok, &session, None).is_empty());
+    assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Revoked);
+    // Without the handoff, the start goes on without the tools.
+    let other: SessionId = "s-2".into();
+    let unverified = Bindings::default();
+    unverified.set_endpoint(URL.to_owned());
+    unverified.record_version(ProviderKind::Claude, "1.0.0".to_owned());
+    let no_endpoint = Bindings::default().with_handoff(verified);
+    for (bindings, durable, why) in [
+        (
+            &unverified,
+            false,
+            coordinator_start::NoTools::Unverified("1.0.0".to_owned()),
+        ),
+        (&no_endpoint, false, coordinator_start::NoTools::NoEndpoint),
+        (&ok, true, coordinator_start::NoTools::Durable),
+    ] {
+        let r = coordinator_start::prepare_fleet(
+            bindings,
+            ProviderKind::Claude,
+            &other,
+            &spec,
+            durable,
+        );
+        assert_eq!(r.err(), Some(why));
+        assert!(bindings.get("s-2:fleet").is_none());
+    }
+}
+
+/// DL-165: a resume gets a launch on the direct host, and a new binding that
+/// replaces the old one of the same id.
+#[test]
+fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
+    let spec = SessionSpec {
+        effort: None,
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+        launch: None,
+        extra_env: None,
+    };
+    let session: SessionId = "s-4".into();
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    let first =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Claude, &session, &spec, false)
+            .expect("the first handoff");
+    let started = |native: &str| Event::SessionStarted {
+        provider: ProviderKind::Claude,
+        provider_instance: "claude".into(),
+        provider_version: None,
+        model: None,
+        cwd: "/w".to_owned(),
+        mode: None,
+        capabilities: Box::new(fleetdeck_proto::Capabilities::minimal()),
+        resumed: None,
+        title: None,
+        branch: None,
+        repo: None,
+        provider_refs: serde_json::json!({"session_id": native})
+            .as_object()
+            .unwrap()
+            .clone(),
+    };
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")], None);
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Active
+    );
+    // The process ends (stop), then the session resumes in the same run.
+    assert!(coordinator_start::ended_events(&bindings, &session, None).is_empty());
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Revoked
+    );
+    let second =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Claude, &session, &spec, false)
+            .expect("a handoff for the resume");
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Pending
+    );
+    assert_ne!(first.token.expose(), second.token.expose());
+    // The old credential fails: its entry is gone.
+    assert!(!bindings.has_digest(&digest(first.token.expose())));
+    // The resumed `session.started` activates the new binding.
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")], None);
+    let b = bindings.get("s-4:fleet").unwrap();
+    assert_eq!(b.state, BindingState::Active);
+    assert_eq!(b.native_id.as_deref(), Some("native-1"));
+    assert!(coordinator_start::ended_events(&bindings, &session, None).is_empty());
+    assert_eq!(
+        bindings.get("s-4:fleet").unwrap().state,
+        BindingState::Revoked
+    );
+}
+
+/// DL-165: a Codex session gets the same fleet-only tools, through
+/// `mcp_servers.fleetdeck` with `bearer_token_env_var` (never the token on
+/// the command line), with the default (real) handoff check and a probed
+/// version that the live smoke verified.
+#[test]
+fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
+    let spec = SessionSpec {
+        effort: None,
+        provider_instance: "codex".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+        launch: None,
+        extra_env: None,
+    };
+    let session: SessionId = "s-3".into();
+    let bindings = Bindings::default();
+    bindings.set_endpoint(URL.to_owned());
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    let launch =
+        coordinator_start::prepare_fleet(&bindings, ProviderKind::Codex, &session, &spec, false)
+            .expect("a Codex fleet handoff");
+    assert!(
+        launch
+            .args
+            .iter()
+            .any(|a| a.contains("mcp_servers.fleetdeck.bearer_token_env_var"))
+    );
+    assert!(launch.args.iter().all(|a| !a.contains("fdc1_")));
+    assert!(
+        bindings
+            .get("s-3:fleet")
+            .expect("the binding")
+            .is_fleet_only()
+    );
+}
+
+/// A spec for the `tools_for` checks; `grant` adds a coordinator grant.
+fn tools_spec(grant: bool) -> SessionSpec {
+    SessionSpec {
+        effort: None,
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: grant.then(|| Box::new(coordinator_spec())),
+        launch: None,
+        extra_env: None,
+    }
+}
+
+/// Bindings with a verified handoff, a bridge and Claude 2.1.296 (the
+/// bridge-verified version), as the shim host has.
+fn with_bridge() -> Bindings {
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.record_version(ProviderKind::Claude, "2.1.296".to_owned());
+    bindings.set_endpoint(URL.to_owned());
+    bindings.set_bridge(crate::coordinator::BridgeEndpoint {
+        program: "/station/bin/current".into(),
+        socket: "/run/fleetdeck/mcp.s".into(),
+    });
+    bindings
+}
+
+#[derive(Clone, Default)]
+struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Buf {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// DL-194: on the shim host a Claude start gets the bridge arguments and a
+/// token; the binding is built but memory is not changed (the launch
+/// stores the row first).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_fleet_start_on_the_shim_host_gets_a_bridge_start_and_no_memory_entry() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-5".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        true,
+        false,
+    )
+    .unwrap();
+    let coordinator_start::Tools::Bridge(start) = tools else {
+        panic!("expected a bridge start");
+    };
+    let config = start
+        .launch
+        .args
+        .iter()
+        .find(|a| a.contains("mcpServers"))
+        .expect("the --mcp-config value");
+    assert!(config.contains("\"type\":\"stdio\"") && config.contains("mcp-bridge"));
+    assert!(start.launch.args.iter().any(|a| a == "--mcp-config"));
+    assert!(start.launch.args.iter().all(|a| !a.contains("fdc1_")));
+    assert_eq!(start.binding.binding_id, "s-5:fleet");
+    assert_eq!(start.binding.state, BindingState::Pending);
+    assert_eq!(start.expires_at, None);
+    assert_eq!(start.digest, digest(start.launch.token.expose()));
+    assert!(bindings.get("s-5:fleet").is_none());
+    assert!(!bindings.has_digest(&start.digest));
+}
+
+/// DL-194 §9.10: Codex is not in `BRIDGE_VERIFIED`: on the shim host it
+/// stays without tools, and the station logs why.
+#[test]
+fn a_codex_fleet_start_on_the_shim_host_has_no_tools() {
+    let buf = Buf::default();
+    let sub = fleetdeck_core::logging::subscriber(
+        fleetdeck_core::logging::LogFormat::Text,
+        fleetdeck_core::logging::env_filter("info").unwrap(),
+        {
+            let buf = buf.clone();
+            move || buf.clone()
+        },
+        false,
+    );
+    let bindings = with_bridge();
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
+    let session: SessionId = "s-6".into();
+    tracing::subscriber::with_default(sub, || {
+        let tools = coordinator_start::tools_for(
+            &bindings,
+            ProviderKind::Codex,
+            &session,
+            &tools_spec(false),
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(tools, coordinator_start::Tools::None));
+    });
+    assert!(bindings.get("s-6:fleet").is_none());
+    let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+    assert!(log.contains("no session tools: durable host"), "{log}");
+}
+
+#[test]
+fn a_fleet_start_without_a_bridge_has_no_tools() {
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    let session: SessionId = "s-7".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        true,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(tools, coordinator_start::Tools::None));
+    assert!(bindings.get("s-7:fleet").is_none());
+}
+
+/// The direct host keeps the loopback endpoint and its memory entry.
+#[test]
+fn a_fleet_start_on_the_direct_host_gets_the_direct_tools() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-8".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        false,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(tools, coordinator_start::Tools::Direct(_)));
+    assert!(bindings.get("s-8:fleet").is_some());
+}
+
+/// DL-194 §2.4: a grant on the shim host gets a bridge start with the
+/// expiry of the grant for its row.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_grant_on_the_shim_host_gets_a_bridge_start_with_its_expiry() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-9".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(true),
+        true,
+        false,
+    )
+    .unwrap();
+    let coordinator_start::Tools::Bridge(start) = tools else {
+        panic!("expected a bridge start");
+    };
+    assert_eq!(start.binding.binding_id, "s-9:grant-1");
+    assert_eq!(start.binding.grant_id, "grant-1");
+    assert_eq!(start.expires_at, Some(coordinator_spec().expires_at));
+    assert!(
+        start
+            .binding
+            .classes
+            .contains(&crate::coordinator::ToolClass::Own)
+    );
+    assert!(bindings.get("s-9:grant-1").is_none());
+    assert!(!bindings.has_digest(&start.digest));
+}
+
+#[test]
+fn a_grant_on_a_resume_or_with_codex_on_the_shim_host_is_refused() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-10".into();
+    for (shim_host, resumed) in [(false, true), (true, true)] {
+        let err = coordinator_start::tools_for(
+            &bindings,
+            ProviderKind::Claude,
+            &session,
+            &tools_spec(true),
+            shim_host,
+            resumed,
+        )
+        .err()
+        .expect("a refusal");
+        assert_eq!(
+            err,
+            "a coordinator session starts only as a new direct child"
+        );
+    }
+    let err = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Codex,
+        &session,
+        &tools_spec(true),
+        true,
+        false,
+    )
+    .err()
+    .expect("a refusal");
+    assert!(err.ends_with("needs a provider version whose bridge is verified"));
+    assert!(bindings.find(&session, "grant-1").is_none());
+}

@@ -1,0 +1,347 @@
+// DL-141: the needs-you rail answers a request in place or opens its session.
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { OpenRequest } from '../gen';
+import { type Outcome, sessionActions } from '../session/commands';
+import { claudeCaps } from '../testing/capabilities';
+import { card, station } from '../testing/fleet';
+import { recordedRequest } from '../testing/timeline';
+import {
+  NeedsYouRail,
+  railCursor,
+  railErrors,
+  railKey,
+  railKeyOption,
+  railStep,
+} from './NeedsYouRail';
+
+const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
+  request_id: 'r1',
+  node_id: null,
+  request_kind: 'tool',
+  title: 'Run tests',
+  details: 'cargo test',
+  input: null,
+  options: [
+    { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+    { option_id: 'deny', label: 'Deny', kind: 'deny' },
+  ],
+  response: 'rpc_reply',
+  requested_at: 1,
+  ...extra,
+});
+
+const waiting = (open: OpenRequest, caps = claudeCaps()) =>
+  card('s1', 'needs_you', 'station-a', {
+    title: 'Fix login',
+    capabilities: caps,
+    open_requests: [open],
+  });
+
+const rail = (
+  open: OpenRequest,
+  scopes: string[] | null = ['read', 'drive', 'approve'],
+  caps = claudeCaps(),
+  freshness: 'live' | 'stale' = 'live',
+) =>
+  renderToStaticMarkup(
+    <NeedsYouRail
+      sessions={[waiting(open, caps)]}
+      stations={[station()]}
+      variant="side"
+      freshness={freshness}
+      onOpen={() => {}}
+      sessionActions={
+        scopes === null ? undefined : (key) => sessionActions(async () => ({}), key, scopes)
+      }
+    />,
+  );
+
+describe('needs-you rail', () => {
+  test('an answerable request has one button per option: decide first, deny last', () => {
+    const html = rail(request());
+    expect(html).toContain('<h2 class="fd-rail-head"><span class="fd-rail-title">Needs you</span>');
+    expect(html).toMatch(
+      /<button type="button" class="fd-decide" aria-label="Allow: Run tests in Fix login">Allow<span class="fd-kbd">a<\/span><\/button>/,
+    );
+    expect(html).toMatch(
+      /<button type="button" class="fd-danger" aria-label="Deny: Run tests in Fix login">Deny<span class="fd-kbd">d<\/span><\/button>/,
+    );
+    expect(html).not.toContain('Open session');
+    expect(html.match(/aria-label="(Allow|Deny): /g)).toHaveLength(2);
+  });
+
+  test('deny is marked by its kind, not by its place (the same rule as the approval dock)', () => {
+    const html = rail(
+      request({
+        options: [
+          { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+          { option_id: 'deny', label: 'Deny', kind: 'deny' },
+          { option_id: 'amend', label: 'Amend', kind: 'amend' },
+        ],
+      }),
+    );
+    expect(html).toMatch(/<button type="button" class="fd-danger" aria-label="Deny: /);
+    // The last option amends: it is a plain button, not a danger one.
+    expect(html).toMatch(/<button type="button" aria-label="Amend: /);
+    expect(html).not.toMatch(/class="fd-danger" aria-label="Amend: /);
+  });
+
+  test('the first request is selected and the options carry their key hints', () => {
+    const html = rail(
+      request({
+        options: [
+          { option_id: 'a', label: 'Once' },
+          { option_id: 'b', label: 'Always' },
+          { option_id: 'c', label: 'Deny' },
+        ],
+      }),
+    );
+    expect(html).toContain('data-request="r1" data-selected="true"');
+    expect(html).toContain(
+      '<span class="fd-rail-keys"><span class="fd-kbd">[</span><span class="fd-kbd">]</span> Move <span class="fd-kbd">a</span> First <span class="fd-kbd">d</span> Last</span>',
+    );
+    expect(html).toMatch(/Once<span class="fd-kbd">a<\/span>/);
+    expect(html).toMatch(/Always<span class="fd-kbd">2<\/span>/);
+    expect(html).toMatch(/Deny<span class="fd-kbd">d<\/span>/);
+    // The legend names the number key of the middle option.
+    expect(html).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span> Option</span>',
+    );
+  });
+
+  test('the number legend shows only with more than two options, and names the range', () => {
+    expect(rail(request())).not.toContain('data-keys="number"');
+    const four = rail(
+      request({
+        options: ['a', 'b', 'c', 'd'].map((id) => ({ option_id: id, label: id.toUpperCase() })),
+      }),
+    );
+    expect(four).toContain(
+      '<span class="fd-rail-keys" data-keys="number"><span class="fd-kbd">2</span>–<span class="fd-kbd">3</span> Option</span>',
+    );
+    // An unanswerable request has no key hint, so no legend.
+    const open = rail(
+      request({
+        options: ['a', 'b', 'c'].map((id) => ({ option_id: id, label: id })),
+      }),
+      null,
+    );
+    expect(open).not.toContain('fd-rail-keys');
+  });
+
+  test('a single option is hinted with a, and only the first of two requests is selected', () => {
+    const one = rail(request({ options: [{ option_id: 'ok', label: 'Okay' }] }));
+    expect(one).toMatch(/Okay<span class="fd-kbd">a<\/span>/);
+    const two = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[
+          waiting(request({ request_id: 'r1', requested_at: 1 })),
+          card('s2', 'needs_you', 'station-a', {
+            title: 'Other',
+            capabilities: claudeCaps(),
+            open_requests: [request({ request_id: 'r2', requested_at: 2 })],
+          }),
+        ]}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        sessionActions={(key) =>
+          sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
+        }
+      />,
+    );
+    expect(two.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(two).toContain('data-request="r1" data-selected="true"');
+    expect(two).not.toContain('data-request="r2" data-selected');
+  });
+
+  test('the cursor starts on the first answerable request, and a answers it', () => {
+    const permission = request({ request_id: 'r2', requested_at: 2 });
+    const sessions = [
+      card('s1', 'needs_you', 'station-a', {
+        title: 'Ask me',
+        capabilities: claudeCaps(),
+        open_requests: [{ ...recordedRequest('codex-question_rpc'), requested_at: 1 }],
+      }),
+      card('s2', 'needs_you', 'station-a', {
+        title: 'Fix login',
+        capabilities: claudeCaps(),
+        open_requests: [permission],
+      }),
+    ];
+    const html = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={sessions}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        sessionActions={(key) =>
+          sessionActions(async () => ({}), key, ['read', 'drive', 'approve'])
+        }
+      />,
+    );
+    // the question comes first (the oldest) and opens its session; the permission is selected
+    expect(html.indexOf('Open session')).toBeLessThan(html.indexOf('data-request="r2"'));
+    expect(html.match(/data-selected="true"/g)).toHaveLength(1);
+    expect(html).toContain('data-request="r2" data-selected="true"');
+    // the keys work on the cursor: a answers the permission with its first option
+    const cursor = railCursor([false, true], 0);
+    expect(cursor).toBe(1);
+    expect(permission.options[railKeyOption('a', permission.options.length)]?.option_id).toBe(
+      'allow',
+    );
+    expect(permission.options[railKeyOption('d', permission.options.length)]?.option_id).toBe(
+      'deny',
+    );
+  });
+
+  test('[ and ] skip the requests that the keys cannot answer, and stop at the ends', () => {
+    const answerable = [true, false, false, true, false];
+    expect(railStep(answerable, 0, 1)).toBe(3);
+    expect(railStep(answerable, 3, 1)).toBe(3);
+    expect(railStep(answerable, 3, -1)).toBe(0);
+    expect(railStep(answerable, 0, -1)).toBe(0);
+    // a shrunk list or a request that became unanswerable moves the cursor to an answerable one
+    expect(railCursor(answerable, 9)).toBe(3);
+    expect(railCursor(answerable, 1)).toBe(3);
+    expect(railCursor([true, false], 1)).toBe(0);
+    expect(railCursor([false, false], 0)).toBe(-1);
+    expect(railCursor([], 0)).toBe(-1);
+    // a, d and the numbers
+    expect(railKeyOption('a', 1)).toBe(0);
+    expect(railKeyOption('d', 1)).toBe(-1);
+    expect(railKeyOption('d', 3)).toBe(2);
+    expect(railKeyOption('2', 3)).toBe(1);
+    expect(railKeyOption('4', 3)).toBe(-1);
+    expect(railKeyOption('x', 3)).toBe(-1);
+  });
+
+  test('without an answerable request there is no selection and no key hint', () => {
+    const html = rail(request(), ['read', 'drive']);
+    expect(html).not.toContain('data-selected');
+    expect(html).not.toContain('fd-rail-keys');
+    expect(html).not.toContain('fd-kbd');
+  });
+
+  test('a request without the approve scope, the capability or actions opens the session', () => {
+    for (const html of [
+      rail(request(), ['read', 'drive']),
+      rail(request(), null),
+      rail(request(), ['read', 'drive', 'approve'], { ...claudeCaps(), approvals: false }),
+    ]) {
+      expect(html).toContain('aria-label="Answer Run tests in Fix login"');
+      expect(html).toContain('Open session');
+      expect(html).not.toContain('aria-label="Allow: ');
+    }
+  });
+
+  test('while the board is stale an otherwise answerable request opens the session', () => {
+    const html = rail(request(), ['read', 'drive', 'approve'], claudeCaps(), 'stale');
+    expect(html).toContain('aria-label="Answer Run tests in Fix login"');
+    expect(html).toContain('Open session');
+    expect(html).not.toContain('aria-label="Allow: ');
+    expect(html).not.toContain('fd-rail-keys');
+    expect(html).not.toContain('data-selected');
+  });
+
+  test('a question form is answered in the session, not in the rail', () => {
+    const html = rail(recordedRequest('codex-question_rpc'));
+    expect(html).toContain('Open session');
+    expect(html).not.toContain('class="fd-decide"');
+    expect(html).toMatch(/class="fd-q-kind"[^>]*>.*Question</);
+  });
+
+  test('an empty rail keeps only the notification switch on the side, and nothing as a strip', () => {
+    const idle = [card('s1')];
+    const side = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+      />,
+    );
+    expect(side).toContain('class="fd-rail-mini"');
+    expect(side).not.toContain('fd-rail-list');
+    const strip = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="strip"
+        freshness="live"
+        onOpen={() => {}}
+      />,
+    );
+    expect(strip).toBe('');
+    // With the header slot of the phone, the strip variant keeps the switch there too.
+    const phone = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={idle}
+        stations={[station()]}
+        variant="strip"
+        freshness="live"
+        onOpen={() => {}}
+        bellSlot={null}
+      />,
+    );
+    expect(phone).toBe('');
+  });
+
+  test('the where cell shows the branch over the station, and the bell goes to the header slot', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[
+          card('s1', 'needs_you', 'station-a', {
+            title: 'Fix login',
+            branch: 'fix/login',
+            capabilities: claudeCaps(),
+            open_requests: [request()],
+          }),
+        ]}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toMatch(
+      /<span class="fd-q-where"><span class="fd-q-place" title="Branch: fix\/login"><svg[^>]*lucide-git-branch[\s\S]*?<\/svg><span class="fd-q-path">fix\/login<\/span><\/span><span class="fd-q-station">Alpha<\/span><\/span>/,
+    );
+    // nothing waits and the header slot is not mounted yet: no switch in place
+    const idle = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[card('s1')]}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        bellSlot={null}
+      />,
+    );
+    expect(idle).toBe('');
+  });
+});
+
+describe('the rail keys and errors (G4)', () => {
+  const P: Outcome = { ok: true, text: 'Sent. The station has not confirmed it yet.' };
+  const R: Outcome = { ok: false, text: 'Refused: no such request' };
+
+  test('the rail keys a request by station, session and request id', () => {
+    expect(railKey({ station_id: 'a', session_id: 's1' }, 'req-3')).not.toBe(
+      railKey({ station_id: 'a', session_id: 's2' }, 'req-3'),
+    );
+  });
+
+  test('the rail counts a delayed repeat of a refusal', () => {
+    const e0 = {};
+    expect(railErrors(e0, 'k', P)).toBe(e0);
+    const e1 = railErrors(e0, 'k', R);
+    expect(e1['k']?.repeats).toBe(1);
+    expect(railErrors(e1, 'k', P)).toBe(e1);
+    expect(railErrors(e1, 'k', R)['k']?.repeats).toBe(2);
+  });
+});

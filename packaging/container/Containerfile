@@ -1,0 +1,49 @@
+# Fleet Deck station container image (PLAN §12 "Release", Phase 7; DL-400).
+#
+# Build from the repository root (Docker or Podman):
+#   docker build -f packaging/container/Containerfile -t fleetdeck-station .
+# Run (the data volume holds station.toml, the identity key and the database):
+#   docker run -d --name fleetdeck-station -v fleetdeck-data:/data fleetdeck-station
+#
+# The image has no provider CLI. Add `claude` or `codex` in a derived image
+# (FROM fleetdeck-station) and sign them in as the `fleetdeck` user. A
+# container stop ends every shim and agent of the container (like a reboot,
+# ADR-005 §7); only a station restart inside the container keeps them.
+# The image build is an owner step: the static checks are in
+# crates/fleetdeck-cli/tests/packaging.rs.
+
+# 1. The board (the deck embeds web/dist). Version as in .github/workflows/v2.yml.
+FROM docker.io/oven/bun:1.4.2 AS web
+WORKDIR /src
+COPY web/package.json web/bun.lock web/
+RUN bun install --cwd web --frozen-lockfile --ignore-scripts
+COPY web web
+RUN bun run --cwd web build
+
+# 2. The binary. Rust as in the workspace `rust-version`.
+FROM docker.io/library/rust:1.96-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+COPY spikes spikes
+COPY --from=web /src/web/dist web/dist
+RUN cargo build --locked --release -p fleetdeck-cli
+
+# 3. The runtime: a non-root user, git for the workspace service, tini as
+#    PID 1 so that ended shims are reaped.
+FROM docker.io/library/debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 fleetdeck \
+    && mkdir -p /data \
+    && chown fleetdeck:fleetdeck /data \
+    && chmod 0700 /data
+COPY --from=build /src/target/release/fleetdeck /usr/local/bin/fleetdeck
+USER fleetdeck
+WORKDIR /home/fleetdeck
+ENV FLEETDECK_DATA_DIR=/data \
+    FLEETDECK_LOG_FORMAT=json
+VOLUME ["/data"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/fleetdeck"]
+CMD ["station", "serve"]

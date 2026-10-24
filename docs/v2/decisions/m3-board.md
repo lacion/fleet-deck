@@ -1,0 +1,84 @@
+# Decisions of lane C (board), M3
+
+Lane C numbers its decisions DL-300 to DL-399 (parallel lanes, owner change of 2026-10-12). The format is the format of `docs/v2/DECISIONS-LOG.md`.
+
+## DL-300: Fast rounds and parallel lanes (owner decision, 2026-10-12)
+
+- Context: the owner wants a usable M3 by 16:20 CEST on 2026-10-12 and gives feedback from real use.
+- Choice (owner): four goal loops build M3 at the same time, each in its own worktree and branch (lane C: `m3/board`, items 6-6, 6-9, 6-10, 6-7, the rest of 6-8, 6-12). Each item gets one review; its findings go to the "Review follow-ups (after M3)" list in `docs/v2/progress/m3-board.md`. Normal rounds run only `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `bun run --cwd web lint`; the full `make check` runs once at the end, in lane A.
+- Owner review: approved (owner decision, 2026-10-12)
+
+## DL-301: The plan library in the deck (M3 round 1, 6-6)
+
+- Context: PLAN Phase 6 "Plans (capture from Claude ExitPlanMode and Codex plan items), plan library" and §16 "Plan library | Keep; capture from the protocol". The providers already emit `plan.proposed { plan_id, turn_id?, markdown }` (`crates/fleetdeck-providers/src/claude/map.rs`, `codex/map.rs`). The deck keeps the per-session timeline only for the current incarnation, so a plan must have its own durable row. v0 `board/src/components/PlanLibrary.tsx` had the statuses proposed, approved, captured, executed and archived, an "execute" that spawned a session, and "assign via mail".
+- Options: (a) derive the library from the timelines on each request; (b) a deck table `plans`, written in the same transaction as the folded event; (c) a station-side library over the link. (a) loses plans when a station incarnation clears its timeline; (c) adds a link method and loses plans of a removed station.
+- Choice: (b). Deck schema V6 `plans` (key `station/session/plan`, no foreign key to `stations` so that the library survives a station removal; `INSERT OR IGNORE`, so a replay or a new incarnation with the same plan id keeps the first text and the owner's status). The text is bounded to 256 KiB at a character boundary (`fleetdeck_proto::plans::bounded_plan`, flag `truncated`). Statuses: `proposed`, `executed`, `archived` (the v0 `approved` and `captured` came from v0 hook paths that v2 does not have; an approval of a plan is the provider's own permission flow). Routes: `GET /api/plans[?archived=true]` (read) and `POST /api/plans/mark {id, status}` (drive, CSRF, audit `plans.mark`). Board: a "Plans" screen; "Start a session with this plan" opens the spawn form with the plan as the first prompt (the owner chooses the station and the directory; nothing starts by itself).
+- Not done (follow-up): "assign via mail" waits for lane B (6-2 Mail). A plan that a station emitted while the link was down and that the deck receives only as a snapshot (no events) is not in the library.
+- Owner review: pending (executor decision, M3 round 1)
+
+## DL-302: A free port for the Playwright tests of a lane (M3 round 1)
+
+- Context: the lane rules forbid fixed test ports, but `web/playwright.config.ts` serves the board on port 4179.
+- Choice: the config reads `FD_E2E_PORT` and keeps 4179 as the default, so `make` targets and lane A do not change. A lane runs its new specs with a free port: `FD_E2E_PORT=<free port> bunx playwright test e2e/<spec>`.
+- Owner review: pending (executor decision, M3 round 1)
+
+## DL-303: Usage and rate-limit meters (M3 round 1, 6-9)
+
+- Context: PLAN Phase 6 "Usage and rate-limit meters ("unknown" is never shown as zero)" and §11 fleet card "usage". The summary already summed token usage with unknown parts as `None`; the `rate_limits` of `usage.updated` were dropped by the fold, and Codex `account/rateLimits/updated` was an ignored notification.
+- Options: (a) a deck table of the latest windows per station and provider instance; (b) the latest windows per scope in `SessionSummary.rate_limits`, and the board picks the newest per station, provider instance and scope. (a) needs a schema, a route and a delta type; (b) reuses the snapshot and delta of the summary.
+- Choice: (b). `SessionSummary.rate_limits` (`#[serde(default)]`, so an N-1 summary without it reads as "no window", not zero), merged by scope (a sparse update keeps the other scopes), at most 16 scopes. Codex: `account/rateLimits/updated` maps to `usage.updated` with all usage parts unknown and the windows `<limitId>.primary|secondary` (`usedPercent`, `resetsAt` seconds → ms; a missing window is not reported). Board: a "Usage" panel on the fleet screen with the totals of the shown sessions ("unknown" when no session reported a part, "at least N (k sessions unknown)" when some did not) and one meter per window; a window with an unknown percentage shows "use unknown" and no bar.
+- Not done (follow-up): rate limits are per provider account, but the board keys them by station and provider instance (the station does not expose the account id). A rate-limit-only `usage.updated` changes the summary's `updated_at`.
+- Owner review: pending (executor decision, M3 round 1)
+
+## DL-304: Image paste into prompts (M3 round 2, 6-10)
+
+- Context: PLAN Phase 6 "Screenshot/image paste into prompts" and §16 "Shift+Enter, Ctrl+V screenshot paste → composer newline; image paste into prompts". `UserInput` carried text only. Both providers accept images in a user turn: Claude stream-json `image` content blocks with a base64 `source`; Codex app-server `turn/start` / `turn/steer` input items `{"type":"image","url":"data:..."}`.
+- Options: (a) upload the image to the station first (a new file method and storage) and send a path; (b) send the image inline as base64 inside the command.
+- Choice: (b), the smallest change that reaches both providers without new storage. `UserInput.images: Vec<ImageInput { media_type, data }>` with `#[serde(default, skip_serializing_if = "Vec::is_empty")]`, so an input without images keeps the old wire form and an N-1 peer reads it. Limits in `crates/fleetdeck-proto/src/input.rs`: at most 4 images, at most 768 KiB of base64 together (the command goes to the station in one control frame of at most 1 MiB), PNG/JPEG/GIF/WebP only, standard base64. The deck refuses an input above the limits with `400 invalid_input` before it stores or sends anything. The board checks the same limits first, draws a large image again as JPEG (long side 1600 px) when the browser can, and offers an "Add image" file picker for phones next to the paste. The textarea keeps Enter as a newline (Shift+Enter parity); the Send button sends.
+- Not done (follow-up): the recorded Claude/Codex host commands (`HostCmd::Prompt`) keep the text only, so a replay of a recorded scenario has no images; no live smoke test with an image.
+- Owner review: pending (executor decision, M3 round 2)
+
+## DL-305: Needs-you notifications in the browser (M3 round 2, 6-10)
+
+- Context: PLAN Phase 6 "notifications". The v0 board has no push service; v2 has no service worker.
+- Choice: the board shows a browser `Notification` ("Needs you: <session>", body = the request title, tag = `station/session/request`) for each open request that appears while notifications are on. The owner turns them on with "Notify me" in the needs-you rail (the browser permission prompt); the setting stays in this browser (`localStorage` `fleetdeck.notify`). Requests that are open at page load or at the turn-on make no notification, so a reload makes no storm. A click focuses the board and opens the session. A browser without the API or with a denied permission shows a note instead of the button.
+- Not done (follow-up): no Web Push / service worker, so a phone with the board closed gets nothing; no notification for a failed or finished turn.
+- Owner review: pending (executor decision, M3 round 2)
+
+## DL-306: Conflict radar across stations (M3 round 2, 6-7)
+
+- Context: PLAN §16 "Conflict radar | Keep, across stations", §10 `file_touches` (conflict radar input), §6.6 "a normalized origin URL is a heuristic, not an identity. Repos with several remotes or no remote are grouped only by explicit owner choice." v0 (`src/daemon/ledger.ts`) records each edit and reports a rival edit of the same file in 30 minutes.
+- Choice:
+  - The station records the repository of the workspace when it creates a session: `RepoInfo { root, origin }` (`fleetdeck_core::git::repo_of`, no `git` process; `commondir` of a linked worktree is followed). `origin` is the normalized URL (`host/path`, host in lower case, no user, port or `.git`) only when the repository has exactly one remote. It goes into `SessionSummary.repo` and the `session.started` event (optional field, an N-1 peer ignores it).
+  - The deck folds `file.changed` paths and the `files` of `tool.completed` into `file_touches` (schema V7), in the same transaction as the event, with the latest touch per (group, file, station, session). Group: `origin:<origin>` across stations; else `root:<station>:<root>` (one work tree on one station); a file outside the repository is grouped by station with its absolute path. A relative path is relative to the session's `cwd`. Rows older than two windows are deleted.
+  - `GET /api/conflicts` (`read`): every file that two or more sessions touched in the last 30 minutes, newest first, at most 200. The board shows the "Conflict radar" panel on the fleet screen; it loads again when the fleet changes; a session of a conflict opens from the panel.
+- Not done (follow-up): the explicit owner choice to group repositories without one origin (no owner setting yet, so they never group across stations); no mail or in-context warning to the two sessions (v0 whisper); ended sessions still count inside the window.
+- Owner review: pending (executor decision, M3 round 2)
+
+## DL-307: The open part of 6-8 is two review steps (M3 round 3, 6-8)
+
+- Context: the software of 6-8 (file browse, search and read, rename, event feed, checkpoint diffs, `turn.finalized`, fenced revert, board `FilesPanel`, `TurnsPanel` and rename form, with their Rust, web unit and Playwright tests `web/e2e/revert.spec.ts` and `web/e2e/workspace.spec.ts`) was done in M3 rounds 3 to 29 of the single-lane loop. The checklist line kept two open steps: a re-review PASS of `files.v1` after DL-103 and DL-109, and a DESIGN REVIEW of the `rename.v1` contract. Both are adversary reviews that the architect starts. This loop may not start subagents.
+- Options: (a) keep 6-8 open until the reviews happen; (b) mark 6-8 done on its software evidence (the M3 checklist rule: "`[x]` = software evidence present and checked by the executor; review by the architect and the adversary is separate") and record the two reviews as architect steps before the PRE-PR REVIEW.
+- Choice: (b). No code changes in this round for 6-8. The two reviews are listed as architect steps in the lane log and in the 6-8 checklist line.
+- Owner review: pending (executor decision, M3 round 3)
+
+## DL-308: Import of a native CLI session (M3 round 3, 6-12)
+
+- Context: PLAN Phase 6 "Import an existing CLI session as a driven session", §4.1 "Import resumes an existing CLI session id as a driven session", §16 "Adopt / takeover a terminal session | Replaced by 'import session id'". D11: no v0 data import, no terminal observation. The station can already resume an ended session natively (`session.resume`, DL-118: Claude `--resume <session_id>`, Codex `thread/resume`).
+- Options: (a) an optional `import` field on `session.start`; (b) a new command `session.import` behind a new feature `import.v1`.
+- Choice: (b). With (a), an N-1 station that does not know the field ignores it and starts a new, empty conversation without an error. With (b), a peer without `import.v1` never gets the method (`feature_not_negotiated`).
+  - Wire: `SessionCommand::Import { spec: SessionSpec, native_session_id, prompt }`, method `session.import`, drive scope, feature `import.v1` (ADR-004 feature, method and envelope tables updated; deck command route `POST /api/commands/session.import`).
+  - Id check `check_native_session_id` (proto, used by the deck with `400 invalid_session_id` and again by the station with `invalid_command`): 1 to 128 ASCII letters, digits, `-`, `_`, `.`, first character a letter or a digit. The id goes into the provider command line, so an id can never read as a flag.
+  - Station: the same admission as `session.start` (provider instance, workspace inside the allowed roots, free slot, no revert over the worktree). It also refuses an id that a session of the station that has not ended already drives (`invalid_state`). It creates a new session, stores the native id, and queues the native resume effect (`EffectPayload::Resume`, no continuation deadline). The provider continues the conversation; the board shows `session.started { resumed: true }` with the imported id. The new session has the station's offline approval policy and the requested mode (L8: an unknown mode runs as the most restrictive one).
+  - Board: the spawn form has the field "Import CLI session id (optional)". With an id, the button is "Import session" and the form sends `session.import`; the form checks the id with the same rule first.
+- Not done (follow-up): the station does not list the native sessions of a workspace (the owner types the id); the station cannot see if a terminal CLI still runs the same conversation (the form tells the owner to close it first); no capability check before the spawn (both providers report `resume`; an unknown id ends as `start_failed`); the station test uses `fake-claude sim` only.
+- Owner review: pending (executor decision, M3 round 3)
+
+## DL-309: `make test-lint` for the round checks (M3 round 4, review)
+
+- Context: the review of round 3 could not run `cargo fmt`, `cargo clippy` and `bun run --cwd web lint` directly; its guard allows only read-only commands, `cargo test`, `make check`, `make test*` and `make perf`.
+- Options: (a) tell the reviewer to run `make check` (too slow for a normal round, and the goal reserves it for the end); (b) a new `make test-lint` target with exactly the three round checks.
+- Choice: (b). `test-lint` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` (with a 30-minute timeout), the offline `bun install` of `make test-web` and `bun run --cwd web lint`. It is offline, like `make check`.
+- Reason: the reviewer can rerun the round checks without a new permission rule, and the target matches the commands of `tools/check.sh`.
+- Owner review: pending (Makefile row; on a merge conflict with another lane's target keep one `test-lint` with the same three checks).
+

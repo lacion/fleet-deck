@@ -1,0 +1,336 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { SettingsProvider, type SettingsEnv } from '../settings/context';
+import { card, station } from '../testing/fleet';
+import { archived as archivedSet } from '../ui/archive';
+import type { Route } from './routes';
+import { Sidebar } from './Sidebar';
+
+const store = (items: Record<string, string>) => {
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k: string) => items[k] ?? null },
+  });
+};
+
+afterEach(() => {
+  Reflect.deleteProperty(globalThis, 'localStorage');
+});
+
+const chrome = {
+  label: 'Connected',
+  freshness: 'live' as const,
+  onLogout: () => {},
+  notices: [],
+};
+
+const render = (
+  route: Route = { name: 'fleet' },
+  extra: { terminalCount?: number; chrome?: typeof chrome & { addDevice?: () => never } } = {},
+  sessions = [card('s1')],
+) =>
+  renderToStaticMarkup(
+    <Sidebar
+      sessions={sessions}
+      stations={[station()]}
+      route={route}
+      terminalCount={extra.terminalCount ?? 0}
+      chrome={extra.chrome ?? chrome}
+      onNavigate={() => {}}
+      onOpenTerminals={() => {}}
+    />,
+  );
+
+const labels = (html: string, from: string, to: string): string[] => {
+  const part = html.slice(html.indexOf(from), html.indexOf(to));
+  return [...part.matchAll(/<a href="#\/[^"]*"[^>]*>(?:<svg.*?<\/svg>)?([A-Za-z]+)/g)].map(
+    (m) => m[1] ?? '',
+  );
+};
+
+describe('the sidebar navigation (S1)', () => {
+  test('the links come before the session list, the footer after it', () => {
+    const html = render();
+    const nav = html.indexOf('aria-label="Board pages"');
+    const list = html.indexOf('class="fd-sidebar-list"');
+    const foot = html.indexOf('class="fd-sidebar-foot"');
+    expect(nav).toBeGreaterThan(html.indexOf('class="fd-sidebar-top"'));
+    expect(nav).toBeLessThan(list);
+    expect(list).toBeLessThan(foot);
+    expect(html).not.toContain('fd-sidebar-bottom');
+  });
+
+  test('four main links, then the More fold with the other pages', () => {
+    const html = render({ name: 'fleet' }, { terminalCount: 2 });
+    const main = labels(html, 'aria-label="Board pages"', '<details class="fd-sidebar-more"');
+    expect(main).toEqual(['Fleet', 'Watch', 'Activity', 'Stations']);
+    const more = html.slice(
+      html.indexOf('<details class="fd-sidebar-more"'),
+      html.indexOf('</nav>'),
+    );
+    expect(more).toContain('<summary><span>More</span>');
+    expect(labels(more, '<summary>', '</details>')).toEqual([
+      'Plans',
+      'Automations',
+      'Artifacts',
+      'Files',
+    ]);
+    expect(more).toContain('Terminals');
+    expect(more).not.toContain('Settings');
+  });
+
+  test('the More fold is closed on a main page and opens for a page inside it', () => {
+    expect(render({ name: 'fleet' })).toContain('<details class="fd-sidebar-more">');
+    const files = render({ name: 'files' });
+    expect(files).toContain('<details class="fd-sidebar-more" open="">');
+    expect(files).toContain('href="#/files" aria-current="page"');
+    expect(render({ name: 'plans' })).toContain('<details class="fd-sidebar-more" open="">');
+  });
+
+  test('the browser keeps the last state of the More fold', () => {
+    store({ 'fd-sidebar-more': '1' });
+    expect(render({ name: 'fleet' })).toContain('<details class="fd-sidebar-more" open="">');
+    store({ 'fd-sidebar-more': '0' });
+    expect(render({ name: 'fleet' })).toContain('<details class="fd-sidebar-more">');
+    // Blocked storage: the fold is closed.
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('blocked');
+      },
+    });
+    expect(render({ name: 'fleet' })).toContain('<details class="fd-sidebar-more">');
+  });
+
+  test('the footer has the preferences, and the Account menu has the switches and actions', () => {
+    const html = render(
+      { name: 'fleet' },
+      { chrome: { ...chrome, addDevice: (() => {}) as never } },
+    );
+    const foot = html.slice(html.indexOf('class="fd-sidebar-foot"'));
+    expect(foot.indexOf('fd-sidebar-prefs')).toBeLessThan(foot.indexOf('fd-sidebar-account'));
+    const menu = foot.slice(foot.indexOf('<details class="fd-menu"'));
+    expect(menu).toContain('<summary class="fd-iconbtn" aria-label="Account">');
+    expect(menu).toContain('Signed in as');
+    expect(menu).toContain('Compact cards');
+    expect(menu).toContain('Reduce motion');
+    expect(menu).toContain('Add a device');
+    expect(menu).toContain('Log out');
+    // Outside the menu, the footer has neither action.
+    expect(foot.slice(0, foot.indexOf('<details class="fd-menu"'))).not.toContain('Log out');
+    // Without an add-device provider the menu has Log out only.
+    const plain = render();
+    expect(plain).toContain('Log out');
+    expect(plain).not.toContain('Add a device');
+  });
+
+  test('a session row has no middle dot between the model, the branch and the folder', () => {
+    const html = render({ name: 'fleet' }, {}, [
+      card('b1', 'working', 'station-a', { branch: 'feat/x', cwd: '/work/app' }),
+      card('f1', 'working', 'station-a', { branch: null, cwd: '/work/app' }),
+    ]);
+    const metas = [...html.matchAll(/<span class="fd-srow-meta">(.*?)<\/a>/g)].map((m) => m[1]);
+    expect(metas.length).toBe(2);
+    for (const meta of metas) {
+      expect(meta).not.toContain('·');
+      expect(meta).toContain('<span class="fd-srow-model">');
+    }
+    expect(metas[0]).toContain('feat/x');
+    expect(metas[1]).toContain('app');
+  });
+  test('a phone row: line 2 is the focus or the model and branch, with no callsign', () => {
+    const list = (sessions: ReturnType<typeof card>[]) =>
+      renderToStaticMarkup(
+        <Sidebar
+          sessions={sessions}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+          variant="list"
+        />,
+      );
+    const html = list([
+      card('c1', 'working', 'station-a', { callsign: 'otter-n1rr', branch: 'feat/x' }),
+      card('c2', 'working', 'station-a', {
+        callsign: 'heron-k2',
+        ...({ focus: 'Fixing the shim' } as object),
+      }),
+      card('c3', 'working', 'station-a', { callsign: null }),
+    ]);
+    const lines = [...html.matchAll(/<span class="fd-srow-line">(.*?)<\/a>/g)].map((m) => m[1]);
+    expect(lines.length).toBe(3);
+    // The Sessions tab is the dense list of concept B: the callsign stays on the Fleet strips.
+    expect(html).not.toContain('fd-callsign');
+    expect(lines.some((l) => l?.includes('feat/x'))).toBe(true);
+    expect(
+      lines.some((l) => l?.startsWith('<span class="fd-focus" title="Fixing the shim">')),
+    ).toBe(true);
+    // The desktop sidebar keeps its one-line rows: no callsign line.
+    expect(
+      render({ name: 'fleet' }, {}, [
+        card('c1', 'working', 'station-a', { callsign: 'otter-n1rr' }),
+      ]),
+    ).not.toContain('fd-srow-line');
+  });
+  test('the Fleet link names its needs-you count', () => {
+    const one = render({ name: 'fleet' }, {}, [card('n1', 'needs_you')]);
+    expect(one).toContain(
+      '<a href="#/fleet" aria-label="Fleet, 1 needs you" aria-current="page" class="fd-selbar">',
+    );
+    expect(one).toContain(
+      'Fleet<span class="fd-count" data-tone="act" aria-hidden="true">1</span>',
+    );
+    const two = render({ name: 'fleet' }, {}, [card('n1', 'needs_you'), card('n2', 'needs_you')]);
+    expect(two).toContain('aria-label="Fleet, 2 need you"');
+    // No count: the text "Fleet" is the name.
+    expect(render()).toContain('<a href="#/fleet" aria-current="page" class="fd-selbar">');
+  });
+
+  test('a station group shows its count right after the name, then the reach dot', () => {
+    const html = render();
+    const title = html.slice(html.indexOf('<section class="fd-sgroup" data-station="station-a"'));
+    expect(title).toMatch(
+      /<span class="fd-sgroup-name fd-wide">Alpha<\/span><span class="fd-count"[^>]*>1<\/span><span class="fd-rdot"/,
+    );
+  });
+
+  test('the footer order is Settings, the preferences, then the account (§4.2 item 5)', () => {
+    const html = renderToStaticMarkup(
+      <SettingsProvider env={{} as SettingsEnv}>
+        <Sidebar
+          sessions={[card('s1')]}
+          stations={[station()]}
+          route={{ name: 'fleet' }}
+          terminalCount={0}
+          chrome={chrome}
+          onNavigate={() => {}}
+          onOpenTerminals={() => {}}
+        />
+      </SettingsProvider>,
+    );
+    const foot = html.slice(html.indexOf('class="fd-sidebar-foot"'));
+    const settings = foot.indexOf('aria-label="Settings"');
+    expect(settings).toBeGreaterThan(-1);
+    expect(settings).toBeLessThan(foot.indexOf('fd-sidebar-prefs'));
+    expect(foot.indexOf('fd-sidebar-prefs')).toBeLessThan(foot.indexOf('fd-sidebar-account'));
+  });
+
+  test('the Stations link has no total; it names the offline stations only', () => {
+    const html = render();
+    const link = html.slice(
+      html.indexOf('href="#/stations"'),
+      html.indexOf('</a>', html.indexOf('href="#/stations"')),
+    );
+    expect(link).not.toContain('fd-count');
+    expect(link).not.toContain('offline');
+    const down = renderToStaticMarkup(
+      <Sidebar
+        sessions={[card('s1')]}
+        stations={[station(), station('station-b', { reachable: false })]}
+        route={{ name: 'fleet' }}
+        terminalCount={0}
+        chrome={chrome}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(down).toContain('Stations<span class="fd-badge" data-tone="hazard">1 offline</span>');
+  });
+
+  test('a station without a session has no group; an ended-only group shows no 0 count', () => {
+    const html = renderToStaticMarkup(
+      <Sidebar
+        sessions={[card('e1', 'ended', 'station-a')]}
+        stations={[station(), station('station-b')]}
+        route={{ name: 'fleet' }}
+        terminalCount={0}
+        chrome={chrome}
+        onNavigate={() => {}}
+        onOpenTerminals={() => {}}
+      />,
+    );
+    expect(html).not.toContain('data-station="station-b"');
+    const alpha = html.slice(html.indexOf('data-station="station-a"'));
+    const title = alpha.slice(0, alpha.indexOf('</h3>'));
+    expect(title).not.toContain('fd-count');
+    expect(title).toContain('<span class="fd-vh">, 1 session on Alpha</span>');
+    expect(alpha).toContain('Ended <span class="fd-count">1</span>');
+  });
+
+  test('the Ended fold opens while it holds the open session', () => {
+    const sessions = [card('w1', 'working'), card('e1', 'ended')];
+    const closed = render({ name: 'fleet' }, {}, sessions);
+    expect(closed).toContain('<details class="fd-sended">');
+    const open = render(
+      { name: 'session', station: 'station-a', session: 'e1', tab: 'chat' },
+      {},
+      sessions,
+    );
+    expect(open).toContain('<details class="fd-sended" open="">');
+    expect(open).toMatch(
+      /<a href="#\/s\/station-a\/e1[^"]*" class="fd-srow fd-selbar" data-status="ended" aria-current="page">/,
+    );
+  });
+
+  test('Archived is a disclosure row like Ended: chevron, name and count pill', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: { getItem: () => null, setItem: () => {} },
+    });
+    archivedSet.add(['station-a/e1', 'station-a/e2']);
+    try {
+      const html = render({ name: 'fleet' }, {}, [
+        card('w1', 'working'),
+        card('e1', 'ended'),
+        card('e2', 'lost'),
+      ]);
+      const row = html.slice(html.indexOf('data-group="archived"'));
+      expect(row).toContain(
+        '<button type="button" class="fd-sidebar-archived" aria-expanded="false">',
+      );
+      expect(row).toContain('<span class="fd-sidebar-chev">');
+      expect(row).toContain('Archived <span class="fd-count">2</span>');
+      // No icon between the chevron and the name: the label starts where "Ended" starts.
+      const button = row.slice(0, row.indexOf('</button>'));
+      expect(button.match(/<svg/g)?.length).toBe(1);
+      expect(html).not.toContain('Archived (');
+      // The fold opens while it holds the open session.
+      const open = render(
+        { name: 'session', station: 'station-a', session: 'e1', tab: 'chat' },
+        {},
+        [card('w1', 'working'), card('e1', 'ended'), card('e2', 'lost')],
+      );
+      expect(open).toContain('class="fd-sidebar-archived" aria-expanded="true"');
+      expect(open).toContain('data-status="ended" aria-current="page"');
+    } finally {
+      archivedSet.remove(['station-a/e1', 'station-a/e2']);
+    }
+  });
+
+  test('the phone list orders a station by last activity; the desktop keeps the status order', () => {
+    const sessions = [
+      card('idle-new', 'idle', 'station-a', { updated_at: 9 }),
+      card('work-old', 'working', 'station-a', { updated_at: 1 }),
+    ];
+    const order = (variant: 'full' | 'list') =>
+      [
+        ...renderToStaticMarkup(
+          <Sidebar
+            sessions={sessions}
+            stations={[station()]}
+            route={{ name: 'fleet' }}
+            variant={variant}
+            terminalCount={0}
+            chrome={chrome}
+            onNavigate={() => {}}
+            onOpenTerminals={() => {}}
+          />,
+        ).matchAll(/href="#\/s\/station-a\/([a-z-]+)/g),
+      ].map((m) => m[1]);
+    expect(order('list')).toEqual(['idle-new', 'work-old']);
+    expect(order('full')).toEqual(['work-old', 'idle-new']);
+  });
+});

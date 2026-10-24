@@ -1,0 +1,101 @@
+/* B15 MCP Apps (design docs/v2/design/mcp-apps.md §4.8): the app row under a tool row of the chat,
+   the frame, the open-calls strip and the dialog bodies. Tokens only (DESIGN-SYSTEM §2). */
+
+.fd-app-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-1) 0 var(--sp-3);
+  min-width: 0;
+}
+
+/* The caption: "App from {server}", the tool in mono, the menu at the end. */
+.fd-app-cap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-app-tool {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--dim);
+}
+
+.fd-app-frame-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* The frame has no edge and sits on the page; `data-border` (prefersBorder) puts it on --raised. */
+.fd-app-frame {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  max-height: 800px;
+  border: 0;
+  background: var(--bg);
+  color-scheme: normal;
+}
+
+.fd-app-frame[data-border="true"] {
+  background: var(--raised);
+  border-radius: var(--r-card);
+}
+
+.fd-app-note {
+  color: var(--faint);
+}
+
+.fd-app-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* The open-calls strip: one line per call; an uncertain call is a notice row with its button. */
+.fd-app-calls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+
+.fd-app-call {
+  color: var(--faint);
+}
+
+/* The dialog bodies: the arguments scroll after 20 lines, the quote and the URL wrap. */
+.fd-app-args {
+  max-height: calc(20 * 1.5em);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fd-app-quote {
+  margin: 0;
+  padding-inline-start: var(--sp-3);
+  border-inline-start: 3px solid var(--border);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: calc(20 * 1.5em);
+  overflow: auto;
+}
+
+.fd-app-url {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  overflow-wrap: anywhere;
+}

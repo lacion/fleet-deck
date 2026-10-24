@@ -1,0 +1,28 @@
+# Fleet Deck station as a systemd user service (PLAN Phase 7, DL-400).
+# Install: see packaging/README.md. Runs as the owner's OS user, so the
+# provider CLIs use the owner's login (PLAN §6.8 caution: run a dedicated OS
+# user on a shared machine).
+[Unit]
+Description=Fleet Deck station
+Documentation=https://github.com/lacion/fleet-deck/blob/v2/packaging/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/fleetdeck station serve
+Environment=FLEETDECK_LOG_FORMAT=json
+# SIGTERM to the station only: the station detaches from its provider shims,
+# and the shims and agents keep running through a restart or an upgrade
+# (ADR-005 §7 "Station graceful stop"). The default control-group mode would
+# kill every shim and agent of the unit.
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

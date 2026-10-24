@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "id": "169ddce6-5a2c-4e4f-8d0e-4951361be56a",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Bash",
+        "status": "ok",
+        "summary": "<command 1>"
+      }
+    },
+    {
+      "id": "0523a10e-16ec-4203-88f6-049a923a64bc",
+      "kind": "assistant",
+      "text": "<text 42>",
+      "tool": null
+    },
+    {
+      "id": "66af0fed-7c02-4dcd-892c-ba780cdf3a93",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Agent",
+        "status": "ok",
+        "summary": ""
+      }
+    },
+    {
+      "id": "1cac23c5-23aa-4813-bece-94e0bfae301e",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Read",
+        "status": "unknown",
+        "summary": "<path 9>"
+      }
+    }
+  ],
+  "state": {
+    "kind": "complete"
+  }
+}

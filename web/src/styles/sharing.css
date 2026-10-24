@@ -1,0 +1,352 @@
+/* R11 (DL-166): the shared fleet ("Flight Deck" v3, DESIGN-SYSTEM.md §4.7): the share dialog, the
+   Shares and Spaces pages, the join page, the member banner, the avatars, the mob strip and the
+   side chat. Primitives come from base.css and page.css, tokens from tokens.css. */
+
+/* ---------- the share dialog ---------- */
+
+/* The frame (§4.7: --raised, --r-panel, --shadow-pop, 20px, a 15px/640 title) is the shared
+   .fd-dialog of shell.css. */
+.fd-overlay .fd-dialog.fd-share {
+  gap: var(--sp-4);
+  width: min(520px, 100%);
+}
+.fd-share-form {
+  display: grid;
+  gap: var(--sp-4);
+}
+/* A label over its select: 12px --dim, 6px above the control. The weight of the legend of the
+   roles (the `.fd-label` look of a legend, base.css): one look for one kind of field label. */
+.fd-share-form > label:not(.fd-share-role),
+.fd-share-target {
+  display: grid;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.fd-share-form select,
+.fd-share-target select {
+  width: 100%;
+  min-width: 0;
+}
+/* Expiry and uses side by side on a wide dialog. */
+@media (min-width: 480px) {
+  .fd-share-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fd-share-form > :is(fieldset, .fd-share-role, .fd-note, button) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* The roles: no box around the group. Each choice is a row; the checked radio and a 600 name mark
+   the picked one. The row reaches 10px into the dialog padding, as a menu row does: its hover
+   fill bleeds out, and the radio sits on the left edge of the legend, the selects and the
+   history checkbox (one left edge for the dialog). */
+.fd-share-roles {
+  display: grid;
+  gap: 2px;
+}
+.fd-share-roles .fd-share-role {
+  min-height: 36px;
+  margin-inline: -10px;
+  padding: 8px 10px;
+  border-radius: var(--r-card);
+  transition: background-color var(--t-fast);
+}
+@media (pointer: coarse) {
+  .fd-share-roles .fd-share-role {
+    min-height: var(--tap-min);
+  }
+}
+@media (hover: hover) {
+  .fd-share-roles .fd-share-role:hover {
+    background: var(--badge-bg);
+  }
+}
+.fd-share-form .fd-share-role {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.fd-share-form .fd-share-role > input {
+  flex: none;
+  width: 16px;
+  min-width: 16px;
+  margin-top: 1px;
+}
+.fd-share-role strong {
+  font-weight: 500;
+}
+/* The picked role: its checked radio carries the state (base.css; Highlight in forced colors) and
+   its name is 600. No box: a white box on the white light dialog read as an empty field. */
+.fd-share-roles .fd-share-role:has(> input:checked) strong {
+  font-weight: 600;
+}
+.fd-share-role .fd-note {
+  font-size: var(--fs-meta);
+}
+/* A choice that wraps leaves no orphan word on its last line ("…ran a session"). */
+.fd-share-role > span {
+  text-wrap: pretty;
+}
+.fd-share-form > .fd-note {
+  margin-top: calc(var(--sp-3) * -1);
+  padding-left: 26px;
+  color: var(--faint);
+}
+.fd-share-form > button[type="submit"] {
+  justify-self: end;
+}
+.fd-overlay .fd-dialog.fd-share > .fd-devlink-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+.fd-dialog.fd-share .fd-share-error {
+  margin: 0;
+}
+
+/* The new link: the URL with Copy, then the QR code. */
+.fd-dialog.fd-share .fd-share-result {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-dialog.fd-share .fd-devlink-qr {
+  width: 176px;
+  justify-self: start;
+}
+[data-theme="light"] .fd-dialog.fd-share .fd-devlink-qr {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* ---------- Shares and Spaces (tables of the page frame, DL-171) ---------- */
+
+/* The inline confirm of a row: the question, then the buttons. */
+.fd-share-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1) var(--sp-2);
+  max-width: 360px;
+  white-space: normal;
+  text-align: left;
+}
+.fd-share-confirm > span {
+  flex: 1 1 100%;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-mob-requests,
+.fd-space-sessions {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-space-sessions {
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+.fd-space-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-space-add label {
+  display: block;
+}
+.fd-space-new {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+/* ---------- the member banner and the viewer note ---------- */
+
+/* A slim info row: --surface with a 3px blue holder at the left (§4.7 notices). */
+.fd-member-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 36px;
+  padding: 4px var(--sp-2) 4px var(--sp-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  box-shadow: inset 3px 0 0 var(--focus);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.fd-member-banner-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.fd-viewer-note {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+
+/* ---------- presence ---------- */
+
+/* §4.2: a 24px circle with the initials; the stack overlaps by 6px. */
+.fd-avatars {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The "+N" disc of the stack: the look of the .fd-avatar primitive (base.css), in --dim. */
+.fd-avatar-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-pill);
+  background: var(--badge-bg);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  line-height: 1;
+}
+/* The stack overlaps by 6px; a 2px --surface ring parts two discs (the primitive keeps its
+   --btn-edge ring inside). */
+.fd-avatars > .fd-avatar,
+.fd-avatars > .fd-avatar-more {
+  margin-left: -6px;
+  box-shadow:
+    inset 0 0 0 1px var(--btn-edge),
+    0 0 0 2px var(--surface);
+}
+.fd-avatars > :first-child {
+  margin-left: 0;
+}
+
+/* ---------- mob steering ---------- */
+
+/* A strip over the composer: --surface, a 3px holder (green while you drive). */
+.fd-mob {
+  display: grid;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2) 6px 15px;
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-card);
+  box-shadow: inset 3px 0 0 var(--faint-decor);
+  font-size: var(--fs-body);
+}
+.fd-mob[data-driving="true"] {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.fd-mob-line,
+.fd-mob-requests li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--ctl-h);
+}
+.fd-mob-text {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-weight: 500;
+}
+.fd-mob-requests li > span {
+  flex: 1 1 140px;
+  min-width: 0;
+  color: var(--dim);
+}
+.fd-mob > .fd-note {
+  margin: 0;
+}
+
+/* ---------- the side chat ---------- */
+
+/* The chat between people: their messages at the left on --surface, yours at the right on
+   --raised (like the user bubble of the session chat). Times are words, not mono. */
+.fd-sidechat {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
+}
+.fd-sidechat > .fd-note,
+.fd-sidechat > .fd-empty {
+  margin: 0;
+  font-size: var(--fs-meta);
+}
+.fd-sidechat-log {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-sidechat-msg {
+  display: grid;
+  gap: 2px;
+  justify-self: start;
+  max-width: 85%;
+  padding: 6px 10px 8px;
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-card);
+}
+.fd-sidechat-msg[data-own="true"] {
+  justify-self: end;
+  background: var(--raised);
+  box-shadow: var(--shadow-lift);
+}
+.fd-sidechat-meta {
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+}
+.fd-sidechat-meta strong {
+  color: var(--dim);
+  font-weight: 600;
+}
+.fd-sidechat-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--fs-chat);
+  line-height: 1.5;
+}
+.fd-sidechat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--sp-2);
+}
+.fd-sidechat-form textarea {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+}
+.fd-sidechat-form button {
+  justify-self: end;
+}
+
+/* ---------- the link in a page description ---------- */
+
+/* On touch, the Spaces link keeps a tall tap area without stretching the line of the sentence. */
+@media (pointer: coarse) {
+  .fd-page-desc a.fd-tap {
+    display: inline;
+    min-height: 0;
+    padding-block: 10px;
+  }
+}

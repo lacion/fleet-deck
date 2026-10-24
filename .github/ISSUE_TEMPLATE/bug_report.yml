@@ -6,17 +6,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to file a bug report. The more detail you
-        give us — especially exact versions and a daemon log excerpt — the
-        faster we can reproduce and fix it.
+        Thanks for taking the time to file a bug report. Exact versions, the
+        `fleetdeck doctor` output and a log excerpt help us reproduce it.
 
         Before you start: please search existing issues to avoid duplicates.
+        Never report a vulnerability here: use the security policy.
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
       description: A clear and concise description of the bug. What did you see?
-      placeholder: The board stopped updating after a session was killed...
+      placeholder: The board showed the session as running after the agent stopped...
     validations:
       required: true
   - type: textarea
@@ -24,7 +24,6 @@ body:
     attributes:
       label: What did you expect?
       description: What did you think would happen instead?
-      placeholder: The pane should have flipped to a dead state within a second or two.
     validations:
       required: false
   - type: textarea
@@ -33,65 +32,66 @@ body:
       label: Steps to reproduce
       description: How can we make this happen ourselves? Numbered steps are ideal.
       placeholder: |
-        1. Start the daemon with `...`
-        2. Spawn a session in `~/projects/foo`
-        3. Kill the tmux pane
-        4. Watch the board footer
+        1. Run `fleetdeck up`
+        2. Start a Claude session in `~/projects/foo`
+        3. Stop the station
+        4. Look at the session card
     validations:
       required: false
   - type: input
     id: fleetdeck-version
     attributes:
       label: Fleet Deck version
-      description: From `claude plugin list`, or read it off the board footer.
-      placeholder: 0.5.0
+      description: From `fleetdeck --version`.
     validations:
-      required: false
-  - type: input
-    id: claude-code-version
+      required: true
+  - type: dropdown
+    id: setup
     attributes:
-      label: Claude Code version
-      description: From `claude --version`. Compare it with this release's `compatibility.json`; unsupported versions leave Claude usable and Fleet Deck inactive.
-      placeholder: 2.1.234
+      label: Setup
+      description: How does Fleet Deck run?
+      options:
+        - "fleetdeck up (deck and station on one machine)"
+        - Deck and stations on different machines
+        - As a service (fleetdeck service install)
     validations:
       required: true
   - type: dropdown
     id: os
     attributes:
       label: OS
-      description: Which operating system are you running Fleet Deck on?
+      description: The operating system of the machine with the problem.
       options:
         - Linux
         - WSL2
         - macOS
-        - Windows (native — untested)
     validations:
       required: true
   - type: input
-    id: node-version
+    id: provider-versions
     attributes:
-      label: Node version
-      description: From `node --version`.
-      placeholder: v22.11.0
-    validations:
-      required: false
-  - type: input
-    id: tmux-version
-    attributes:
-      label: tmux version
-      description: From `tmux -V`, or "none" if you do not use tmux.
-      placeholder: tmux 3.4
+      label: Provider CLI versions
+      description: From `claude --version` and `codex --version`.
+      placeholder: Claude Code 2.1.300, codex-cli 0.162.1
     validations:
       required: false
   - type: textarea
-    id: daemon-log
+    id: doctor
     attributes:
-      label: Daemon log excerpt
+      label: fleetdeck doctor
+      description: The output of `fleetdeck doctor`. It changes nothing.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
       description: >
-        Relevant lines from `$FLEETDECK_HOME/fleetd.log` (default
-        `~/.fleetdeck/fleetd.log`). The auth token is never logged, but your
-        prompts and session titles may appear — redact anything sensitive
-        before pasting.
+        Service: `journalctl --user -u fleetdeck-up.service` (Linux, WSL) or
+        `~/Library/Logs/fleetdeck/up.log` (macOS). Else the standard error of
+        `fleetdeck up`. Secrets are never logged, but prompts, paths and session
+        titles can be: redact anything sensitive before you paste.
       render: shell
     validations:
       required: false

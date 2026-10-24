@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Deck · Fleet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+const t = new URLSearchParams(location.search).get('theme');
+if (t === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="fleet.html"><span class="logo">FD</span><b>Fleet Deck</b></a>
+  <nav class="nav" aria-label="Main">
+    <a href="fleet.html" aria-current="page">Fleet</a>
+    <a href="#">Watch</a>
+    <a href="#">Activity</a>
+    <a href="#">Stations</a>
+    <a href="#">More <i data-lucide="chevron-down"></i></a>
+  </nav>
+  <div class="tb-right">
+    <div class="search"><i data-lucide="search"></i><span>Search sessions</span><kbd class="kbd">⌘K</kbd></div>
+    <button class="btn btn-icon btn-ghost" aria-label="Switch theme"><i data-lucide="sun-moon"></i></button>
+    <button class="btn btn-ink"><i data-lucide="plus"></i>New session <kbd class="kbd">N</kbd></button>
+    <span class="live">Live</span>
+    <span class="avatar" title="Account">LM</span>
+  </div>
+</header>
+
+<main class="fleet">
+
+  <section class="hero" aria-label="Needs you">
+    <div class="hero-title">
+      <h1 class="hero-h">2 sessions need you.</h1>
+      <span class="hint"><kbd class="kbd plain">[</kbd><kbd class="kbd plain">]</kbd> move between requests</span>
+    </div>
+
+    <article class="req st-lighting">
+      <span class="tab"></span>
+      <div class="req-top">
+        <span class="callsign">otter-n1rr</span>
+        <span class="chip"><i class="sdot"></i>Lighting</span>
+        <span class="spacer"></span>
+        <span class="kind">Permission</span>
+        <span class="req-age"><i data-lucide="clock"></i>2 min</span>
+      </div>
+      <div class="cmd"><i data-lucide="terminal"></i><code><b>Bash</b> cargo nextest run -p fleetdeck-station -E 'test(shim)'</code></div>
+      <div class="req-actions">
+        <button class="btn btn-sun">Allow <kbd class="kbd">a</kbd></button>
+        <button class="btn btn-deny">Deny <kbd class="kbd">d</kbd></button>
+      </div>
+    </article>
+
+    <article class="req st-dev1">
+      <span class="tab"></span>
+      <div class="req-top">
+        <span class="callsign">kite-x81d</span>
+        <span class="chip"><i class="sdot"></i>dev1</span>
+        <span class="spacer"></span>
+        <span class="kind">Question</span>
+        <span class="req-age"><i data-lucide="clock"></i>6 min</span>
+      </div>
+      <div class="cmd q"><span>Use the test key or the live key for the webhook secret?</span></div>
+      <div class="req-actions">
+        <button class="btn">Test key</button>
+        <button class="btn">Live key</button>
+      </div>
+    </article>
+
+    <aside class="hero-side" aria-label="Usage and conflict radar">
+      <div class="usage">
+        <div class="gauges">
+          <div class="gauge">
+            <div class="ring"><svg viewBox="0 0 40 40"><circle class="trk" cx="20" cy="20" r="17"/><circle class="arc" cx="20" cy="20" r="17" stroke-dasharray="66.2 106.8"/></svg><b>62%</b></div>
+            <div><div class="g-l">Claude · 5 h</div><div class="g-s">resets in 1 h 48 min</div></div>
+          </div>
+          <div class="gauge">
+            <div class="ring"><svg viewBox="0 0 40 40"><circle class="trk" cx="20" cy="20" r="17"/><circle class="arc" cx="20" cy="20" r="17" stroke-dasharray="33.1 106.8"/></svg><b>31%</b></div>
+            <div><div class="g-l">Claude · week</div><div class="g-s">resets Mon</div></div>
+          </div>
+          <div class="gauge">
+            <div class="ring"><svg viewBox="0 0 40 40"><circle class="trk" cx="20" cy="20" r="17"/><circle class="arc" cx="20" cy="20" r="17" stroke-dasharray="19.2 106.8"/></svg><b>18%</b></div>
+            <div><div class="g-l">Codex · 5 h</div><div class="g-s">5-hour window</div></div>
+          </div>
+        </div>
+        <div class="totals"><span>Today</span><span><b>4.2 M</b> in · <b>610 k</b> out</span><b>$38.40</b></div>
+      </div>
+      <a class="radar" href="#"><i data-lucide="triangle-alert"></i><span class="t"><b>Conflict radar</b><span class="s"><code>tokens.css</code> changed by falcon-vf9n and heron-mc2q</span></span><i data-lucide="chevron-right"></i></a>
+    </aside>
+  </section>
+
+  <section class="lanes" aria-label="Sessions by station">
+
+    <div class="lane st-lighting">
+      <div class="lane-head">
+        <div class="lh1"><i class="sdot"></i><h2>Lighting</h2><span class="plat">Linux · x86_64</span><span class="cap">3 of 12<span class="bar"><i style="width:25%"></i></span></span></div>
+        <div class="lh2"><span class="on">Online</span><span>Claude 2.1.306</span><span>Codex 0.163.0</span></div>
+      </div>
+
+      <article class="ticket needs">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">otter-n1rr</span><span class="t-age">2 min</span><span class="status needs">Needs you</span></div>
+        <h3 class="t-title">Fix flaky shim test</h3>
+        <div class="t-now warn"><i data-lucide="triangle-alert"></i><b>Bash</b><span class="target">cargo nextest run -p fleetdeck-station -E 'test(shim)'</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>fleet-sync</span><span class="chip">Sonnet 5.5</span><span class="diffstat" title="1 file"><span class="add">+9</span><span class="del">−3</span></span></div>
+        <div class="t-actions"><button class="btn btn-sun">Allow</button><button class="btn btn-deny">Deny</button></div>
+      </article>
+
+      <article class="ticket">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">falcon-vf9n</span><span class="t-age">14 min</span><span class="status working">Working</span></div>
+        <h3 class="t-title">Fleet Deck UI</h3>
+        <p class="t-note">Designing the new board: concept briefs</p>
+        <div class="t-now"><i data-lucide="pen-line"></i><b>Write</b><span class="target">concepts/BRIEF.md</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>ui-refresh</span><span class="chip">Opus 5.5</span><span class="diffstat" title="3 files"><span class="add">+412</span><span class="del">−0</span></span></div>
+      </article>
+
+      <article class="ticket">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">heron-mc2q</span><span class="t-age">2 h</span><span class="status idle">Idle</span></div>
+        <h3 class="t-title">Omarchy integration docs</h3>
+        <div class="t-now"><i data-lucide="message-square"></i><span>“The docs build passes. Next?”</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>docs/omarchy-integration</span><span class="chip">GPT-6.1 Codex</span><span class="diffstat" title="4 files"><span class="add">+260</span><span class="del">−31</span></span></div>
+      </article>
+    </div>
+
+    <div class="lane st-dev1">
+      <div class="lane-head">
+        <div class="lh1"><i class="sdot"></i><h2>dev1</h2><span class="plat">Omarchy · x86_64</span><span class="cap">2 of 12<span class="bar"><i style="width:16.7%"></i></span></span></div>
+        <div class="lh2"><span class="on">Online</span><span>Omarchy desktop</span></div>
+      </div>
+
+      <article class="ticket needs">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">kite-x81d</span><span class="t-age">6 min</span><span class="status needs">Needs you</span></div>
+        <h3 class="t-title">Stripe webhooks</h3>
+        <div class="t-now warn q"><i data-lucide="message-circle-question"></i><span>Use the test key or the live key for the webhook secret?</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>rannoch/webhooks</span><span class="chip">GPT-6.1 Codex</span><span class="chip"><i data-lucide="list-todo"></i>1 open task</span></div>
+        <div class="t-actions"><button class="btn">Test key</button><button class="btn">Live key</button></div>
+      </article>
+
+      <article class="ticket">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">lynx-4kq2</span><span class="t-age">38 min</span><span class="status working">Working</span></div>
+        <h3 class="t-title">Rannoch checkout flow</h3>
+        <div class="t-now"><i data-lucide="pencil"></i><b>Edit</b><span class="target">src/checkout/cart.ts</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>rannoch/checkout</span><span class="chip">Opus 5.5</span><span class="diffstat" title="6 files"><span class="add">+142</span><span class="del">−37</span></span></div>
+        <div class="t-foot x"><span class="chip"><i data-lucide="git-pull-request"></i>PR #128</span><span class="chip"><i data-lucide="bot"></i>2 subagents</span></div>
+      </article>
+    </div>
+
+    <div class="lane st-mac">
+      <div class="lane-head">
+        <div class="lh1"><i class="sdot"></i><h2>mac-m4</h2><span class="plat">macOS · arm64</span><span class="cap">2 of 12<span class="bar"><i style="width:16.7%"></i></span></span></div>
+        <div class="lh2"><span class="on">Online</span><span>Claude 2.1.305</span><span>Codex 0.162.1</span></div>
+      </div>
+
+      <article class="ticket">
+        <span class="tab"></span>
+        <div class="t-top"><span class="callsign">wren-77ta</span><span class="t-age">9 min</span><span class="status working">Working</span></div>
+        <h3 class="t-title">Journzy iOS build</h3>
+        <div class="t-now"><i data-lucide="terminal"></i><b>Bash</b><span class="target">xcodebuild -scheme Journzy test</span></div>
+        <div class="t-foot"><span class="chip mono"><i data-lucide="git-branch"></i>journzy/ios-ci</span><span class="chip">Sonnet 5.5</span><span class="diffstat" title="2 files"><span class="add">+18</span><span class="del">−4</span></span></div>
+      </article>
+
+      <a class="ended-row" href="#"><i data-lucide="chevron-right"></i>1 ended<span class="r">swift-0p3e · landed into v2</span></a>
+
+    </div>
+
+  </section>
+</main>
+
+<nav class="float-pills" aria-label="Secondary">
+  <a class="fp" href="#"><i data-lucide="activity"></i>Activity</a>
+  <a class="fp" href="#" title="1 mail waiting for delivery to heron-mc2q"><i data-lucide="mail"></i>Mail <span class="badge">1</span></a>
+  <a class="fp" href="#"><i data-lucide="send"></i>Assign</a>
+</nav>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>
