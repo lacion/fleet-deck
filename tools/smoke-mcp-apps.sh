@@ -21,6 +21,10 @@
 #   5. After slow_bump.txt appears, a revert is refused: app_call_running.
 #   6. After the release, a revert is refused: app_call_ran_after_turn.
 #
+# Steps 3, 5 and 6 need the provider's conversation rollback: a provider
+# without it (Claude, capabilities.rollback = false) skips them. A failed
+# revert check does not stop the run; the run fails at its end.
+#
 # Environment:
 #   FD_BIN                 the fleetdeck binary (default: target/debug/fleetdeck;
 #                          build it first: umask 022 && sh tools/heavy.sh
@@ -230,6 +234,12 @@ elif cmd == "turn-id":
         if kind == "turn.started":
             print(p["turn_id"])
             break
+elif cmd == "rollback":
+    # "true" when the session's provider can roll back its conversation.
+    for kind, p in rows(*args):
+        if kind == "session.started":
+            print("true" if p.get("capabilities", {}).get("rollback") else "false")
+            break
 elif cmd == "turn-done":
     sys.exit(0 if any(k == "turn.completed" for k, _ in rows(*args)) else 1)
 elif cmd == "reverts":
@@ -260,15 +270,20 @@ elif cmd == "call-of":
 PY
 py() { python3 -I "$TMP/h.py" "$@"; }
 
-# wait_for LABEL COMMAND...: runs COMMAND until it succeeds or $STEP ends.
+# wait_ok COMMAND...: runs COMMAND until it succeeds (0) or $STEP ends (1).
+wait_ok() {
+    end=$(($(date +%s) + STEP))
+    until "$@" >/dev/null 2>&1; do
+        [ "$(date +%s)" -lt "$end" ] || return 1
+        sleep 1
+    done
+}
+
+# wait_for LABEL COMMAND...: wait_ok, and a timeout fails the run.
 wait_for() {
     label=$1
     shift
-    end=$(($(date +%s) + STEP))
-    until "$@" >/dev/null 2>&1; do
-        [ "$(date +%s)" -lt "$end" ] || fail "timeout: $label"
-        sleep 1
-    done
+    wait_ok "$@" || fail "timeout: $label"
 }
 
 smoke_one() {
@@ -382,9 +397,24 @@ EOF
     *) fail "$driver bump did not give count 1: $(cat "$RES")" ;;
     esac
 
+    # The revert checks need the provider's conversation rollback (Claude
+    # has none: capabilities.rollback = false, and the station refuses every
+    # revert with "not supported"). A failed revert check does not stop the
+    # run: the later steps do not depend on it. The run fails at its end.
+    rollback=$(py rollback "$DB" "$session")
+    misses=0
+    miss() {
+        echo "FAIL (the run goes on): $*" >&2
+        misses=$((misses + 1))
+    }
+
     # revert_is REASON: a revert of the first turn is refused with REASON.
     revert_is() {
         want=$1
+        if [ "$rollback" != true ]; then
+            echo "skip: revert ($want): $driver has no rollback (capabilities.rollback = $rollback)"
+            return 0
+        fi
         before=$(py reverts "$DB" "$session" | wc -l)
         answer=$(fdd deck command smoke \
             "{\"op\":\"revert\",\"session_id\":\"$session\",\"turn_id\":\"$turn\"}")
@@ -392,13 +422,22 @@ EOF
         # A refusal at the admission has no revert row and no revert.updated
         # event: the command answer holds it.
         case $answer in
-        *rejected:*) fail "$driver revert was refused at the admission, wanted '$want' (a revert.updated event): $answer" ;;
+        *rejected:*)
+            miss "$driver revert was refused at the admission, wanted '$want' (a revert.updated event): $answer"
+            return 0
+            ;;
         esac
-        wait_for "a refused revert of $driver" sh -c \
-            "[ \"\$(python3 -I '$TMP/h.py' reverts '$DB' '$session' | wc -l)\" -gt $before ]"
+        if ! wait_ok sh -c \
+            "[ \"\$(python3 -I '$TMP/h.py' reverts '$DB' '$session' | wc -l)\" -gt $before ]"; then
+            miss "timeout: a refused revert of $driver (wanted '$want'): $answer"
+            return 0
+        fi
         got=$(py reverts "$DB" "$session" | tail -n 1)
-        [ "$got" = "failed $want" ] || fail "$driver revert gave '$got', wanted '$want'"
-        echo "ok: revert refused with $want"
+        if [ "$got" = "failed $want" ]; then
+            echo "ok: revert refused with $want"
+        else
+            miss "$driver revert gave '$got', wanted '$want'"
+        fi
     }
 
     # 3. The revert meets the settled bump.
@@ -435,6 +474,7 @@ EOF
 
     py dump "$DB" "$session" "$REC/events.jsonl"
     save_records
+    [ "$misses" -eq 0 ] || fail "$driver: $misses check(s) failed (records in $REC)"
     echo "PASS: $driver (records in $REC)"
 }
 
