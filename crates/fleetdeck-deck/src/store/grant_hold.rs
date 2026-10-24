@@ -252,14 +252,22 @@ impl DeckStore {
     /// a returning link: it waits for its return check (§3.3a). No row:
     /// `false`. One `call` closure, one transaction, `now_ms(&inner.clock)`.
     ///
+    /// The same transaction rebuilds the derived `coordinate` scopes
+    /// (`sync_coordinate_scopes`): a scope rebuild during the gap (another
+    /// grant changed) removed the scope of a grant that the hold makes in
+    /// effect again. The changed stations are noted; the link start
+    /// publishes them to the link cache before it serves the link (PRE-PR
+    /// review, "Build answers").
+    ///
     /// # Errors
     /// A database error.
     pub async fn hold_returning(&self, station: StationId) -> Result<bool> {
         let inner = Arc::clone(&self.inner);
-        call(&self.inner.db, move |conn| {
+        let (returning, changed) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let now = now_ms(&inner.clock);
             hold_tx(&tx, &online(&inner), Some(&station), now)?;
+            let changed = super::sync_coordinate_scopes(&tx, now)?;
             let returning: Option<bool> = tx
                 .query_row(
                     "SELECT info_incarnation IS NOT NULL FROM stations WHERE station_id = ?1",
@@ -268,9 +276,11 @@ impl DeckStore {
                 )
                 .optional()?;
             tx.commit()?;
-            Ok(returning.unwrap_or(false))
+            Ok((returning.unwrap_or(false), changed))
         })
-        .await
+        .await?;
+        self.note_scope_changes(changed);
+        Ok(returning)
     }
 
     /// Settles the holds and the update rule of `station` with one

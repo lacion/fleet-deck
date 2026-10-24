@@ -17,12 +17,23 @@ use super::grant_scopes::turns::Stream;
 use super::{DeckStore, Inner, Result, call};
 
 /// B26 §3.3a: the live links that wait for their first return check, by
-/// station and link token; in memory only. The lock is never held together
-/// with another lock.
+/// station and link token, and the settle epoch of each station; in memory
+/// only. The lock is never held together with another lock.
 pub(super) struct SettleState {
-    pending: Mutex<BTreeMap<StationId, BTreeSet<u64>>>,
+    pending: Mutex<Pending>,
     /// Counts the changes of `pending` (the waiting requests watch it).
     changes: watch::Sender<u64>,
+}
+
+/// The state under the one lock of [`SettleState`].
+#[derive(Default)]
+struct Pending {
+    /// The waiting link tokens of each station.
+    links: BTreeMap<StationId, BTreeSet<u64>>,
+    /// Grows by one with each returning link of the station
+    /// ([`DeckStore::mark_unsettled`]). An entry is never removed, so an
+    /// epoch is never used twice for one station.
+    epochs: BTreeMap<StationId, u64>,
 }
 
 impl SettleState {
@@ -33,7 +44,7 @@ impl SettleState {
         }
     }
 
-    fn pending(&self) -> MutexGuard<'_, BTreeMap<StationId, BTreeSet<u64>>> {
+    fn pending(&self) -> MutexGuard<'_, Pending> {
         self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -53,11 +64,12 @@ impl Inner {
     pub(super) fn settle(&self, station: &StationId, token: u64) -> bool {
         let waited = {
             let mut pending = self.settle.pending();
-            let waited = pending
+            let links = &mut pending.links;
+            let waited = links
                 .get_mut(station)
                 .is_some_and(|tokens| tokens.remove(&token));
-            if pending.get(station).is_some_and(BTreeSet::is_empty) {
-                pending.remove(station);
+            if links.get(station).is_some_and(BTreeSet::is_empty) {
+                links.remove(station);
             }
             waited
         };
@@ -133,17 +145,44 @@ impl Inner {
 }
 
 impl DeckStore {
-    /// Link `token` of `station` waits for its return check. `DeckLink::up`
-    /// calls it before `set_link_features`, so the link is never published
-    /// without its gate.
+    /// Link `token` of `station` waits for its return check, and the settle
+    /// epoch of `station` grows by one. `DeckLink::up` calls it before
+    /// `set_link_features`, so the link is never published without its gate.
     pub fn mark_unsettled(&self, station: &StationId, token: u64) {
-        self.inner
-            .settle
-            .pending()
-            .entry(station.clone())
-            .or_default()
-            .insert(token);
+        {
+            let mut pending = self.inner.settle.pending();
+            pending
+                .links
+                .entry(station.clone())
+                .or_default()
+                .insert(token);
+            *pending.epochs.entry(station.clone()).or_default() += 1;
+        }
         self.inner.settle.changes.send_modify(|n| *n += 1);
+    }
+
+    /// The settle epoch of `station` when no live link of it waits for its
+    /// return check; `None` while one waits. A live answer of the station
+    /// (`coordinator.policy_now`) holds only while
+    /// [`DeckStore::settled_since`] with this epoch is true (B26 §3.3a).
+    #[must_use]
+    pub fn settle_epoch(&self, station: &StationId) -> Option<u64> {
+        let pending = self.inner.settle.pending();
+        if pending
+            .links
+            .get(station)
+            .is_some_and(|tokens| !tokens.is_empty())
+        {
+            return None;
+        }
+        Some(pending.epochs.get(station).copied().unwrap_or(0))
+    }
+
+    /// True when no live link of `station` waits now and no link of it
+    /// returned since the deck read `epoch` with [`DeckStore::settle_epoch`].
+    #[must_use]
+    pub fn settled_since(&self, station: &StationId, epoch: u64) -> bool {
+        self.settle_epoch(station) == Some(epoch)
     }
 
     /// True when link `token` of `station` is live (in `link_features`) and
@@ -155,6 +194,7 @@ impl DeckStore {
                 .inner
                 .settle
                 .pending()
+                .links
                 .get(station)
                 .is_some_and(|tokens| tokens.contains(&token))
     }
@@ -162,11 +202,7 @@ impl DeckStore {
     /// True when no live link of `station` waits (also true without a link).
     #[must_use]
     pub fn station_settled(&self, station: &StationId) -> bool {
-        self.inner
-            .settle
-            .pending()
-            .get(station)
-            .is_none_or(BTreeSet::is_empty)
+        self.settle_epoch(station).is_some()
     }
 
     /// Waits at most `wait` until `link_settled(station, token)`. It

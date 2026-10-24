@@ -24,11 +24,9 @@ use fleetdeck_proto::command::{
     CommandOrigin, DeckCommandState, GrantKind, RETRY_WINDOW_MS, SessionCommand,
 };
 use fleetdeck_proto::link::Outcome;
-use fleetdeck_proto::mutation::{
-    CommandAuthority, PolicyNow, PolicyNowAnswer, StationChange, StationConfigureEnvelope,
-};
+use fleetdeck_proto::mutation::{CommandAuthority, StationChange, StationConfigureEnvelope};
 use fleetdeck_proto::version::feature;
-use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, SessionId, StationId};
+use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, StationId};
 use serde::{Deserialize, Serialize};
 
 use super::DeckLink;
@@ -140,59 +138,6 @@ impl DeckLink {
     pub(crate) fn live_stations(&self) -> Vec<StationId> {
         let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         live.keys().cloned().collect()
-    }
-
-    /// The live fleet-control policy of the caller station (ADR-008 section
-    /// 6.2): `coordinator.policy_now` with a deadline of 3 s. `None` for any
-    /// error, a timeout, no live link or a link without `coordinator.v2`;
-    /// the caller treats it as `fleet_control: false` (fail closed).
-    pub async fn policy_now(
-        &self,
-        station: &StationId,
-        caller_session: &SessionId,
-    ) -> Option<PolicyNowAnswer> {
-        let query = PolicyNow {
-            caller_session: caller_session.clone(),
-            binding: None,
-        };
-        self.policy_now_with(station, query, POLICY_NOW_DEADLINE)
-            .await
-    }
-
-    /// [`DeckLink::policy_now`] with the request `query` (R13 P6 §5.6 sends
-    /// the expected binding) and the wait `timeout`.
-    pub(crate) async fn policy_now_with(
-        &self,
-        station: &StationId,
-        query: PolicyNow,
-        timeout: Duration,
-    ) -> Option<PolicyNowAnswer> {
-        // B26 3.3a: a station that waits for its return check is unknown.
-        if !self.store.station_settled(station) {
-            return None;
-        }
-        let control = self.control_for(station)?;
-        let params = serde_json::to_value(query).ok()?;
-        let outcome = tokio::time::timeout(
-            timeout,
-            control.request("coordinator.policy_now", None, params),
-        )
-        .await;
-        match outcome {
-            Ok(Ok(Outcome::Ok(value))) => serde_json::from_value(value).ok(),
-            Ok(Ok(Outcome::Err(e))) => {
-                tracing::debug!(station = %station, code = %e.code, "policy_now refused");
-                None
-            }
-            Ok(Err(e)) => {
-                tracing::debug!(station = %station, error = %e, "policy_now failed");
-                None
-            }
-            Err(_) => {
-                tracing::debug!(station = %station, "policy_now timed out");
-                None
-            }
-        }
     }
 
     /// Builds the stored command of `kind` for `station`: a new

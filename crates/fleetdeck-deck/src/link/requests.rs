@@ -287,6 +287,14 @@ async fn authority_answer(
         Ok(local) => local,
         Err(reason) => return Ok(refused(reason)),
     };
+    // B26 §3.3a: the policy answer holds only for the links of the caller
+    // that were settled when the deck asked. A link of the caller that
+    // returned since then waits for (or ran) its return check, which can drop
+    // the grant after the last pass read it. No await follows this check.
+    if !ctx.store.settled_since(&check.caller_station, policy.epoch) {
+        return Ok(refused("caller_unreachable"));
+    }
+    let policy = policy.answer;
     if !policy.bound {
         return Ok(refused("caller_unbound"));
     }

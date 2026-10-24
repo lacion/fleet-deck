@@ -32,6 +32,7 @@ pub mod fleet_git_sync;
 mod info;
 mod outbox;
 mod palette;
+mod policy_now;
 mod requests;
 pub mod router;
 pub mod runtime;
@@ -219,6 +220,11 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
             true
         }
     };
+    // The scopes that the hold rebuilt reach the link cache before the link
+    // is published (a failed refresh stays noted for the next one).
+    if let Err(e) = ctx.peers.refresh_changed().await {
+        tracing::warn!(error = %e, "link scopes at the link start");
+    }
     let live = ctx.up(&id, &control, data, remote, returning);
     if let Err(e) = ctx
         .store

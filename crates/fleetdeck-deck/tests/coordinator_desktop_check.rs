@@ -244,6 +244,41 @@ async fn a_grant_revoked_during_the_policy_round_trip_is_lost_at_the_second_loca
     assert_eq!(w.fake.count("coordinator.policy_now"), 1);
 }
 
+/// B26 PRE-PR review: a link of the caller station that returns during the
+/// policy round trip makes the answer stale, also when its return check
+/// commits before the answer arrives (the settle epoch moved).
+#[tokio::test]
+async fn a_caller_link_that_returns_during_the_policy_round_trip_is_unknown() {
+    let all: Vec<String> = fleetdeck_proto::version::feature::ALL
+        .iter()
+        .map(|f| (*f).to_owned())
+        .collect();
+    for (token, settle) in [(9_001_u64, false), (9_002, true)] {
+        let w = attempted_world().await;
+        let (store, station, all) = (w.f.store.clone(), w.station(), all.clone());
+        w.fake.set(handler(move |req| {
+            let (store, station, all) = (store.clone(), station.clone(), all.clone());
+            async move {
+                if req.method == "coordinator.policy_now" {
+                    store.mark_unsettled(&station, token);
+                    store.set_link_features(&station, token, all);
+                    if settle {
+                        // No stored `station.info` answer: no update, no reset.
+                        let r = store
+                            .resolve_grant_holds(station, token, "inc-r".to_owned().into(), None)
+                            .await
+                            .unwrap();
+                        assert!(r.settled && r.dropped == 0);
+                    }
+                }
+                Some(standard_answer(&req))
+            }
+        }));
+        is(&w.check(payload("op-1", "H", "execute")).await, UNKNOWN);
+        assert_eq!(w.fake.count("coordinator.policy_now"), 1);
+    }
+}
+
 #[tokio::test]
 async fn a_malformed_check_is_unknown_and_never_an_error() {
     let w = attempted_world().await;

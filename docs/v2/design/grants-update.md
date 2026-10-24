@@ -172,7 +172,7 @@ impl DeckStore {
 2. The hold does not read the setting. At the deck start (`DeckStore::open` sweeps before `serve` sets the knobs), every station is offline, and the durable `last_seen` gives each one its gap. A deck that was down for more than 60 minutes holds nothing.
 3. The reachability lock is taken and released before the first statement (`online`); no lock is held across a database call.
 4. When a station stays offline for more than 60 minutes, the touches stop. The grant then ends by the idle rule one idle time after the last touch, with today's `coordinator.grant_expired` row.
-5. **The link start** (finding 3 of the design review). `link::serve` calls `hold_returning` after `station_by_key` and **before** `DeckLink::up` (which publishes the reachability and the link features) and before `station_heard` (which overwrites `last_seen`), so no sweep, admission or G6 touch sees the new link before the gap is settled. A gap shorter than one sweep (30 s) is therefore also counted: for example a grant with 5 s of idle time left at the last frame and a reconnect 10 s later is touched at the reconnect. The error path: `tracing::warn!` and the link counts as returning (`true`, fail closed).
+5. **The link start** (finding 3 of the design review). `link::serve` calls `hold_returning` after `station_by_key` and **before** `DeckLink::up` (which publishes the reachability and the link features) and before `station_heard` (which overwrites `last_seen`), so no sweep, admission or G6 touch sees the new link before the gap is settled. A gap shorter than one sweep (30 s) is therefore also counted: for example a grant with 5 s of idle time left at the last frame and a reconnect 10 s later is touched at the reconnect. The error path: `tracing::warn!` and the link counts as returning (`true`, fail closed). The same transaction rebuilds the derived `coordinate` scopes (`sync_coordinate_scopes`) and `hold_returning` notes the changed stations; `serve` then runs `peers.refresh_changed()` before `up`, so the link cache has the scope before the link is published (Build answers, item 2).
 6. A link that dies without a close (power loss, a cut cable) counts as live until the control link's `IDLE_LIMIT` (45 s, `crates/fleetdeck-link/src/control.rs:43`). A grant whose idle time runs out in that window ends as today. A station update closes its link, so the deck sees the end at once.
 
 ### 3.3 The return (deck store, `store/grant_hold.rs`)
@@ -270,10 +270,10 @@ The first answer comes at once after the link is up, then every 60 s (`INFO_REFR
 
 ```rust
 /// B26 §3.3a: the live links that wait for their first return check, by
-/// station and link token; in memory only. The lock is never held together
-/// with another lock.
+/// station and link token, and the settle epoch of each station; in memory
+/// only. The lock is never held together with another lock.
 pub(super) struct SettleState {
-    pending: Mutex<BTreeMap<StationId, BTreeSet<u64>>>,
+    pending: Mutex<Pending>, // `links: BTreeMap<StationId, BTreeSet<u64>>`, `epochs: BTreeMap<StationId, u64>`
     /// Counts the changes of `pending` (the waiting requests watch it).
     changes: watch::Sender<u64>,
 }
@@ -291,10 +291,18 @@ impl Inner {
 }
 
 impl DeckStore {
-    /// Link `token` of `station` waits for its return check. `DeckLink::up`
-    /// calls it before `set_link_features`, so the link is never published
-    /// without its gate.
+    /// Link `token` of `station` waits for its return check, and the settle
+    /// epoch of `station` grows by one (an entry is never removed).
+    /// `DeckLink::up` calls it before `set_link_features`, so the link is
+    /// never published without its gate.
     pub fn mark_unsettled(&self, station: &StationId, token: u64);
+    /// The settle epoch of `station` when no live link of it waits; `None`
+    /// while one waits (Build answers, item 1).
+    #[must_use]
+    pub fn settle_epoch(&self, station: &StationId) -> Option<u64>;
+    /// `settle_epoch(station) == Some(epoch)`.
+    #[must_use]
+    pub fn settled_since(&self, station: &StationId, epoch: u64) -> bool;
     /// True when link `token` of `station` is live (in `link_features`) and
     /// does not wait. A link that ended is never settled.
     #[must_use]
@@ -339,7 +347,7 @@ impl DeckStore {
    ```
 
    and, as the first statement inside `if let Some((authority, target)) = authority_of(&cmd.envelope)`: `if !self.store.station_settled(&authority.caller_station) { return; }`. The new private `fn grant_work(cmd: &DeckCommand) -> bool` is `cmd.origin == "coordinator" || authority_of(&cmd.envelope).is_some() || cmd.method == "session.coordinator_set" || worker_start(&cmd.envelope)`. A held command stays `pending`; the dispatch after the settle (the call site above) or the next router tick sends it. Owner commands from the board and `session.coordinator_revoke` are not held.
-5. `DeckLink::policy_now_with` (`router.rs:163-192`), first statement: `if !self.store.station_settled(station) { return None; }`. Both authority checks (ADR-008 `coordinator.authority_check`, `requests.rs:166-200`, and R13 `desktop.authority_check` through `caller_policy`, `coordinator_desktop/policy.rs:36-56`) then fail closed (`caller_unreachable`, `authority_unknown`) for a caller station whose link waits.
+5. `DeckLink::policy_now_with` (moved to `link/policy_now.rs`), first statement: `let epoch = self.store.settle_epoch(station)?;`. After the answer it returns `None` unless `settled_since(station, epoch)`; else `Some(BoundPolicy { answer, epoch })`. Both authority checks (ADR-008 `coordinator.authority_check`, `requests.rs`, and R13 `desktop.authority_check` through `caller_policy_bound`, `coordinator_desktop/policy.rs`) then fail closed (`caller_unreachable`, `authority_unknown`) for a caller station whose link waits. Their final decision, after the second local pass and with no await before the answer, checks `settled_since(caller_station, epoch)` again (Build answers, item 1).
 6. `serve` keeps the `dispatch_pending` spawn at the link start (`mod.rs:245-247`): the router sends the commands that are not grant work at once and holds the rest (item 4).
 
 **Who waits.** Only a returning link: `hold_returning` is `true` when `stations.info_incarnation` is set. The first link after the pairing, and the first link of each station after the V51 upgrade, have no stored answer: their first check only records (§3.8 item 2) and can drop nothing, so they do not wait. The fake station of `tests/common/mod.rs` never answers `station.info` (`next_request` skips it), so its links never wait; the fakes that answer it (`fleet_git_fake.rs`, `fleet_git_move_fake.rs`) answer every link, so a second link of theirs waits only for that answer.
@@ -676,6 +684,13 @@ Not changed in this revision (open items for the architect):
 
 - MINOR (`adv-design.md`, design line 278): the board filters out every revoked grant (`accessRows`, `web/src/fleet/FleetAccess.tsx:49-60`), so the words of §3.6 item 5 for `station_updated`, `station_reset` and `station_removed` are never shown. T4 test 2 tests only the formatter. A fix needs a decision about a list of ended grants on the board.
 - UNVERIFIED (`adv-design.md`, design line 41): the "session token is not valid" report of `live-evidence-2026-10-24-token.md` comes from the station's binding check, before the deck. This revision does not reconcile it with §1.1 and adds no live acceptance case for a shim-hosted session across an update.
+
+## Build answers
+
+PRE-PR review (`/home/luismorales/fleetdeck-briefs/backlog2/grants-update/adv-prepr.md`, commit `e34a1c77`). Both findings are confirmed in the code and fixed.
+
+1. BLOCKER (the return gate at the final decision): the settle check of `policy_now_with` ran only before the round trip, and the second local pass does not read the settle state, so an answer of the old link could give `valid: true` after a returning link of the caller was marked. Fix: each station has a settle epoch that `mark_unsettled` raises (§3.3a store API). `policy_now_with` reads the epoch before it asks and returns the answer with it only when `settled_since` still holds after the answer. `authority_answer` and the desktop `pass` (`coordinator_desktop/check.rs`) check `settled_since(caller, epoch)` after their last local pass, with no await before the answer; a stale answer is `caller_unreachable` / `authority_unknown`. The epoch, not only `station_settled`, closes the case where the returning link also settled (and maybe dropped the grant) between the last local read and the answer. The other `caller_policy` users keep their result type (`caller_policy` wraps `caller_policy_bound`): the target's authority check is the final gate of their work. Tests: `tests/grant_return_review.rs` (a return during the policy wait, and a return that settles during the wait), `coordinator_desktop_check.rs` (`a_caller_link_that_returns_during_the_policy_round_trip_is_unknown`), `store/grant_hold_review_tests.rs` (`the_settle_epoch_moves_with_each_returning_link`).
+2. MAJOR (the derived scopes at the link start): `hold_returning` touched `last_used_at` but did not rebuild the `coordinate` scopes, so a scope that a rebuild during the gap removed (the grant was idle by its own clock and still `active`) stayed absent after an unchanged return. Fix: `hold_returning` runs `sync_coordinate_scopes` in its transaction and notes the changed stations; `serve` runs `peers.refresh_changed()` before `up` (§3.2 item 5). A request that the link layer reads before `serve` reaches `up` is refused with the old cache (fail closed; the station sends it again). Tests: `store/grant_hold_review_tests.rs` (`the_link_start_restores_a_scope_that_a_rebuild_in_the_gap_removed`, `the_link_start_rebuild_keeps_an_ended_grant_without_a_scope`), `tests/grant_return_review.rs` (`the_first_query_after_a_return_passes_when_a_rebuild_in_the_gap_removed_the_scope`).
 
 ## Decision log entries (to append)
 
