@@ -276,7 +276,7 @@
       "usage": {
         "input_tokens": 2033,
         "output_tokens": 86,
-        "cost_usd": 0.004649250000000001,
+        "cost_usd": 0.0007094800000000001,
         "cost_inferred": true,
         "cache_read_tokens": 9984,
         "cache_write_tokens": 0,
@@ -364,7 +364,7 @@
       "usage": {
         "input_tokens": 1121,
         "output_tokens": 6,
-        "cost_usd": 0.0028372500000000004,
+        "cost_usd": 0.00045156000000000005,
         "cost_inferred": true,
         "cache_read_tokens": 11008,
         "cache_write_tokens": 0,

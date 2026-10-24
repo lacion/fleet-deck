@@ -154,7 +154,7 @@
       "usage": {
         "input_tokens": 2046,
         "output_tokens": 73,
-        "cost_usd": 0.0045355,
+        "cost_usd": 0.00069648,
         "cost_inferred": true,
         "cache_read_tokens": 9984,
         "cache_write_tokens": 0,
@@ -251,7 +251,7 @@
       "usage": {
         "input_tokens": 9897,
         "output_tokens": 56,
-        "cost_usd": 0.01430725,
+        "cost_usd": 0.00226676,
         "cost_inferred": true,
         "cache_read_tokens": 11008,
         "cache_write_tokens": 0,
@@ -332,7 +332,7 @@
       "usage": {
         "input_tokens": 7087,
         "output_tokens": 6,
-        "cost_usd": 0.01016675,
+        "cost_usd": 0.00162428,
         "cost_inferred": true,
         "cache_read_tokens": 9984,
         "cache_write_tokens": 0,
@@ -409,7 +409,7 @@
       "usage": {
         "input_tokens": 795,
         "output_tokens": 61,
-        "cost_usd": 0.00413175,
+        "cost_usd": 0.0006366799999999999,
         "cost_inferred": true,
         "cache_read_tokens": 20224,
         "cache_write_tokens": 0,
@@ -497,7 +497,7 @@
       "usage": {
         "input_tokens": 968,
         "output_tokens": 6,
-        "cost_usd": 0.003798,
+        "cost_usd": 0.0006052799999999999,
         "cost_inferred": true,
         "cache_read_tokens": 20224,
         "cache_write_tokens": 0,

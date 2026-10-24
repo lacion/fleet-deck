@@ -6,6 +6,15 @@
 //! own). A model that is not in the table has no cost
 //! (unknown, never zero). Change a price or add a model together with
 //! [`PRICE_TABLE_VERSION`].
+//!
+//! Source of the rates (2026-10-24): AI Pricing Guru
+//! (`https://www.aipricing.guru/api/pricing.json`, updated 2026-10-24), which
+//! cites the providers' own pricing pages (developers.openai.com and
+//! platform.claude.com). The table keeps the base rates: the long-context
+//! tier of some models (above 272K input tokens of one request; Claude Haiku
+//! 5.5 above 100K) is not applied, because a usage bucket does not keep the
+//! size of each request. Where a provider lists no cache-write rate, a cache
+//! write costs the input rate.
 
 use fleetdeck_proto::event::ProviderKind;
 
@@ -21,35 +30,56 @@ pub struct Price {
     pub output: f64,
 }
 
-/// Removes a trailing date (`-YYYY-MM-DD`) from a model id.
+/// Removes a trailing date (`-YYYY-MM-DD`, or `-YYYYMMDD` as the Claude CLI
+/// writes it) from a model id.
 fn without_date(model: &str) -> &str {
     let bytes = model.as_bytes();
-    let Some(start) = bytes.len().checked_sub(11) else {
-        return model;
-    };
-    let tail = &bytes[start..];
-    let is_date = tail[0] == b'-'
-        && tail[1..5].iter().all(u8::is_ascii_digit)
-        && tail[5] == b'-'
-        && tail[6..8].iter().all(u8::is_ascii_digit)
-        && tail[8] == b'-'
-        && tail[9..11].iter().all(u8::is_ascii_digit);
-    if is_date { &model[..start] } else { model }
+    let digits = |b: &[u8]| b.iter().all(u8::is_ascii_digit);
+    if let Some(start) = bytes.len().checked_sub(11) {
+        let tail = &bytes[start..];
+        if tail[0] == b'-'
+            && digits(&tail[1..5])
+            && tail[5] == b'-'
+            && digits(&tail[6..8])
+            && tail[8] == b'-'
+            && digits(&tail[9..11])
+        {
+            return &model[..start];
+        }
+    }
+    if let Some(start) = bytes.len().checked_sub(9) {
+        let tail = &bytes[start..];
+        if tail[0] == b'-' && digits(&tail[1..9]) {
+            return &model[..start];
+        }
+    }
+    model
 }
 
 /// The price of a model of a provider; `None` for a model that is not
-/// listed. A trailing date (`-YYYY-MM-DD`) is removed before the match.
+/// listed. A trailing date (`-YYYY-MM-DD` or `-YYYYMMDD`) is removed before
+/// the match.
 #[must_use]
 pub fn price_of(provider: ProviderKind, model: &str) -> Option<Price> {
     if provider != ProviderKind::Codex {
         return None;
     }
     let (input, cache_read, cache_write, output) = match without_date(model) {
-        // `gpt-5.6-luna` (the model of the recorded fixtures) has the gpt-5
-        // rates as a placeholder: the owner confirms the real price.
-        "gpt-5" | "gpt-5-codex" | "gpt-5.1" | "gpt-5.1-codex" | "gpt-5.6-luna" => {
-            (1.25, 0.125, 1.25, 10.0)
-        }
+        "gpt-6-astra" => (10.0, 1.0, 12.5, 50.0),
+        "gpt-6.1-sol" => (2.0, 0.1, 2.5, 10.0),
+        "gpt-6-sol" => (2.0, 0.2, 2.5, 10.0),
+        "gpt-6-luna" => (0.1, 0.01, 0.125, 0.5),
+        "gpt-5.6-sol" => (4.0, 0.4, 5.0, 20.0),
+        "gpt-5.6-terra" => (2.0, 0.2, 2.5, 12.0),
+        "gpt-5.6-luna" => (0.2, 0.02, 0.25, 1.2),
+        "gpt-5.6-cyber" => (12.5, 1.25, 15.625, 75.0),
+        "gpt-5.5-cyber" => (12.5, 1.25, 12.5, 75.0),
+        "gpt-5.5" => (5.0, 0.5, 5.0, 30.0),
+        "gpt-5.4" => (2.5, 0.25, 2.5, 15.0),
+        "gpt-5.4-mini" => (0.75, 0.075, 0.75, 4.5),
+        "gpt-5.4-nano" => (0.2, 0.02, 0.2, 1.25),
+        "gpt-5.2" => (1.75, 0.175, 1.75, 14.0),
+        "gpt-5" | "gpt-5-codex" | "gpt-5.1" | "gpt-5.1-codex" => (1.25, 0.125, 1.25, 10.0),
         "gpt-5-mini" | "gpt-5.1-codex-mini" => (0.25, 0.025, 0.25, 2.0),
         "gpt-5-nano" => (0.05, 0.005, 0.05, 0.4),
         _ => return None,
@@ -63,18 +93,32 @@ pub fn price_of(provider: ProviderKind, model: &str) -> Option<Price> {
 }
 
 /// The price of a model for an analytics estimate (B29): the Codex rows of
-/// `price_of` and the Claude rows fitted from the CLI's own `cost-state`
-/// records (design `analytics.md` §1.2). `None`: no price.
+/// `price_of`, and the Claude rows (the three 5.5 rows also match the CLI's
+/// own `cost-state` records, design `analytics.md` §1.2). A `gpt-*` model
+/// that the Claude CLI runs through a gateway gets its OpenAI row. `None`: no
+/// price.
 #[must_use]
 pub fn estimate_price_of(provider: ProviderKind, model: &str) -> Option<Price> {
     if provider != ProviderKind::Claude {
         return price_of(provider, model);
     }
     let model = model.strip_suffix("[1m]").unwrap_or(model);
+    if model.starts_with("gpt-") {
+        return price_of(ProviderKind::Codex, model);
+    }
     let (input, cache_read, cache_write, output) = match without_date(model) {
         "claude-opus-5-5" => (4.0, 0.2, 5.0, 20.0),
         "claude-sonnet-5-5" => (2.0, 0.1, 2.5, 10.0),
         "claude-haiku-5-5" => (0.1, 0.01, 0.125, 0.5),
+        "claude-fable-5-1" | "claude-mythos-5-1" => (10.0, 0.25, 12.5, 50.0),
+        "claude-fable-5" | "claude-mythos-5" => (10.0, 1.0, 12.5, 50.0),
+        "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
+        | "claude-opus-4-5" => (5.0, 0.5, 6.25, 25.0),
+        "claude-opus-4-1" | "claude-opus-4" => (15.0, 1.5, 18.75, 75.0),
+        "claude-sonnet-5" => (2.0, 0.2, 2.5, 10.0),
+        "claude-sonnet-4-6" | "claude-sonnet-4-5" | "claude-sonnet-4" => (3.0, 0.3, 3.75, 15.0),
+        "claude-haiku-4-5" => (1.0, 0.1, 1.25, 5.0),
+        "claude-haiku-3-5" => (0.8, 0.08, 1.0, 4.0),
         _ => return None,
     };
     Some(Price {
