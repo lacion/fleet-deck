@@ -60,10 +60,11 @@ describe('the sidebar navigation (S1)', () => {
     expect(html).not.toContain('fd-sidebar-bottom');
   });
 
-  test('four main links, then the More fold with the other pages', () => {
+  test('the main links, then the More fold with the other pages', () => {
     const html = render({ name: 'fleet' }, { terminalCount: 2 });
     const main = labels(html, 'aria-label="Board pages"', '<details class="fd-sidebar-more"');
-    expect(main).toEqual(['Fleet', 'Watch', 'Activity', 'Stations']);
+    // B29: Analytics follows Activity.
+    expect(main).toEqual(['Fleet', 'Watch', 'Activity', 'Analytics', 'Stations']);
     const more = html.slice(
       html.indexOf('<details class="fd-sidebar-more"'),
       html.indexOf('</nav>'),

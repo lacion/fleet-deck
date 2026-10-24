@@ -198,6 +198,7 @@ describe('the More page (§4.8)', () => {
     expect(order(lists[0] ?? '')).toEqual([
       'Watch',
       'Activity',
+      'Analytics',
       'Stations',
       'Plans',
       'Automations',
