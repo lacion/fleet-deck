@@ -100,7 +100,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Which `/` positions does the provider accept? Claude reads a slash command only at the start of a prompt. A `/` in the middle of the text can be only a text insert, not a command.
   - Where does the list come from before the first turn, and for Codex (its built-in commands, prompts and skills)?
   - Does `@` open a menu on the `@` alone (recent or top files), as Claude Code does?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the `/` menu lists every command and skill from the provider (the Claude `initialize` list, Codex skills), opens in the first word, and the bare `@` shows the changed files (design `docs/v2/design/composer-menus.md`, merged into v2 by `90845b08`)
+- **Open:** the two composer caret fixes (`5f6e9aec`) have no DOM test.
 
 ## B12. Workflows (ultracode) show nothing in the session (owner report, 2026-10-22)
 
@@ -115,7 +117,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Are the agents of a workflow in the session transcript, or only in the workflow's own files? This decides how the shim reads each agent's chat (as "Show its work" does for a subagent, DL-191).
   - Is a workflow a group in the Agents switcher (workflow → phase → agent), or a separate view?
   - What does the shim need beyond the direct host: is the workflow state lost after a shim takeover or a resume?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** a workflow and its agents show in the session (progress, an agent chat, the Agents switcher) and in the fleet view with agent counts (design `docs/v2/design/workflow-agents.md`, merged into v2 by `ab653cd5`)
 
 ## B13. Resume after Stop fails until the owner marks the previous run as ended (owner report, 2026-10-22)
 
@@ -131,7 +134,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - After an owner Stop (not a crash), may the station reconcile by itself when the check is complete and nothing lives? This is the same check that "Mark as ended" runs, with the same accepted risk as the direct host. It needs an adversary DESIGN REVIEW, because it changes the termination proof of DL-182.
   - Can Resume run the check first and reconcile when it is safe, so that the error shows only when a process really lives?
   - If a process still lives, can Resume offer "Stop them and resume" (BG-4 stop, then the check, then the resume) in one step?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the shim stops the leftover members of a run before the exit report and the station proves the exit itself, so a resume after Stop needs no manual step (design `docs/v2/design/resume-after-stop.md`, merged into v2 by `a13fab1c`)
 
 ## B14. Token counts and cost are not correct (owner report, 2026-10-22)
 
@@ -150,7 +154,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Use the provider's running totals (Claude transcript, Codex `tokenUsage.total`) as the source and store the last value per process or thread, instead of adding deltas?
   - Show cache tokens separately (read, write) and use them in the cost.
   - Keep the price table current from one place (both providers), show its date, and say "estimate" on a subscription plan?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** token counts and cost come from the provider totals (`result.modelUsage`, `tokenUsage.total`), the Claude resume baseline is counted, and old counts can be recounted (B14, B20, B21) (design `docs/v2/design/usage-cost.md`, merged into v2 by `3e8d26e0`)
 
 ## B15. Explore: interactive mini UIs in the chat (MCP Apps), as t3code does (owner request, 2026-10-22)
 
@@ -173,7 +178,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Routing: the app's tool calls go from the board through the deck and the station to the live provider session. Which principals may call them (owner only; a shared-session approver)? This is a new command path: adversary DESIGN REVIEW.
   - Where is the app document stored (session attachment, artifact store), and what does the deck relay?
   - Can Fleet Deck's own MCP tools (the coordinator tools) ship apps, for example a fleet view or a task board inside a chat?
-- **Status:** open (exploration, noted only).
+- **Status:** done.
+- **Done (2026-10-24):** phase 1: MCP Apps show as interactive UIs in the chat for Codex and Claude, owner only (design `docs/v2/design/mcp-apps.md`, merged into v2 by `f9fb83f2`)
+- **Open:** phase 2 (full screen, `ui/update-model-context`, downloads) is not built.
 
 ## B16. A new logo for Fleet Deck (owner request, 2026-10-22)
 
@@ -187,7 +194,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Keep the idea of the current icon (a deck of session cards) or start again (an aviation or carrier-deck idea that matches "Flight Deck", stations, callsigns)?
   - Concepts first (3 directions as an artifact, as the UI refresh did), then the owner chooses?
   - Monochrome-first, so that it works in forced colors and in the Omarchy theme palettes?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the logo is concept C, "Formation" (owner decision 2026-10-23): one mark source, favicon, app icons, README header and the Omarchy bar mark (design `docs/v2/design/logo.md`, merged into v2 by `ea2323b4`)
 
 ## B17. More control of the wall: scroll, custom URLs, a "remote control" for the wall browser, AI-generated wall UIs (owner request, 2026-10-22)
 
@@ -208,7 +216,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Custom URLs: a new `url` mode in a sandboxed frame? Which URLs are allowed (any, an owner list, only the local network)? The wall principal and the kiosk profile must not leak to the page. High risk: adversary DESIGN REVIEW.
   - Remote control of the wall only: a live view of the wall (P6 screenshots, or a stream) plus input that P7 limits to the wall window, or a board-side mirror of the wall state (no pixels, just the same route and directives)? The mirror is cheaper and safer.
   - AI-generated wall UIs: an agent publishes an HTML artifact with a small bridge (as MCP Apps, B15): live data from the deck (read-only, the display's own rows), and maybe actions that go back through the owner's approval. Do B15 and this item share one app host for the chat and the wall?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** phases A and B: wall controls, a remote control and wall pages (with scroll) (design `docs/v2/design/wall-control.md`, merged into v2 by `9468081c`)
+- **Open:** phase C (wall apps) is in progress on the branch `bl/wall-apps` at the time of writing.
 
 ## B18. Show the effort level next to the model (owner request, 2026-10-22)
 
@@ -223,7 +233,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - A new `session.effort_changed` event (like `model_changed`), so that a `/effort` change in the session shows at once?
   - Show it also on the session cards, the wall tiles and the spawn dialog? Let the owner choose the effort at spawn and in the session (this is a separate step: it writes, the display only reads).
   - Unknown effort: show nothing, or "default"?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the effort level shows next to the model, from the effort that the providers report, and can be chosen at spawn and in the session (design `docs/v2/design/effort.md`, merged into v2 by `8d004dc2`)
 
 ## B19. The fleet view shows the agents too: per session and in total, with ultracode workflows (owner request, 2026-10-22)
 
@@ -240,7 +251,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Fleet total: sum over the sessions the viewer can see (a shared member sees less), and a note when a station is stale and its count is old.
   - Where to show it: a total in the fleet header and the strip, and "N agents" next to each session. Should the wall (B17) show the total too?
   - Keep "tasks" (shell commands) separate from "agents" in the count, so the number means agents only?
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the fleet view and the session show running agents, with the agents of workflows (B19) (design `docs/v2/design/workflow-agents.md`, merged into v2 by `ab653cd5`)
 
 ## B20. Cost totals already stored are too high: repair or reset (owner report, 2026-10-22)
 
@@ -249,7 +261,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Facts:** the session total is a sum of every `usage.updated` event (`add_usage`, `crates/fleetdeck-proto/src/fold.rs`). A wrong value in an event is therefore kept in the stored total. The fix in B14 does not change the totals that are already stored.
 - **Questions for the design:** recompute the totals from the stored events (a migration), or reset them and count again from the fix date? Show the reset in the audit log. Which sessions does it touch: all, or only the ones with a Claude or Codex cost?
 - **Depends on:** B14 (the source of the cost must be right before a repair is worth doing).
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the stored cost totals are set apart as old counts and can be recounted per session (B20) (design `docs/v2/design/usage-cost.md`, merged into v2 by `3e8d26e0`)
 
 ## B21. The first turn after a Claude resume is not counted (owner report, 2026-10-22)
 
@@ -259,7 +272,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Facts:** the resume path is the shim-resume design (`docs/v2/design/shim-resume.md` §2 and §3). Claude's cost is `total_cost_usd` of the `result` frame (`claude/map.rs`, `usage_of`).
 - **Risk:** this changes the protocol between the station and the provider, and the station state. It needs its own high-risk review: an adversary DESIGN REVIEW before any build.
 - **Depends on:** B14 (the source of Claude's cost). If the cost is a running total of the process, the fix of B14 may change this design.
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** the first turn after a Claude resume is counted from the resume baseline (B21) (design `docs/v2/design/usage-cost.md`, merged into v2 by `3e8d26e0`)
 
 ## B22. "Last seen" of an offline station shows when its last link started, not when it ended (owner report, 2026-10-22)
 
@@ -267,7 +281,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** "Last seen" shows the end of the last link (the last moment the station was reachable).
 - **Facts:** the board shows `station.last_seen` in `web/src/board/StationsPanel.tsx` (the text "Last seen …" with `showLastSeen`, `web/src/board/StationSummary.tsx`). The value comes from the deck's station record. I did not trace where the deck writes `last_seen` for a station; that is the first research step.
 - **Questions for the design:** does the deck store the link start and the link end separately? If not, add the link end when the link closes (and keep the start for the status history).
-- **Status:** open (noted only).
+- **Status:** done.
+- **Done (2026-10-24):** "Last seen" is the last frame heard from the station, and "Linked" comes from `linked_at` (B22) (design `docs/v2/design/last-seen.md`, merged into v2 by `d3abf941`)
 
 ## B23. Smaller items: a restart marker, turns without a snapshot, the phone artifact version selector, older hover CSS (owner list, 2026-10-22)
 
@@ -276,4 +291,25 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   2. **Folding turns that have no snapshot.** The turn list shows a turn diff only when it has a snapshot (`web/src/session/TurnsPanel.tsx`, `parseTurnSnapshot`, `turnSnapshot`). A turn without one is not folded the same way. Decide the fold rule for such turns.
   3. **The version selector of phone artifacts.** On the phone, an artifact chip shows the version (`Artifact: <title> v<n>`, `web/src/artifacts/ArtifactChips.tsx`). The owner wants a version selector on the phone that is as clear as the board's.
   4. **Some older CSS hover rules.** About 148 `:hover` rules are in `web/src/styles`. Some are old and do not match the new design (`DESIGN-SYSTEM.md`). Find them and bring them to the design rules.
-- **Status:** open (noted only). Each point is a separate small item when it is built.
+- **Status:** done.
+- **Done (2026-10-24):** the restart marker, the quiet-turn folds, the phone version badge and the hover sweep (B23) (design `docs/v2/design/small-ui.md`, merged into v2 by `a55ff709`)
+
+## B24. Fleet gaps found while running the backlog program (2026-10-23)
+
+- **Observed:** six gaps showed while the backlog program ran with coordinator sessions (design `docs/v2/design/fleet-gaps.md`).
+- **Done (2026-10-24), merged into v2 by `0c382e9f` (the gaps track):**
+  - G1: a spawn outside the allowed roots now refuses with `outside_roots` and the station text.
+  - G2: the `fleet_view` station filter works.
+  - G3: the DL-402 fix: `runtime_requests` keyed by `(session_id, request_id)`, station migration V43 (`b0cdbf5f`, DL-521).
+  - G4: the board follows a pending command and shows a refused answer.
+  - G5: the deck wake key has the session (deck migration V49).
+- **Open (G6):** a coordinator grant expires after 30 idle minutes while its own long workflow only waits. The error "`coordinator.query` needs scope coordinate, which the pairing did not grant" hides that the grant expired.
+- **Wanted (G6):** a clear text ("your grant expired (idle); the owner can renew it"), and a decision whether a running turn of the coordinator session counts as use (owner policy question).
+- **Status:** G1 to G5 done; G6 open.
+
+## B25. Flaky test rig (2026-10-24)
+
+- **Observed:** the test `fleetdeck-station manager::shim_workflow_tests::an_adopted_session_binds_33_runs_before_its_observer_reads_them` failed once with "database is locked".
+- **Cause (probable):** `shim_resume_rig.rs` `as_shim_station` reopens `station.db` while the old manager can still hold a connection.
+- **Wanted:** the rig waits for the old store to close before it reopens the database.
+- **Status:** open.

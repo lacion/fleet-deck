@@ -3713,3 +3713,412 @@ Owner review: pending.
   - e. An editor that writes through a descriptor opened before the replace, after the re-read, writes to a removed file (as with any rename-based replace).
   - f. A push lease row written before the upgrade (strict dest) and a new row (canonical dest) for one ref are two rows; `same_dest` keeps each check correct.
   - g. Not built: the macOS build of `RENAME_NOREPLACE` was not compiled here (rustix supports it for Apple targets).
+
+## DL-410 — Claude command list from `initialize`, `commands_changed` and every root `init` (B11)
+
+- Context: owner report 2026-10-22 (B11): the `/` menu misses commands. The Claude core sent `session.slash_commands` only from the first `init`, which the CLI sends only with the first prompt; the `initialize` answer (141 commands, recorded on 2.1.308) and `system/commands_changed` (147) were ignored.
+- Choice: `claude/commands.rs` emits `session.slash_commands` from the `commands` of the `initialize` answer, from each `system/commands_changed`, and from each root `init` (`slash_commands` minus the `terminal_slash_commands` of the last root init; `skills` of the last root init). Names: one leading `/` removed, 1-128 bytes, no whitespace, sorted, unique, at most 500. The core emits only when the sorted pair changed; the first list also when empty; a source without an array changes nothing. The event can come before `session.started` (as the control answers of DL-141); the replay invariant allows it. `ClaudeCore.commands: CommandState` is `serde(default)`; `CHECKPOINT_VERSION` stays.
+- Rejected: holding the event as `pending_models` (DL-151); a cached list from another session.
+
+## DL-411 — Codex skills in `session.slash_commands` (B11)
+
+- Context: Codex sessions had no `/` menu. The app-server 0.163.0 has `skills/list` and `skills/changed`, but no list of its TUI commands or custom prompts, and it sends `/compact` to the model as text (recorded). It loads a skill that the text names with `$name` anywhere (recorded: +1,367 input tokens for the 5,472-byte skill file).
+- Choice: after the thread opens, and after each `skills/changed`, the Codex core sends `skills/list {cwds: [<session folder>]}` (`HostRequest::SkillCatalog`) when `CoreConfig.request_models` is true, and emits `session.slash_commands { commands: [], skills: <enabled names> }` with the rules of DL-410. A failed list emits nothing and no error. The testkit sim answers with one skill.
+- Rejected: a new event kind or field; a new `CoreConfig` field; offering the Codex TUI commands.
+
+## DL-412 — Composer: where the command menus open (B11)
+
+- Context: Claude runs a slash command only when the prompt starts with it (recorded); the board trims the text before it sends it.
+- Choice: `/` opens the command menu while the caret is in the first word of the text (leading whitespace allowed), for Claude and Codex. A `/` in another word opens nothing. In a Codex session `$` opens the skill menu at any word start, with no menu when nothing matches; a pick inserts `$name ` (also from the `/` menu). A Claude pick inserts `/name ` and keeps the rest of the text. The command menu wins over `#` and `@` only while the caret is in its word.
+- Rejected: a `/` menu at every word start.
+
+## DL-413 — Composer: the command menu lists every command (B11)
+
+- Context: the menu showed at most 8 rows in the frame order, so built-in commands never showed for `/`.
+- Choice: `matchSlash` and `MAX_SLASH_OPTIONS` are replaced by `matchCommand`, `rankNames`, `commandMenu` and `pickCommand` (`web/src/session/slash.ts`). Ranking: prefix, part prefix after `:`, `-` or `_`, contains; each group sorted case-insensitively. Up to 200 rows in the 240px scroll box, the selected row scrolled into view, the menu fade (`.fd-composer-menu` in the `base.css` fade rules). The list is commands and skills together. Status rows say when there is no list yet, when the provider has none, and when nothing matches (texts in `composer-menus.md` §3.6); they replace the note under the box. Placeholder `($ for skills)` for Codex.
+- Rejected: 8 rows plus a "more" row; fuzzy matching; descriptions in the summary.
+
+## DL-414 — Composer: the bare `@` shows the changed files of the session (B11)
+
+- Context: the bare `@` showed only "Type 2 or more letters to search files"; the station search needs 2 letters.
+- Choice: under 2 letters the `@` menu lists the changed paths of the session that the board already loaded (`useDiffPaths`), filtered by the 1-letter query (case-insensitive), at most 20, then the same status row. No change of the station.
+- Rejected: a `files.list` of the root; a 1-letter station search.
+
+## DL-420: Workflow progress from the Claude stream (B12, design `docs/v2/design/workflow-agents.md`)
+
+- Context: a Claude `Workflow` run showed only a "done" tool card and one background task. Recordings (Claude 2.1.308) show one `local_workflow` task and `task_progress.workflow_progress` lists of phases and agents; no agent frames in the stream.
+- Decision: the Claude adapter keeps a state per workflow (checkpointed, a digest per agent) and emits `workflow.updated { task_id, node_id?, name?, run_id?, status, untracked?, phases[], agents[], running_agents, agents_total }` with only the changed phases and agents, in events of at most 256 KiB; states `queued`, `running`, `done`, `failed`, `stopped`; counters ride along. A final status carries no agents; the receivers stop the queued and running ones. The core follows at most 64 running workflows and never drops a running one; more are `untracked`. The run id comes only from `tool_use_result.runId` (`wf_…`). Permission requests of a workflow agent carry `provider_refs.agent_id`.
+
+## DL-421: Agent counts in the session summary (B12, B19)
+
+- Decision: `SessionSummary` gets `running_workflows` (at most 256, `{task_id, running_agents, agents_total, untracked?}`), `background_workflows`, `workflows_overflow`, a derived `running_agents` (running subagent tools + `background_agents` + running workflow agents) and a derived `agents_partial` (`workflows_overflow` or an untracked entry). A `background.updated` removes every workflow that it does not list, and clears `workflows_overflow` only when every listed workflow has an entry. All `#[serde(default)]` and optional in TypeScript. The display card copies `running_agents` only.
+- Changed later: the 256-entry cap and `workflows_overflow` in the summary (see docs/v2/design/workflow-agents.md §Revision 3 (design review round 2))
+
+## DL-422: The chat of a workflow agent (B12)
+
+- Decision: link method `session.workflow_agent` (feature `workflows.v1`, scope `read`) with `{session_id, agent_id}`; the station serves only an agent that it bound from its own projection when the run id came, in the event transaction before any pruning (station migration V45 `workflow_agent_logs`, key `(session_id, agent_id)`, with run id and launch facts) and reads `projects/<cwd>/<native>/subagents/workflows/<run_id>/agent-<agent_id>.jsonl` with the DL-191 checks and parser. The binding is in `append_at`, so both hosts bind in the same way and no observer is needed; every process keeps its launch facts in `process_launch_facts`, written in the same transaction as its process row. Deck route `GET /api/sessions/{station}/{session}/workflow-agents/{agent_id}`, owner only. Risk high: adversary DESIGN REVIEW before the station and deck tasks.
+- Changed later: the workflow binding moved into the event transaction; launch facts commit with the process row (see docs/v2/design/workflow-agents.md §Revision 3 (design review round 2))
+
+## DL-423: Workflows in the Agents switcher (B12)
+
+- Decision: one group per workflow (head with name, count and status), phase heads, agent rows with chips; an agent view with its facts and "Show its work"; the URL `agent=wf:<task_id>:<index>`; a one-line status under the Workflow card; "From workflow agent <label>" on its approvals. The board starts from the station's workflow page and applies the later events with the same rules. An older station shows the workflow with "This station does not report the agents of a workflow."
+
+## DL-424: Agents in the fleet view (B19)
+
+- Decision: the strip shows "Agents running" (subagents + running workflow agents, "N+" when partial) and "Background commands" (tasks that are neither); the header sentence of Fleet and Watch adds "N at work" (working or background live sessions plus their running agents; unreachable stations not counted, said in the title). Queued agents and shell tasks do not count.
+
+## DL-425: Workflows after stop, takeover and resume (B12)
+
+- Facts: Claude's interrupt kills running workflows (recorded between turns, sent outside Fleet Deck); Fleet Deck sends an interrupt only during a main turn; a resumed process reports an unfinished workflow `stopped` and does not continue it; a shim takeover keeps it running.
+- Decision: Fleet Deck keeps its interrupt guards; between turns, Stop ends the workflow with the process. At a final status or the end of the process, the station projection and the board set the running and queued agents `stopped`; the board keeps the `local_workflow` kind over an `unknown` notification; agent chats stay readable from their binding rows; the launch facts of a process are committed with its process row, so they survive a takeover and a crash before the first observer.
+- Changed later: launch facts are committed with the process row (see docs/v2/design/workflow-agents.md §Revision 3 (design review round 2))
+
+## DL-426: The workflow projection of the station (B12)
+
+- Decision: the station keeps `workflow_runs`, `workflow_phases` and `workflow_agents` (migration V45), written in the event transaction with the view rules R1 to R6 (every running run, at most 32 ended runs per session, 1,000 agents and 100 phases per run). Link method `session.workflows` (feature `workflows.v1`, scope `read`) gives pages of at most 512 KiB with `as_of`; deck route `GET /api/sessions/{station}/{session}/workflows`, readable by the owner and the members of the session. The board reads every page (until `next` is absent, no page cap) when a session opens and again when its event window passes `as_of`.
+- Changed later: pages are read until `next` is absent, with no page cap (see docs/v2/design/workflow-agents.md §Revision 3 (design review round 2))
+
+## DL-430: B13 root cause: the shim's exit reaper did not reap the provider's orphans (architect, 2026-10-23)
+
+- Context: B13; design `docs/v2/design/resume-after-stop.md` §1. A resume after Stop failed with `exit_unverified` until the owner clicked "Mark as ended".
+- Cause: `reap_orphans` used `rustix::process::waitpid(None, NOHANG)`, which is `waitpid(0)`: only children in the shim's own process group. The provider's orphans are in the provider's group, so their zombies stayed in the provider's session and made every census pass unclean for the 1 s exit budget. Reproduced on Lighting for Claude and Codex.
+- Decision: the exit path reaps with `rustix::process::wait(NOHANG)` (`waitpid(-1)`), after tokio reaped the provider.
+
+## DL-431: The shim stops the leftover members of a run before the exit report, with the leader pinned (architect, 2026-10-23)
+
+- Context: design §3.2. A live member at the exit (a slow MCP server, a background command; Codex MCP servers run in their own groups) leaves `exited_descendants_remaining`.
+- Decision: a dedicated thread waits for the exit with `waitid(P_PID, WEXITED | WNOWAIT)` without reaping, so the zombie leader keeps its pid number; the shim then gives members 2 s, sends SIGTERM (the group through `kill(-L)`, other session members through verified pidfds), 2 s, SIGKILL (at most 3 rounds), counts again, and only then reaps the leader. Every signal of the provider (stop, Kill, Interrupt) goes through one lifecycle gate: numeric signals only while the leader is unreaped and running; a Kill during the sweep escalates the sweep; nothing after the reap. When the wait fails, the shim sends no numeric signal and reports its census unchanged (revision 2).
+- Changed later: the leader is pinned by a `waitid` thread; no numeric signal when the pin fails (see docs/v2/design/resume-after-stop.md §Revision 2 (design review round 1))
+
+## DL-432: The station proves an unverified exit by its own check at resume (architect, 2026-10-23)
+
+- Context: design §3.3. Shims of an older build keep the bug of DL-430 until they end; a busy machine can still leave an incomplete exit census.
+- Decision: before the decision of `session.resume`, of an input to an ended session, and of the auto-continue of a lost session at the station start, the station runs the check of "Mark as ended" for each `exited` row whose effective reason is `exit_unverified`. A complete check on the same boot with no live identity and no group or session member records `station_proof = 'checked_after_exit'` (new column, schema V44) and the event `session.execution_settled` (a kind separate from the owner's `session.execution_reconciled`). `lost` and `exited_descendants_remaining` rows stay owner-only. The termination standard of DL-182 §1a does not change: this is the clean-exit proof, taken later.
+- Changed later: the station's proof is the separate kind `session.execution_settled` (see docs/v2/design/resume-after-stop.md §Revision 2 (design review round 1))
+
+## DL-433: A refused resume opens the check; "Mark as ended and resume" and "Stop them and resume" (architect, 2026-10-23)
+
+- Context: design §3.4.
+- Decision: when the station refuses a resume with "not_resumable: the previous execution may still run", the board opens the previous-run dialog for the owner in resume mode, with "Mark as ended and resume" (nothing lives) or "Stop them and resume" (BG-4 plan and elevation, then a fresh check, the owner mark and the resume). The combined stop action marks the run as ended; this changes BG-4 §5.5 for this action only. The dialog gets the `.fd-dialog-head`.
+
+## DL-434: Compatibility of B13 (architect, 2026-10-23)
+
+- Decision: no feature flag. The exit report wire does not change. The station's proof is the new event kind `session.execution_settled`; `session.execution_reconciled` stays the owner's event without change, so an older deck keeps the new kind as unknown and never stores it as the owner's. An older station binary refuses the V44 database (`DbError::TooNew`); the recovery is forward repair, or the restore of the V43 pre-upgrade backup (`operations.md` §13.6), which loses station writes since the upgrade. Shims that an older build launched are covered by DL-432.
+- Changed later: recovery is a forward repair or the restore of the V43 backup, not a binary rollback; the station proof is a separate kind (see docs/v2/design/resume-after-stop.md §Revision 2 (design review round 1))
+
+## DL-440: Usage events stay deltas; provider running totals are the source (B14) (design agent, 2026-10-23)
+
+- `usage.updated` keeps the delta contract of `fold.rs` `add_usage`. Each adapter keeps the last running total of its process (Claude, per model) or thread (Codex) and emits the growth. Older decks stay correct. A session total is the usage of the executions that Fleet Deck ran for it. Design `docs/v2/design/usage-cost.md` §3.
+
+## DL-441: `input_tokens` is new input for both providers; cache reads and writes are separate counts (B14) (design agent, 2026-10-23)
+
+- `Usage` gets `cache_read_tokens`, `cache_write_tokens` (optional). Codex input = `inputTokens − cachedInputTokens − cacheWriteInputTokens`. The board says "new input", "cache read", "cache write", "output". The meaning applies to usage with `scheme: 2` only (DL-449). Design §3.1, §3.6.
+- Changed later: scheme and count rules refined (see docs/v2/design/usage-cost.md §Revision 2 (design review round 1))
+
+## DL-442: Claude usage comes from `result.modelUsage` per model (B14) (design agent, 2026-10-23)
+
+- The cumulative per-model totals contain subagents, background agents and the cache, and their `costUSD` is Claude's own list price. A separate cost cursor moves at every result. `result.usage` is used only when the token base is not known or `modelUsage` is absent, and such a delta is marked `tokens_partial`. Replaces the cost rule of `0e6c3600`. Design §3.2.
+- Changed later: scheme and count rules refined (see docs/v2/design/usage-cost.md §Revision 2 (design review round 1))
+
+## DL-443: The Claude resume baseline is the last `cost-state` record of the transcript (B21) (design agent, 2026-10-23)
+
+- The CLI restores its totals from the last `cost-state` record (written at a clean exit, not at `SIGKILL`; a fork restores the parent's). The adapter reads it before the spawn (no-follow, owner uid, 32 MiB, 2 s) and stores it in the checkpointed core state. Unreadable: the first result counts the turn tokens and no cost, marked partial. Fixes the "resumed first result adds 0" rule of `0e6c3600` and the shim-restore overcount. Design §3.3.
+- Changed later: baseline rules refined (see docs/v2/design/usage-cost.md §Revision 2 (design review round 1))
+
+## DL-444: One dated price table for inferred costs, Codex rows only (B14) (design agent, 2026-10-23)
+
+- `crates/fleetdeck-providers/src/prices.rs`, `PRICE_TABLE_VERSION = "2026-10-23"`, rates per 1M tokens for input, cache read, cache write and output. An inferred cost carries the table date in `Usage.prices`. No Claude rows. Design §3.5.
+
+## DL-445: Codex usage comes from `tokenUsage.total` per thread, sub-agents included (B14) (design agent, 2026-10-23)
+
+- An own-thread update before the first `turn/started` of a process (the resume or fork replay) is a base and adds nothing. Sub-agent threads add their own growth, priced at the session model. A core restored from an older checkpoint counts the `last` block of the first update of each thread. Design §3.4.
+- Changed later: count rules refined (see docs/v2/design/usage-cost.md §Revision 2 (design review round 1))
+
+## DL-446: Every cost stays "at API prices"; no plan detection (B14) (design agent, 2026-10-23)
+
+- The existing label and title ("A subscription does not bill it") are the estimate text. Design §2 (B14.4).
+
+## DL-447: Old counts are recounted from the provider record with a `usage.set` event (B20) (design agent, 2026-10-23, revision 3)
+
+- The events cannot rebuild the totals (7-day retention, 500 deck rows, old meanings). Only a total that is entirely an old count is recounted, and only for a session whose conversation started in it on this station (proven by its first `start` effect; no import, no move, no shared conversation, no pruned start record) and whose every execution is proven ended (the resume rule, under the session lock). The station reads the last Claude `cost-state` or prices the Codex rollout interval by interval through the trusted history locator and appends `usage.set { usage, previous, source, command_id }`; the folds replace and keep `previous` in the summary. A recounted total is a lower bound. A session without a record becomes unknown. Design §4.
+- Changed later: the recount needs positive proof of the origin (`origin_unproven`) (see docs/v2/design/usage-cost.md §Revision 3 (design review round 2))
+
+## DL-448: The recount is an owner command per session, `session.usage_recount`, feature `usage_recount.v1` (B20) (design agent, 2026-10-23, revision 2)
+
+- Generic command route, scope `admin`, owner login only, with a submitted and an outcome audit row per session. The board runs it from the Usage tab, four at a time, after a confirm, with its own typed call that polls a pending command and matches the summary by command id. Design §4.2-§4.4.
+- Changed later: recount command rules refined (see docs/v2/design/usage-cost.md §Revision 2 (design review round 1))
+
+## DL-449: Usage accounting scheme 2; old counts are set apart; partial totals are marked (B14, B20) (design agent, 2026-10-23, revision 2)
+
+- Every usage of the new rules carries `scheme: 2`. The fold never adds new-rule and old-rule parts together: the first new-rule event moves an old total into `SessionSummary.usage_legacy`, and a later old-rule event goes there too. `tokens_partial` and `cost_partial` mark a lower bound; the fold keeps them and marks a cost partial when a part with tokens has no cost. The board sums only new-rule usage, says "at least" for partial parts and shows the old count apart. Design §3.1, §3.6.
+
+## DL-450 — MCP Apps phase 1 for Claude and Codex (B15)
+
+- Context: B15 asked whether Fleet Deck can show MCP Apps in the chat as t3code does. Live recordings on 2026-10-23 prove the provider paths: Codex 0.163.0 (`io.modelcontextprotocol/ui` extension in `initialize`, `mcpAppResourceUri` on `mcpToolCall`, `mcpServer/resource/read`, `mcpServer/tool/call`, `mcpServerStatus/list`) and Claude 2.1.308 (`CLAUDE_CODE_MCP_APPS_HOST=1`, `mcp_status` with `_meta.ui`, `mcp_read_resource`, `mcp_call` with `result_not_for_model`).
+- Choice: phase 1 renders MCP Apps inline in the chat for both providers. Codex at or above 0.163.0 (cached `--version` probe); Claude when `system/init.capabilities` has `mcp_read_resource_v1`, `mcp_tool_ui_meta_v1` and `mcp_call_result_not_for_model_v1`.
+- Rejected: Codex only.
+- Review: high risk; adversary DESIGN REVIEW of `docs/v2/design/mcp-apps.md` before the build.
+
+## DL-451 — App documents live on the station; the deck relays them per view
+
+- Choice: a station table `mcp_apps` (migration V46) keeps the document (at most 2 MiB), the tool input (64 KiB) and the tool result (512 KiB); 50 rows per session, 500 per station. The deck keeps no copy: `GET /api/sessions/{station}/{session}/apps/{app_id}` mints a 10-minute in-memory token and `GET /app/{token}` serves the document in chunks from the station with the app CSP.
+- Rejected: the artifact store; a deck cache; `srcdoc` frames.
+
+## DL-452 — Capture after the tool call, without holding the turn
+
+- Choice: provider cores emit `Output::AppCandidate`; a station capture task resolves the `ui://` URI (Claude through `mcp_status`), reads it (20 s), validates it, stores it and appends the additive event `tool.app`. A failure leaves a plain tool row. The turn is never held open.
+- Rejected: t3code's turn hold; capture inside the core.
+
+## DL-453 — The app request path is owner-only and station-enforced
+
+- Choice: link methods `session.app_meta` (Read), `session.app_document` (Read), `session.app_call` (Drive), `session.app_calls` (Read) and `session.app_release` (Drive), all non-mutating, feature `mcp_apps.v1`. Deck routes are owner-only and in the board-API method table; the POST routes are mutating (CSRF). The station resolves the app from its own row, reaches only that server, calls a Claude tool only by a unique, addressable name, refuses tools without the `app` visibility, allows only `ui://` reads, answers `confirm` for every tool that is not read-only until the board sends `confirmed: true`, rate-limits (2 call tasks, 8 `uncertain` rows, 30 per minute per session), and never starts, resumes or wakes a session. Every tool call is a durable row under the workspace fence that blocks a revert of its folder while it runs or its end is unproven; only a server result or the observed end of that process proves the end, never a provider error, a provider timeout, the station shutdown detach or a missing registry entry; a non-read-only call advances the folder generation (the B8 barrier). `session.app_calls` (Read) lists the open calls of a session and of its folder, and `session.app_release` releases an `uncertain` call, both by the call row alone, so a call stays visible and releasable after the caps delete its app.
+- Rejected: a durable session command; board-only checks; members and coordinators in phase 1.
+- Changed later: five link methods and four deck API routes (see docs/v2/design/mcp-apps.md §Revision 2 (design review round 1))
+
+## DL-454 — Phase 1 host bridge and consent
+
+- Choice: `ui/initialize`, tool-input and tool-result replay, host context with literal theme colors, `size-changed`, `host-context-changed`, `request-teardown`, `resource-teardown`, `ping`, `tools/call` and `resources/read` through the deck, `ui/message` (owner dialog, then the normal composer send), `ui/open-link` (owner dialog, http and https only), inline display only. Not supported: full screen, model context, downloads, sampling.
+- Rejected: t3code's full host side in one step.
+
+## DL-455 — One opaque frame with a per-app CSP
+
+- Choice: `sandbox allow-scripts` in both the frame attribute and the CSP header, never `allow-same-origin`; the CSP is built from the sanitized `connectDomains` and `resourceDomains` only, with no `'self'`, no frames, no forms, no `base`. The deck prefixes one bootstrap: a cookie facade, a color-scheme listener and the bridge channel (a `MessagePort` sent to the board in one hello before any app script runs; `window.parent` becomes that port). The board talks only on that port; a second hello or a second `load` closes the bridge.
+- Rejected: the spec's double-iframe sandbox proxy; reusing the artifact CSP.
+- Changed later: a deck bootstrap with a `MessageChannel` port replaces the window messages of the frame (see docs/v2/design/mcp-apps.md §Revision 2 (design review round 1))
+
+## DL-456 — One app host module for the chat and the wall
+
+- Choice: `web/src/apps/bridge.ts` takes a policy object; phase 1 ships the chat policy. Apps on the wall (B17 item 4) need their own design and DESIGN REVIEW (scripts on the wall, the display principal, a read-only policy).
+- Rejected: a separate wall host.
+
+## DL-457 — Fleet Deck's own MCP tools ship no apps in phase 1
+
+- Choice: the coordinator MCP server returns no `_meta.ui`. The generic path would render such apps later, but the board's native views are the better place for fleet data.
+- Rejected: a fleet-view app in the chat now.
+
+## DL-458 — No owner switch in phase 1
+
+- Choice: the extension offer follows the provider gates of DL-450 only; no station setting yet (owner question 2 of the design).
+- Rejected: a Settings → station switch in phase 1.
+
+## DL-460: The Fleet Deck logo is concept C, "Formation" (B16, owner decision 2026-10-23)
+
+- The owner chose concept C, "Formation" (owner decision 2026-10-23), among A (Strip deck), B (Angled deck) and C in the artifact "Fleet Deck logo: 3 concepts". The mark is the path of `c-mark.svg`; the A and B paths are not shipped. Design `docs/v2/design/logo.md` §2 (its text names concept B; read it as C, see §"Architect decisions", question 1).
+
+## DL-461: One mark path in `web/src/ui/brand.ts` is the source of every brand file (B16) (design agent, 2026-10-23)
+
+- `MARK_PATH` (24-unit box, even-odd fill, filled shapes only). `ui/Mark.tsx` draws it in `currentColor` with `color: var(--text)`, no tile; forced colors draw it in CanvasText. `tools/brand/render.mjs` makes the favicon, the app icons and the README and social images from it; the Omarchy widget carries the same string, and tests check the three places. Design §3.1-§3.2.
+
+## DL-462: The wordmark is Mona Sans 115 %, weight 620, sentence case; raster in images (B16) (design agent, 2026-10-23)
+
+- `.fd-wordmark` goes from weight 600 to 620 (the `.fd-wide` cut of DESIGN-SYSTEM §2.3). Lockup: mark box 1.7 times the font size, gap a third of the box. No outlined SVG wordmark: the README uses two lockup PNGs in a `<picture>`. Design §3.3, §3.7.
+
+## DL-463: Favicon, app icons and a manifest with `display: "browser"` (B16) (design agent, 2026-10-23)
+
+- `favicon.svg` (the bare mark with a color-scheme media query), `favicon.ico` (16, 32, 48 px tiles), `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `manifest.webmanifest` in `web/public/`, linked from `web/index.html` with relative URLs. No deck change: the content types and the CSP exist. Design §3.4-§3.5.
+
+## DL-464: Brand PNGs come from the e2e Chromium and are committed (B16) (design agent, 2026-10-23)
+
+- `tools/brand/render.mjs` uses the Playwright Chromium of `web/node_modules` and the bundled Mona Sans; it writes the ICO itself. No new dependency, no Chromium in the build. Design §3.6.
+
+## DL-465: The Omarchy bar widget draws the mark with `PathSvg`; the menu keeps glyphs (B16) (design agent, 2026-10-23)
+
+- `Widget.qml` replaces the U+F0E8 glyph with a `QtQuick.Shapes` `Shape` filled with `root.tint` (Omarchy ships `QtQuick.Shapes`). The Omarchy menu draws an extension icon only as a glyph, so its rows stay. Existing installs update through "outdated → Install". Design §3.8.
+
+## DL-466: No Fleet Deck launcher or notification icon in B16 (design agent, 2026-10-23)
+
+- The installer writes only under the config home, and a launcher needs data-home files and a new repair asset id. The operations guide names `omarchy-webapp-install "Fleet Deck" <board URL> <board URL>/apple-touch-icon.png` (with the icon URL, so that no public favicon service sees the board address). Design §3.9, §6.
+
+## DL-467: The README header is the lockup; the social preview is a committed PNG (B16) (design agent, 2026-10-23)
+
+- `docs/v2/assets/brand/lockup-{light,dark}.png` in a `<picture>` inside the README H1; `docs/v2/assets/brand/social-preview.png` (1280×640), uploaded by the owner in the GitHub settings. Design §3.7.
+
+## DL-468: The old icon `docs/v2/assets/fleet-deck-icon.png` is removed (B16) (design agent, 2026-10-23)
+
+- Nothing referred to it, and its orange is not a color of the design system. Design §3.4.
+
+## DL-470: B17 wall controls are a transient owner relay (architect, 2026-10-23)
+
+- Context: the owner cannot scroll the wall or move between its items from the board or the phone (B17 want 1). Directives are durable "what the wall shows" state, and the wall keys act only at the kiosk.
+- Decision: navigation from the remote ("Open", "Back", the next or previous view) is an owner directive (`POST /api/displays/{id}/remote/navigate`, the checks and audit of the directive route), followed by a `navigate` frame so that the wall reads it at once. The transient steps are a closed control enum (`scroll { area, step }`, `select { item }`); the only reference is the selected session, checked against the display's effective scope. The owner sends a control with `POST /api/displays/{id}/control` (Drive, owner only). The deck keeps the controls in memory (32 for each display, 30 s, 10 per second), keeps a checkpoint of their result for the current directive generation (the selection and the long-frame position), and pushes each frame (with a relay `incarnation`, its `seq`, its generation and the checkpoint after it) only to display sockets that declare `wall_control.v1`. A socket gets a `sync` frame when it attaches and after a lag. The wall applies a frame like its keys and holds auto-focus and ambient for 120 s.
+- Rejected: new directive kinds for scroll and select; navigation as a transient control; delivery by the 2 s directive poll; coordinator, member, station or display senders.
+
+## DL-471: B17 remote control is a board-side mirror (architect, 2026-10-23)
+
+- Context: B17 want 3 asks for a remote desktop for the wall browser only.
+- Decision: the board route `#/remote/<display_id>` renders `WallPage` from the owner's data, narrowed to the display's effective scope, at the bound monitor's logical size, with the display's directive and checkpoint (`GET /api/displays/{id}/remote`). The mirror applies only polled frames, in `seq` order; it rebases on its first view, on a new relay incarnation and on a gap. "Take a screenshot of the wall" reuses the P5a owner screenshot of the bound monitor. No pixels stream and no input reaches the wall.
+- Rejected: P6 screenshots or a stream with P7 input into the wall window (P7 refuses wall windows on purpose; one dev1 still was 867 KB, above the 700 KiB MCP limit); a display→deck view report.
+
+## DL-472: B17 wall pages are an owner allow-list in a credentialless frame (architect, 2026-10-23)
+
+- Context: B17 want 2 asks for custom URLs on the wall. The kiosk holds the read-only display login.
+- Decision: the owner keeps at most 50 "Wall pages" (name, URL, fit) on the deck, added with elevation. A `page` directive names an entry by id. The wall shows it in an `<iframe credentialless sandbox="allow-scripts allow-same-origin allow-forms" allow="" referrerpolicy="no-referrer">`, and refuses to show it without `credentialless` support or for a board origin. Only a `/display` request with the display's own login gets the origin of the page of its current directive in `frame-src`; the anonymous document holds no configuration data, and the wall reloads its document once for each page generation. The `frame-src` keeps the pane's own frame on that origin; it does not limit what the page embeds, so the owner adds only trusted sites. `https` anywhere; `http` only for loopback hosts (the `https` wall blocks other `http` frames as mixed content). Migration V48 adds `wall_pages` and rebuilds `display_directives` with the mode `page`. An older wall reads a `page` directive as `mission`.
+- Rejected: a free URL in a directive; a normal frame; a separate window as the main path (it stays as Desktop › Open a link).
+- Changed later: the public `/display` document holds the base policy only; `http` only for loopback hosts; the allow-list is not a content boundary (see docs/v2/design/wall-control.md §Revision 2 (design review round 1))
+
+## DL-473: B17 scroll model (architect, 2026-10-23)
+
+- Context: nothing on the wall can scroll from a key or a directive; the focus chat clips older lines; an opaque artifact frame cannot be scrolled from outside.
+- Decision: named scroll areas (`needs`, `stream`, `chat`, `changes`, `artifact`, `page`) and discrete steps (10 % line, 90 % page, top, bottom). The focus chat becomes scrollable with a "Scrolled back. New lines are below." note. Pages with the long fit, and HTML artifacts while the position is above 0, use a frame 8 screens tall inside a scrolled container. The deck counts the position of such a frame in tenths of a screen (0 to 70) in its checkpoint, and the wall scrolls to that absolute position.
+- Rejected: pixel offsets from the remote; scripts in the inert artifact frame.
+
+## DL-474: B17 wall apps share the B15 app host (architect, 2026-10-23)
+
+- Context: B17 want 4 asks for agent-made live UIs on the wall; B15 designs MCP Apps in the chat.
+- Decision: phase C, after the B15 host. An `artifact` directive with `app: true` on a display with "Allow apps on this wall" (off by default, elevation to turn on) is served with the B15 app policy (scripts, `connect-src 'none'`) and rendered in the B15 `AppFrame` with the role `wall`. The frame URL declares `wall_apps.v1` in its query, because a frame navigation cannot carry a header; the declaration grants nothing. The only app request on a wall is `ui/initialize`. The wall sends the feed `notifications/fleetdeck/wall-data` with the cards of the author session and its spawn lineage inside the display scope. Coordinator `wall_show` gets an optional `app` flag.
+- Rejected: a separate wall bridge; a feed of the whole display scope; app actions on the wall.
+
+## DL-475: B17 backlog corrections (architect, 2026-10-23)
+
+- The directive is a tagged enum with typed references, not `{ mode, artifact_url, … }`. The station sender uses `desktop_shell.v1` and two intents. A display reads artifacts through the inert display artifact route, not `/a/{token}/`, so scripts never run on a wall. Desktop › Open a link already opens any web page in its own window on a desktop monitor. P7 refuses wall windows. The wall cannot scroll at all today. No owner route reads a display's current directive. Side finding for the MCP track: `desktop_info` refuses a grant station given by name and accepts its id.
+
+## DL-480: B18, effort display
+
+- New event `effort.changed { effort: Option<String> }` and `SessionSummary.effort` (optional, absent when not reported). `session.started` clears it. No feature flag: older peers drop the unknown kind and field. (docs/v2/design/effort.md §4.1)
+
+## DL-481: B18, Claude source
+
+- The Claude core asks `get_settings` after the first `init`, after each `result` and after a `set_model` answer (one open, a stale one replaced after 60 s, stopped at the first error, no chat error) and passes on only `applied.effort`. The settings files are not read. (§4.3)
+
+## DL-482: B18, redaction
+
+- The Claude driver writes a `get_settings` answer to the raw-frame log with `applied` only; the `effective` and `sources` parts (they hold the settings `env`, credentials included) never reach a log, an event or the store. (§4.3, §8)
+
+## DL-483: B18, Codex source
+
+- The Codex core reports the effort from the `thread/start|resume|fork` answer (`reasoningEffort`, else `thread.reasoningEffort`) and from `thread/settings/updated` of its own thread. `config.toml` is not read. (§4.2)
+
+## DL-484: B18, validation
+
+- An effort id is 1 to 16 of `a-z0-9_-` (`fleetdeck_proto::effort::valid_effort`); any other value counts as not reported. It is a syntax check only: a valid id that is not a real level (`bogus`) shows as reported. (§4.1)
+- Changed later: `valid_effort` is a syntax check only (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-485: B18, board
+
+- The board shows `Opus 5.5 · high` through `modelText` wherever a session's model shows; Properties has an Effort row; an unknown effort shows nothing (never "default"). The ids show as the providers name them. (§4.4)
+
+## DL-486: B18, chat
+
+- The chat adds "Effort changed to x" only for a change after the first report of the current process; a `null` report keeps the last value. The model change notice keeps the model alone. (§4.4 items 4 and 5)
+- Changed later: `lastEffort` and `effortReported` in the timeline (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-487: B18, wall
+
+- The wall display allowlist stays without model and effort. (§6 decision 11)
+
+## DL-488: B18, Phase 2
+
+- Choosing the effort is a separate high-risk build: `session.set_effort`, `SessionSpec.effort`, capability `set_effort`, station feature `session_effort.v1`, events `effort.set_result` and `effort.chosen`, `summary.effort_choice`; it needs an adversary DESIGN REVIEW first. (§9)
+
+## DL-489: B18, checkpoint
+
+- The effort state of the provider cores is in `#[serde(default)]` fields, never in a new `HostRequest` variant; the `Instant` is skipped; the checkpoint version stays 1, so upgrade and rollback restore a live shim. (§4.3.1, §9.5)
+
+## DL-490: B18, Phase 2 evidence
+
+- A `set_effort` effect settles only on `effort.set_result` with its effect id: `accepted` (the provider's ack) confirms first; `applied`, `adjusted`, `unverified` report the verification (and confirm when nothing confirmed before); `refused`, `superseded` retire. Claude verifies with a `get_settings` read written after the change; Codex settles the pick that its turn request sent. An ack is never an observation. (§9.2)
+- Changed later: the ack of `apply_flag_settings` emits nothing; `effort.set_result` settles the effect (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-491: B18, Phase 2 choice
+
+- The owner's choice is `summary.effort_choice`, apart from the observed `summary.effort`; it is set by `effort.chosen` and by the `accepted` result at the provider's ack, never by a verification result; resume and restore pass the choice. (§9.2 item 5)
+- Changed later: the choice is also set by the `accepted` result at the provider's ack (see docs/v2/design/effort.md §Revision 3 (design review round 2))
+
+## DL-492: B18, Phase 2 gate
+
+- An effort command needs `session_effort.v1` at admission and at every send and resend; `Down` waits, `Without` refuses. (§9.2 item 1)
+- Changed later: the gate runs at admission and at every send and resend (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-490: B22 `stations.last_seen` is the last frame heard, refreshed while the link lives (design agent, 2026-10-23)
+
+- Context: B22; design `docs/v2/design/last-seen.md` §1-§3. The deck wrote `last_seen` only at link start (`link/mod.rs:207`), so an offline station showed the start of its last link as "Last seen".
+- Decision: `last_seen` is the deck time of the last frame from the station (`now - Control::since_last_frame()`). The deck writes it at link start, every 30 s while the link lives, and in `serve` when a link ends, before the station is marked unreachable. The SQL uses `MAX`: the time never moves back. The writes do not bump the board version. No schema change.
+- Rejected: a new `link_ended_at` column with a migration; a write only at link close (lost on a deck stop); the close time (up to 45 s late).
+- Changed later: the ack of `apply_flag_settings` emits nothing; `effort.set_result` settles the effect (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-491: B22 `StationView.linked_at` is the start of the continuous link, in memory (design agent, 2026-10-23)
+
+- Decision: the deck keeps, beside the reachability (`BTreeMap<StationId, i64>`), the time of the first `up` after a gap and sends it as the optional `StationView.linked_at`. The board's Linked fact reads it. No column: a live link always belongs to the running deck process.
+- Rejected: a stored link start (no reader, no status history).
+- Changed later: the choice is also set by the `accepted` result at the provider's ack (see docs/v2/design/effort.md §Revision 3 (design review round 2))
+
+## DL-492: B22 the board shows "Last seen" only for a station that the deck reports offline (design agent, 2026-10-23)
+
+- Decision: `StationsPanel` shows "Last seen" when `station.reachable` is false, in live and stale status; a station last reported online shows "Last reported: online." and no "Last seen" while the status is stale.
+- Rejected: the stale case of today, which showed the link start of a station last reported online.
+- Changed later: the gate runs at admission and at every send and resend (see docs/v2/design/effort.md §Revision 2 (design review round 1))
+
+## DL-500: A marker on each setting that waits for a restart (B23, 2026-10-23)
+
+- After a save, a field of `restart_needed` shows the badge "Restart needed" (`.fd-badge[data-tone=info]`, 12px `rotate-ccw`) in place of its neutral "Applies after a restart", until the restart wait of the tab ends. The notice "N settings apply after a restart." counts these fields; a save of live keys no longer removes it. Design `docs/v2/design/small-ui.md` §3.
+
+## DL-501: The pending restart set is board state (B23, 2026-10-23)
+
+- `restartPending.ts` keeps the pending keys with their first value in the tab state; a key changed back to that value leaves the set (not a secret field). It ends with the tab state, like the notice. Rejected: a `pending_restart` list in `SettingsView` (a schema change of the proto, the deck and every station).
+
+## DL-502: The row of a turn without a start snapshot (B23, 2026-10-23)
+
+- A turn whose start or end side is `unavailable`, or that has no checkpoint, says "No snapshot: <cause>" (or "No snapshot of the files for this turn"); "No file changes" only when both sides are available and the diff has no change. New causes: `checkpoint_missing`, `checkpoint_changed`.
+
+## DL-503: Folds of quiet turns (B23, 2026-10-23)
+
+- In the By turn list, three or more turns in a row that have no diff, are not reverted and offer no enabled revert fold into one closed `<details>` row "Turns <a>–<b>" with one cause, "No snapshot", "No file changes" or "No changes to show". The last turn never folds. The empty states of round 3 stay first.
+
+## DL-504: The artifact panel bar on a touch screen (B23, 2026-10-23)
+
+- The actions of the panel bar take the field size of the version select (the page header rule of `base.css`), and in a narrow bar the select label sits on the gutter (the page rule of `page.css`). The phone panel that a chat chip opens then reads as the board's.
+
+## DL-505: The chip version is the neutral version badge (B23, 2026-10-23)
+
+- The chat chip shows "v<n>" (from v2) as `.fd-badge.fd-art-ver`, the badge of the artifact list, with a 1px inset `--btn-edge-raised` ring on the `--raised` chip. It replaces the muted badge, which read as a part of the title.
+
+## DL-506: Every hover rule in a hover block (B23, 2026-10-23)
+
+- The 40 older rules outside `@media (hover: hover)` move into it (10 split, 1 duplicate removed); the budget of check 5e is 0. Nine guarded rules get the fill of the DS: `--hover-bg` for rows with a selected state, `--raised` for the chat folds, `--badge-bg` for folder rows on a panel or a dialog, the primary hover for the session header confirm; two dead rules go. The three hover fills over `--raised-hi` (`session.css:1093`, `1409`, `1948`) stay for a separate DS decision. List: `~/fleetdeck-briefs/backlog/small-ui/hover-verdicts.tsv`.
+
+## DL-510: G1 a start outside the allowed roots is refused with `outside_roots` and a text that names the folder and the station (design agent, 2026-10-23)
+
+- Context: G1; design `docs/v2/design/fleet-gaps.md` §1. A coordinator spawn into a folder outside the roots ended as `rejected: forbidden` with no reason (`manager/decide.rs:481`, `store/outbox.rs:281`).
+- Decision: new `RejectCode::OutsideRoots` (`outside_roots`, stored) for `session.start` and `session.import`; text "The folder <cwd> is outside the allowed roots of station <name>." (`this station` for an empty name). No link feature flag: an older peer reads `unknown` and keeps the text.
+- Rejected: `forbidden` with a new text; `cwd_outside_roots`; listing the roots in the text; a deck-side check.
+
+## DL-511: G1 the outbox reason of a refused command carries the station text (design agent, 2026-10-23)
+
+- Decision: `next()` writes `rejected: <code>: <text>` (text trimmed, control characters as spaces, at most 300 characters plus `…`); `rejected: <code>` for an empty text. `command_status`, the task rows and the mail rows show it without other changes.
+- Rejected: a separate `reject` object in `command_status`.
+
+## DL-512: G2 the `fleet_view` station filter works for stations, projects and sessions (design agent, 2026-10-23)
+
+- Decision: the deck applies `station` (an id, or a unique name, also case-insensitive) to the `stations`, `projects` and `sessions` views; `me` ignores it. A filter that names no station, or an ambiguous name, is `invalid_params` "no paired station has this id or this unique name". The tool description says so.
+- Rejected: sessions only; an empty page for an unknown station.
+
+## DL-513: G4 the board follows a pending command with `GET /api/commands/<id>` (design agent, 2026-10-23)
+
+- Context: the board gets the receipt in the HTTP answer when the station decides within 5 s (`command_routes.rs:85-90`; live: 76 refused answers settled in 14 ms on average). After a `pending` answer it never read the command again.
+- Decision: `sessionActions.run` gives a `pending` outcome a `later` follow-up that reads `GET /api/commands/<id>` (1 s ×10, then 5 s, at most 120 s; three failed reads stop it). An outcome with `later` is provisional. The session controller follows each pending command on its own; the rail and the watch tiles show the final refusal; "Mark as ended" marks only on a confirmed outcome; "Return" keeps the follow-up of its resume; the shell release dialog closes only on a confirmed release; the shell chips are used up only by a confirmed prompt; "Resume all" counts a pending resume apart (revision 3). The consumers that watch the effect themselves (stop and handover, keep-one, the execution stop) do not change.
+- Rejected: a WebSocket event for commands; a longer `RECEIPT_WAIT`; one follow for each controller (a newer action dropped the older refusal); a `run` that waits for the final outcome; chips hidden while pending and shown again on a refusal.
+- Changed later: each pending command has its own follow; a result with `later` is provisional (see docs/v2/design/fleet-gaps.md §Revision 2 (design review round 1))
+
+## DL-514: G4 a refused answer is shown under its request in the dock, and a repeat is counted (design agent, 2026-10-23)
+
+- Decision: the session controller keeps the refused answers by request; the approval dock shows each one under its request with `.fd-q-error`; the session header does not repeat it. The same refusal again reads "… (2 times)", also when each attempt was pending first (the count compares final outcomes only). The rail keys its pending and error state by station, session and request id.
+- Rejected: a toast; the header only; an animation.
+- Changed later: refused answers are kept by request (see docs/v2/design/fleet-gaps.md §Revision 2 (design review round 1))
+
+## DL-515: G5 the wall-wake key has the session; deck migration V49 keeps the old `wake_seen` rows as tombstones (design agent, 2026-10-23)
+
+- Context: request ids are per session (DL-402, station V43). The deck wake scan and `wake_seen` keyed requests by `(station, request_id)` (`wake/scan.rs:149`, `display_v25.rs:43-49`), so the second session with the same id never woke a wall.
+- Decision: the key is `(station_id, session_id, request_id)` in `Scanner.known`, `present`, `wake_reserve` and the table. V49 rebuilds `wake_seen` with the new primary key and copies every old row as a legacy tombstone (session `''`); a tombstone makes its `(station, request_id)` `Seen` in every session until it ages out (24 hours). `wake_state` stays. An empty session in `wake_reserve` is `Error`.
+- Rejected: drop the old rows (a request restored after the startup baseline would wake again; design review r1); a 120 s tombstone; derive the session of old rows from the cards.
+- Changed later: V49 copies every V48 row as a legacy tombstone (see docs/v2/design/fleet-gaps.md §Revision 2 (design review round 1))
+
+## DL-520: Tests run only at the merge into v2 (owner rule, 2026-10-23)
+
+- Context: several agents share one machine and parallel worktrees share one `target`; test runs on every feature branch filled the disk and stopped the machine.
+- Choice: a worker compiles only (`cargo check -p <crate> --tests`, web `typecheck` and `lint`) and writes its tests without running them. The coordinator runs the tests, one review per track and `make check` at the merge into `v2`. `tools/heavy.sh` builds without the `kache` rustc wrapper, because parallel worktrees share one target (commit `28b5fed9`).
+- Owner review: accepted (owner rule).
+
+## DL-521: The DL-402 fix: `runtime_requests` keyed by `(session_id, request_id)`, station migration V43 (b0cdbf5f, 2026-10-23)
+
+- Context: DL-402 (request ids collide between sessions of one station).
+- Choice: the station table `runtime_requests` is keyed by `(session_id, request_id)` in station migration V43 (`b0cdbf5f`). The live check on dev1 passed.
