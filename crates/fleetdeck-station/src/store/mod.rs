@@ -24,6 +24,7 @@
 //!   effects, coordinator outbox rows and artifact suggestions stay for
 //!   [`HISTORY_RETENTION_MS`].
 
+pub mod analytics;
 pub mod app_calls;
 pub mod apps;
 pub mod artifact_deletions;
@@ -85,6 +86,7 @@ mod schema_v43;
 mod schema_v44;
 mod schema_v45;
 mod schema_v46;
+mod schema_v50;
 pub mod secret_homes;
 pub mod session_files;
 pub mod session_grants;
@@ -723,6 +725,9 @@ fn to_i64(v: u64) -> Result<i64> {
     i64::try_from(v).map_err(|_| StoreError::Corrupt(format!("sequence {v} too large")))
 }
 
+#[cfg(test)]
+#[path = "analytics_tests.rs"]
+mod analytics_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
