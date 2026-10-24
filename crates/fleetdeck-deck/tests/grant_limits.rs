@@ -328,7 +328,6 @@ async fn an_omitted_answer_cap_is_lowered_on_the_owner_start_route() {
 #[tokio::test]
 async fn an_omitted_spawn_cap_is_lowered_to_the_limit() {
     let mut r = rig().await;
-    let mut station = r.f.connect().await;
     set_limits(&r.f.store, Some(&r.c), |l| l.spawn_cap = Some(2));
     let token = elevate(&r.c, &r.h).await;
     let got = r
@@ -347,7 +346,9 @@ async fn an_omitted_spawn_cap_is_lowered_to_the_limit() {
         .await;
     expect(&got, 400, "invalid_grant");
     assert_eq!(got.body["message"], OVER_SPAWN, "{}", got.body);
-    // The owner start route.
+    // The owner start route. The station connects only now: its first
+    // snapshot has no `run-1`, and the live gives above need that session.
+    let mut station = r.f.connect().await;
     let body = |id: &str, classes: Value| {
         json!({"station": "fake", "command_id": id, "elevation": token,
             "command": {"op": "start", "prompt": null, "spec": {"provider_instance": "claude",

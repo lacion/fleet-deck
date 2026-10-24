@@ -289,8 +289,10 @@ async fn the_owner_gives_a_grant_to_a_running_or_hibernated_session() {
     assert!(all.iter().all(|c| c.method != "session.coordinator_revoke"));
     assert!(w.s.outbox().await.unwrap().is_empty());
 
-    // A value out of range is an error and writes nothing.
+    // A value out of range is an error and writes nothing (the spawn cap is
+    // checked only with the spawn class, B27 §3.2).
     let mut bad = new_grant(&w, "owner-3");
+    bad.classes.insert(GrantClass::Spawn);
     bad.spawn_cap = 99;
     let err =
         w.s.give(w.a.clone(), "owner-3".into(), bad)

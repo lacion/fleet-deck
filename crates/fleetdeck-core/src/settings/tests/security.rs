@@ -281,8 +281,9 @@ fn a_more_permissive_default_mode_needs_the_elevation() {
         ["default_mode.claude"]
     );
     assert!(danger_keys::<StationHolder>(&more, &old).is_empty());
+    // A lower mode in the shared order (`mode_within`) is no danger.
     let plan = station("[default_mode]\nclaude = \"plan\"\n");
-    assert!(danger_keys::<StationHolder>(&old, &plan).is_empty());
+    assert!(danger_keys::<StationHolder>(&more, &plan).is_empty());
     let codex = station("[default_mode]\ncodex = \"on-request/workspace-write\"\n");
     assert_eq!(
         danger_keys::<StationHolder>(&old, &codex),

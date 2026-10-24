@@ -165,7 +165,9 @@ async fn a_bypass_default_without_the_restart_runs_supervised() {
         &st,
         "allow_bypass_permissions = true\n[default_mode]\nclaude = \"bypassPermissions\"\n",
     );
-    assert_eq!(stored(&mut st, "claude").await.as_deref(), Some("default"));
+    // No mode (`effective` is `None`): the adapter runs the provider default
+    // `default` (§3.5), never the deferred bypass default.
+    assert_eq!(stored(&mut st, "claude").await, None);
     st.manager.shutdown(StopMode::Kill).await;
 }
 
@@ -176,10 +178,9 @@ async fn a_codex_full_access_default_without_the_restart_runs_supervised() {
         &st,
         "allow_bypass_permissions = true\n[default_mode]\ncodex = \"never/danger-full-access\"\n",
     );
-    assert_eq!(
-        stored(&mut st, "codex").await.as_deref(),
-        Some("untrusted/workspace-write")
-    );
+    // The start succeeds (no `InvalidMode`) with no mode: the adapter runs
+    // the provider default `untrusted/workspace-write` (§3.5).
+    assert_eq!(stored(&mut st, "codex").await, None);
     st.manager.shutdown(StopMode::Kill).await;
 }
 
