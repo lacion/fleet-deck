@@ -170,11 +170,19 @@ const LOCK = (
 
 /** The warning under the bypass switch while it is on (§2.2: bypass is a hazard state). */
 function hazardOf(meta: FieldMeta, value: unknown): ReactNode {
-  if (meta.key !== 'allow_bypass_permissions' || value !== true) return null;
+  let text: string;
+  if (meta.key === 'allow_bypass_permissions' && value === true) {
+    text = 'Sessions on this station can run every tool without asking.';
+  } else if (meta.key === 'keep_grants_on_update' && value === false) {
+    text =
+      'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.';
+  } else {
+    return null;
+  }
   return (
     <p className="fd-set-hazard">
       <Icon of={TriangleAlert} size={14} />
-      Sessions on this station can run every tool without asking.
+      {text}
     </p>
   );
 }

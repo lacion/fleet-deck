@@ -441,6 +441,18 @@ describe('the fleet access rows', () => {
     expect(grantState({ ...idle, revoked_reason: 'ttl' })).toBe('expired');
   });
 
+  test('a_grant_ended_by_a_station_change_says_why', () => {
+    const ended = (reason: string): GrantView => ({
+      ...grant,
+      state: 'revoked',
+      revoked_reason: reason,
+    });
+    expect(grantState(ended('station_updated'))).toBe('ended by a station update');
+    expect(grantState(ended('station_reset'))).toBe('ended: the station has new data');
+    expect(grantState(ended('station_removed'))).toBe('ended: the station was removed');
+    expect(grantState(ended('owner'))).toBe('revoked');
+  });
+
   test('the expired grants fold under a collapsed Expired row; the heading counts the others', () => {
     const idle: GrantView = { ...grant, grant_id: 'i', state: 'expired', revoked_reason: 'idle' };
     const html = rows([grant, idle]);

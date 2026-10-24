@@ -48,7 +48,10 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
     ],
   },
   { title: 'Sharing', keys: ['member_deny'] },
-  { title: 'Fleet control', keys: ['fleet_control', 'allow_fleet_control'] },
+  {
+    title: 'Fleet control',
+    keys: ['fleet_control', 'allow_fleet_control', 'keep_grants_on_update'],
+  },
   {
     title: 'Worker grants',
     keys: [
