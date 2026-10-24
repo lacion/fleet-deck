@@ -4,6 +4,8 @@
 //! their processes (PLAN §6.1, A9).
 
 pub mod adapter;
+/// MCP Apps for the adapters (B15, design `mcp-apps.md` §4.2).
+pub mod apps;
 pub mod checkpoint;
 pub mod claude;
 pub mod codex;

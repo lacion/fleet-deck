@@ -37,6 +37,10 @@
 //! reply), `slowend` (1 s between `item/completed` and `turn/completed`),
 //! `latestart` (1 s between the reply and `turn/started`, then as `hang`).
 //!
+//! Scenario `mcp_app` (B15, `sim_codex_mcp.rs`) adds the MCP server `demo` with
+//! its app: the three app requests of the host and one `mcpToolCall` item in
+//! every turn.
+//!
 //! `account/read` answers signed in, except under scenario
 //! `auth:signed-out`. End of stdin ends the process with exit code 0.
 
@@ -44,6 +48,9 @@ use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
+
+#[path = "sim_codex_mcp.rs"]
+mod mcp;
 
 /// The first line that `sim` writes to the stdin log, before its pid.
 pub const PID_LINE: &str = "# fake-codex pid ";
@@ -93,6 +100,8 @@ struct Sim<W: Write> {
     /// reply) or `exit` (the process ends without a reply). A prompt
     /// `set-rollback <mode>` sets it (DL-087).
     rollback: String,
+    /// Scenario `mcp_app` (B15).
+    mcp: bool,
 }
 
 /// Runs the model until stdin ends. `scenario` is `sim` or `auth:<state>`.
@@ -111,6 +120,7 @@ pub fn run(scenario: &str) -> ExitCode {
         background: Vec::new(),
         turns: 0,
         rollback: "ok".to_owned(),
+        mcp: scenario == mcp::SCENARIO,
     };
     let mut log = std::env::var_os(crate::fake::STDIN_LOG_ENV).and_then(|path| {
         std::fs::OpenOptions::new()
@@ -252,6 +262,9 @@ impl<W: Write> Sim<W> {
                 }]}),
             ),
             Some("thread/rollback") => self.on_rollback(&id, &params),
+            Some(
+                m @ ("mcpServerStatus/list" | "mcpServer/resource/read" | "mcpServer/tool/call"),
+            ) if self.mcp => self.on_mcp(&id, m, &params),
             Some(_) if !id.is_null() => self.error(&id, "method not supported by the sim"),
             Some(_) => Ok(()),
         }
@@ -473,6 +486,9 @@ impl<W: Write> Sim<W> {
 
     /// An agent message, then `turn/completed` with `status`.
     fn answer(&mut self, turn: &str, text: &str, status: &str) -> std::io::Result<()> {
+        if self.mcp {
+            self.mcp_item(turn)?;
+        }
         let msg = format!("msg-sim-{}", self.next());
         self.item("started", turn, agent_message(&msg, ""))?;
         self.notify(

@@ -74,7 +74,7 @@ fn core_events(records: &[Value], cwd: &str) -> Vec<Event> {
     let mut push = |out: Vec<Output>| {
         events.extend(out.into_iter().filter_map(|o| match o {
             Output::Emit(e) => Some(e),
-            Output::Write(_) | Output::NativeIdentity { .. } => None,
+            Output::Write(_) | Output::NativeIdentity { .. } | Output::AppCandidate(_) => None,
         }));
     };
     for rec in records {

@@ -9,11 +9,17 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use fleetdeck_providers::adapter::{Answer, ProviderError};
+use fleetdeck_providers::apps::{
+    AppBridge, AppError, AppTool, READ_TIMEOUT, TOOLS_TIMEOUT, ToolAnswer,
+};
 use fleetdeck_providers::checkpoint::{AdapterCheckpoint, CheckpointError};
+use fleetdeck_providers::claude::AppOp as ClaudeAppOp;
 use fleetdeck_providers::claude::frames::parse_line;
-use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, Output};
+use fleetdeck_providers::claude::{ClaudeCore, CoreConfig, Output, parse_tools};
 use fleetdeck_providers::host::shim::host::Attached;
+use serde_json::Value;
 
 use super::durable::{DriverError, DurableCore, DurableDriver, Steps, host_input, not_a_command};
 use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
@@ -31,6 +37,7 @@ fn split(out: Vec<Output>) -> Steps {
                 native_id,
                 after: steps.events.len(),
             }),
+            Output::AppCandidate(candidate) => steps.apps.push(candidate),
         }
     }
     steps
@@ -49,6 +56,10 @@ impl DurableCore for ClaudeCore {
 
     fn load(config: CoreConfig, checkpoint: &AdapterCheckpoint) -> Result<Self, CheckpointError> {
         Self::restore(config, checkpoint)
+    }
+
+    fn keep_runtime_of(&mut self, old: &mut Self) {
+        Self::keep_runtime_of(self, old);
     }
 
     fn line(&mut self, line: &str) -> Steps {
@@ -139,6 +150,73 @@ impl DurableDriver<ClaudeCore> {
     }
 }
 
+impl DurableDriver<ClaudeCore> {
+    /// One app request and its answer (see [`DurableDriver::app_exchange`]).
+    async fn claude_app(
+        &self,
+        op: ClaudeAppOp,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Result<Value, String>, AppError> {
+        self.app_exchange(
+            |c| c.app_request(&op).map(|(id, out)| (id, split(out))),
+            |c, id| c.take_app_answer(id),
+            |c, id| c.forget_app_request(id),
+            deadline,
+        )
+        .await
+    }
+}
+
+/// The app operations of a Claude session under a shim: the same operations
+/// as the direct driver (`claude/driver_apps.rs`) on top of the durable
+/// driver's app exchange. A CLI without the three capabilities gives
+/// [`AppError::Unsupported`] (the core refuses with `NotReady`).
+#[async_trait]
+impl AppBridge for DurableDriver<ClaudeCore> {
+    async fn tools(&self) -> Result<Vec<AppTool>, AppError> {
+        let deadline = tokio::time::Instant::now() + TOOLS_TIMEOUT;
+        let answer = self
+            .claude_app(ClaudeAppOp::Tools, Some(deadline))
+            .await?
+            .map_err(AppError::Answered)?;
+        Ok(parse_tools(&answer))
+    }
+
+    async fn read_resource(&self, server: &str, uri: &str) -> Result<Value, AppError> {
+        let op = ClaudeAppOp::Read {
+            server: server.to_owned(),
+            uri: uri.to_owned(),
+        };
+        let deadline = tokio::time::Instant::now() + READ_TIMEOUT;
+        self.claude_app(op, Some(deadline))
+            .await?
+            .map_err(AppError::Answered)
+    }
+
+    /// Claude's success answer relays the server's result, so it proves that
+    /// the tool handler returned; its timeouts, cancellations and lost
+    /// transports are error answers, which prove nothing (fact 21).
+    async fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+    ) -> Result<ToolAnswer, AppError> {
+        let op = ClaudeAppOp::Call {
+            server: server.to_owned(),
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let result = self.claude_app(op, None).await?;
+        result
+            .map(|result| ToolAnswer {
+                result,
+                proves_end: true,
+            })
+            .map_err(AppError::Answered)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -223,5 +301,41 @@ mod tests {
             "<bash-stdout>a&lt;b\n</bash-stdout><bash-stderr></bash-stderr>"
         );
         assert_eq!(blocks[2]["text"], "go");
+    }
+
+    /// Review blocker 2: the durable driver rolls a refused command back by a
+    /// rebuild from the checkpoint of the time before it. An app request that
+    /// waits survives the rollback: its later answer reaches the wait.
+    #[test]
+    fn a_pending_app_request_survives_the_rollback_of_a_refused_command() {
+        let config = CoreConfig {
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            capabilities: capabilities(false),
+            resumed: None,
+            usage_base: fleetdeck_providers::claude::UsageBase::Zero,
+        };
+        let mut core = <ClaudeCore as DurableCore>::create(config.clone());
+        let init = serde_json::json!({"type": "system", "subtype": "init", "session_id": "s-1",
+            "model": "claude-haiku-5-5", "permissionMode": "default",
+            "claude_code_version": "2.1.308", "capabilities": ["mcp_read_resource_v1",
+            "mcp_tool_ui_meta_v1", "mcp_call_result_not_for_model_v1"]});
+        DurableCore::line(&mut core, &init.to_string());
+        let (id, _) = core.app_request(&ClaudeAppOp::Tools).unwrap();
+        let before = DurableCore::save(&core).unwrap();
+        let _refused = core.prompt(&HostInput {
+            id: InputId::from("01J00000000000000000000003"),
+            origin: RunOrigin::Coordinator,
+            input: UserInput::new("later".to_owned()),
+            context: Vec::new(),
+        });
+        super::super::durable::roll_back(&config, &mut core, &before).unwrap();
+        let answer = serde_json::json!({"type": "control_response", "response":
+            {"subtype": "success", "request_id": id, "response": {"mcpServers": []}}});
+        DurableCore::line(&mut core, &answer.to_string());
+        assert_eq!(
+            core.take_app_answer(&id),
+            Some(Ok(serde_json::json!({"mcpServers": []})))
+        );
     }
 }

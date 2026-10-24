@@ -26,6 +26,9 @@ pub enum Output {
     /// durable driver passes it, in order with the events, to the output
     /// transaction (DL-194).
     NativeIdentity { native_id: String },
+    /// A completed MCP tool call that may name an app (B15). The station
+    /// decides; the direct driver hands it to its candidate channel.
+    AppCandidate(crate::apps::AppCandidate),
 }
 
 /// The sans-IO Codex adapter core of one app-server process.
@@ -118,6 +121,12 @@ pub struct CodexCore {
     /// none (`restore` sets the legacy state).
     #[serde(default)]
     pub(super) usage: Option<super::thread_usage::ThreadUsage>,
+    /// Offer the MCP Apps extension in `initialize` (B15).
+    #[serde(default)]
+    offer_mcp_apps: bool,
+    /// The app requests in flight and their answers (B15); not in the checkpoint.
+    #[serde(skip)]
+    app_requests: apps_impl::AppRequests,
 }
 
 impl CodexCore {
@@ -166,6 +175,8 @@ impl CodexCore {
             skill_requests: HashMap::new(),
             emitted_skills: None,
             usage: Some(super::thread_usage::ThreadUsage::default()),
+            offer_mcp_apps: false,
+            app_requests: apps_impl::AppRequests::default(),
         }
     }
 
@@ -325,7 +336,7 @@ impl CodexCore {
             "initialize",
             json!({
                 "clientInfo": {"name": self.config.client.name, "version": self.config.client.version},
-                "capabilities": {"experimentalApi": true},
+                "capabilities": self.capabilities_json(),
             }),
         ))])
     }
@@ -553,13 +564,13 @@ impl CodexCore {
         }
         match frame {
             Incoming::Response { id, result } => {
-                if self.skill_answer(&id, false) {
+                if self.skill_answer(&id, false) || self.app_answer(&id, Ok(&result)) {
                     return Vec::new();
                 }
                 self.on_response(&id, Ok(result))
             }
             Incoming::ErrorResponse { id, code, message } => {
-                if self.skill_answer(&id, true) {
+                if self.skill_answer(&id, true) || self.app_answer(&id, Err(message.as_str())) {
                     return Vec::new();
                 }
                 self.on_response(&id, Err((code, message)))
@@ -757,6 +768,8 @@ impl CodexCore {
     }
 }
 
+#[path = "core_apps.rs"]
+mod apps_impl;
 #[path = "core_next_turn.rs"]
 mod next_turn;
 #[path = "core_skills.rs"]

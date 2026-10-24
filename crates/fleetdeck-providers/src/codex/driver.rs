@@ -149,12 +149,17 @@ pub enum Origin {
 pub struct CodexAdapter {
     config: CodexAdapterConfig,
     host: Arc<dyn SessionHost>,
+    offer_apps: Arc<tokio::sync::OnceCell<bool>>,
 }
 
 impl CodexAdapter {
     #[must_use]
     pub fn new(config: CodexAdapterConfig, host: Arc<dyn SessionHost>) -> Self {
-        Self { config, host }
+        Self {
+            config,
+            host,
+            offer_apps: Arc::default(),
+        }
     }
 
     /// Starts `codex app-server`, does the handshake and opens the thread.
@@ -226,7 +231,8 @@ impl CodexAdapter {
             })
             .await?;
         let cwd_text = cwd.to_string_lossy().into_owned();
-        let core = CodexCore::new(CoreConfig {
+        let offer = self.apps_offered().await;
+        let mut core = CodexCore::new(CoreConfig {
             provider_instance: spec.provider_instance.clone(),
             cwd: cwd_text.clone(),
             capabilities: caps.clone(),
@@ -234,9 +240,12 @@ impl CodexAdapter {
             client: self.config.client.clone(),
             request_models: self.config.request_models,
         });
+        core.set_offer_mcp_apps(offer);
         let raw_dir = raw.as_ref().map(|r| r.dir().to_path_buf());
+        let (candidates, candidate_rx) = mpsc::channel(apps::CANDIDATE_QUEUE);
         let shared = Arc::new(Shared {
             core: Mutex::new(core),
+            candidates,
             sink,
             raw: std::sync::Mutex::new(raw),
             poll: Notify::new(),
@@ -274,6 +283,7 @@ impl CodexAdapter {
             delivery_grace: self.config.delivery_grace,
             rollback_timeout: self.config.rollback_timeout,
             raw_dir,
+            apps: apps::SessionApps::new(offer, candidate_rx),
         };
         let (resume, fork) = match origin {
             Origin::New => (None, false),
@@ -308,6 +318,10 @@ impl ProviderAdapter for CodexAdapter {
 
     fn capabilities(&self) -> Capabilities {
         capabilities(self.config.allow_full_access)
+    }
+
+    async fn offers_mcp_apps(&self) -> bool {
+        self.apps_offered().await
     }
 
     /// `codex --version`, then `account/read` of a short app-server process
@@ -394,6 +408,7 @@ impl ProviderAdapter for CodexAdapter {
 #[derive(Debug)]
 struct Shared {
     core: Mutex<CodexCore>,
+    candidates: mpsc::Sender<crate::apps::AppCandidate>,
     sink: EventSink,
     raw: std::sync::Mutex<Option<RawFrameLog>>,
     /// Wakes the background poller.
@@ -465,6 +480,7 @@ impl Shared {
                 }
                 // Only the durable (shim) driver uses the identity (DL-194).
                 Output::NativeIdentity { .. } => {}
+                Output::AppCandidate(candidate) => self.offer_candidate(candidate),
             }
         }
         Ok(())
@@ -486,6 +502,7 @@ pub struct CodexSession {
     delivery_grace: Duration,
     pub(super) rollback_timeout: Duration,
     raw_dir: Option<PathBuf>,
+    apps: apps::SessionApps,
 }
 
 impl CodexSession {
@@ -642,6 +659,10 @@ impl LiveSession for CodexSession {
         Some(self.control.pid())
     }
 
+    fn exit_watch(&self) -> Option<crate::host::ExitWatch> {
+        self.control.exit_watch()
+    }
+
     async fn prompt(&mut self, input: HostInput) -> Result<()> {
         require(&self.caps, Operation::Prompt)?;
         self.run(move |c| c.prompt(&input)).await
@@ -714,6 +735,14 @@ impl LiveSession for CodexSession {
         self.roll_back(turns).await
     }
 
+    fn app_bridge(&self) -> Option<Arc<dyn crate::apps::AppBridge>> {
+        self.apps.bridge(&self.shared, &self.writes, &self.frames)
+    }
+
+    fn take_app_candidates(&mut self) -> Option<mpsc::Receiver<crate::apps::AppCandidate>> {
+        self.apps.take_candidates()
+    }
+
     /// Graceful: write the queued frames, close stdin (the app-server then
     /// exits), wait the rest of the grace time, then signal the group.
     async fn stop(&mut self, how: StopMode) -> Result<()> {
@@ -745,19 +774,8 @@ impl LiveSession for CodexSession {
     }
 }
 
-impl Drop for CodexSession {
-    /// The tasks hold the process control: abort them so that the last
-    /// reference drops and the host kills the group.
-    fn drop(&mut self) {
-        for task in [self.reader.take(), self.writer.take(), self.poller.take()]
-            .into_iter()
-            .flatten()
-        {
-            task.abort();
-        }
-    }
-}
-
+#[path = "driver_apps.rs"]
+mod apps;
 #[path = "durable_launch.rs"]
 mod durable_launch;
 #[path = "driver_io.rs"]

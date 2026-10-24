@@ -37,6 +37,9 @@ pub enum Output {
     /// event: the durable driver passes it, in order with the events, to
     /// the output transaction (DL-194).
     NativeIdentity { native_id: String },
+    /// A completed MCP tool call that may name an app (B15). The station
+    /// decides; the direct driver hands it to its candidate channel.
+    AppCandidate(crate::apps::AppCandidate),
 }
 
 /// What the core needs to know about its session.
@@ -285,6 +288,19 @@ pub struct ClaudeCore {
     /// The `apply_flag_settings` requests of an effort change, by `N`.
     #[serde(default)]
     pub(super) effort_sets: BTreeMap<u64, EffortSet>,
+    /// The root `system/init.capabilities` has the three MCP Apps capabilities (B15).
+    #[serde(default)]
+    pub(super) mcp_apps_ready: bool,
+    /// Counter of the `fd-app-N` request ids. The checkpoint keeps it: the CLI
+    /// aborts a request that reuses the id of a live one (B15).
+    #[serde(default)]
+    pub(super) app_seq: u64,
+    /// `tool_use_id` → raw MCP server name of its `can_use_tool` request (B15).
+    #[serde(skip)]
+    pub(super) mcp_server_hints: map::apps::ServerHints,
+    /// The app requests in flight and their answers (B15); not in the checkpoint.
+    #[serde(skip)]
+    pub(super) app_requests: map::apps::AppRequests,
 }
 
 impl ClaudeCore {
@@ -337,6 +353,10 @@ impl ClaudeCore {
             reported_model: None,
             effort_seq: 0,
             effort_sets: BTreeMap::new(),
+            mcp_apps_ready: false,
+            app_seq: 0,
+            mcp_server_hints: map::apps::ServerHints::default(),
+            app_requests: map::apps::AppRequests::default(),
         }
     }
 
@@ -594,7 +614,9 @@ impl ClaudeCore {
                 match o {
                     e @ Output::Emit(Event::SlashCommands { .. }) => released.push(e),
                     Output::Emit(e) => self.early.push(e),
-                    w @ (Output::Write(_) | Output::NativeIdentity { .. }) => released.push(w),
+                    w @ (Output::Write(_)
+                    | Output::NativeIdentity { .. }
+                    | Output::AppCandidate(_)) => released.push(w),
                 }
             }
             return released;

@@ -414,6 +414,14 @@ fn samples() -> Vec<Event> {
         Event::EffortChosen {
             effort: "high".into(),
         },
+        Event::ToolApp {
+            node_id: "node-1".into(),
+            app_id: "app-1".into(),
+            server: "srv".into(),
+            tool: "show".into(),
+            resource_uri: "ui://srv/show".into(),
+            prefers_border: Some(true),
+        },
     ]
 }
 

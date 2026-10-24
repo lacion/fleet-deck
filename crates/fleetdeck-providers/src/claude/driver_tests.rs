@@ -86,6 +86,7 @@ fn shared(queued: usize) -> (Arc<Shared>, mpsc::Receiver<crate::adapter::Emitted
     let (sink, events) = EventSink::channel(64);
     let shared = Arc::new(Shared {
         core: Mutex::new(ClaudeCore::new(config(false))),
+        candidates: mpsc::channel(8).0,
         sink,
         raw: std::sync::Mutex::new(None),
         queued: AtomicUsize::new(queued),

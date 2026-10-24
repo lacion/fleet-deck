@@ -73,6 +73,7 @@ import { workflowAgentTotal } from './workflows';
 import { finalizedTurns, useDiffTotal } from './workspace';
 import { modelText } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
+import { appsEnvOf } from '../apps/env';
 
 export { readFilesOpen } from './paneLayout';
 
@@ -510,6 +511,7 @@ export function SessionView(props: SessionViewProps) {
                   workflows={workflows}
                   tasks={tasks}
                   highlight={highlight}
+                  apps={appsEnvOf(session, actions ?? null, guest)}
                   shell={
                     guest === null && actions != null
                       ? {

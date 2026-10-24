@@ -30,7 +30,9 @@ fn claude_view(out: &[claude::Output]) -> Vec<String> {
         .filter_map(|o| match o {
             claude::Output::NativeIdentity { native_id } => Some(format!("identity:{native_id}")),
             claude::Output::Emit(Event::SessionStarted { .. }) => Some("session.started".into()),
-            claude::Output::Emit(_) | claude::Output::Write(_) => None,
+            claude::Output::Emit(_)
+            | claude::Output::Write(_)
+            | claude::Output::AppCandidate(_) => None,
         })
         .collect()
 }
@@ -98,7 +100,7 @@ fn codex_view(out: &[CodexOutput]) -> Vec<String> {
         .filter_map(|o| match o {
             CodexOutput::NativeIdentity { native_id } => Some(format!("identity:{native_id}")),
             CodexOutput::Emit(Event::SessionStarted { .. }) => Some("session.started".into()),
-            CodexOutput::Emit(_) | CodexOutput::Write(_) => None,
+            CodexOutput::Emit(_) | CodexOutput::Write(_) | CodexOutput::AppCandidate(_) => None,
         })
         .collect()
 }

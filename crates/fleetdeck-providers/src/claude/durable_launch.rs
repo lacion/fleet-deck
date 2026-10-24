@@ -47,7 +47,10 @@ impl ClaudeAdapter {
             .into_iter()
             .map(OsString::from)
             .collect();
-        let env = env_with_extra(&self.config.env, spec.extra_env.as_deref());
+        let env = super::apps::with_apps_host(env_with_extra(
+            &self.config.env,
+            spec.extra_env.as_deref(),
+        ));
         // What the CLI restores from the transcript of a resume (B21).
         let usage_base = match resume {
             Some(id) => cost_state::restored_base(&env, &cwd, &id.0),

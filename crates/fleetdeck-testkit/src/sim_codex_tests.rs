@@ -15,6 +15,7 @@ fn sim() -> Sim<Vec<u8>> {
         background: Vec::new(),
         turns: 0,
         rollback: "ok".to_owned(),
+        mcp: false,
     }
 }
 

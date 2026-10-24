@@ -284,6 +284,10 @@ impl ProcessControl for DirectProcess {
     fn exit(&self) -> Option<ExitReport> {
         self.exit_rx.borrow().clone()
     }
+
+    fn exit_watch(&self) -> Option<super::ExitWatch> {
+        Some(self.exit_rx.clone())
+    }
 }
 
 impl Drop for DirectProcess {

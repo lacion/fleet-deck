@@ -3,8 +3,8 @@
 // test-results/gallery/<project>-<NN>-<name>-<theme>.png at the viewport of its project (phone
 // and desktop). The tablet project does not run this spec.
 import { expect, type Page, test } from '@playwright/test';
-import { logIn } from './fake-deck';
-import { FD_REPO } from './gallery-data';
+import { fakeApps, installApps, logIn } from './fake-deck';
+import { APP_ID, appTimeline, FD_REPO } from './gallery-data';
 import { galleryDeck, LIGHTING, OTTER } from './gallery-scene';
 
 test.skip(!process.env['FD_GALLERY'], 'FD_GALLERY is not set');
@@ -379,4 +379,36 @@ test('26 project', async ({ page }) => {
   // The strip has its columns outside the fleet board: one --strip-h (44px) row.
   expect(Math.round(await strip.evaluate((el) => el.getBoundingClientRect().height))).toBe(44);
   await themed(page, '26', 'project');
+});
+
+/** B15: the chat of otter-n1rr with an MCP app under a tool row (the fake deck serves the app). */
+async function toApp(page: Page, open: Parameters<typeof fakeApps>[4] = []) {
+  const deck = await setUp(page);
+  const apps = fakeApps(deck, LIGHTING, OTTER, APP_ID, open);
+  await installApps(page, apps);
+  deck.emit(LIGHTING, OTTER, appTimeline(Date.now()));
+  await toOtter(page, 'chat');
+  await expect(page.frameLocator('iframe.fd-app-frame').locator('#counter')).toBeVisible();
+}
+
+test('28 mcp app in the chat', async ({ page }) => {
+  await toApp(page);
+  await themed(page, '28', 'mcp-app-in-the-chat');
+});
+
+test('29 mcp app with an uncertain action', async ({ page }) => {
+  await toApp(page, [
+    {
+      call_id: '01JGALLERYCALL000000000000',
+      session_id: OTTER,
+      app_id: APP_ID,
+      server: 'demo',
+      tool: 'bump',
+      state: 'uncertain',
+      cause: 'provider_error',
+      created_at: Date.now(),
+    },
+  ]);
+  await expect(page.getByText('The provider stopped waiting for an app action')).toBeVisible();
+  await themed(page, '29', 'mcp-app-with-an-uncertain-action');
 });

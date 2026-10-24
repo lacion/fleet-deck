@@ -152,6 +152,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `artifacts_video.v1` | The `video` artifact kind, the `recording` capture provenance and metadata, and the HTTP video and `Range` contract of the deck (R13 P5b, `omarchy-p5b.md` §3.1, §11, §14; a peer without it receives `kind: "other"` and no recording provenance) |
 | `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
+| `mcp_apps.v1` | `session.app_meta`, `session.app_document`, `session.app_call`, `session.app_calls`, `session.app_release` (B15, design `docs/v2/design/mcp-apps.md` §4.6; MCP Apps: the app document, the owner's app tool calls and the release of an open call) |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
 
@@ -540,6 +541,11 @@ close             { reason, detail }
 | `maintenance.attach` | deck → station | admin | `desktop_tool_install.v1` | no |
 | `maintenance.resize` | deck → station | admin | `desktop_tool_install.v1` | no |
 | `fleet.view` | station → deck | admin | `fleet_view.v1` | no |
+| `session.app_meta` | deck → station | read | `mcp_apps.v1` | no |
+| `session.app_document` | deck → station | read | `mcp_apps.v1` | no |
+| `session.app_call` | deck → station | drive | `mcp_apps.v1` | no |
+| `session.app_calls` | deck → station | read | `mcp_apps.v1` | no |
+| `session.app_release` | deck → station | drive | `mcp_apps.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

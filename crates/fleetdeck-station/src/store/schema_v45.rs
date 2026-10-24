@@ -84,7 +84,7 @@ mod tests {
             [],
         )
         .unwrap();
-        migrations.to_latest(&mut conn).unwrap();
+        migrations.to_version(&mut conn, 45).unwrap();
         // The old row stays.
         assert_eq!(count(&conn, "sessions"), 1);
         // Each new table accepts one row.

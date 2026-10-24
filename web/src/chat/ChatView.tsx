@@ -44,6 +44,9 @@ import { PromptBubble } from './PromptBubble';
 import { hasOpenRequest, pairWaiting, WAITING_LABEL, WAITING_SHORT, type Waiting } from './waiting';
 import { ReviewCard } from '../review/ReviewCard';
 import type { WorkflowView } from '../session/workflows';
+import { AppCalls } from '../apps/AppCalls';
+import { AppRow, AppsProvider } from '../apps/AppRow';
+import type { AppsEnv } from '../apps/env';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
 export type ChatReview = {
@@ -84,6 +87,8 @@ export type ChatViewProps = {
   readonly emptyText?: string | undefined;
   /** B8: what a shell card does (Stop, Release); absent: the cards only show. */
   readonly shell?: ShellEnv | undefined;
+  /** B15: MCP apps under their tool rows and the open-calls strip; absent: plain tool rows. */
+  readonly apps?: AppsEnv | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
@@ -445,6 +450,7 @@ function ItemView(
         <>
           <ToolView tool={item} waitingFor={props.waiting?.tools.get(item.key)} />
           <WorkflowLine workflows={props.workflows} nodeId={item.node_id} />
+          {item.app === undefined ? null : <AppRow app={item.app} />}
         </>
       );
     case 'subagent':
@@ -669,58 +675,61 @@ export function ChatView(props: ChatViewProps) {
     ) : null;
 
   return (
-    <section className="fd-chat" aria-label="Conversation" ref={chat}>
-      {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
+    <AppsProvider env={props.apps}>
+      <section className="fd-chat" aria-label="Conversation" ref={chat}>
+        {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
           end of the session tab row (chat.css), out of the transcript. */}
-      {toolbar ? (
-        <div className="fd-chat-bar">
-          <div className="fd-chat-toolbar">{props.toolbar}</div>
-          {filterBar}
+        {toolbar ? (
+          <div className="fd-chat-bar">
+            <div className="fd-chat-toolbar">{props.toolbar}</div>
+            {filterBar}
+          </div>
+        ) : (
+          filterBar
+        )}
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
+        <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
+          <div className="fd-chat-column" ref={column}>
+            {history === undefined ? null : (
+              <>
+                {history.view.more ? (
+                  <button
+                    type="button"
+                    className="fd-ghost fd-sm fd-history-more"
+                    disabled={history.view.loading}
+                    onClick={loadEarlier}
+                  >
+                    {history.view.loading ? 'Loading…' : 'Load earlier messages'}
+                  </button>
+                ) : null}
+                <HistoryBlock view={history.view} gap={history.gap} />
+              </>
+            )}
+            {body}
+            {ready && !error && showWorking ? (
+              <p className="fd-chat-working">
+                <span className="fd-dot" data-status="working" aria-hidden="true" />
+                Working
+              </p>
+            ) : null}
+            {props.apps?.owner === true ? <AppCalls env={props.apps} /> : null}
+            {props.footer}
+          </div>
         </div>
-      ) : (
-        filterBar
-      )}
-      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
-      <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
-        <div className="fd-chat-column" ref={column}>
-          {history === undefined ? null : (
-            <>
-              {history.view.more ? (
-                <button
-                  type="button"
-                  className="fd-ghost fd-sm fd-history-more"
-                  disabled={history.view.loading}
-                  onClick={loadEarlier}
-                >
-                  {history.view.loading ? 'Loading…' : 'Load earlier messages'}
-                </button>
-              ) : null}
-              <HistoryBlock view={history.view} gap={history.gap} />
-            </>
-          )}
-          {body}
-          {ready && !error && showWorking ? (
-            <p className="fd-chat-working">
-              <span className="fd-dot" data-status="working" aria-hidden="true" />
-              Working
-            </p>
-          ) : null}
-          {props.footer}
-        </div>
-      </div>
-      {behind ? (
-        <button
-          type="button"
-          className="fd-chat-jump fd-sm"
-          onClick={() => {
-            toBottom(true);
-            stick.current = true;
-            setBehind(false);
-          }}
-        >
-          <Icon of={ArrowDown} size={14} /> Jump to latest
-        </button>
-      ) : null}
-    </section>
+        {behind ? (
+          <button
+            type="button"
+            className="fd-chat-jump fd-sm"
+            onClick={() => {
+              toBottom(true);
+              stick.current = true;
+              setBehind(false);
+            }}
+          >
+            <Icon of={ArrowDown} size={14} /> Jump to latest
+          </button>
+        ) : null}
+      </section>
+    </AppsProvider>
   );
 }

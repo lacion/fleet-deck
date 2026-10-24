@@ -290,6 +290,11 @@ pub mod feature {
     /// uses it.
     pub const WALL_PAGES: &str = "wall_pages.v1";
 
+    /// MCP Apps (B15): the link methods `session.app_meta`,
+    /// `session.app_document`, `session.app_call`, `session.app_calls` and
+    /// `session.app_release`, and the `tool.app` event.
+    pub const MCP_APPS: &str = "mcp_apps.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -360,6 +365,7 @@ pub mod feature {
         WALL_PAGES,
         USAGE_RECOUNT,
         SESSION_EFFORT,
+        MCP_APPS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -566,14 +572,27 @@ mod tests {
     }
 
     #[test]
-    fn the_session_effort_feature_has_its_name_and_is_the_last_in_all() {
+    fn the_session_effort_feature_has_its_name_and_is_offered() {
         assert_eq!(feature::SESSION_EFFORT, "session_effort.v1");
-        assert_eq!(feature::ALL.last(), Some(&feature::SESSION_EFFORT));
         assert!(
             VersionOffer::this_build()
                 .features
                 .iter()
                 .any(|f| f == "session_effort.v1")
+        );
+    }
+
+    #[test]
+    fn the_mcp_apps_feature_has_its_name_follows_the_session_effort_and_is_the_last_in_all() {
+        assert_eq!(feature::MCP_APPS, "mcp_apps.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::MCP_APPS));
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::SESSION_EFFORT) + 1, at(feature::MCP_APPS));
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "mcp_apps.v1")
         );
     }
 

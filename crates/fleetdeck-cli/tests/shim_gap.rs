@@ -65,6 +65,9 @@ impl DurableCore for Lines {
         })
     }
 
+    /// No state outside the checkpoint.
+    fn keep_runtime_of(&mut self, _old: &mut Self) {}
+
     fn line(&mut self, text: &str) -> Steps {
         self.seen += 1;
         let event = Event::Error {

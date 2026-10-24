@@ -367,6 +367,8 @@ impl SessionSummary {
             | Event::WorkspaceIncludeSkipped { .. }
             // The board reads the reason from the event (FG-12).
             | Event::ArtifactsUnavailable { .. }
+            // The board reads the app from the event (B15).
+            | Event::ToolApp { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. }
             // A verification or refusal reports what the provider runs; it

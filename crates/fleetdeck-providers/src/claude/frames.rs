@@ -85,6 +85,10 @@ pub struct MessageFrame {
     /// `tool_use_result.runId` of a user frame (a workflow run id), kept only
     /// when it matches `wf_[a-z0-9-]{1,64}` (B12).
     pub workflow_run_id: Option<String>,
+    /// The structured `tool_use_result` (or `toolUseResult`) of a user frame.
+    /// Only the MCP Apps candidate of an `mcp__` result reads it (B15); every
+    /// other use of the structured result stays closed (DL-191).
+    pub tool_use_result: Option<Value>,
 }
 
 impl MessageFrame {
@@ -203,24 +207,31 @@ pub fn parse_line(line: &str) -> Result<CliFrame, ParseError> {
 /// # Errors
 /// Returns [`ParseError::NotObject`] when the value is not a JSON object.
 pub fn parse_value(value: Value) -> Result<CliFrame, ParseError> {
-    let Value::Object(map) = value else {
+    let Value::Object(mut map) = value else {
         return Err(ParseError::NotObject);
     };
-    let kind = map.get("type").and_then(Value::as_str).unwrap_or_default();
-    let frame = match kind {
+    let kind = str_or_empty(&map, "type");
+    let frame = match kind.as_str() {
         "system" => CliFrame::System {
             subtype: str_or_empty(&map, "subtype"),
             body: map,
         },
         "assistant" | "user" => {
+            let agent_id = structured_agent_id(&map);
+            let workflow_run_id = structured_workflow_run_id(&map);
+            // Moved out, not copied: the frame is not used after this.
+            let tool_use_result = map
+                .remove("tool_use_result")
+                .or_else(|| map.remove("toolUseResult"));
             let msg = MessageFrame {
                 session_id: opt_str(&map, "session_id"),
                 parent_tool_use_id: opt_str(&map, "parent_tool_use_id"),
                 uuid: opt_str(&map, "uuid"),
                 is_replay: map.get("isReplay").and_then(Value::as_bool) == Some(true),
                 message: map.get("message").cloned().unwrap_or(Value::Null),
-                agent_id: structured_agent_id(&map),
-                workflow_run_id: structured_workflow_run_id(&map),
+                agent_id,
+                workflow_run_id,
+                tool_use_result,
             };
             if kind == "assistant" {
                 CliFrame::Assistant(msg)

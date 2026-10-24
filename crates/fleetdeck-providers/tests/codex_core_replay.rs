@@ -171,7 +171,7 @@ fn collect(out: Vec<Output>, report: &mut Report, queue: &mut VecDeque<Value>) {
         match o {
             Output::Emit(e) => report.events.push(e),
             Output::Write(v) => queue.push_back(v),
-            Output::NativeIdentity { .. } => {}
+            Output::NativeIdentity { .. } | Output::AppCandidate(_) => {}
         }
     }
 }
@@ -267,7 +267,7 @@ fn replay_named(scenario: &str) -> Vec<Event> {
 #[test]
 fn every_recorded_fixture_replays_through_the_production_core() {
     let files = fixtures();
-    assert_eq!(files.len(), 18, "the recorded Codex fixtures");
+    assert_eq!(files.len(), 19, "the recorded Codex fixtures");
     let mut writes = 0;
     let mut names = Vec::new();
     for path in &files {

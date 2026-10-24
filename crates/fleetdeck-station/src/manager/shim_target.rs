@@ -28,7 +28,6 @@ use std::time::Duration;
 
 use fleetdeck_core::new_id;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
-use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::{Event, EventBody, SessionId};
 use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::durable::{DurableConfig, DurableLaunch};
@@ -41,9 +40,10 @@ use super::super::coordinator_start::BridgeStart;
 use super::super::shim_claude::DurableClaude;
 use super::super::shim_codex::DurableCodex;
 use super::super::shim_codex_poll::{BACKGROUND_POLL, spawn_background_poll};
-use super::super::shim_station::{Durable, Restored};
+use super::super::shim_station::Durable;
 use super::super::shims::{self, LaunchError, launch_shim_for, reason};
 use super::super::turns::SessionTurns;
+use super::apps::{AppHosts, HostEnd};
 use super::{Live, REASON_PROCESS_EXIT, SessionTarget, Sessions};
 use crate::history::subagent::LaunchFacts;
 use crate::store::resumes::Purpose;
@@ -129,51 +129,6 @@ impl SessionTarget {
         adapter.durable_launch(spec).ok().map(|l| (shims, l))
     }
 
-    /// Takes over the sessions that a station start restored.
-    pub async fn adopt(&self, restored: Vec<Restored>, stop: StopPolicy, from: u64) {
-        for r in restored {
-            let summary = self
-                .store
-                .summary(r.session_id.clone())
-                .await
-                .ok()
-                .flatten();
-            let cwd = summary
-                .as_ref()
-                .and_then(|s| s.cwd.clone())
-                .unwrap_or_default();
-            let facts =
-                crate::workflows::launch::adopted(&self.store, &r.session_id, &r.process).await;
-            // A restore starts no new process: no identity (B9, out of scope).
-            let turns = self.turns(&r.session_id, Path::new(&cwd)).await;
-            turns.set_process(r.process.clone());
-            // A session whose exit a restored driver already committed:
-            // its observer still reads every event from `from` (turns that
-            // the provider completed while the station was down), then ends
-            // the session when it has caught up. It takes no commands.
-            if summary.is_some_and(|s| matches!(s.state, SessionState::Exited | SessionState::Lost))
-            {
-                tokio::spawn(observe(
-                    self.store.clone(),
-                    Arc::clone(&self.sessions),
-                    r.session_id.clone(),
-                    r.process,
-                    r.driver.process(),
-                    turns,
-                    from,
-                    Drain::ToHead,
-                    facts,
-                ));
-                continue;
-            }
-            // `from` is the head before the restoration: the observer sees
-            // every event that the driver committed while it replayed.
-            // An adopted process gets the launch facts that its launch stored
-            // (B12).
-            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from, facts);
-        }
-    }
-
     async fn turns(&self, session_id: &SessionId, cwd: &Path) -> Arc<SessionTurns> {
         SessionTurns::open(
             self.store.clone(),
@@ -208,9 +163,13 @@ impl SessionTarget {
         let Ok(mut map) = self.sessions.lock() else {
             return;
         };
+        // The app host and the sink are installed under the same lock: the
+        // observer drops the host only after it took the lock (B15 §4.3).
+        self.attach_durable_apps(session_id, &process, &turns, &driver);
         let observer = tokio::spawn(observe(
             self.store.clone(),
             Arc::clone(&self.sessions),
+            self.apps.hosts(),
             session_id.clone(),
             process.clone(),
             driver.process(),
@@ -402,6 +361,11 @@ impl SessionTarget {
             self.start_failed(&session_id, &text).await;
             return Dispatch::NotDispatched("credentials".into());
         }
+        // Whether the Codex `initialize` offers the MCP Apps extension (B15):
+        // asked before the shim starts, so the cached probe never delays the
+        // handshake.
+        let offer_apps = matches!(launch.core, DurableConfig::Codex { .. })
+            && self.offers_mcp_apps(&spec.provider_instance).await;
         // ADR-008 §6.2: the gate runs inside the launch, after the `starting`
         // row and right before the shim starts.
         let attached = match launch_shim_for(
@@ -455,14 +419,21 @@ impl SessionTarget {
                 thread,
                 skill_dir,
             } => {
-                DurableCodex::open(&self.store, attached, config, &thread, skill_dir.as_deref())
-                    .await
-                    .map(|d| {
-                        // The shim host polls the background work too
-                        // (DL-024, DL-199).
-                        spawn_background_poll(&d, BACKGROUND_POLL);
-                        Durable::Codex(d)
-                    })
+                DurableCodex::open(
+                    &self.store,
+                    attached,
+                    config,
+                    &thread,
+                    skill_dir.as_deref(),
+                    offer_apps,
+                )
+                .await
+                .map(|d| {
+                    // The shim host polls the background work too
+                    // (DL-024, DL-199).
+                    spawn_background_poll(&d, BACKGROUND_POLL);
+                    Durable::Codex(d)
+                })
             }
         };
         let driver = match driver {
@@ -697,6 +668,7 @@ const EXIT_REPORT_WAIT: Duration = Duration::from_secs(10);
 async fn observe(
     store: Store,
     sessions: Sessions,
+    apps: AppHosts,
     session_id: SessionId,
     process: ProcessIncarnation,
     shim: Arc<ShimProcess>,
@@ -743,7 +715,7 @@ async fn observe(
             return;
         }
     }
-    end_observed(&store, &sessions, &session_id, process, &shim).await;
+    end_observed(&store, &sessions, &apps, &session_id, process, &shim).await;
 }
 
 /// The end of a session under a shim: it leaves the live set, its process
@@ -755,6 +727,7 @@ async fn observe(
 async fn end_observed(
     store: &Store,
     sessions: &Sessions,
+    apps: &AppHosts,
     session_id: &SessionId,
     process: ProcessIncarnation,
     shim: &ShimProcess,
@@ -766,6 +739,15 @@ async fn end_observed(
     if let Ok(mut map) = sessions.lock() {
         map.remove(session_id);
     }
+    // The app host leaves (B15 §4.3 item 2). Only a shim report that proves
+    // the end (no surviving member of the provider's group) is an observed
+    // exit; else the provider's tools may still run (`Lost`).
+    let end = if shims::exit_reason(exit.as_ref()) == reason::EXITED {
+        HostEnd::Exited
+    } else {
+        HostEnd::Lost
+    };
+    apps.drop_host(session_id, &process, end);
     if let Err(e) = store
         .process_ended(process, REASON_PROCESS_EXIT.to_owned())
         .await
@@ -792,3 +774,6 @@ async fn end_rows(
         }
     }
 }
+
+#[path = "shim_adopt.rs"]
+mod adopt;

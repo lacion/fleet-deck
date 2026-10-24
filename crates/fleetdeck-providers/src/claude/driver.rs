@@ -190,7 +190,7 @@ impl ClaudeAdapter {
         };
         let env = CoordinatorLaunch::env_for(
             coordinator,
-            &env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+            &apps::with_apps_host(env_with_extra(&self.config.env, spec.extra_env.as_deref())),
             &cwd,
         )?;
         // What the CLI restores from the transcript of a resume or a fork,
@@ -225,8 +225,10 @@ impl ClaudeAdapter {
         });
         let init = core.initialize()?;
         let raw_dir = raw.as_ref().map(|r| r.dir().to_path_buf());
+        let (candidates, candidate_rx) = mpsc::channel(apps::CANDIDATE_QUEUE);
         let shared = Arc::new(Shared {
             core: Mutex::new(core),
+            candidates,
             sink,
             raw: std::sync::Mutex::new(raw),
             queued: AtomicUsize::new(0),
@@ -258,6 +260,7 @@ impl ClaudeAdapter {
             idle_grace: self.config.idle_grace,
             delivery_grace: self.config.delivery_grace,
             raw_dir,
+            apps: apps::SessionApps::new(candidate_rx),
         };
         for o in init {
             if let Output::Write(v) = o {
@@ -388,6 +391,8 @@ impl ClaudeAdapter {
 #[derive(Debug)]
 struct Shared {
     core: Mutex<ClaudeCore>,
+    /// The candidates of completed MCP tool calls for the station (B15).
+    candidates: mpsc::Sender<crate::apps::AppCandidate>,
     sink: EventSink,
     raw: std::sync::Mutex<Option<RawFrameLog>>,
     /// The frames in the stdin queue that the writer did not take (NV-19).
@@ -450,6 +455,7 @@ impl Shared {
                 Output::Emit(e) => self.sink.emit_with(e, raw_ref.cloned()).await?,
                 // Only the durable (shim) driver uses the identity (DL-194).
                 Output::NativeIdentity { .. } => {}
+                Output::AppCandidate(candidate) => self.offer_candidate(candidate),
             }
         }
         Ok(())
@@ -470,6 +476,7 @@ pub struct ClaudeSession {
     idle_grace: Duration,
     delivery_grace: Duration,
     raw_dir: Option<PathBuf>,
+    apps: apps::SessionApps,
 }
 
 impl ClaudeSession {
@@ -550,6 +557,18 @@ impl LiveSession for ClaudeSession {
 
     fn pid(&self) -> Option<u32> {
         Some(self.control.pid())
+    }
+
+    fn exit_watch(&self) -> Option<crate::host::ExitWatch> {
+        self.control.exit_watch()
+    }
+
+    fn app_bridge(&self) -> Option<Arc<dyn crate::apps::AppBridge>> {
+        Some(self.apps.bridge(&self.shared, &self.writes, &self.frames))
+    }
+
+    fn take_app_candidates(&mut self) -> Option<mpsc::Receiver<crate::apps::AppCandidate>> {
+        self.apps.take_candidates()
     }
 
     async fn prompt(&mut self, input: HostInput) -> Result<()> {
@@ -712,6 +731,8 @@ pub(crate) fn env_with_extra(
 #[path = "driver_tests.rs"]
 mod tests;
 
+#[path = "driver_apps.rs"]
+mod apps;
 #[path = "durable_launch.rs"]
 mod durable_launch;
 #[path = "driver_io.rs"]

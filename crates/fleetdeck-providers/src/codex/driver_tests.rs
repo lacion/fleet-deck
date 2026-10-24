@@ -14,6 +14,7 @@ fn shared(queued: usize) -> Arc<Shared> {
     let (sink, _events) = EventSink::channel(64);
     Arc::new(Shared {
         core: Mutex::new(CodexCore::new(config("/w"))),
+        candidates: mpsc::channel(1).0,
         sink,
         raw: std::sync::Mutex::new(None),
         poll: Notify::new(),

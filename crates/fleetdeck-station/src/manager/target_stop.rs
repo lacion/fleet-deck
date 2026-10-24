@@ -13,14 +13,19 @@
 //! 4. It checks the shim row and the boot again; a change settles the row
 //!    `failed` with `plan_changed`.
 //! 5. [`super::stop_exec::execute`] signals the targets.
+//!
+//! It also holds [`SessionTarget::stop_all`], the stop of every live session at the station shutdown (moved from `target.rs` in B15 T5a).
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use fleetdeck_proto::SessionId;
+use fleetdeck_proto::command::StopMode;
 use fleetdeck_proto::execution_stop::code;
 use fleetdeck_providers::host::shim::identity::real_boot_id_reader;
 
 use super::SessionTarget;
+use super::apps::HostEnd;
 use super::{Dispatch, Effect, EffectPayload};
 use crate::manager::stop_attribution::check_row;
 use crate::manager::stop_exec;
@@ -94,5 +99,42 @@ impl SessionTarget {
             }
         }
         stop_exec::execute(&plan, stop_exec::real_send(), stop_exec::real_uids()).await
+    }
+}
+
+impl SessionTarget {
+    /// Stops every live session (station shutdown). First it stops the setup
+    /// commands that run and waits for their tasks, up to 15 s.
+    pub async fn stop_all(&self, how: StopMode) {
+        self.stop_setups(how).await;
+        let all: Vec<_> = match self.sessions.lock() {
+            Ok(s) => s
+                .iter()
+                .map(|(id, l)| (id.clone(), Arc::clone(l)))
+                .collect(),
+            Err(_) => return,
+        };
+        for (session_id, live) in all {
+            let durable = live.lock().await.durable.is_some();
+            if durable {
+                // A session under a shim keeps running (ADR-005): detach its
+                // driver and observer; the next station start restores it.
+                let process = live.lock().await.process.clone();
+                Self::detach_durable(&mut *live.lock().await).await;
+                if let Ok(mut sessions) = self.sessions.lock() {
+                    sessions.remove(&session_id);
+                }
+                // The shim provider goes on: the app host leaves with the
+                // `Live` entry, and no call row changes (B15 §4.3 item 2).
+                self.drop_app_host(&session_id, &process, HostEnd::Detached);
+                continue;
+            }
+            let session = live.lock().await.session.take();
+            if let Some(mut session) = session
+                && let Err(e) = session.stop(how).await
+            {
+                tracing::warn!(error = %e, "stop at shutdown");
+            }
+        }
     }
 }

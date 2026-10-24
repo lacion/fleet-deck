@@ -10,6 +10,8 @@ pub mod host {
 
 /// The connected GitHub, GitLab, Jira and Linear accounts (DL-173).
 pub mod accounts;
+/// MCP Apps: the capture of an app after a tool call (B15).
+pub mod apps;
 /// Artifacts: versioned files that a session or a person publishes (R12).
 pub mod artifacts;
 /// Model help on the station (R10, DL-167).

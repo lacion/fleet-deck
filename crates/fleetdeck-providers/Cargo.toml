@@ -22,6 +22,8 @@ ulid = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# `start_paused` in the app-call tests (B15); the station already enables it.
+tokio = { workspace = true, features = ["test-util"] }
 fleetdeck-testkit = { path = "../fleetdeck-testkit" }
 tempfile = { workspace = true }
 

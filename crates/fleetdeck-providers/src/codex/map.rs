@@ -22,6 +22,9 @@ use map_tools::{tool_kind, tool_title};
 // `model/list` and its pages (moved out of this file for the module size rule).
 #[path = "map_models.rs"]
 mod map_models;
+// The app candidate and the app requests (B15).
+#[path = "apps.rs"]
+pub(super) mod apps;
 
 /// Notifications that the core reads but maps to no event. Every other
 /// unknown method counts as an unknown frame, so a new protocol feature
@@ -596,12 +599,17 @@ impl CodexCore {
             .and_then(Value::as_i64)
             .and_then(|c| i32::try_from(c).ok());
         out.push(Output::Emit(Event::ToolCompleted {
-            node_id,
+            node_id: node_id.clone(),
             status,
             files,
             exit_code,
             provider_refs: ProviderRefs::new(),
         }));
+        // B15: the candidate of an MCP app comes after the close of its call.
+        if item_type == "mcpToolCall" && self.own_thread(p) {
+            let candidate = apps::candidate(item, &node_id);
+            out.extend(candidate.map(Output::AppCandidate));
+        }
         out
     }
 

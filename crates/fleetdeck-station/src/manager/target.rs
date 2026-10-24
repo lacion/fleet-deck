@@ -108,6 +108,8 @@ pub struct SessionTarget {
     moves: Option<Arc<super::land::move_in::MoveState>>,
     /// The session locks and the stop plans (BG-4).
     stops: super::stop_state::StopState,
+    /// The app hosts and the capture service of the station (B15).
+    apps: apps::Apps,
 }
 
 impl SessionTarget {
@@ -119,6 +121,7 @@ impl SessionTarget {
 
     #[must_use]
     pub fn new(store: Store, adapters: Adapters, ids: SharedIds) -> Self {
+        let apps = apps::Apps::new(store.clone());
         Self {
             store,
             adapters,
@@ -149,6 +152,7 @@ impl SessionTarget {
             shell: shell_run::ShellRunState::default(),
             moves: None,
             stops: super::stop_state::StopState::default(),
+            apps,
         }
     }
 
@@ -249,37 +253,6 @@ impl SessionTarget {
             .collect()
     }
 
-    /// Stops every live session (station shutdown). First it stops the setup
-    /// commands that run and waits for their tasks, up to 15 s.
-    pub async fn stop_all(&self, how: StopMode) {
-        self.stop_setups(how).await;
-        let all: Vec<_> = match self.sessions.lock() {
-            Ok(s) => s
-                .iter()
-                .map(|(id, l)| (id.clone(), Arc::clone(l)))
-                .collect(),
-            Err(_) => return,
-        };
-        for (session_id, live) in all {
-            let durable = live.lock().await.durable.is_some();
-            if durable {
-                // A session under a shim keeps running (ADR-005): detach its
-                // driver and observer; the next station start restores it.
-                Self::detach_durable(&mut *live.lock().await).await;
-                if let Ok(mut sessions) = self.sessions.lock() {
-                    sessions.remove(&session_id);
-                }
-                continue;
-            }
-            let session = live.lock().await.session.take();
-            if let Some(mut session) = session
-                && let Err(e) = session.stop(how).await
-            {
-                tracing::warn!(error = %e, "stop at shutdown");
-            }
-        }
-    }
-
     /// Where the provider of a launch writes its files, from the current
     /// policy snapshot (DL-191); `None` without an absolute provider home.
     pub(super) fn launch_facts(&self, spec: &SessionSpec) -> Option<LaunchFacts> {
@@ -352,7 +325,7 @@ impl SessionTarget {
         let turns = self.open_turns(&session_id, spec).await;
         let (sink, rx) = EventSink::channel(SINK_CAPACITY);
         let (ready_tx, ready_rx) = oneshot::channel();
-        tokio::spawn(pump::pump(
+        let pump_task = tokio::spawn(pump::pump(
             self.store.clone(),
             Arc::clone(&self.sessions),
             session_id.clone(),
@@ -452,6 +425,7 @@ impl SessionTarget {
                 }
             }
         }
+        self.attach_direct_apps(&session_id, &process, &turns, &mut *session, pump_task);
         if let Ok(mut map) = self.sessions.lock() {
             map.insert(
                 session_id,
@@ -761,6 +735,10 @@ mod move_launch;
 
 #[path = "target_stop.rs"]
 mod target_stop;
+
+#[path = "target_apps.rs"]
+mod apps;
+pub use apps::{AppHost, HostEnd};
 
 #[cfg(any(test, feature = "fault-injection"))]
 #[path = "target_gate.rs"]

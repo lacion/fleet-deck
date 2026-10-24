@@ -41,3 +41,17 @@ pub(super) async fn poll_loop(
         }
     }
 }
+
+// In this file for the module size rule (`driver.rs`); no behavior change.
+impl Drop for super::CodexSession {
+    /// The tasks hold the process control: abort them so that the last
+    /// reference drops and the host kills the group.
+    fn drop(&mut self) {
+        for task in [self.reader.take(), self.writer.take(), self.poller.take()]
+            .into_iter()
+            .flatten()
+        {
+            task.abort();
+        }
+    }
+}

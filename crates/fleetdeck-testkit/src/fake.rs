@@ -155,8 +155,9 @@ impl FakeAgent {
 ///   `auth:signed-in` / `auth:signed-out`, else fail.
 /// - Scenario `env` prints its environment (`NAME=value`, sorted) and exits 0
 ///   (for the environment scrub tests).
-/// - `fake-codex app-server` under scenario `sim` or `auth:<state>` runs
-///   [`crate::sim_codex`].
+/// - `fake-codex app-server` under scenario `sim`, `mcp_app` or `auth:<state>`
+///   runs [`crate::sim_codex`] (`mcp_app` is B15: the demo MCP app, and the
+///   version `0.163.0`).
 /// - Scenario `fixture:<path>#<process>` plays one process of a recorded
 ///   fixture ([`crate::script`]).
 /// - Every other scenario is an error (exit 2).
@@ -167,7 +168,17 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
 
     let name = agent.bin_name();
     if std::env::args().skip(1).any(|a| a == "--version") {
-        println!("{}", agent.version_line());
+        // Scenario `mcp_app` (B15) reports the first version with an app path.
+        let apps =
+            agent == FakeAgent::Codex && std::env::var(SCENARIO_ENV).as_deref() == Ok("mcp_app");
+        println!(
+            "{}",
+            if apps {
+                "codex-cli 0.163.0"
+            } else {
+                agent.version_line()
+            }
+        );
         return ExitCode::SUCCESS;
     }
     let scenario = std::env::var(SCENARIO_ENV).unwrap_or_default();
@@ -205,7 +216,7 @@ pub fn fake_main(agent: FakeAgent) -> std::process::ExitCode {
         }
         "echo" => return echo_lines(),
         "sim" if agent == FakeAgent::Claude => return crate::sim_claude::run(),
-        "sim" | "auth:signed-in" | "auth:signed-out"
+        "sim" | "mcp_app" | "auth:signed-in" | "auth:signed-out"
             if agent == FakeAgent::Codex
                 && args.first().map(String::as_str) == Some("app-server") =>
         {

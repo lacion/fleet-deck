@@ -5,7 +5,8 @@
 //! folder fence ([`super::turns::Fences`]). So no turn start checkpoint is
 //! taken at the old generation after a settlement. [`task`] wakes on a
 //! notify and at a slow tick; [`start_up`] runs once before the shell
-//! admission opens.
+//! admission opens. The app tool calls of MCP Apps (B15) use the same task:
+//! their settled rows advance the folder generation here too.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -43,6 +44,13 @@ pub async fn advance_pending(store: &Store, fences: &Fences) -> Result<usize> {
         store.shell_advance(effect_id, root, false).await?;
         done += 1;
     }
+    // B15: the settled app calls advance their folder the same way.
+    for (call_id, root) in store.app_call_pending_advances().await? {
+        let fence = fences.for_worktree(Path::new(&root));
+        let _guard = fence.lock().await;
+        store.app_call_advance(call_id, root).await?;
+        done += 1;
+    }
     Ok(done)
 }
 
@@ -60,6 +68,9 @@ pub async fn start_up(store: &Store, fences: &Fences) -> Result<()> {
     }
     settle_claimed(store).await?;
     settle_codex_sent(store).await?;
+    // B15: the app calls of the last station process are settled or marked
+    // `uncertain` before the advance.
+    crate::apps::calls::start_up(store).await?;
     advance_pending(store, fences).await?;
     store.shell_open_admission().await
 }
@@ -170,6 +181,9 @@ pub async fn task(
         }
         if let Err(e) = settle_proven(&store).await {
             tracing::error!(error = %e, "shell proof check failed");
+        }
+        if let Err(e) = crate::apps::calls::settle_proven(&store).await {
+            tracing::error!(error = %e, "app call proof check failed");
         }
         // A dropped advance is safe: the row keeps `advance_pending = 1` and
         // `start_up` advances it at the next start.

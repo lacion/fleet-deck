@@ -16,6 +16,9 @@ use super::{commands, effort, effort_set, requests, usage, workflows};
 // The `task_*` frames and the tools under a running task (B6).
 #[path = "tasks.rs"]
 mod tasks;
+// The MCP Apps candidate, hints and requests (B15).
+#[path = "apps.rs"]
+pub(super) mod apps;
 
 /// A `provider_refs` map; `None` values are skipped.
 pub(super) fn refs(pairs: &[(&str, Option<&str>)]) -> Map<String, Value> {
@@ -86,7 +89,10 @@ pub(super) fn on_frame(core: &mut ClaudeCore, frame: CliFrame) -> Vec<Output> {
         CliFrame::ControlRequest {
             request_id,
             request,
-        } => requests::on_control_request(core, &request_id, request),
+        } => {
+            apps::note_hint(core, &request);
+            requests::on_control_request(core, &request_id, request)
+        }
         CliFrame::ControlResponse(resp) => on_control_response(core, &resp),
         CliFrame::ControlCancelRequest { request_id } => requests::on_cancel(core, &request_id),
         CliFrame::CommandLifecycle {
@@ -108,6 +114,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             core.native_session_id = get("session_id");
             core.mode = get("permissionMode");
             core.model = get("model");
+            apps::note_init(core, body);
             // Every root `init` states the root identity (DL-194); a child
             // `init` carries a `parent_tool_use_id`.
             let root = matches!(body.get("parent_tool_use_id"), None | Some(Value::Null));
@@ -292,6 +299,7 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
         };
     }
     let mut out = Vec::new();
+    let single = results.len() == 1;
     for block in results {
         let Some(tool_use_id) = block.get("tool_use_id").and_then(Value::as_str) else {
             continue;
@@ -336,6 +344,9 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
         }
         // The run id of a `Workflow` result comes from the structured result only (B12).
         let run_id_update = workflows::on_run_id(core, tool_use_id, &node, msg, &mut provider_refs);
+        // B15: the candidate of an MCP app comes after the close of its call.
+        let ok = status == ToolStatus::Ok;
+        let candidate = apps::on_tool_result(core, tool_use_id, &node, ok, single, msg);
         out.push(Output::Emit(Event::ToolCompleted {
             node_id: node.node_id,
             status,
@@ -344,6 +355,7 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
             provider_refs,
         }));
         out.extend(run_id_update);
+        out.extend(candidate);
     }
     out
 }
@@ -614,6 +626,10 @@ fn on_control_response(core: &mut ClaudeCore, resp: &ControlResponse) -> Vec<Out
     }
     if resp.request_id.starts_with(effort_set::EFFORT_ID_PREFIX) {
         return effort_set::on_response(core, resp);
+    }
+    // B15: the answer of an app request.
+    if core.app_answer(resp) {
+        return Vec::new();
     }
     // The CLI also echoes responses to its own requests: ignore unknown ids.
     let Some(kind) = core.host_requests.remove(&resp.request_id) else {
