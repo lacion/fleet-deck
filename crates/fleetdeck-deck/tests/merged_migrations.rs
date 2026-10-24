@@ -19,7 +19,7 @@ use rusqlite::Connection;
 const DECK_V2_LAST: usize = 25;
 const DECK_LATEST: i64 = 47;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 44;
+const STATION_LATEST: i64 = 45;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))

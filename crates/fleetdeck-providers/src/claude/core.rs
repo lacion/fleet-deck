@@ -20,6 +20,7 @@ use serde_json::Value;
 use super::args::input_uuid;
 use super::commands::CommandState;
 use super::frames::CliFrame;
+use super::workflows::WorkflowEntry;
 use super::{control, map};
 use crate::adapter::{HostInput, ProviderError, Result};
 
@@ -205,6 +206,15 @@ pub struct ClaudeCore {
     /// The tasks of `system/task_*` frames, by task id (B6).
     #[serde(default)]
     pub(super) tasks: BTreeMap<String, TaskEntry>,
+    /// The workflow runs of `local_workflow` tasks, by task id (B12).
+    #[serde(default)]
+    pub(super) workflows: BTreeMap<String, WorkflowEntry>,
+    /// Running workflows that the core does not follow (§4.1 limits), oldest first.
+    #[serde(default)]
+    pub(super) untracked_workflows: VecDeque<String>,
+    /// The start counter of `WorkflowEntry::started`.
+    #[serde(default)]
+    pub(super) next_workflow: u64,
     /// When the last `get_usage` request was written (R4.5). Not part of the
     /// checkpoint: a restored core may ask once more.
     #[serde(skip)]
@@ -254,6 +264,9 @@ impl ClaudeCore {
             early: Vec::new(),
             background: Vec::new(),
             tasks: BTreeMap::new(),
+            workflows: BTreeMap::new(),
+            untracked_workflows: VecDeque::new(),
+            next_workflow: 0,
             usage_asked: None,
             usage_stopped: false,
             usage_seq: 0,

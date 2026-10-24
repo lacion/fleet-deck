@@ -52,7 +52,10 @@ use crate::display_event::{
     DisplayDisk, DisplayEvent, DisplayItem, DisplayRequestState, DisplayResources,
     DisplaySessionLoad,
 };
-use crate::event::{Event, EventEnvelope};
+use crate::event::{
+    Event, EventEnvelope, WorkflowAgent, WorkflowPhase, WorkflowRun, WorkflowUpdate,
+    WorkflowsCursor, WorkflowsPage, WorkflowsQuery,
+};
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
 use crate::execution_stop::{
     ExecutionStopOutcome, ExecutionStopPlan, ExecutionStopPlanQuery, StopOutcome,
@@ -96,7 +99,7 @@ use crate::recording as rec;
 use crate::resources::{
     CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
 };
-use crate::session::{CardStatus, SessionSummary};
+use crate::session::{CardStatus, RunningWorkflow, SessionSummary};
 use crate::settings::{
     Apply, Durability, FieldKind, FieldMeta, RestartAnswer, RestartItem, RestartKind,
     RestartRequest, SecretSet, SecretSetParams, SettingsChange, SettingsSaved, SettingsSetParams,
@@ -106,7 +109,7 @@ use crate::share::{
     ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
     ShareHistory, ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
 };
-use crate::subagent::{SubagentLog, SubagentQuery};
+use crate::subagent::{SubagentLog, SubagentQuery, WorkflowAgentQuery};
 use crate::version::{Negotiated, VersionOffer};
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
@@ -262,6 +265,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         HistoryUnavailable::export_all(&cfg),
         SubagentQuery::export_all(&cfg),
         SubagentLog::export_all(&cfg),
+        WorkflowAgentQuery::export_all(&cfg),
+        WorkflowsQuery::export_all(&cfg),
+        WorkflowsCursor::export_all(&cfg),
+        WorkflowsPage::export_all(&cfg),
+        WorkflowRun::export_all(&cfg),
+        WorkflowUpdate::export_all(&cfg),
+        WorkflowPhase::export_all(&cfg),
+        WorkflowAgent::export_all(&cfg),
+        RunningWorkflow::export_all(&cfg),
         NativeSessionsQuery::export_all(&cfg),
         NativeSessionList::export_all(&cfg),
         NativeHome::export_all(&cfg),

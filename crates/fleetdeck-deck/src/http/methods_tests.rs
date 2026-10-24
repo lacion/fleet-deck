@@ -83,6 +83,7 @@ fn exactly_these_methods_are_open_to_a_member() {
             "session.steer",
             "sessions.history",
             "sessions.list",
+            "sessions.workflows",
             "stations.list",
         ]
     );
@@ -223,5 +224,31 @@ fn the_desktop_tools_rows_are_admin_owner_rows_and_one_is_a_socket() {
         assert_eq!(api.mutating, mutating, "{name}");
         assert!(!api.member && !api.display, "{name}");
         assert_eq!(is_socket(name), name == MAINTENANCE_WS_METHOD, "{name}");
+    }
+}
+
+/// The workflow rows (B12): both `read`, neither mutating; the page is open to
+/// a member of the session, the chat of one agent is the owner only.
+#[test]
+fn the_method_table_has_both_rows_with_their_member_flags() {
+    let rows = [
+        (
+            "sessions.workflows",
+            "/api/sessions/{station}/{session}/workflows",
+            true,
+        ),
+        (
+            "sessions.workflow_agent",
+            "/api/sessions/{station}/{session}/workflow-agents/{agent_id}",
+            false,
+        ),
+    ];
+    for (name, path, member) in rows {
+        let api = find(&Method::GET, path).unwrap_or_else(|| panic!("{name} has no row"));
+        assert_eq!(api.name, name);
+        assert_eq!(api.scope, Some(Scope::Read), "{name}");
+        assert!(!api.mutating, "{name}");
+        assert_eq!(api.member, member, "{name}");
+        assert!(!api.display, "{name}");
     }
 }

@@ -655,5 +655,6 @@ fn all() -> Vec<M<'static>> {
         M::up(super::schema_v42::V42),
         M::up(super::schema_v43::V43),
         M::up(super::schema_v44::V44),
+        M::up(super::schema_v45::V45),
     ]
 }

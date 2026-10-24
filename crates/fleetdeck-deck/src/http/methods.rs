@@ -89,6 +89,8 @@ mod table_reports;
 mod table_rest;
 #[path = "methods_table_tools.rs"]
 mod table_tools;
+#[path = "methods_table_work.rs"]
+mod table_work;
 
 /// Every board-API method, in table order.
 pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
@@ -99,6 +101,7 @@ pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
         .chain(table_display::API_DISPLAY.iter())
         .chain(table_reports::API_REPORTS.iter())
         .chain(table_tools::API_TOOLS.iter())
+        .chain(table_work::API_WORK.iter())
 }
 
 /// The route prefix of the command methods.

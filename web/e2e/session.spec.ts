@@ -118,8 +118,8 @@ test('the subagent tree shows each child timeline and status, and the card count
   await setUp(page, deck);
   await openFleet(page);
   const card = page.locator(`[data-session="${ID}"]`);
-  await expect(card.locator('[data-running-subagents="4"]')).toBeVisible();
-  await expect(card.locator('[title="Subagents running"]')).toHaveText('4');
+  await expect(card.locator('[data-running-agents="4"]')).toBeVisible();
+  await expect(card.locator('[title="Agents running"]')).toHaveText('4');
   expect(await fitsWidth(page)).toBe(true);
 
   // the whole card is the link to the session

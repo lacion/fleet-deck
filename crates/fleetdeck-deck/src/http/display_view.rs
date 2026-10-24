@@ -59,8 +59,8 @@ fn display_request(r: &OpenRequest) -> OpenRequest {
 
 /// The card of a display, built from an explicit allowlist (R13 §5D item
 /// 11): provider and instance, callsign, title, state and activity, the run
-/// and turn ids, usage and rate limits, the background agent count, the
-/// focus line, the update time, the repository basename, the batch
+/// and turn ids, usage and rate limits, the background agent count, the running
+/// agent count, the focus line, the update time, the repository basename, the batch
 /// reference when it is valid, and the open requests as fixed labels. It has
 /// no digest, cwd, branch, worktree, tools, errors, models, base, review
 /// revision, unread count or project.
@@ -80,6 +80,9 @@ pub fn display_card(card: &DeckSession) -> DeckSession {
     summary.usage = s.usage.clone();
     summary.rate_limits.clone_from(&s.rate_limits);
     summary.background_agents = s.background_agents;
+    // A count (R13 §5D): the agent count of the card. Not the workflow task
+    // ids, not the background workflows, not the partial flag.
+    summary.running_agents = s.running_agents;
     summary.focus.clone_from(&s.focus);
     summary.batch = s.batch.clone().filter(|b| b.problem().is_none());
     summary.updated_at = s.updated_at;
@@ -347,5 +350,33 @@ mod tests {
             size: 4,
         });
         assert!(display_card(&card).summary.batch.is_none());
+    }
+
+    #[test]
+    fn the_display_card_copies_running_agents_only() {
+        let mut card = DeckSession {
+            station_id: StationId::new("a"),
+            summary: SessionSummary::new(SessionId::new("s")),
+            status: fleetdeck_proto::session::CardStatus::Idle,
+            unread: None,
+            project_id: None,
+            review_rev: None,
+        };
+        card.summary.running_agents = 7;
+        card.summary.agents_partial = true;
+        card.summary.workflows_overflow = true;
+        card.summary.background_workflows = 2;
+        card.summary.running_workflows = vec![fleetdeck_proto::session::RunningWorkflow {
+            task_id: "wf-secret".to_owned(),
+            running_agents: 7,
+            agents_total: 9,
+            untracked: false,
+        }];
+        let shown = display_card(&card).summary;
+        assert_eq!(shown.running_agents, 7);
+        assert!(shown.running_workflows.is_empty());
+        assert_eq!(shown.background_workflows, 0);
+        assert!(!shown.agents_partial);
+        assert!(!shown.workflows_overflow);
     }
 }

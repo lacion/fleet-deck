@@ -191,9 +191,53 @@ describe('strip markup', () => {
     // each fact is named for the strip link, with its count
     expect(full).toContain('<span role="img" aria-label="Artifacts: 3" class="fd-strip-ico"');
     expect(full).toContain(
-      '<span role="img" aria-label="Background tasks: 2" class="fd-strip-ico"',
+      '<span role="img" aria-label="Background commands: 2" class="fd-strip-ico"',
     );
     expect(full).toContain('data-artifacts="3"');
+  });
+
+  test('the strip shows Agents running 3 and Background commands 1', () => {
+    const html = board([
+      card('a', 'working', 'station-a', {
+        running_agents: 3,
+        background_tasks: ['t1', 't2', 't3', 't4'],
+        background_agents: 2,
+        background_workflows: 1,
+      }),
+    ]);
+    expect(html).toContain('<span role="img" aria-label="Agents running: 3" class="fd-strip-ico"');
+    expect(html).toContain('data-ico="agents"');
+    expect(html).toContain('data-running-agents="3"');
+    expect(html).toContain('title="Agents running"');
+    expect(html).toContain(
+      '<span role="img" aria-label="Background commands: 1" class="fd-strip-ico"',
+    );
+    expect(html).not.toContain('Subagents running');
+    expect(html).not.toContain('Background tasks');
+    // the background count hides at 0: only agents and workflows run in the background
+    const none = board([
+      card('b', 'working', 'station-a', { background_tasks: ['t1'], background_agents: 1 }),
+    ]);
+    expect(none).not.toContain('data-ico="background"');
+    expect(none).toContain('data-ico="agents"');
+  });
+
+  test('a partial card shows 3+ with the note in the title', () => {
+    const html = board([
+      card('a', 'working', 'station-a', { running_agents: 3, agents_partial: true }),
+    ]);
+    expect(html).toContain('title="Agents running. Some workflow agents are not counted."');
+    expect(html).toContain('aria-label="Agents running: 3+"');
+    expect(html).toMatch(/<\/svg><span>3\+<\/span>/);
+  });
+
+  test('a partial card with 0 counted agents shows 0+', () => {
+    const html = board([card('a', 'working', 'station-a', { agents_partial: true })]);
+    expect(html).toContain('data-ico="agents"');
+    expect(html).toContain('aria-label="Agents running: 0+"');
+    expect(html).toMatch(/<\/svg><span>0\+<\/span>/);
+    // not partial and no agents: no icon
+    expect(board([card('b')])).not.toContain('data-ico="agents"');
   });
 
   test('the now cell shows the focus line before the status, and an ask before the focus', () => {

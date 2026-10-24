@@ -94,6 +94,10 @@
 .fd-home-counts .fd-badge {
   vertical-align: 1px;
 }
+.fd-home-work {
+  color: var(--text);
+  font-weight: 500;
+}
 .fd-home-needs {
   color: var(--act);
   font-weight: 600;

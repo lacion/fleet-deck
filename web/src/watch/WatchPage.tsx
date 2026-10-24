@@ -12,6 +12,7 @@ import {
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import { useLayout } from '../app/viewport';
+import { atWork } from '../board/agentCounts';
 import { NO_REPO, repoName, stationName } from '../board/fleet';
 import { PathTail } from '../chat/PathTail';
 import type { ApprovalOption, DeckSession, SessionKey, StationView } from '../gen';
@@ -530,7 +531,12 @@ export function WatchPage({
   const onStations = new Set(matching.map((c) => c.station_id)).size;
   const summary = (
     <span aria-live="polite">
-      <FleetSentence live={matching.length} stations={onStations} needsYou={needs} />
+      <FleetSentence
+        live={matching.length}
+        stations={onStations}
+        needsYou={needs}
+        atWork={atWork(matching)}
+      />
     </span>
   );
   const stationSelect = select(

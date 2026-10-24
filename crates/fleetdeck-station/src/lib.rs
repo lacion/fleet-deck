@@ -110,3 +110,6 @@ pub mod worker;
 
 /// The workspace service (PLAN §6.6): checkpoints, diffs, restore.
 pub mod workspace;
+
+/// Workflow agents: the launch facts of a process (B12).
+pub mod workflows;

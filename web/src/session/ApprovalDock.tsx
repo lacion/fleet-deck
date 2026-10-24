@@ -12,6 +12,8 @@ type Props = {
   readonly answerable: boolean;
   readonly enabled: boolean;
   readonly busy: boolean;
+  /** B12: request id → the label of the workflow agent that asked (`null`: the label is not known). */
+  readonly from?: ReadonlyMap<string, string | null> | undefined;
   readonly onAnswer: (request: string, option: string, reply: Reply | null) => void;
 };
 
@@ -42,6 +44,7 @@ export function ApprovalDock(props: Props) {
         {props.requests.map((r) => {
           const form = props.answerable ? questionForm(r) : null;
           const reason = form ? null : reasonOf(r);
+          const label = props.from?.get(r.request_id);
           return (
             <li key={r.request_id} className="fd-q-dock fd-glow" data-request={r.request_id}>
               <div className="fd-q-dock-head">
@@ -60,6 +63,11 @@ export function ApprovalDock(props: Props) {
                   <pre className="fd-code fd-dock-cmd">{r.details}</pre>
                 </details>
               ) : null}
+              {label === undefined ? null : (
+                <p className="fd-note">
+                  {label === null ? 'From a workflow agent' : `From workflow agent ${label}`}
+                </p>
+              )}
               {/* Without the approvals capability the provider answers under its
                 own policy: the board shows the request but no controls (§6.2). */}
               {/* A question gets an answer form (DL-068). */}

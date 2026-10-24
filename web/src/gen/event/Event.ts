@@ -42,6 +42,7 @@ import type { TurnCheckpoint } from "./TurnCheckpoint";
 import type { TurnStatus } from "./TurnStatus";
 import type { Usage } from "./Usage";
 import type { WorkerOutcome } from "./WorkerOutcome";
+import type { WorkflowUpdate } from "./WorkflowUpdate";
 
 /**
  * A canonical event of a known kind.
@@ -130,7 +131,7 @@ inferred: boolean, } | { "kind": "artifact.published", artifact_id: string, vers
 /**
  * Named `artifact_kind` because `kind` is the event tag.
  */
-artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.execution_reconciled", shim_id: string, } | { "kind": "session.execution_settled", shim_id: string, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "workspace.base_stale", code: string, text: string, } | { "kind": "workspace.include_skipped", files: Array<SkippedFile>, } | { "kind": "session.push", state: PushState, ref_name: string, oid?: string, desired_oid?: string, stop_code?: string, attempts: number, next_attempt_at?: number, code?: string, text?: string, } | { "kind": "session.cleanup", state: CleanupState, reason?: string, } | { "kind": "artifacts.ready", path?: string, url?: string, } | { "kind": "artifacts.unavailable", code: string, text: string, } | { "kind": "artifacts.revoked", code: string, text: string, } | { "kind": "session.land" } & LandInfo | { "kind": "session.move_in" } & MoveInInfo | { "kind": "session.moved", move_id: string, to_station: StationId, to_session: SessionId, } | { "kind": "session.move_undone", move_id: string, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.execution_reconciled", shim_id: string, } | { "kind": "session.execution_settled", shim_id: string, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "workspace.base_stale", code: string, text: string, } | { "kind": "workspace.include_skipped", files: Array<SkippedFile>, } | { "kind": "session.push", state: PushState, ref_name: string, oid?: string, desired_oid?: string, stop_code?: string, attempts: number, next_attempt_at?: number, code?: string, text?: string, } | { "kind": "session.cleanup", state: CleanupState, reason?: string, } | { "kind": "artifacts.ready", path?: string, url?: string, } | { "kind": "artifacts.unavailable", code: string, text: string, } | { "kind": "artifacts.revoked", code: string, text: string, } | { "kind": "session.land" } & LandInfo | { "kind": "session.move_in" } & MoveInInfo | { "kind": "session.moved", move_id: string, to_station: StationId, to_session: SessionId, } | { "kind": "session.move_undone", move_id: string, } | { "kind": "workflow.updated" } & WorkflowUpdate | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

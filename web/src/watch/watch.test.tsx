@@ -425,6 +425,22 @@ describe('the watch page', () => {
     );
   });
 
+  test('Watch passes the matching cards', () => {
+    const cards = [
+      card('a', 'working', 'station-a', { running_agents: 2 }),
+      card('b', 'idle', 'station-a', { activity: 'idle', running_agents: 1 }),
+      // not live: left out of the wall and of the total
+      card('u', 'unreachable', 'station-a', { running_agents: 9 }),
+      // another station: filtered out
+      card('c', 'working', 'station-b', { running_agents: 4 }),
+    ];
+    // one working session plus the three running agents of the live cards on station-a
+    const html = page(cards, { initialFilter: { ...emptyWatchFilter, station: 'station-a' } });
+    expect(html).toContain('>4 at work</span>');
+    expect(html).not.toContain('>9 at work');
+    expect(page([card('i', 'idle', 'station-a', { activity: 'idle' })])).not.toContain('at work');
+  });
+
   test('the page counts the live sessions and states an empty board', () => {
     expect(page([card('a', 'working'), card('b', 'idle')])).toContain('2 live');
     expect(page([])).toContain('No sessions yet');

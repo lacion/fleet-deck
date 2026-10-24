@@ -12,6 +12,7 @@ import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
+import { FleetSentence } from './FleetSentence';
 import { isHibernated, RESUME_TRIES, resumeThenSend } from './hibernate';
 import { FocusLine, UnreadMark, unreadOf } from './marks';
 import { topSeq } from './markRead';
@@ -301,5 +302,41 @@ describe('the board calls of the views', () => {
       async () => ({}),
     );
     expect(bad.activity({})).rejects.toThrow('invalid activity list');
+  });
+});
+
+describe('the at-work part of the fleet sentence', () => {
+  const sentence = (atWork?: { sessions: number; agents: number; partial: boolean }) =>
+    renderToStaticMarkup(<FleetSentence live={6} stations={4} needsYou={2} atWork={atWork} />);
+
+  test('the sentence says 9 at work with its title', () => {
+    const html = sentence({ sessions: 3, agents: 6, partial: false });
+    expect(html).toContain(
+      '<span class="fd-home-work" title="3 sessions and 6 of their agents run now. Sessions on unreachable stations are not counted.">9 at work</span>.',
+    );
+    // after the stations part and before who needs you
+    expect(html.indexOf('4 stations')).toBeLessThan(html.indexOf('9 at work'));
+    expect(html.indexOf('9 at work')).toBeLessThan(html.indexOf('2 need you'));
+    // singular words, and no agents
+    expect(sentence({ sessions: 1, agents: 1, partial: false })).toContain(
+      'title="1 session and 1 of their agents run now. Sessions on unreachable stations are not counted.">2 at work<',
+    );
+    expect(sentence({ sessions: 3, agents: 0, partial: false })).toContain(
+      'title="3 sessions run now. Sessions on unreachable stations are not counted.">3 at work<',
+    );
+  });
+
+  test('a partial total says 9+ at work', () => {
+    const html = sentence({ sessions: 3, agents: 6, partial: true });
+    expect(html).toContain('>9+ at work</span>');
+    expect(html).toContain(
+      'Sessions on unreachable stations are not counted. Some workflow agents are not counted."',
+    );
+  });
+
+  test('no at-work part at 0', () => {
+    expect(sentence({ sessions: 0, agents: 0, partial: false })).not.toContain('at work');
+    expect(sentence({ sessions: 0, agents: 0, partial: true })).not.toContain('at work');
+    expect(sentence(undefined)).not.toContain('at work');
   });
 });

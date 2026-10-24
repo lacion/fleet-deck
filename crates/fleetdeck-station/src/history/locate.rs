@@ -210,6 +210,49 @@ pub fn locate_subagent(
     })
 }
 
+/// Finds the transcript of one workflow agent below `home` and checks its
+/// metadata only; every record is checked by the reader (B12). The path is
+/// `projects/<encoded cwd>/<native>/subagents/workflows/<run id>/agent-<agent id>.jsonl`,
+/// opened one segment at a time without following a link.
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_workflow_agent(
+    home: &Path,
+    cwd: &str,
+    native: &str,
+    run_id: &str,
+    agent_id: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    let home =
+        std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
+    let root = open_root(&home).map_err(open_fail)?;
+    let name = format!("agent-{agent_id}.jsonl");
+    let dirs: Vec<String> = vec![
+        "projects".to_owned(),
+        encode_cwd(cwd),
+        native.to_owned(),
+        "subagents".to_owned(),
+        "workflows".to_owned(),
+        run_id.to_owned(),
+    ];
+    let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let dir = descend(&root, &dir_refs).map_err(open_fail)?;
+    let fd =
+        rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
+    let file = File::from(fd);
+    let size = check_meta(&file, trust, SUBAGENT_FILE_MAX)?;
+    let mut path: PathBuf = dirs.iter().collect();
+    path.push(name);
+    Ok(Opened {
+        file,
+        size,
+        home,
+        path,
+    })
+}
+
 /// The trust checks on the open file; returns its size.
 fn check_file(
     file: &File,

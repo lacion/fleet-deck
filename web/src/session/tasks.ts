@@ -2,6 +2,7 @@
 // command. The station deduplicates the events; the board keeps the last state of each task.
 import type { Event, EventEnvelope } from '../gen';
 import { type Item, type Subagent, type SubagentStatus, subagentLabel } from './timeline';
+import type { WorkflowView } from './workflows';
 
 export type TaskState = {
   task_id: string;
@@ -37,7 +38,8 @@ export function taskStates(events: readonly EventEnvelope[]): Map<string, TaskSt
     tasks.set(e.task_id, {
       task_id: e.task_id,
       node_id: e.node_id ?? before?.node_id ?? null,
-      kind: e.task_kind,
+      // A notification of a task that the current process did not start has no kind: it keeps the earlier one.
+      kind: e.task_kind === 'unknown' ? (before?.kind ?? e.task_kind) : e.task_kind,
       status: e.status,
       description: e.description ?? before?.description ?? null,
       summary: e.summary ?? before?.summary ?? null,
@@ -106,25 +108,34 @@ export function commandTasks(tasks: ReadonlyMap<string, TaskState>): TaskState[]
   return [...tasks.values()].filter((t) => t.kind === 'local_bash');
 }
 
-/** True when the switcher has something to list. */
+/** True when the switcher has something to list (a workflow counts, B12). */
 export function hasAgents(
   subagents: readonly Subagent[],
   tasks: ReadonlyMap<string, TaskState>,
+  workflows?: ReadonlyMap<string, WorkflowView>,
 ): boolean {
-  return subagents.length > 0 || commandTasks(tasks).length > 0;
+  return subagents.length > 0 || commandTasks(tasks).length > 0 || (workflows?.size ?? 0) > 0;
 }
 
-/** Subagents that run (by their shown status, or in the background without a task) plus running commands. */
+/**
+ * Subagents that run (by their shown status, or in the background without a task), running
+ * commands and the running agents of the running workflows (B12).
+ */
 export function runningCount(
   subagents: readonly Subagent[],
   tasks: ReadonlyMap<string, TaskState>,
+  workflows?: ReadonlyMap<string, WorkflowView>,
 ): number {
   const agents = subagents.filter((sub) =>
     taskOf(sub, tasks) === null
       ? sub.status === 'running' || sub.status === 'background'
       : isLive(shownStatus(sub, tasks)),
   ).length;
-  return agents + commandTasks(tasks).filter((t) => isRunningStatus(t.status)).length;
+  let inWorkflows = 0;
+  for (const w of workflows?.values() ?? []) {
+    if (isRunningStatus(w.status)) inWorkflows += w.running_agents;
+  }
+  return agents + inWorkflows + commandTasks(tasks).filter((t) => isRunningStatus(t.status)).length;
 }
 
 /** The input summary of every tool card of the tree (also inside subagents), by node id. */

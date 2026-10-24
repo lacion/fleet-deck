@@ -73,6 +73,12 @@ pub mod feature {
     /// provider's own transcript of that subagent (DL-191).
     pub const SUBAGENT: &str = "subagent.v1";
 
+    /// `session.workflows` (the workflow projection of a session, in pages)
+    /// and `session.workflow_agent` (the transcript of one workflow agent)
+    /// with the `workflow.updated` event (B12, design
+    /// `docs/v2/design/workflow-agents.md` §4.2).
+    pub const WORKFLOWS: &str = "workflows.v1";
+
     /// `station.native_sessions` and `station.native_preview`: browse the
     /// native sessions of a station's provider homes (B7).
     pub const NATIVE_SESSIONS: &str = "native_sessions.v1";
@@ -329,6 +335,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        WORKFLOWS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -505,7 +512,19 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
+        // Later features (for example `workflows.v1`) follow in `ALL`.
+    }
+
+    #[test]
+    fn the_workflows_feature_has_its_name_and_is_offered() {
+        assert_eq!(feature::WORKFLOWS, "workflows.v1");
+        assert!(feature::ALL.contains(&feature::WORKFLOWS));
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "workflows.v1")
+        );
     }
 
     #[test]

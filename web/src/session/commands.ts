@@ -17,6 +17,8 @@ import type {
   SessionHistory,
   SessionKey,
   SubagentLog,
+  WorkflowsCursor,
+  WorkflowsPage,
 } from '../gen';
 import { isSessionHistory } from '../chat/history';
 import { type FleetAnswers, isFleetAnswers } from './fleetAnswers';
@@ -90,6 +92,10 @@ export type SessionActions = {
   readonly history?: ((before: string | null) => Promise<SessionHistory>) | null;
   /** DL-191: the own messages and tool calls of one subagent (owner only); `null` without a reader. */
   readonly subagent?: ((toolUseId: string) => Promise<SubagentLog>) | null;
+  /** B12: a page of the workflows of the session (owner and members); `null` without a reader. */
+  readonly workflows?: ((after: WorkflowsCursor | null) => Promise<WorkflowsPage>) | null;
+  /** B12: the own messages and tool calls of one workflow agent (owner only); `null` without a reader. */
+  readonly workflowAgent?: ((agentId: string) => Promise<SubagentLog>) | null;
   /** DL-191: the other branches of the repository of the session (owner only); `null` without a reader. */
   readonly branches?: (() => Promise<RepoBranches>) | null;
   /** DL-191: the committed diff of one branch head (owner only); `null` without a reader. */
@@ -216,6 +222,9 @@ const isSubagentLog = (v: unknown): v is SubagentLog =>
   record(v['state']) &&
   typeof v['state']['kind'] === 'string';
 
+const isWorkflowsPage = (v: unknown): v is WorkflowsPage =>
+  record(v) && typeof v['as_of'] === 'number' && Array.isArray(v['workflows']);
+
 const isRepoBranches = (v: unknown): v is RepoBranches =>
   record(v) && Array.isArray(v['branches']) && typeof v['truncated'] === 'boolean';
 
@@ -339,6 +348,24 @@ export function sessionActions(
     subagent: get
       ? async (toolUseId) => {
           const v = await get(`${sessionPath}/subagents/${encodeURIComponent(toolUseId)}`);
+          if (!isSubagentLog(v)) throw invalidAnswer();
+          return v;
+        }
+      : null,
+    workflows: get
+      ? async (after) => {
+          const query =
+            after === null
+              ? ''
+              : `?after_order=${after.run_order}&after_index=${after.agent_index}`;
+          const v = await get(`${sessionPath}/workflows${query}`);
+          if (!isWorkflowsPage(v)) throw invalidAnswer();
+          return v;
+        }
+      : null,
+    workflowAgent: get
+      ? async (agentId) => {
+          const v = await get(`${sessionPath}/workflow-agents/${encodeURIComponent(agentId)}`);
           if (!isSubagentLog(v)) throw invalidAnswer();
           return v;
         }

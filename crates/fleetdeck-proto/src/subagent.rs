@@ -36,3 +36,17 @@ pub struct SubagentLog {
     pub items: Vec<HistoryItem>,
     pub state: HistoryState,
 }
+
+/// `session.workflow_agent` params (B12, feature `workflows.v1`, deck →
+/// station, scope `read`, not mutating). The station finds the transcript
+/// from its own binding row of this agent; the caller never gives a path or a
+/// run id. The answer is [`SubagentLog`] (same limits: [`MAX_ITEMS`],
+/// [`MAX_ANSWER_BYTES`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "subagent/")]
+pub struct WorkflowAgentQuery {
+    pub session_id: SessionId,
+    /// `[a-z0-9]{1,64}`.
+    pub agent_id: String,
+}

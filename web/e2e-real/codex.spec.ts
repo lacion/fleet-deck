@@ -253,7 +253,7 @@ test('a Codex background command shows on the card until the station poll sees i
   await expect(view).toContainText('started in background');
   await phone.fleet();
   const card = page.locator('.fd-strip').filter({ hasText: 'Codex approval' });
-  const tasks = card.locator('[title="Background tasks"]');
+  const tasks = card.locator('[title="Background commands"]');
   await expect(tasks).toHaveText('1');
   // The poll repeats every 5 s while the terminal runs; the fake ends it on
   // the second list.

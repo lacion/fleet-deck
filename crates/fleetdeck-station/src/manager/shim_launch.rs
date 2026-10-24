@@ -162,3 +162,7 @@ pub(crate) async fn launch_shim_for(
         Err(e) => fail(e.to_string()).await,
     }
 }
+
+#[cfg(test)]
+#[path = "shim_workflow_tests.rs"]
+mod shim_workflow_tests;

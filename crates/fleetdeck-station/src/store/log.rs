@@ -190,6 +190,7 @@ pub(super) fn append_at(
     super::requests::observe(conn, &envelope, now, time)?;
     super::effects::observe(conn, &envelope, now)?;
     super::shell_observe::observe(conn, &envelope, now)?;
+    super::workflow_state::observe(conn, &envelope, now)?;
     Ok(envelope)
 }
 
