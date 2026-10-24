@@ -317,7 +317,7 @@ fn check_raw_log(at: &str, records: &[Value], played: &Played) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_recorded_fixture_replays_through_the_production_adapter() {
     let files = fixtures();
-    assert_eq!(files.len(), 20, "the recorded Rust fixtures");
+    assert_eq!(files.len(), 21, "the recorded Rust fixtures");
     let mut played_processes = 0;
     let mut with_refs = 0;
     for path in &files {
@@ -334,6 +334,6 @@ async fn every_recorded_fixture_replays_through_the_production_adapter() {
             played_processes += 1;
         }
     }
-    assert_eq!(played_processes, 23, "every recorded process");
+    assert_eq!(played_processes, 24, "every recorded process");
     assert!(with_refs > 0, "events carry raw_refs");
 }
