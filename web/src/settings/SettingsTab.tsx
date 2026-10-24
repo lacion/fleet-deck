@@ -7,7 +7,14 @@ import { Icon, RefreshCw } from '../ui/icons';
 import { DECK, type SettingsActions, type Target } from './actions';
 import { RestartDialog, RestartOverlay, type RestartView, SecretDialog, waitStep } from './dialogs';
 import { useElevation } from './elevation';
-import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
+import {
+  readPosture,
+  relaySecret,
+  tryRestart,
+  trySave,
+  UNSUPPORTED_TEXT,
+  withPosture,
+} from './flow';
 import { describe } from './http';
 import { Loading } from '../ui/Loading';
 import { NoticeIcon } from './NoticeIcon';
@@ -186,6 +193,7 @@ export function SettingsTab({
   const [giveUp, setGiveUp] = useState(false);
   const { ask, node: elevationNode } = useElevation(actions);
   const turn = useRef(0);
+  const postureTurn = useRef(0);
   const noticeTop = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const noticeCount = notices.length;
@@ -291,6 +299,14 @@ export function SettingsTab({
       ...withoutNotice(cur, 'restart', 'uncertain', 'changed', 'error'),
       ...noticesOfSaved(saved, Object.keys(next).length),
     ]);
+    // The save answer has no posture: read it again, so that the posture line shows a control
+    // that this save relaxed or restored (B27 §3.6). Only the newest read of a live tab applies.
+    const mine = turn.current;
+    const read = ++postureTurn.current;
+    void readPosture(actions, target).then((posture) => {
+      if (mine !== turn.current || read !== postureTurn.current) return;
+      setView((cur) => (cur === null ? cur : withPosture(cur, posture)));
+    });
   };
 
   const save = async () => {

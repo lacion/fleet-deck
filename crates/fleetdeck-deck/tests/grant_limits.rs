@@ -197,6 +197,28 @@ async fn the_worker_grant_count_follows_the_setting() {
     assert_eq!(worker_grants(&f.store).await.len(), 201);
 }
 
+/// Review finding (B27): a deck.toml with `[grant_limits] worker_spawn_cap = 1`
+/// and no `[worker_grant]` table gives a worker grant with the cap 1. Before
+/// the fix the absent table kept the default cap 2 and the start failed.
+#[tokio::test]
+async fn an_absent_worker_table_starts_within_a_low_worker_spawn_limit() {
+    let mut f = fixture().await;
+    let _station = f.connect().await;
+    let config =
+        fleetdeck_core::config::DeckConfig::parse("[grant_limits]\nworker_spawn_cap = 1\n")
+            .unwrap();
+    assert_eq!(config.worker_grant.spawn_cap, Some(1));
+    set_limits(&f.store, None, |l| l.worker_spawn_cap = Some(1));
+    let out = f
+        .store
+        .submit_start_with_worker_decision(start("low1", config.worker_grant, &f.station))
+        .await
+        .unwrap();
+    assert!(carries_grant(&out.command));
+    let g = worker_grants(&f.store).await.remove(0);
+    assert_eq!(g.spawn_cap, 1);
+}
+
 // ---------------------------------------------------------------------------
 // The board routes: an omitted cap is resolved to the limit
 // ---------------------------------------------------------------------------

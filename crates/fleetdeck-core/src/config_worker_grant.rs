@@ -105,7 +105,7 @@ pub(crate) const RAW_WORKER_GRANT_KEYS: &[&str] = &[
     "allow_bypass",
 ];
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawWorkerGrant {
     enabled: Option<bool>,

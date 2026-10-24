@@ -136,6 +136,10 @@ fn worker_grant_values_stay_within_the_grant_limits() {
     // An omitted cap takes the default, lowered to the limit.
     let w = deck(&worker("worker_spawn_cap = 1", "")).worker_grant;
     assert_eq!(w.spawn_cap, Some(1));
+    // An absent table resolves the same as an empty one.
+    let w = deck("[grant_limits]\nworker_spawn_cap = 1\n").worker_grant;
+    assert_eq!(w.spawn_cap, Some(1));
+    assert_eq!(deck("").worker_grant, WorkerGrantConfig::default());
 }
 
 #[test]

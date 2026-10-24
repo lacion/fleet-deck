@@ -197,10 +197,12 @@ impl DeckConfig {
             Some(raw) => raw.validate()?,
             None => GrantLimits::default(),
         };
-        let worker_grant = match raw.worker_grant {
-            Some(raw) => raw.validate(&grant_limits)?,
-            None => WorkerGrantConfig::default(),
-        };
+        // An absent table resolves the same as an empty one: the omitted
+        // caps are lowered to the grant limits (B27 §3.2).
+        let worker_grant = raw
+            .worker_grant
+            .unwrap_or_default()
+            .validate(&grant_limits)?;
         Ok(Self {
             name,
             listen,

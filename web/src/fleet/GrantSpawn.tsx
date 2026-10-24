@@ -51,15 +51,14 @@ export const hasLimit = (g: GrantView): boolean => g.classes.includes('spawn');
 export const hasCeilings = (g: GrantView): boolean =>
   g.classes.includes('spawn') || g.classes.includes('manage');
 
-const limitMax = (g: GrantView): number => (g.kind === 'worker' ? 10 : 50);
-
-/** The problem of the session limit text, or null (only checked for a grant with the class `spawn`). */
+/**
+ * The problem of the session limit text, or null (only checked for a grant with the class
+ * `spawn`). B27: the board checks no upper bound; the deck refuses a value above its grant limit.
+ */
 export function sessionLimitProblem(g: GrantView, v: SpawnValues): string | null {
   if (!hasLimit(g) || v.spawnNone) return null;
-  const max = limitMax(g);
-  const t = v.spawnCap.trim();
-  if (/^\d+$/.test(t) && Number(t) <= max) return null;
-  return `The session limit is a whole number from 0 to ${max}.`;
+  if (/^\d+$/.test(v.spawnCap.trim())) return null;
+  return 'The session limit is a whole number.';
 }
 
 /** True when `mode` is not higher than `ceiling` in the order of the deck; an unknown value is false. */
@@ -153,7 +152,6 @@ export function SpawnForm({ grant, values, busy, onChange, onSave, onCancel }: F
         <LimitInput
           label="Session limit"
           value={values.spawnCap}
-          max={limitMax(grant)}
           problem={problem}
           onChange={(spawnCap) => onChange({ ...values, spawnCap })}
           none={values.spawnNone}

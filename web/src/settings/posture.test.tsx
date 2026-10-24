@@ -1,8 +1,10 @@
 // B27 §3.7: the posture line and the hazard lines of the settings page.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { FieldMeta } from '../gen';
+import type { FieldMeta, SettingsView } from '../gen';
+import type { SettingsActions } from './actions';
 import { limitMeta, meta, relaxedItem, view } from './fixtures';
+import { readPosture, withPosture } from './flow';
 import { PostureLine } from './PostureLine';
 import { HAZARDS, hazardText, SettingsFields } from './SettingsFields';
 
@@ -162,5 +164,87 @@ describe('the hazard lines', () => {
       />,
     );
     expect(html).toContain(TEXTS['grant_limits.answer_cap'] ?? '');
+  });
+});
+
+/** Settings actions whose `view` answers `next` (or fails); the other calls are not used. */
+const viewer = (next: () => Promise<SettingsView>): SettingsActions => ({
+  view: next,
+  save: async () => {
+    throw new Error('not used');
+  },
+  setSecret: async () => {
+    throw new Error('not used');
+  },
+  elevate: async () => {},
+  elevation: () => null,
+  forgetElevation: () => {},
+  restart: async () => {
+    throw new Error('not used');
+  },
+});
+
+// Review finding (B27): a save answer has no posture, so the tab reads the view again after a
+// save and replaces only the posture of the view that it shows.
+describe('the posture after a save', () => {
+  const bypass = relaxedItem('worker_grant.allow_bypass', 'Workers can start bypass sessions');
+  const posture = (v: SettingsView) =>
+    renderToStaticMarkup(<PostureLine relaxed={v.relaxed} target="deck" />);
+
+  test('a save that relaxes a control shows it without a reload', async () => {
+    const shown = view({ relaxed: [] });
+    expect(posture(shown)).toContain('Security: every control is at its secure default.');
+    const after = withPosture(
+      shown,
+      await readPosture(
+        viewer(async () => view({ relaxed: [bypass], revision: 'rev-2' })),
+        { kind: 'deck' },
+      ),
+    );
+    expect(after.relaxed).toEqual([bypass]);
+    expect(after.revision).toBe('rev-1');
+    expect(posture(after)).toContain('<li>Workers can start bypass sessions</li>');
+    expect(posture(after)).not.toContain('every control is at its secure default');
+  });
+
+  test('a save that restores a control removes it without a reload', async () => {
+    const shown = view({ relaxed: [bypass, relaxedItem('host', 'Host', 'after_restart')] });
+    const after = withPosture(
+      shown,
+      await readPosture(
+        viewer(async () => view({ relaxed: [relaxedItem('host', 'Host', 'until_restart')] })),
+        { kind: 'deck' },
+      ),
+    );
+    expect(after.relaxed).toEqual([relaxedItem('host', 'Host', 'until_restart')]);
+    expect(posture(after)).toContain('<li>Host (still in effect until the next restart)</li>');
+    expect(posture(after)).not.toContain('bypass');
+    const secure = withPosture(
+      after,
+      await readPosture(
+        viewer(async () => view({ relaxed: [] })),
+        { kind: 'deck' },
+      ),
+    );
+    expect(posture(secure)).toContain('Security: every control is at its secure default.');
+  });
+
+  test('an older station has no posture after the read', async () => {
+    const got = await readPosture(
+      viewer(async () => view()),
+      { kind: 'station', id: 'st-a' },
+    );
+    expect(got).toEqual({});
+    expect(withPosture(view({ relaxed: [bypass] }), got).relaxed).toBeUndefined();
+  });
+
+  test('a failed read keeps the posture that the tab shows', async () => {
+    const got = await readPosture(
+      viewer(() => Promise.reject(new Error('Failed to fetch'))),
+      { kind: 'deck' },
+    );
+    expect(got).toBeNull();
+    const shown = view({ relaxed: [bypass] });
+    expect(withPosture(shown, got)).toBe(shown);
   });
 });
