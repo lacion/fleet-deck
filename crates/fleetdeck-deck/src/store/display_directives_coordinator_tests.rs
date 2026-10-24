@@ -262,6 +262,7 @@ fn artifact(station: &StationId, id: &str, version: u32) -> DirectiveBody {
             artifact_id: id.to_owned(),
             version,
         },
+        app: false,
         pin: false,
         filter: filter(station),
     }

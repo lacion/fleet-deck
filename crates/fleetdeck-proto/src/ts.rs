@@ -112,6 +112,7 @@ use crate::share::{
 };
 use crate::subagent::{SubagentLog, SubagentQuery, WorkflowAgentQuery};
 use crate::version::{Negotiated, VersionOffer};
+use crate::wall_apps as wa;
 use crate::wall_control as wc;
 use crate::wall_pages as wp;
 
@@ -395,6 +396,8 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         wp::WallPageList::export_all(&cfg),
         wp::PageRef::export_all(&cfg),
         wp::DisplayPage::export_all(&cfg),
+        wa::WallAppCard::export_all(&cfg),
+        wa::WallAppFeed::export_all(&cfg),
         DisplayChangesQuery::export_all(&cfg),
         DisplayFileChange::export_all(&cfg),
         DisplayChanges::export_all(&cfg),

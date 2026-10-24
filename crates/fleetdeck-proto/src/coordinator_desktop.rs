@@ -73,6 +73,9 @@ pub struct WallShowArguments {
     pub content: WallContent,
     #[serde(default)]
     pub pin: bool,
+    /// B17 wall apps: run the artifact as an app (an artifact only).
+    #[serde(default)]
+    pub app: bool,
 }
 
 /// `notify` arguments.
@@ -269,6 +272,9 @@ impl DesktopCall {
                 check_station(a.station.as_ref())?;
                 if !word(&a.display_id, 64) {
                     return Err(bad("display_id"));
+                }
+                if a.app && matches!(a.content, WallContent::Session { .. }) {
+                    return Err(bad("app"));
                 }
                 match &a.content {
                     WallContent::Session { session } => {

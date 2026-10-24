@@ -34,6 +34,7 @@ export function directiveFor(
           artifact_id: target.artifact_id,
           version: target.version,
         },
+        app: false,
         pin,
         filter: null,
       }

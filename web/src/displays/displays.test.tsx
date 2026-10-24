@@ -46,6 +46,7 @@ const display = (extra: Partial<DisplayView> = {}): DisplayView => ({
   ceiling: ['station-a'],
   show_diffs: false,
   wake_on_needs_you: true,
+  allow_apps: false,
   quiet_hours: null,
   binding: null,
   created_at: 1_000,
@@ -537,6 +538,7 @@ describe('send to wall', () => {
     ).toEqual({
       mode: 'artifact',
       artifact: { station_id: 'st', artifact_id: 'ar', version: 4 },
+      app: false,
       pin: true,
       filter: null,
     });

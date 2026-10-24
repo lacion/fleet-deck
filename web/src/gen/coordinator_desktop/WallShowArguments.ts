@@ -4,4 +4,8 @@ import type { WallContent } from "./WallContent";
 /**
  * `wall_show` arguments.
  */
-export type WallShowArguments = { request_id: string, station?: string, display_id: string, content: WallContent, pin: boolean, };
+export type WallShowArguments = { request_id: string, station?: string, display_id: string, content: WallContent, pin: boolean, 
+/**
+ * B17 wall apps: run the artifact as an app (an artifact only).
+ */
+app: boolean, };

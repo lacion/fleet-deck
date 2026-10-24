@@ -182,6 +182,7 @@ fn every_tool_of_the_call_method_is_served_wall_show_included() {
             },
         },
         pin: false,
+        app: false,
     });
     assert!(served(&wall));
 }

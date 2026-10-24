@@ -47,6 +47,7 @@ const display = (): DisplayView => ({
   ceiling: ['station-a'],
   show_diffs: false,
   wake_on_needs_you: true,
+  allow_apps: false,
   quiet_hours: null,
   binding: null,
   created_at: 1_000,

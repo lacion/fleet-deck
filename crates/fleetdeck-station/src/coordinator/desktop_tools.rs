@@ -115,7 +115,8 @@ const BUNDLE: &str = r##"
         "station": { "$ref": "#/$defs/id" },
         "display_id": { "$ref": "#/$defs/display_id" },
         "content": { "$ref": "#/$defs/wall_content" },
-        "pin": { "type": "boolean", "default": false }
+        "pin": { "type": "boolean", "default": false },
+        "app": { "type": "boolean", "default": false }
       }
     },
     "notify": {

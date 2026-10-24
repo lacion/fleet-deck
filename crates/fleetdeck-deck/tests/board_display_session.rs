@@ -83,6 +83,7 @@ async fn rig() -> Rig {
                     artifact_id: "b1".to_owned(),
                     version: 1,
                 },
+                app: false,
                 pin: false,
                 filter: None,
             },

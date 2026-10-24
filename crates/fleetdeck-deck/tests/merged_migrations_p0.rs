@@ -39,7 +39,7 @@ fn migration_v40_adds_the_receipt_grant_and_old_rows_read_null() {
     .unwrap();
 
     migrations.to_latest(&mut conn).unwrap();
-    assert_eq!(user_version(&conn), 49);
+    assert_eq!(user_version(&conn), 50);
     assert!(has_grant_column(&conn));
     let (caller, grant): (String, Option<String>) = conn
         .query_row(

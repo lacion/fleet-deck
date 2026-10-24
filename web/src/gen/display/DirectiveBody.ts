@@ -9,4 +9,8 @@ import type { SessionRef } from "./SessionRef";
  * display reads. One variant for each mode; a field that does not belong to
  * the mode is a parse error.
  */
-export type DirectiveBody = { "mode": "mission", pin: boolean, filter: DirectiveFilter | null, } | { "mode": "focus", session: SessionRef, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "review", session: SessionRef, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "race", batch_id: string, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "artifact", artifact: ArtifactRef, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "ambient", pin: boolean, filter: DirectiveFilter | null, } | { "mode": "page", page: PageRef, pin: boolean, filter: DirectiveFilter | null, };
+export type DirectiveBody = { "mode": "mission", pin: boolean, filter: DirectiveFilter | null, } | { "mode": "focus", session: SessionRef, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "review", session: SessionRef, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "race", batch_id: string, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "artifact", artifact: ArtifactRef, 
+/**
+ * B17 wall apps: run the file as an app when the display allows it.
+ */
+app: boolean, pin: boolean, filter: DirectiveFilter | null, } | { "mode": "ambient", pin: boolean, filter: DirectiveFilter | null, } | { "mode": "page", page: PageRef, pin: boolean, filter: DirectiveFilter | null, };

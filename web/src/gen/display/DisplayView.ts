@@ -11,6 +11,10 @@ export type DisplayView = { display_id: string, name: string,
  */
 ceiling: Array<StationId>, show_diffs: boolean, wake_on_needs_you: boolean, 
 /**
+ * B17 wall apps: the wall may run an HTML artifact as an app.
+ */
+allow_apps: boolean, 
+/**
  * `HH:MM-HH:MM`, or absent.
  */
 quiet_hours: string | null, binding: DisplayBinding | null, 

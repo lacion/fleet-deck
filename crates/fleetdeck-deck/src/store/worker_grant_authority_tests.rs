@@ -312,7 +312,7 @@ fn the_migrations_add_the_grant_kind_the_schedule_author_and_the_attach_table() 
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 49);
+    assert_eq!(version, 50);
     let kind: String = conn
         .query_row("SELECT kind FROM tokens WHERE grant_id = 'g1'", [], |r| {
             r.get(0)

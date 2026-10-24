@@ -27,6 +27,7 @@ pub mod desktop_capture_routes;
 pub mod desktop_recording_routes;
 pub mod desktop_routes;
 pub mod desktop_tools_routes;
+mod display_app_feed;
 pub mod display_artifact;
 pub mod display_bodies;
 pub mod display_changes;
@@ -695,6 +696,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(wall_page_routes::routes())
         .merge(display_changes::routes())
         .merge(display_artifact::routes())
+        .merge(display_app_feed::routes())
         .merge(display_page::routes())
         .merge(desktop_routes::routes())
         .merge(desktop_capture_routes::routes())

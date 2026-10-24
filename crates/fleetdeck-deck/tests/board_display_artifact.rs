@@ -180,6 +180,7 @@ impl Rig {
                 artifact_id: id.to_owned(),
                 version,
             },
+            app: false,
             pin: false,
             filter,
         };

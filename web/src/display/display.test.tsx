@@ -326,6 +326,7 @@ describe('the directive', () => {
       {
         mode: 'artifact',
         artifact: { station_id: 'st', artifact_id: 'ar', version: 3 },
+        app: false,
         pin,
         filter,
       },

@@ -115,6 +115,7 @@ fn exactly_these_methods_are_open_to_a_display() {
             "board.ws",
             "board.ws_ticket",
             "displays.self",
+            "displays.self_app_feed",
             "displays.self_artifact",
             "displays.self_directive",
             "displays.self_page",

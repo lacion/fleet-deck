@@ -295,6 +295,13 @@ pub mod feature {
     /// `session.app_release`, and the `tool.app` event.
     pub const MCP_APPS: &str = "mcp_apps.v1";
 
+    /// B17 §3.4: wall apps (the `app` flag of an `artifact` directive, the
+    /// setting `allow_apps` and the route `GET /api/displays/self/app-feed/
+    /// ...`). A board feature: no station and no link method uses it. The
+    /// wall declares it in the header or in the query `features=` of the
+    /// artifact request.
+    pub const WALL_APPS: &str = "wall_apps.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -366,6 +373,7 @@ pub mod feature {
         USAGE_RECOUNT,
         SESSION_EFFORT,
         MCP_APPS,
+        WALL_APPS,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -583,9 +591,8 @@ mod tests {
     }
 
     #[test]
-    fn the_mcp_apps_feature_has_its_name_follows_the_session_effort_and_is_the_last_in_all() {
+    fn the_mcp_apps_feature_has_its_name_and_follows_the_session_effort_in_all() {
         assert_eq!(feature::MCP_APPS, "mcp_apps.v1");
-        assert_eq!(feature::ALL.last(), Some(&feature::MCP_APPS));
         let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
         assert_eq!(at(feature::SESSION_EFFORT) + 1, at(feature::MCP_APPS));
         assert!(
@@ -594,6 +601,15 @@ mod tests {
                 .iter()
                 .any(|f| f == "mcp_apps.v1")
         );
+    }
+
+    #[test]
+    fn the_wall_apps_feature_has_its_name_follows_the_mcp_apps_and_is_the_last_in_all() {
+        assert_eq!(feature::WALL_APPS, "wall_apps.v1");
+        assert_eq!(feature::ALL.last(), Some(&feature::WALL_APPS));
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::MCP_APPS) + 1, at(feature::WALL_APPS));
+        assert!(!feature::REQUIRED.contains(&feature::WALL_APPS));
     }
 
     #[test]
