@@ -1878,3 +1878,57 @@ The limits of the channel:
 - A person with a key on your tailnet can send a false report while the window is open, and can fill the 64 rows. A report is a lossy diagnostic message. It is not proof of a failure, and not an enrollment. Code that runs as the station user can send a report in its name (P8-17).
 
 What stays open (no board path yet): a failure without a valid provisioning file, pin or station key; a station without a running supervisor or without a network; and the codes without a retry. Their repair is a new provisioning file at the first setup of the machine.
+
+
+## 16. Security options (B27)
+
+Design: `docs/v2/design/security-options.md`. Each relaxation is one setting. The secure value is the default. Each relaxed value shows a hazard text on the board and a line in the posture. A change that relaxes a control needs the elevation.
+
+### 16.1 Allow a worker to start a bypass session
+
+A worker session can start a session that runs every tool without asking only when all three switches allow it. The worker must also run in a bypass mode itself.
+
+1. Open Settings, the station tab, the Sessions section. Turn on "allow_bypass_permissions". Restart the station to apply it.
+2. Open Settings, the Deck tab, the Worker grants section. Turn on `worker_grant.allow_bypass`.
+3. In the same section, set `worker_grant.claude_mode` to `bypassPermissions`, or `worker_grant.codex_mode` to `never/danger-full-access`.
+4. Save with the elevation. The board shows a hazard text for each switch.
+
+Each accepted bypass start writes the audit row `coordinator.worker_bypass_start`. Turn off `worker_grant.allow_bypass` to stop new bypass starts at once, also those that are queued. A resume and a set_mode never go into a bypass mode.
+
+### 16.2 Grant limits
+
+Open Settings, the Deck tab, the Grant limits section. The keys are `grant_limits.worker_grants` (200), `spawn_cap` (50), `worker_spawn_cap` (10), `idle_hours` (24) and `answer_cap` (5000). Each is a number or "No limit".
+
+- A raise, and "No limit", need the elevation.
+- A lower limit applies to new grants and to cap changes. Existing grants keep their values.
+- A grant with "No limit" for sessions or answers stores the value 4294967295. No idle limit stores the grant lifetime.
+- The grant lifetime stays fixed (7 days, worker grants 168 hours). It is the hard cap of every grant.
+- `worker_grant.spawn_cap` and `worker_grant.idle_minutes` also take "No limit" when their limit is "No limit".
+
+In the spawn form and in the fleet control fields, a "No limit" checkbox sets the session limit, the answer limit and the idle limit. A raised cap on a live grant uses the same checkbox.
+
+### 16.3 A default mode for a station
+
+Open Settings, the station tab, the Sessions section. Set `default_mode.claude` and `default_mode.codex`. The station uses this mode for a start or an import that gives no mode, also for a scheduled start.
+
+- A start from issue or pull request text ignores the default.
+- A bypass or full-access default needs `allow_bypass_permissions` in the same file. Until the restart that applies it, a start without a mode gets the provider default.
+- A coordinator start without a mode gets the lower of the station default and the grant ceiling. The deck writes it into the command.
+- The spawn form shows "Station default (mode)" when the station reports its default.
+
+### 16.4 The posture line
+
+Each settings tab shows a line at the top.
+
+- "Security: every control is at its secure default." No control is relaxed in the file, in the running process, or on the command line.
+- "Relaxed security": a list of the changed controls. A suffix shows the state: "(after the next restart)", "(still in effect until the next restart)" or "(set on the command line)".
+- "This station does not report its security posture." The station is older than this change. Update it.
+
+A save that relaxes a control writes the audit row `settings.relaxed` with the keys. It never writes the values. A hand edit of the file is not audited, but the posture shows it.
+
+### 16.5 Downgrade note
+
+- Deck migration V52 is forward only. An older deck binary cannot open a V52 database.
+- An older deck refuses a `deck.toml` with `"none"` values or a `[grant_limits]` table. Remove those keys before a downgrade.
+- An older station refuses a `station.toml` with `[default_mode]`. Remove the table before a downgrade.
+- Update the deck first, then the stations. An older station shows "does not report" in the posture.

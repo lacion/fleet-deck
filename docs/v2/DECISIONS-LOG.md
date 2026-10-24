@@ -4122,3 +4122,36 @@ Owner review: pending.
 
 - Context: DL-402 (request ids collide between sessions of one station).
 - Choice: the station table `runtime_requests` is keyed by `(session_id, request_id)` in station migration V43 (`b0cdbf5f`). The live check on dev1 passed.
+
+## DL-540: B27 one switch per security control, secure by default, warned and shown in a posture (design agent, 2026-10-24)
+
+- Context: B27; design `docs/v2/design/security-options.md` §2, §3.1.
+- Decision: each relaxation is one settings key with today's secure value as the default, the elevation when it relaxes, a hazard text on the board while it is relaxed, and a line in the posture of §3.6. No profile sets several controls at once. The floors of the `[security]` knobs, the grant lifetime and the member deny list stay fixed. The `[security]` knobs are already read since K2; B27 fixes the stale comments of `config_deck.rs:72` and `config.rs:318`.
+- Rejected: a "trusted home network" profile.
+
+## DL-541: B27 grant limits are deck settings `[grant_limits]` with "no limit" (design agent, 2026-10-24)
+
+- Decision: `grant_limits.worker_grants` (200), `spawn_cap` (50), `worker_spawn_cap` (10), `idle_hours` (24) and `answer_cap` (5000) replace `WORKER_GRANT_CAP`, `MAX_SPAWN_CAP`, `MAX_WORKER_SPAWN_CAP`, `MAX_IDLE_TTL_MS` and `MAX_ANSWER_CAP`. `spawn_cap` applies to owner grants and `worker_spawn_cap` to worker grants, never both. An omitted spawn or answer cap gets `min(default, limit)` and is then checked like a given cap. Each is a number or `"none"` (new `FieldKind::Limit`). `worker_grant.spawn_cap` and `worker_grant.idle_minutes` also take `"none"` when their limit is none. A raise needs the elevation. A limit applies at grant creation and at a cap change. A grant row stores no limit as `NO_LIMIT = u32::MAX` (spawn and answer caps) or as `idle_ttl_ms = ttl_ms` (idle). The lifetime stays the hard cap.
+- Rejected: a nullable column; `0` as "no limit"; a bool switch beside each number.
+
+## DL-542: B27 deck migration V52 rebuilds `tokens` with wider checks (design agent, 2026-10-24)
+
+- Decision: `spawn_cap BETWEEN 0 AND 4294967295`, `idle_ttl_ms BETWEEN 1 AND 604800000`, `answer_cap IS NULL OR BETWEEN 0 AND 4294967295`; every other column (with `kind`), check, index and the foreign key of `coordinator_lineage` stay (the V38 pattern). Forward only. V52 is reserved; the merge renumbers if needed.
+
+## DL-543: B27 a worker grant may start a session in a bypass mode (design agent, 2026-10-24)
+
+- Decision: a coordinator start in a bypass mode is accepted only for a worker grant, while the deck setting `worker_grant.allow_bypass` is on (read at the decision and at the dispatch), within a bypass ceiling that the setting allowed at the grant creation, on a station that offers the mode (`allow_bypass_permissions` applied), and while the worker session runs in a bypass mode itself. Each accepted start writes the audit row `coordinator.worker_bypass_start`. The dispatch check accepts a bypass launch mode only when the stored start has exactly that mode, for a worker grant, with the setting on and within the ceiling. Owner grants, resume and set_mode keep the absolute rule of ADR-008 §5.2. The fleet skill says when a bypass start is allowed.
+- Rejected: the station switch alone; bypass for owner grants.
+
+## DL-544: B27 a default agent mode per station (design agent, 2026-10-24)
+
+- Decision: `[default_mode]` in `station.toml` (`claude`, `codex`; absent: the provider default) is the mode of a start or an import that gives none, except a start from issue or pull request text. A bypass or full-access default needs `allow_bypass_permissions` in the same file. A more permissive default needs the elevation. The station applies it only to a start without command authority, and a bypass or full-access default only after the restart that makes the adapters offer it (until then: the provider default). The station reports the effective default in `StationProvider.default_mode`. For a coordinator start without a mode the deck always writes a concrete mode into the command: the lower of the reported default and the grant ceiling, or the provider default for an older station. It refuses a resolved bypass mode that the rules of DL-543 refuse.
+- Rejected: per project (not in B27); per provider instance; a deck-wide default.
+
+## DL-545: B27 the relaxed-security posture and its audit (design agent, 2026-10-24)
+
+- Decision: `SettingsView.relaxed` lists every control that is weaker than its secure default in the file, in the running process or from a command-line flag, each with a state (`active`, `after_restart`, `until_restart`, `command_line`). The holder computes the items of one config (deck: the danger keys of the default against the current config, with listen addresses counted only when unspecified; station: an explicit list). Guard tests keep every danger field in the posture or in an explicit exclusion list. Each settings tab shows a "Relaxed security" line. `SettingsSaved.relaxed` carries the danger keys of a save, and the deck writes the audit row `settings.relaxed` with the keys, never the values.
+
+## DL-546: B27 is high risk: adversary design review and pre-PR review (design agent, 2026-10-24)
+
+- Decision: B27 lets agent-started sessions skip permission checks, removes grant limits and rebuilds the grant table. It gets the adversary DESIGN REVIEW before T3 and T4 start and the PRE-PR REVIEW of the final branch. `SECURITY-CHECKLIST.md` gets the rows of T1-T7.
