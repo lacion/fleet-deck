@@ -7,4 +7,6 @@
 pub mod channel;
 pub mod detect;
 pub mod gate;
+pub mod staged;
+pub mod tree_digest;
 pub mod verify;
