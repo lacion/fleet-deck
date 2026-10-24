@@ -8,6 +8,10 @@ pub mod account_routes;
 pub mod account_secrets;
 pub mod activity_routes;
 pub mod admission;
+mod app_csp;
+pub mod app_public;
+pub mod app_routes;
+mod app_views;
 pub mod archive_routes;
 pub mod artifact_delete;
 mod artifact_projection;
@@ -159,6 +163,8 @@ pub fn router(board: Arc<Board>) -> Router {
     // The open OAuth transactions (DL-173): in memory, one set for this
     // router and its clones.
     let oauth = Arc::new(crate::oauth::Transactions::default());
+    // The view tokens and the call rate limit of MCP Apps: in memory.
+    let apps = Arc::new(app_public::AppTokens::default());
     let mut r = Router::new();
     for api in methods::command_methods() {
         r = r.route(&methods::route_of(api), post(command_routes::command));
@@ -648,6 +654,26 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/sessions/{station}/{session}/fleet-answers",
             get(fleet_answers_routes::list),
         )
+        .route(
+            "/api/sessions/{station}/{session}/apps/{app_id}",
+            get(app_views::view).layer(Extension(Arc::clone(&apps))),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/apps/{app_id}/call",
+            post(app_routes::call)
+                .layer::<_, std::convert::Infallible>(axum::extract::DefaultBodyLimit::max(
+                    app_routes::MAX_CALL_BODY,
+                ))
+                .layer(Extension(Arc::clone(&apps))),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/app-calls",
+            get(app_views::list),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/app-calls/{call_id}/release",
+            post(app_views::release),
+        )
         .merge(display_routes::routes())
         .merge(fleet_git_routes::routes())
         .merge(display_directive_routes::routes())
@@ -668,6 +694,12 @@ pub fn router(board: Arc<Board>) -> Router {
         // policy (R13 §5E item 3, §5F item 3). `/display/` redirects.
         .route("/display", get(display_document::document))
         .route("/display/", get(display_document::redirect))
+        .route(
+            "/app/{token}",
+            get(app_public::document)
+                .head(app_public::document)
+                .layer(Extension(apps)),
+        )
         .route("/a/{token}", get(artifact_routes::public::public_slash))
         .route(
             "/a/{token}/",
