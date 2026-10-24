@@ -37,6 +37,19 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   },
   { title: 'Providers', keys: ['provider_instance'] },
   {
+    title: 'Provider updates',
+    keys: [
+      'provider_updates.enabled',
+      'provider_updates.window_start',
+      'provider_updates.window_hours',
+      'provider_updates.timezone',
+      'provider_updates.claude_channel',
+      'provider_updates.claude_pin',
+      'provider_updates.codex_pin',
+      'provider_updates.min_age_hours',
+    ],
+  },
+  {
     title: 'Model help',
     keys: [
       'model_help.enabled',

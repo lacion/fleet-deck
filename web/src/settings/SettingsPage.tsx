@@ -326,6 +326,7 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
             live={live && station.reachable}
             omarchy={env.omarchy}
             desktopTools={env.desktopTools}
+            cliUpdate={env.cliUpdate}
             list={list}
             sessions={sessions}
             monitors={station.info?.desktop?.monitors}
