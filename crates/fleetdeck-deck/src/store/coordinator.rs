@@ -40,12 +40,13 @@ use fleetdeck_proto::{CommandId, Receipt, Reject, RejectCode, SessionId, Station
 use ring::digest::{SHA256, digest};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::coordinator_fleet::{decide_worker, mode_refusal};
+use super::coordinator_fleet::decide_worker;
 use super::coordinator_ops::{CallFlags, Context, Decision, decide, in_lineage, session_known};
 use super::grant_scopes::{NOT_COVERED, expire_idle, station_covered};
 use super::grants::grant_end::{GrantEnd, end_text, grant_end, grant_refusal};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant, get_grant};
 use super::members::scope_of;
+use super::worker_bypass::launch_refusal;
 use super::{AuditResult, DeckStore, LinkV2, NewAudit, Result, call, new_id};
 use crate::link::router::CommandKind;
 
@@ -125,6 +126,8 @@ pub(crate) struct FleetEnv {
     /// The `fleet_git.land.v1` state of each station link (FG-10).
     pub land: BTreeMap<String, super::LinkFeature>,
     pub moves: BTreeMap<String, super::LinkFeature>,
+    /// The deck knobs of the turn (`worker_bypass`, B27 §3.4).
+    pub knobs: crate::knobs::DeckKnobs,
 }
 
 impl FleetEnv {
@@ -679,6 +682,7 @@ impl DeckStore {
         check: AuthorityCheck,
     ) -> Result<std::result::Result<AuthorityLocal, &'static str>> {
         let on = self.fleet_control();
+        let worker_bypass = self.knobs().worker_bypass;
         let clock = self.inner.clock.clone();
         call(&self.inner.db, move |conn| {
             let a = CommandAuthority {
@@ -750,7 +754,8 @@ impl DeckStore {
                 let family = serde_json::to_value(launch.provider)
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_owned));
-                if mode_refusal(&grant, family.as_deref(), launch.mode.as_deref()).is_some() {
+                let launch = (family.as_deref(), launch.mode.as_deref());
+                if launch_refusal(&grant, &command, launch, worker_bypass) {
                     return Ok(Err("mode_not_allowed"));
                 }
             }
