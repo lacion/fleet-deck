@@ -191,6 +191,7 @@ pub(super) fn append_at(
     super::effects::observe(conn, &envelope, now)?;
     super::shell_observe::observe(conn, &envelope, now)?;
     super::workflow_state::observe(conn, &envelope, now)?;
+    super::analytics_observe::observe(conn, &envelope)?;
     Ok(envelope)
 }
 

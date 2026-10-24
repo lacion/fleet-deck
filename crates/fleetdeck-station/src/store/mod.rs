@@ -25,6 +25,7 @@
 //!   [`HISTORY_RETENTION_MS`].
 
 pub mod analytics;
+pub mod analytics_observe;
 pub mod app_calls;
 pub mod apps;
 pub mod artifact_deletions;
@@ -725,6 +726,9 @@ fn to_i64(v: u64) -> Result<i64> {
     i64::try_from(v).map_err(|_| StoreError::Corrupt(format!("sequence {v} too large")))
 }
 
+#[cfg(test)]
+#[path = "analytics_observe_tests.rs"]
+mod analytics_observe_tests;
 #[cfg(test)]
 #[path = "analytics_tests.rs"]
 mod analytics_tests;
