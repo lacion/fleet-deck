@@ -985,3 +985,13 @@ No finding was rejected.
 ## DL-546: B27 is high risk: adversary design review and pre-PR review (design agent, 2026-10-24)
 
 - Decision: B27 lets agent-started sessions skip permission checks, removes grant limits and rebuilds the grant table. It gets the adversary DESIGN REVIEW before T3 and T4 start and the PRE-PR REVIEW of the final branch. `SECURITY-CHECKLIST.md` gets the rows of T1-T7.
+
+## Build answers
+
+- T2 Q: How does the station get its running config for `.with_running(...)` at `crates/fleetdeck-station/src/serve.rs:397` (`StationConfig` and `Secret` are not `Clone`)? — A: Option C. The callers keep the loaded config in an `Arc` and pass it down; `with_running` keeps `Arc<StationConfig>` as §3.6 states. Rejected: A (`posture<H>` is generic over `H::Parsed = StationConfig` and uses `H::relaxed` and `H::values` on `running`; a second posture type duplicates that path), B (breaks the `Secret` doctrine, GATE-M1 G12), D (a second load can differ from the config that built the adapters and the `Policy`, and it reads the secret store again). The decisions:
+  1. `RunningStation::start` and `fleetdeck_station::serve::serve` take `config: &Arc<StationConfig>` instead of `&StationConfig`. The other parameters do not change. Inside `start`, the old uses of `config` stay (deref coercion); `serve` passes `config` on to `start`.
+  2. `serve.rs:397`: `StationSettings::new(..)` gets `.with_running(Arc::clone(config))`. No `config.clone()`; no `Clone` derive on `StationConfig`, `ProviderInstance` or `Secret`.
+  3. `crates/fleetdeck-cli/src/station.rs:27`: `let config = Arc::new(StationConfig::load_with_store(..)?);` and `serve(dirs, &config, ..)`.
+  4. `crates/fleetdeck-cli/src/up.rs:103`: `let station_config = Arc::new(StationConfig::load_with_store(..)?);`, `:112` passes `&station_config`; `:144` stays `station_config.name` (it compiles through `Deref`; if it does not, write `station_config.name.as_str()`). The test at `:186-188` passes `&Arc::new(home.station_config().unwrap())`.
+  5. `crates/fleetdeck-station/src/serve_tests.rs:127` and `:180`: wrap the config in `Arc::new(..)` and pass a reference.
+  6. T2 owned files add `crates/fleetdeck-cli/src/up.rs`, `crates/fleetdeck-cli/src/station.rs` and `crates/fleetdeck-station/src/serve_tests.rs`, only for these call-site changes. `crates/fleetdeck-station/src/serve.rs` is already owned. No other file changes; if another caller of `start` or `serve` exists, stop and ask.
