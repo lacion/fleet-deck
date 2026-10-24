@@ -60,6 +60,32 @@ pub(super) fn fetch_info(
                 {
                     tracing::warn!(error = %e, "link stream");
                 }
+                // B26 section 3.3: the return check; its commit opens the
+                // return gate of this link.
+                if let Ok(Some(info)) = &answer {
+                    match ctx
+                        .store
+                        .resolve_grant_holds(
+                            id.clone(),
+                            token,
+                            info.incarnation.clone(),
+                            info.version.clone(),
+                        )
+                        .await
+                    {
+                        // The grant work that the router held goes out now.
+                        Ok(r) if r.settled => {
+                            let (router, station) = (Arc::clone(&ctx), id.clone());
+                            tokio::spawn(async move { router.dispatch_pending(station).await });
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(
+                            station = %id,
+                            error = %e,
+                            "grant return check failed: no grant work on this link until the next answer"
+                        ),
+                    }
+                }
                 if matches!(answer, Ok(Some(_))) && !announced.swap(true, Ordering::Relaxed) {
                     tokio::spawn(async move { fleet_git_sync::sync_station(&ctx, id).await });
                 }

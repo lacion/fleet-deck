@@ -167,6 +167,10 @@ impl DeckLink {
         query: PolicyNow,
         timeout: Duration,
     ) -> Option<PolicyNowAnswer> {
+        // B26 3.3a: a station that waits for its return check is unknown.
+        if !self.store.station_settled(station) {
+            return None;
+        }
         let control = self.control_for(station)?;
         let params = serde_json::to_value(query).ok()?;
         let outcome = tokio::time::timeout(
@@ -425,9 +429,16 @@ impl DeckLink {
         let Some(control) = self.control_for(&cmd.station_id) else {
             return;
         };
+        // B26 3.3a: grant work waits for the return check.
+        if grant_work(&cmd) && !self.store.station_settled(&cmd.station_id) {
+            return;
+        }
         // A fleet-control command checks its authority before every send and
         // resend (ADR-008 section 6.2).
         if let Some((authority, target)) = authority_of(&cmd.envelope) {
+            if !self.store.station_settled(&authority.caller_station) {
+                return;
+            }
             let gate = self
                 .store
                 .gate_authority(
@@ -612,6 +623,15 @@ fn worker_start(envelope: &serde_json::Value) -> bool {
     })
 }
 
+/// Grant work waits for the return check of its station (B26 3.3a).
+#[must_use]
+fn grant_work(cmd: &DeckCommand) -> bool {
+    cmd.origin == "coordinator"
+        || authority_of(&cmd.envelope).is_some()
+        || cmd.method == "session.coordinator_set"
+        || worker_start(&cmd.envelope)
+}
+
 /// True when a command waits for a better link: a `session.coordinator_set`
 /// whose station link did not negotiate `coordinator_live.v1` (MCP P4b §9).
 #[must_use]
@@ -711,6 +731,58 @@ mod tests {
             assert!(!holds("session.coordinator_revoke", live));
         }
         assert!(!holds("session.coordinator_set", LinkFeature::Negotiated));
+    }
+
+    fn stored(method: &str, origin: &str, command: serde_json::Value) -> DeckCommand {
+        let envelope = serde_json::json!({
+            "command_id": "c1", "target_incarnation": null, "retry_until": 1, "origin": "board", "command": command,
+        });
+        let mut cmd: DeckCommand = serde_json::from_value(serde_json::json!({
+            "command_id": "c1", "station_id": "st-1", "method": method,
+            "origin": origin, "envelope": envelope, "retry_until": 1,
+            "state": "pending", "attempts": 0, "sent_at": null,
+            "receipt": null, "reason": null, "created_at": 0, "updated_at": 0,        }))
+        .unwrap();
+        if method == "session.fleet" {
+            cmd.envelope["authority"] = serde_json::json!({"grant_id": "g1",
+                "caller_station": "st-2", "caller_session": "s2", "generation": 1});
+        }
+        cmd
+    }
+
+    #[test]
+    fn grant_work_names_the_commands_that_wait_for_the_return_check() {
+        let interrupt = serde_json::json!({"op": "interrupt", "session_id": "s1"});
+        let set = serde_json::json!({"op": "coordinator_set", "session_id": "s1", "seq": 1, "grant_id": "g1", "spec": null});
+        let revoke =
+            serde_json::json!({"op": "coordinator_revoke", "session_id": "s1", "grant_id": "g1"});
+        let worker = serde_json::json!({"op": "start", "prompt": null, "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null, "title": null,
+            "coordinator": {"grant_id": "g1", "classes": [], "idle_ttl_ms": 1,
+                "expires_at": 1, "kind": "worker",
+                "control_skill": {"version": "", "text": ""}}}});
+        assert!(grant_work(&stored(
+            "session.interrupt",
+            "coordinator",
+            interrupt.clone()
+        )));
+        assert!(grant_work(&stored(
+            "session.fleet",
+            "board",
+            interrupt.clone()
+        )));
+        assert!(grant_work(&stored("session.coordinator_set", "board", set)));
+        assert!(grant_work(&stored("session.start", "board", worker)));
+        assert!(!grant_work(&stored(
+            "session.interrupt",
+            "board",
+            interrupt
+        )));
+        assert!(!grant_work(&stored(
+            "session.coordinator_revoke",
+            "board",
+            revoke
+        )));
     }
 
     #[tokio::test]

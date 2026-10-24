@@ -124,12 +124,18 @@ impl DeckLink {
         control: &Control,
         data: Option<Arc<streams::DataHub>>,
         remote: Option<SocketAddr>,
+        returning: bool,
     ) -> LiveGuard {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         live.entry(id.clone())
             .or_default()
             .push((token, control.clone(), data));
+        // B26 section 3.3a: a returning link waits for its return check, and
+        // is never published without its gate.
+        if returning {
+            self.store.mark_unsettled(id, token);
+        }
         // The features of this link, for the fleet-control checks (ADR-008
         // section 3).
         self.store
@@ -204,7 +210,16 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         }
     };
     let id = station.station_id.clone();
-    let live = ctx.up(&id, &control, data, remote);
+    // B26 section 3.2: the gap of the station is settled before the link is
+    // published. A failure keeps the gate closed (fail closed).
+    let returning = match ctx.store.hold_returning(id.clone()).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "grant hold at the link start");
+            true
+        }
+    };
+    let live = ctx.up(&id, &control, data, remote, returning);
     if let Err(e) = ctx
         .store
         .station_heard(id.clone(), ctx.store.now_ms())
@@ -255,8 +270,9 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
             Inbound::Request(req) => {
                 let (ctx, control, station) =
                     (Arc::clone(&ctx), control.clone(), sync.station.clone());
+                let token = live.token;
                 tokio::spawn(async move {
-                    requests::answer(&ctx, &control, station, req).await;
+                    requests::answer(&ctx, &control, station, token, req).await;
                 });
             }
             Inbound::Frame(frame) => match *frame {
