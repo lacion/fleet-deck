@@ -66,7 +66,7 @@ async fn a_claude_session_runs_asks_for_approval_is_answered_and_interrupted_fro
         &outside,
         "hi",
     ]);
-    assert!(err.contains("rejected (forbidden)"), "{err}");
+    assert!(err.contains("rejected (outside_roots)"), "{err}");
 
     // 4. SIGTERM stops both sessions; the socket goes away.
     station.stop();
