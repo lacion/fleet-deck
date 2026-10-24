@@ -124,7 +124,7 @@ pub(super) fn station_relaxed(c: &StationConfig) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for f in station_fields() {
         let key = f.key.as_str();
-        let on = |b: bool| b.then(|| Value::Bool(false));
+        let on = |b: bool| b.then_some(Value::Bool(false));
         let default = match key {
             "allow_setup_cmd" => on(c.allow_setup_cmd),
             "allow_shell" => on(c.allow_shell),
@@ -141,7 +141,7 @@ pub(super) fn station_relaxed(c: &StationConfig) -> Vec<(String, String)> {
             "offline_approval_policy" => (policy_rank(c.offline_approval_policy)
                 > policy_rank(OfflineApprovalPolicy::Wait))
             .then(|| Value::String("wait".to_owned())),
-            "listen" => unspecified(&c.listen).then(|| Value::Null),
+            "listen" => unspecified(&c.listen).then_some(Value::Null),
             "retention.raw_log_mib" => (c.retention.raw_log_mib > 16).then(|| Value::from(16_u32)),
             "default_mode.claude" => mode_default("claude", CLAUDE_PROVIDER_DEFAULT, c),
             "default_mode.codex" => mode_default("codex", CODEX_PROVIDER_DEFAULT, c),

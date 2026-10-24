@@ -74,10 +74,10 @@ pub(super) fn record_lifecycle(
             reason.as_str()
         }
         Event::SessionEnded { .. } => "session_ended",
-        _ => return apply_lifecycle(tx, station, e, now, late),
+        _ => return apply_lifecycle(tx, station, e, now, late, limits),
     };
     let before = grant_audit::active_of_station(tx, station)?;
-    let changed = apply_lifecycle(tx, station, e, now, late)?;
+    let changed = apply_lifecycle(tx, station, e, now, late, limits)?;
     grant_audit::audit_ends_tx(tx, station, &before, cause, now)?;
     Ok(changed)
 }
@@ -89,6 +89,7 @@ fn apply_lifecycle(
     e: &fleetdeck_proto::EventEnvelope,
     now: i64,
     late: (&dyn IdSource, i64),
+    limits: &GrantLimits,
 ) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::event::{Event, EventBody};
     let EventBody::Known(event) = &e.event else {
@@ -447,7 +448,7 @@ pub(super) fn apply_projection(
     limits: &GrantLimits,
 ) -> Result<BTreeSet<StationId>> {
     let before = grant_audit::active_of_station(tx, station)?;
-    let changed = apply_projection_rows(tx, station, at, projection)?;
+    let changed = apply_projection_rows(tx, station, at, projection, limits)?;
     grant_audit::audit_ends_tx(tx, station, &before, "snapshot", at)?;
     Ok(changed)
 }
@@ -458,6 +459,7 @@ fn apply_projection_rows(
     station: &StationId,
     at: i64,
     projection: &[fleetdeck_proto::CoordinatorBindingState],
+    limits: &GrantLimits,
 ) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::CoordinatorBindingPhase as Phase;
     let mut changed = BTreeSet::new();
