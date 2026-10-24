@@ -624,7 +624,7 @@ pub struct ThreadMeta { pub thread: String, pub parent: Option<String> }
    - `event_msg` with `payload.type == "token_count"`: `C = payload.info.total_token_usage`, `L = payload.info.last_token_usage`, `R = None`; `info` null or either object missing: `Nothing`.
    - `token_usage_record`: `C = payload.thread_token_usage`, `L = payload.usage`, `R = payload.response_id` when it is a non-empty string of at most 128 bytes.
    - A totals object needs `input_tokens` and `output_tokens`; the other keys default to 0. Missing: `Malformed`. A time that does not parse: `Malformed`. When `epoch_ms` is still 0: `epoch_ms = time`.
-5. Rules, in order (from t3code `codexUsage.ts:198-268`; revision 2 adds the restart check of `:245` before any subtraction; DL-562):
+5. Rules, in order (from t3code `codexUsage.ts:198-268`; revision 2 adds the restart check of `:245` before any subtraction; DL-572):
    1. `copying` and `time - copy_anchor_ms < 1000`: `copy_anchor_ms = time`, `baseline = Some(C)`, `Nothing`. Else `copying = false`.
    2. `baseline == Some(C)`: `Nothing` (the same request reported twice: a `token_count` and its `token_usage_record`, or a replay).
    3. `L.input_tokens + L.output_tokens == 0`: `baseline = Some(C)`, `Nothing` (a context-size report).
@@ -1062,47 +1062,47 @@ Order (revision 2: ten tasks): A1 ∥ A2 → A3 → A4 ∥ A5 → A6 → A7 → 
 
 ## Decision log entries (to append)
 
-## DL-560: B29 analytics: tokens and cost by time come from the provider transcripts (design agent, 2026-10-24)
+## DL-570: B29 analytics: tokens and cost by time come from the provider transcripts (design agent, 2026-10-24)
 
 - Context: B29; design `docs/v2/design/analytics.md` §1-§3. The station events are kept 7 days and the session totals have no time; the transcripts hold every API response with its time (Claude 30 days by the CLI default, Codex since install).
 - Decision: each station scans its provider homes every 10 minutes, incrementally by byte offset with a hash guard (an unfinished file is always read again; a same-size rewrite is found by its mtime), and stores hour buckets per home, provider, model, conversation and proven session, with dedupe keys kept forever (Claude `message.id:requestId`, Codex `response_id` or thread, counter epoch and cumulative total). No age limit on the ingestion. It keeps the numbers after the CLI deletes a transcript. The home trust is the browse's (`Unverifiable` homes, every macOS home, are read and marked). A station knob `analytics.transcripts` (default on) stops the reading.
 - Rejected: the B14 session totals as a time series; one stored row per record; a scan on each page read.
 
-## DL-561: B29 Claude transcript records are deduplicated globally by `message.id:requestId` (design agent, 2026-10-24)
+## DL-571: B29 Claude transcript records are deduplicated globally by `message.id:requestId` (design agent, 2026-10-24)
 
 - Evidence: 203,926 records, 105,652 keys on Lighting (one record per content block, copies in forks).
 - Decision: a record counts only when its key is new in `analytics_seen`; the bucket and the key commit in one transaction with the file offset.
 
-## DL-562: B29 Codex usage counts the growth of the thread's cumulative total (design agent, 2026-10-24)
+## DL-572: B29 Codex usage counts the growth of the thread's cumulative total (design agent, 2026-10-24)
 
 - Decision: `token_count.total_token_usage` and `token_usage_record.thread_token_usage` feed one baseline per file; an equal total is the same request; a total equal to the request (`C == L`) after a non-zero baseline is a restart and counts the whole request; the first total of a file, or a total below the baseline, counts the request's own usage; otherwise the growth counts; records of a fork or sub-agent copy burst (gaps under 1 s after `session_meta`) set the baseline only; each restart starts a counter epoch that is part of the key; a sub-agent counts in its root thread's conversation through `analytics_threads` (both parent encodings, at most 16 levels, a cycle keeps the own thread).
 - Rejected: `last_token_usage` alone (double counts with `token_usage_record`); `token_usage_record` alone (older rollouts lack it).
 
-## DL-563: B29 Claude rows in the price table, for the analytics estimate only (design agent, 2026-10-24)
+## DL-573: B29 Claude rows in the price table, for the analytics estimate only (design agent, 2026-10-24)
 
 - Decision: `estimate_price_of` adds `claude-opus-5-5` (4.0 / 0.2 / 5.0 / 20.0), `claude-sonnet-5-5` (2.0 / 0.1 / 2.5 / 10.0) and `claude-haiku-5-5` (0.1 / 0.01 / 0.125 / 0.5) USD per 1M (input, cache read, cache write, output), fitted exactly from the CLI's own `cost-state` records; `PRICE_TABLE_VERSION` becomes `2026-10-24`. `price_of` keeps its Codex-only rule (DL-444) for the live counts. Every analytics cost is "Cost estimate" with the table date; a model without a row is "no price", never zero.
 
-## DL-564: B29 Fleet Deck counters per hour and session, in the event transaction (design agent, 2026-10-24)
+## DL-574: B29 Fleet Deck counters per hour and session, in the event transaction (design agent, 2026-10-24)
 
 - Decision: `analytics_observe` counts turns by outcome and duration, tool calls by kind and outcome, approvals by who answered and their wait, errors by code, files and lines changed, starts, resumes, runs, artifacts and workflows (analytics-owned identities, first seen counts) into `analytics_activity`, and the execution intervals of the sessions into `analytics_exec`; one ordered cursor (`analytics_meta.next_seq`) counts every event once in order, inline when caught up and by `catch_up_step` when behind (the events that the station still holds at V50); the prune keeps every event that the cursor did not count; sessions started, turns recorded and shell commands come from the kept tables at query time. Each family reports its start date (`events_since`, `kept_since`).
 
-## DL-565: B29 the link method `station.analytics`, feature `analytics.v1` (design agent, 2026-10-24)
+## DL-575: B29 the link method `station.analytics`, feature `analytics.v1` (design agent, 2026-10-24)
 
 - Decision: params `since` (an hour start), `until`, `before` (the page cursor), `sessions` (optional filter), `audience` (owner or member); the answer has the usage and activity rows of whole hours, newest first, at most `MAX_PAGE_BYTES` (960 KiB) serialized, the sources (owner or member form), the coverage, the price table date and `next_before`; the deck reads at most 16 pages per station (`truncated_before`). One query at a time per station. The method row is in `fleetdeck-link/src/methods_table.rs` and ADR-004 §9.6 (deck → station, read, `analytics.v1`, not mutating).
 
-## DL-566: B29 analytics visibility: members see the proven runs of their covered sessions, everything else is owner only (design agent, 2026-10-24)
+## DL-576: B29 analytics visibility: members see the proven runs of their covered sessions, everything else is owner only (design agent, 2026-10-24)
 
 - Decision: `GET /api/analytics` serves the owner (every station, every row) and members (the stations and sessions of `ShareScope::covers`, an uncovered station is 404); a usage record belongs to a session only when its time is inside a proven execution interval of exactly one holder of its conversation (decided per record at ingestion); a member gets only such rows of covered sessions and the member form of the sources (no file counts, bytes, scan times, reasons, `keeps_days`; `first_at` clipped to `events_since`); the imported earlier history of a session is never in a member answer, whatever `grant.history` says; the deck filters the rows and clears the owner-form fields again; tokens and wall displays get 403.
 
-## DL-567: B29 the deck returns the union of the station answers; the board sums into local days (design agent, 2026-10-24)
+## DL-577: B29 the deck returns the union of the station answers; the board sums into local days (design agent, 2026-10-24)
 
 - Decision: the deck fans out, reads the pages of each station (15 s per page, 60 s per station) and returns each station's state and merged answer; the board merges, groups hour rows into days of the browser's time zone, and for a provider home that two stations report (same source key) per bucket identity (hour, provider, model, conversation key) counts the proven rows of each session once and the unproven rest of the station with the most requests once (A11 Q2).
 
-## DL-568: B29 no invented history on the analytics page (owner scope rule; design agent, 2026-10-24)
+## DL-578: B29 no invented history on the analytics page (owner scope rule; design agent, 2026-10-24)
 
 - Decision: a day before a source's first record is not a zero: the chart marks the start (`No data before <date>`) and each section says its start date; learnings computed over a part of the window say `(since <date>)`; five learnings only, each with a rule and a minimum sample.
 
-## DL-569: B29 design system: `.fd-bars`, a one-series bar chart (design agent, 2026-10-24)
+## DL-579: B29 design system: `.fd-bars`, a one-series bar chart (design agent, 2026-10-24)
 
 - Decision: an inline SVG bar chart with `--fuel` bars (or neutral `--dim`), a zero baseline, a top value line, three x labels, focusable bars with a readout line and a hidden value table, a dashed start line for missing history; listed in `DESIGN-SYSTEM.md` §3 and §7.
 - Rejected: a chart library; stacked categorical colors.
@@ -1113,7 +1113,7 @@ Adversary DESIGN REVIEW round 1 (`/home/luismorales/fleetdeck-briefs/backlog2/an
 
 | # | Severity | Finding | Checked against | Change |
 | --- | --- | --- | --- | --- |
-| 1 | BLOCKER | The session created first took a whole conversation, so a later private run (an import into an unshared session, a terminal continuation) showed as a shared session's usage. | `store/resumes.rs:229-300` (holders that are not busy are allowed), `manager/usage_recount.rs:321-326` | New §3.6a: per-record attribution at ingestion to a proven execution interval (`analytics_exec`, from `session.started` to the end of that process) of exactly one holder; everything else has no session and is owner only. `analytics_usage` gets `session_id` in its key; §3.5 step 4, §3.7 step 4, §4 item 3, decision 6, DL-566. The one residual case (a terminal continuation while the Fleet Deck process runs) is stated in §3.6a item 6, §4 and owner question 8. |
+| 1 | BLOCKER | The session created first took a whole conversation, so a later private run (an import into an unshared session, a terminal continuation) showed as a shared session's usage. | `store/resumes.rs:229-300` (holders that are not busy are allowed), `manager/usage_recount.rs:321-326` | New §3.6a: per-record attribution at ingestion to a proven execution interval (`analytics_exec`, from `session.started` to the end of that process) of exactly one holder; everything else has no session and is owner only. `analytics_usage` gets `session_id` in its key; §3.5 step 4, §3.7 step 4, §4 item 3, decision 6, DL-576. The one residual case (a terminal continuation while the Fleet Deck process runs) is stated in §3.6a item 6, §4 and owner question 8. |
 | 2 | BLOCKER | Analytics bypassed `ShareGrant.history`. | `deck/src/store/members.rs:61`, `http/history_routes.rs:135-143` | The imported prefix is before the importing session's first run, so it is never attributed (§3.6a items 2-3); a member never gets it, whatever `history` says (stricter than the history view). Hour buckets cannot cross the boundary: the attribution is per record and the bucket key holds it (§3.6a item 4). Test `an_imported_prefix_has_no_session`, `a_member_without_history_gets_the_same_query`. |
 | 3 | BLOCKER | Member answers carried station-wide source facts. | design §3.7 step 8, §3.9 step 5 (revision 1) | `Audience` param; a member form of `AnalyticsSource` (owner-only fields are `Option` and `None`; reason `unavailable`; `first_at` clipped to `events_since`) and of `kept_since` (§3.2, §3.7 step 7); the deck clears the fields again (§3.9 step 5). |
 | 4 | BLOCKER | `station.analytics` had no method row: every call would be `unknown_method`. | `fleetdeck-link/src/control.rs:280`, `methods.rs:79-100`, `methods_table.rs:306-322` | The row (deck → station, read, `analytics.v1`, not mutating), the ADR-004 feature row and §9.6 row (§3.2); A1 owns them and tests `authorize`. |

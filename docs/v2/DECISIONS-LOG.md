@@ -4123,6 +4123,52 @@ Owner review: pending.
 - Context: DL-402 (request ids collide between sessions of one station).
 - Choice: the station table `runtime_requests` is keyed by `(session_id, request_id)` in station migration V43 (`b0cdbf5f`). The live check on dev1 passed.
 
+## DL-530: B26 a station update loses grants through the idle clock, not through a key or an incarnation change (design agent, 2026-10-24)
+
+- Context: B26; design `docs/v2/design/grants-update.md` §1. The owner's live deck and Lighting station (read only, 2026-10-24): no key and no incarnation changed since pairing; no grant ended for an update reason; the reported loss of 2026-10-23 is an idle expiry at 17:07:59 during the update work (last fleet call 16:36:07); the grant of 2026-10-22 on dev1 idled out and its rebind at generation 2 after the resume was ignored, as the "no revival" rule says.
+- Decision: the fix keeps the grants of a station's sessions in use while that station is offline (DL-531) and settles them when it returns (DL-532). Nothing revives an ended grant.
+
+## DL-531: B26 a bound grant of an offline station is in use for up to 60 minutes after its last frame (design agent, 2026-10-24)
+
+- Decision: each sweep (also at the deck start) sets `last_used_at = now` for every `active`, bound grant whose station has no live link, whose station was last heard (`stations.last_seen`) at most 60 minutes ago and not after `now`, and that was in effect at that last frame. It records a `grant_holds` row (V51) when the gap is at least 30 s. The step runs after the G6 touch and before `end_stale`, in the sweep transaction. The start of each station link applies the same rule to that station before the link is published and before `last_seen` is overwritten (revision 2). `expires_at` stays the cap. The hold does not read the setting. ADR-006 §5.3 is amended.
+- Rejected: an idle predicate in `in_effect`; a touch at the link end only; a revival at the return.
+- Changed later: `hold_tx` and `DeckStore::hold_returning` also hold a returning station at its link start, before `up`, and `hold_returning` rebuilds the `coordinate` scopes (see grants-update.md §3.2 and Build answers 2).
+
+## DL-532: B26 the deck settles a returning station at each `station.info` answer of a live link (design agent, 2026-10-24)
+
+- Decision: the deck stores the incarnation and the version of the last answer (`stations.info_incarnation`, `stations.info_version`, V51). Another incarnation ends every grant of the station's sessions that is not revoked, also an expired one with a pending renewal (`revoked`, `station_reset`), with either setting. Another version ends them (`station_updated`) when `keep_grants_on_update` is off, and keeps them with one `coordinator.grant_kept` row each when it is on. The same incarnation and version keep the held grants with one kept row each. An end queues `session.coordinator_set` with no spec (a grant with a row) or `session.coordinator_revoke` (otherwise). The answer of a link that ended settles nothing. A station without a version is never updated.
+- Changed later: a drop revokes every grant of the station's sessions that is not revoked, not only the `active` ones, so a pending renewal cannot revive an expired grant (see grants-update.md Revision 2, finding 2).
+
+## DL-533: B26 the deck setting `keep_grants_on_update` (design agent, 2026-10-24)
+
+- Decision: a top-level `deck.toml` bool, default `true`, `Live`, a danger setting: turning it on needs the elevation, off does not. The store reads it from `DeckKnobs`. Board label "Keep grants on update", in the "Fleet control" section, with the warning "Each station update ends the fleet grants of the sessions on that station. You give them again after the update." while it is off.
+
+## DL-534: B26 the audit log records every grant that a station keeps or drops (design agent, 2026-10-24)
+
+- Decision: new actions `coordinator.grant_kept` and `coordinator.grant_dropped` (actor `deck`, target the grant id, detail `key=value` pairs: `reason`, `cause`, `station`, `from`, `to`, `offline_ms`). Every lifecycle event of a station that ends one of its grants (`coordinator.bound`, `coordinator.ended`, `coordinator.worker_outcome`, `session.ended`, a snapshot) writes one dropped row per ended grant, from the diff of the station's active grants around the event. The owner revoke and the sweep keep their own rows.
+
+## DL-535: B26 a removed station's grants are revoked; a key rotation keeps them (design agent, 2026-10-24)
+
+- Decision: `revoke_station` revokes every grant of the removed station's sessions that is not revoked (`station_removed`) in its transaction, with one dropped row each. `rotate_station` keeps the grants and writes one kept row per active grant (`key_rotated`). A new key is a new station, so no grant moves to it.
+
+## DL-536: B26 the refusal texts of a grant that a station change ended (design agent, 2026-10-24)
+
+- Decision: `GrantEnd::StationUpdated` "Your fleet grant ended when your station was updated, because the deck setting \"Keep grants on update\" is off. The owner can give a new grant on the board." and `GrantEnd::StationReset` "Your fleet grant ended because your station started with new data. The owner can give a new grant on the board." The code stays `forbidden`.
+
+## DL-537: B26 a resumed worker still gets no grant (design agent, 2026-10-24)
+
+- Decision: the P4a rule "a resumed start never gets a grant" stays. A direct-host restart ends the worker processes, and the resume drops their grants with a dropped row (`reason=handoff_skipped;cause=resumed`). A worker grant on resume (P4a W2) is a follow-up item with its own design.
+
+## DL-538: B26 is high risk: adversary design review and pre-PR review (design agent, 2026-10-24)
+
+- Decision: B26 changes how long a grant authorizes calls and adds three ways that the deck ends a grant. It gets the adversary DESIGN REVIEW before T1-T5 start and the PRE-PR REVIEW of the final branch. `SECURITY-CHECKLIST.md` gets row 530. Deck migration V51 (the merge renumbers when needed).
+
+## DL-539: B26 a returning station link authorizes no grant work before its return check (design agent, 2026-10-24, revision 2)
+
+- Context: adversary DESIGN REVIEW of B26, finding 1 (`/home/luismorales/fleetdeck-briefs/backlog2/grants-update/adv-design.md`).
+- Decision: a link of a station with a stored `station.info` answer is marked waiting before it is published. Every request on it waits for the first committed return check (at most 8 s, then the link error `timeout`); the router holds the grant work for that station (origin `coordinator`, an authority, `session.coordinator_set`, a worker start) and the fleet-control commands of its callers; `coordinator.policy_now` of that station fails closed. A failed check keeps the gate closed. A first link (no stored answer) does not wait.
+- Rejected: awaiting `station.info` before the request loop (link backpressure); a gate in each store grant check; holding every router command.
+
 ## DL-540: B27 one switch per security control, secure by default, warned and shown in a posture (design agent, 2026-10-24)
 
 - Context: B27; design `docs/v2/design/security-options.md` §2, §3.1.
@@ -4215,3 +4261,50 @@ Owner review: pending.
 
 - Context: adversary DESIGN REVIEW finding 6.
 - Decision: the deck compares the stored incarnation with `station.info` before it builds `after_seq` (0 for a new incarnation); `cli_update.attempts` answers its incarnation with the rows; `cli_update_seen` keeps the imported attempt ids so a restored station shows no attempt twice.
+
+## DL-570: B29 analytics: tokens and cost by time come from the provider transcripts (design agent, 2026-10-24)
+
+- Context: B29; design `docs/v2/design/analytics.md` §1-§3. The station events are kept 7 days and the session totals have no time; the transcripts hold every API response with its time (Claude 30 days by the CLI default, Codex since install).
+- Decision: each station scans its provider homes every 10 minutes, incrementally by byte offset with a hash guard (an unfinished file is always read again; a same-size rewrite is found by its mtime), and stores hour buckets per home, provider, model, conversation and proven session, with dedupe keys kept forever (Claude `message.id:requestId`, Codex `response_id` or thread, counter epoch and cumulative total). No age limit on the ingestion. It keeps the numbers after the CLI deletes a transcript. The home trust is the browse's (`Unverifiable` homes, every macOS home, are read and marked). A station knob `analytics.transcripts` (default on) stops the reading.
+- Rejected: the B14 session totals as a time series; one stored row per record; a scan on each page read.
+
+## DL-571: B29 Claude transcript records are deduplicated globally by `message.id:requestId` (design agent, 2026-10-24)
+
+- Evidence: 203,926 records, 105,652 keys on Lighting (one record per content block, copies in forks).
+- Decision: a record counts only when its key is new in `analytics_seen`; the bucket and the key commit in one transaction with the file offset.
+
+## DL-572: B29 Codex usage counts the growth of the thread's cumulative total (design agent, 2026-10-24)
+
+- Decision: `token_count.total_token_usage` and `token_usage_record.thread_token_usage` feed one baseline per file; an equal total is the same request; a total equal to the request (`C == L`) after a non-zero baseline is a restart and counts the whole request; the first total of a file, or a total below the baseline, counts the request's own usage; otherwise the growth counts; records of a fork or sub-agent copy burst (gaps under 1 s after `session_meta`) set the baseline only; each restart starts a counter epoch that is part of the key; a sub-agent counts in its root thread's conversation through `analytics_threads` (both parent encodings, at most 16 levels, a cycle keeps the own thread).
+- Rejected: `last_token_usage` alone (double counts with `token_usage_record`); `token_usage_record` alone (older rollouts lack it).
+
+## DL-573: B29 Claude rows in the price table, for the analytics estimate only (design agent, 2026-10-24)
+
+- Decision: `estimate_price_of` adds `claude-opus-5-5` (4.0 / 0.2 / 5.0 / 20.0), `claude-sonnet-5-5` (2.0 / 0.1 / 2.5 / 10.0) and `claude-haiku-5-5` (0.1 / 0.01 / 0.125 / 0.5) USD per 1M (input, cache read, cache write, output), fitted exactly from the CLI's own `cost-state` records; `PRICE_TABLE_VERSION` becomes `2026-10-24`. `price_of` keeps its Codex-only rule (DL-444) for the live counts. Every analytics cost is "Cost estimate" with the table date; a model without a row is "no price", never zero.
+
+## DL-574: B29 Fleet Deck counters per hour and session, in the event transaction (design agent, 2026-10-24)
+
+- Decision: `analytics_observe` counts turns by outcome and duration, tool calls by kind and outcome, approvals by who answered and their wait, errors by code, files and lines changed, starts, resumes, runs, artifacts and workflows (analytics-owned identities, first seen counts) into `analytics_activity`, and the execution intervals of the sessions into `analytics_exec`; one ordered cursor (`analytics_meta.next_seq`) counts every event once in order, inline when caught up and by `catch_up_step` when behind (the events that the station still holds at V50); the prune keeps every event that the cursor did not count; sessions started, turns recorded and shell commands come from the kept tables at query time. Each family reports its start date (`events_since`, `kept_since`).
+- Changed later: a `lost` state closes the open execution interval at the last evidence of the process, not at the restart, so a terminal continuation in an outage is not counted for the shared session (see analytics.md Build answers, A11 Q1).
+
+## DL-575: B29 the link method `station.analytics`, feature `analytics.v1` (design agent, 2026-10-24)
+
+- Decision: params `since` (an hour start), `until`, `before` (the page cursor), `sessions` (optional filter), `audience` (owner or member); the answer has the usage and activity rows of whole hours, newest first, at most `MAX_PAGE_BYTES` (960 KiB) serialized, the sources (owner or member form), the coverage, the price table date and `next_before`; the deck reads at most 16 pages per station (`truncated_before`). One query at a time per station. The method row is in `fleetdeck-link/src/methods_table.rs` and ADR-004 §9.6 (deck → station, read, `analytics.v1`, not mutating).
+
+## DL-576: B29 analytics visibility: members see the proven runs of their covered sessions, everything else is owner only (design agent, 2026-10-24)
+
+- Decision: `GET /api/analytics` serves the owner (every station, every row) and members (the stations and sessions of `ShareScope::covers`, an uncovered station is 404); a usage record belongs to a session only when its time is inside a proven execution interval of exactly one holder of its conversation (decided per record at ingestion); a member gets only such rows of covered sessions and the member form of the sources (no file counts, bytes, scan times, reasons, `keeps_days`; `first_at` clipped to `events_since`); the imported earlier history of a session is never in a member answer, whatever `grant.history` says; the deck filters the rows and clears the owner-form fields again; tokens and wall displays get 403.
+
+## DL-577: B29 the deck returns the union of the station answers; the board sums into local days (design agent, 2026-10-24)
+
+- Decision: the deck fans out, reads the pages of each station (15 s per page, 60 s per station) and returns each station's state and merged answer; the board merges, groups hour rows into days of the browser's time zone, and for a provider home that two stations report (same source key) per bucket identity (hour, provider, model, conversation key) counts the proven rows of each session once and the unproven rest of the station with the most requests once (A11 Q2).
+- Changed later: per bucket identity the proven rows count once per session and the owner's unproven rest of the winner group counts once; the deck merges the sources by `(provider, key)` and translates the source index of later pages (see analytics.md Build answers, A11 Q2 and Q3).
+
+## DL-578: B29 no invented history on the analytics page (owner scope rule; design agent, 2026-10-24)
+
+- Decision: a day before a source's first record is not a zero: the chart marks the start (`No data before <date>`) and each section says its start date; learnings computed over a part of the window say `(since <date>)`; five learnings only, each with a rule and a minimum sample.
+
+## DL-579: B29 design system: `.fd-bars`, a one-series bar chart (design agent, 2026-10-24)
+
+- Decision: an inline SVG bar chart with `--fuel` bars (or neutral `--dim`), a zero baseline, a top value line, three x labels, focusable bars with a readout line and a hidden value table, a dashed start line for missing history; listed in `DESIGN-SYSTEM.md` §3 and §7.
+- Rejected: a chart library; stacked categorical colors.

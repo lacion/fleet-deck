@@ -190,6 +190,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Status:** done.
 - **Done (2026-10-24):** phase 1: MCP Apps show as interactive UIs in the chat for Codex and Claude, owner only (design `docs/v2/design/mcp-apps.md`, merged into v2 by `f9fb83f2`)
 - **Open:** phase 2 (full screen, `ui/update-model-context`, downloads) is not built.
+- **Done (2026-10-24, live verification):** the live smoke passes for Codex and Claude after the revert-admission fix 37a2a6f4 (the revert admission checks the app call barrier).
 
 ## B16. A new logo for Fleet Deck (owner request, 2026-10-22)
 
@@ -322,6 +323,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Cause (probable):** `shim_resume_rig.rs` `as_shim_station` reopens `station.db` while the old manager can still hold a connection.
 - **Wanted:** the rig waits for the old store to close before it reopens the database.
 - **Status:** open.
+- **Open:** `web/src/App.tsx` (793 lines) and `crates/fleetdeck-deck/tests/merged_migrations.rs` (799 lines) are at the size limit; the next change to them must split them.
 
 - **Notes (2026-10-24):** the station store sets a 5 s busy timeout (`fleetdeck-core/src/db.rs` `BUSY_TIMEOUT_MS`), so the error is either a deferred transaction that cannot upgrade to a write while the old manager's connection writes (SQLite answers busy at once in that case), or a lock held longer than 5 s under the full workspace load. The rig `shim_resume_rig.rs` `as_shim_station` (7 tests) reopens the file while the old `SessionManager` is still referenced; drop the old manager and wait for its store tasks before the reopen, or open the migration with `BEGIN IMMEDIATE`.
 - **Update (2026-10-24):** after the wall-apps merge, `a_shim_hosted_session_binds_workflow_agents` and `an_adopted_session_binds_33_runs_before_its_observer_reads_them` fail on every run on Lighting (0.6 s, `DatabaseBusy` at `shim_resume_rig.rs:196`, the start of the new `SessionManager`, not the open). An immediate busy means a read-to-write upgrade conflict: most likely a B12 workflow task of the old manager still writes after `shutdown(StopMode::Kill)`. The owner said to ignore flaky tests for now, so both tests are `#[ignore]` with this reason; remove the attribute with the fix. The other 8659 Rust tests pass.
@@ -338,7 +340,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Is the drop intended for a key change (a new station, or a changed key), and not for a plain version update? If so, keep the grants on a version change and drop them on a key change.
   - Make it a setting: "keep grants on update" (default on), with a clear warning when it is off.
   - The audit log records every grant that an update keeps or drops.
-- **Status:** done on branch `bl/grants-update` (2026-10-24): design `docs/v2/design/grants-update.md`, tasks T1-T5 (DL-530 to DL-539). The cause was the idle clock, not a key change. The deck now holds grants for up to 60 minutes while a station is offline, settles them at the return, and has the setting `keep_grants_on_update`. The merge commit is the one that merges this branch into `v2`.
+- **Status:** done.
+- **Done (2026-10-25):** a station update keeps the fleet grants of its sessions: the deck holds the grants of an offline station for up to 60 minutes, settles them at its return, and has the setting `keep_grants_on_update` (design `docs/v2/design/grants-update.md`, merged into v2 by `e18100c5`).
+- **Open:** a worker grant (MCP P4a) does not come back when its session is resumed after a direct-host station restart (follow-up P4a W2).
 
 ## B27. Security defaults the owner can change: a default agent mode, unlimited grants, bypass permissions (owner request, 2026-10-22)
 
@@ -354,7 +358,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - A default agent mode: a setting per station or per project, used when a spawn does not give a mode. It must never be more permissive than the station's allowed ceiling, unless the owner set that ceiling.
   - Each relaxation changes the threat model, so each needs its own review (adversary DESIGN REVIEW for bypass and for the approval step).
   - Show the active posture on the board (for example a "Relaxed: bypass allowed for workers" line in Settings).
-- **Status:** built on branch `bl/security-options` (T1 to T8, DL-540 to DL-546; design `docs/v2/design/security-options.md`). Pending at the merge: `make check`, one run of the tests, and the adversary PRE-PR review (high risk).
+- **Status:** done.
+- **Done (2026-10-25):** the owner can relax each security control: a default agent mode, grant limits with no limit, bypass for workers, and the relaxed-security posture (design `docs/v2/design/security-options.md`, merged into v2 by `e939a8ea`).
 
 ## B28. Update Claude and Codex automatically from the station service (owner request, 2026-10-22)
 
@@ -375,7 +380,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Gate: run the probe and the handoff check (`coordinator/bindings_handoff.rs`) on the new version before it counts as updated.
   - Each update is a high-risk change (it runs code from an external source as the owner). Adversary DESIGN REVIEW before the build.
   - Settings: the schedule, the channel and the on/off switch in the station settings (B27 applies to the same settings).
-- **Status:** built on branch `bl/cli-update` (design `docs/v2/design/cli-update.md`, DL-550 to DL-562, tasks T1 to T11). Open until the merge into `v2`: the tests, the adversary PRE-PR REVIEW, and the live checks of the merge note.
+- **Status:** done.
+- **Done (2026-10-25):** the station updates Claude Code and Codex by itself, with signature checks, a gate and a way back (design `docs/v2/design/cli-update.md`, merged into v2 by `e517f9e6`).
 
 ## B29. An analytics page: per station and for the whole fleet, backfilled from the sessions (owner idea, 2026-10-24)
 
@@ -405,4 +411,6 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - The t3code token contract (`packages/contracts/src/usage.ts`) splits the input into uncached, cached read and cache creation. It also says that reasoning tokens are a subset of output and must not be added again. That split is what B14 needs.
 - **Answer to the backfill question:** the history goes back as far as the provider transcripts on the station's disk. Fleet Deck's station already knows these folders (the native-session browse of B7 and the import of DL-189). The first research step is to measure, on a real station, which transcript files exist and how far back they go, and which fields they hold (usage, model, speed, cache).
 - **Scope rule from the owner (2026-10-24):** the metrics go as far as the data goes. Do not invent history, and do not estimate a missing period.
-- **Status:** open (noted only). Research first: check which metrics the events, the sessions and the transcripts really hold.
+- **Status:** done.
+- **Done (2026-10-25):** an analytics page per station and for the fleet, backfilled from the provider transcripts (design `docs/v2/design/analytics.md`, merged into v2 by `d79ca74d`).
+- **Open:** the Help page "Pages" list does not name Analytics yet. Six Codex models (gpt-6.1-sol, gpt-daybreak-blue-latest, gpt-5.6-sol, gpt-6-astra, gpt-5.4, gpt-5.5) have no price, so they show "no price" until the owner gives rates.
