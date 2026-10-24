@@ -83,6 +83,7 @@ fn info(name: &str) -> StationInfo {
         taildrive: None,
         fleet_git: None,
         fleet_summary: None,
+        cli_update: None,
     }
 }
 

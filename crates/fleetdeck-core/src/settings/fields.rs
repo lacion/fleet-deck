@@ -5,6 +5,7 @@ use fleetdeck_proto::settings::{Apply, FieldKind, FieldMeta};
 
 use super::fields_knobs::{deck_knob_fields, station_knob_fields};
 use super::fields_security::{deck_security_fields, station_security_fields};
+use super::fields_updates::provider_update_fields;
 use crate::config::MAX_HIBERNATE_AFTER_MIN;
 
 /// The builder of one entry.
@@ -348,6 +349,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
     .map(|f| f.0)
     .chain(station_security_fields())
     .chain(station_knob_fields())
+    .chain(provider_update_fields())
     .collect()
 }
 

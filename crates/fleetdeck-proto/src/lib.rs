@@ -16,6 +16,7 @@ pub mod board;
 pub mod branches;
 pub mod capability;
 pub mod capture;
+pub mod cli_update;
 pub mod command;
 pub mod conflicts;
 pub mod coordinator_desktop;

@@ -23,6 +23,7 @@ pub mod assign_routes;
 pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
+pub mod cli_update_routes;
 pub mod command_routes;
 pub mod desktop_capture_routes;
 pub mod desktop_recording_routes;
@@ -610,6 +611,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/native-sessions/preview",
             post(native_routes::preview),
+        )
+        .route(
+            "/api/stations/{station}/cli-update",
+            get(cli_update_routes::status).post(cli_update_routes::run),
         )
         .route(
             "/api/spaces",

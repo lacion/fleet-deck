@@ -1392,6 +1392,103 @@ The audit action `station.maintenance` has these rows: `stage=opened` (the reque
 
 Shim-hosted agents keep running through the whole sequence; the new station reattaches them when it speaks their shim protocol. An upgrade that cannot speak a running shim's protocol fails its trial.
 
+## 9A. Provider updates (B28)
+
+The station can update the Claude Code and Codex programs for you. The update runs as your user. It is off until you turn it on. Fleet Deck never updates a program that it cannot check.
+
+### 9A.1 Turn updates on
+
+1. Open the board. Go to Settings, then the station tab, and choose the station.
+2. Open the section "Provider updates". Turn on "Update Claude and Codex at night". This key is a restart value, so restart the station after you save it.
+3. Set the other keys when the defaults do not fit (see the table).
+
+After the restart, the Claude sessions that the station starts get `DISABLE_AUTOUPDATER=1`. Claude no longer updates itself inside these sessions. Your own terminals keep their updater. When a version changes outside Fleet Deck, the station records it as "changed outside Fleet Deck".
+
+| Key (`[provider_updates]`) | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | The nightly window. A restart value. |
+| `window_start` | `"03:00"` | The start of the window, `HH:MM`. |
+| `window_hours` | `2` | The length of the window, 1 to 12 hours. |
+| `timezone` | `"local"` | `local` (the clock of the machine), `UTC`, or an offset such as `+02:00`. |
+| `claude_channel` | `stable` | `stable` is about one week old. `latest` is every release. Codex has one channel. |
+| `claude_pin`, `codex_pin` | empty | An exact version. The station installs it and stays on it, also when it is older. |
+| `min_age_hours` | `48` | A new version waits this long after its release. A pin does not wait. |
+
+### 9A.2 The window, channels and pins
+
+- The station tries every 15 minutes inside the window. Each station has a small random delay. The station never updates at its own start.
+- An update starts only when no session of that provider runs. The station then holds new session starts for a few seconds while it switches the files. The schedule never forces an update.
+- The "Update now…" button in the card "Update now" runs one update at once. Only the owner can use it, and it asks for the elevation. The button "Check" asks the vendor and changes nothing.
+- The station refuses a version that is on the deny list, is older than the tested minimum of the station build, or is younger than `min_age_hours`. A pin skips the age rule only.
+- Claude with running sessions: the owner can tick "Update while they run". The running sessions keep their version. This option exists only for native Claude. An npm or Bun update replaces files in place, so the station never does it while sessions run.
+
+### 9A.3 Which installs the station updates
+
+| Install | What the station does |
+| --- | --- |
+| Native Claude, with the link `~/.local/bin/claude` that points into `versions/` | Updates it. It needs `gpgv` (see 9A.8). |
+| Codex installed with npm (npm 7 or later) or Bun (1.2 or later) | Updates it. |
+| Claude installed with npm or Bun | Report only. |
+| Homebrew, a system package, the Codex standalone installer | Report only. |
+| A custom launcher link ("custom launcher") or an unknown layout | Report only. |
+
+"Report only" means that the station shows the version and the way to update, and never changes the install. "Custom launcher" means that the program that the station runs is not the install that the vendor tools manage, for example a link or a wrapper that you made. Update these by hand with the tool that installed them.
+
+| Method | Update by hand |
+| --- | --- |
+| Native Claude | `claude update` |
+| npm | `npm install -g @openai/codex@<version>` (Codex) or `npm install -g @anthropic-ai/claude-code@<version>` (Claude) |
+| Bun | `bun add -g @openai/codex@<version>` (Codex) or `bun add -g @anthropic-ai/claude-code@<version>` (Claude) |
+| Homebrew | `brew upgrade --cask claude-code` or `brew upgrade --cask codex` |
+| System package | the package manager of the system, for example `pacman -Syu` |
+
+After a manual update, press "Check" in Settings. The station reads the new version and refreshes its report.
+
+### 9A.4 The checks of one update
+
+The station downloads the new version into a private folder and checks it against the signed release before it runs any byte of it. Claude: the checksum of the file against the release manifest, which `gpgv` verifies. Codex: every package against the registry signature, and a provenance attestation. Then the station runs the new copy once, in its private place, and drives it with the same first messages that a session uses. Only then does it switch the files. After the switch it checks the active program again. A failed check after the switch puts the old version back from a local copy, with no network.
+
+### 9A.5 Files of the update
+
+| What | Where | When it goes |
+| --- | --- | --- |
+| Log of an attempt (output of the download and the install, mode 0600, at most 256 KiB) | `<station dir>/cli-update/logs/<attempt id>.log` | The newest 20 files stay. |
+| Rollback copy of native Claude | `<station dir>/cli-update/rollback/<attempt id>/claude` | Removed when the attempt ends. It stays after a failed way back. |
+| Stage folder of a native download | `~/.local/share/claude/versions/.fd-stage-<attempt id>` | Removed when the attempt ends. |
+| Stage folder and old packages of npm or Bun | `<prefix>/lib/.fd-cli-update/<attempt id>` (npm) or `<bun install>/install/global/.fd-cli-update/<attempt id>` (Bun) | Removed when the attempt ends. It stays after a failed way back. |
+
+At each attempt and at each station start, the station also removes the folders of an attempt that no record needs any more. The station directory is `~/.local/share/fleetdeck/station/` (see section 1). Child output never goes into the database, the link or the station log. Read these log files for the cause of a failure.
+
+The station copies each finished attempt into the deck audit log (action `cli_update.attempt`, actor `station:<name>`). The owner's "Check" and "Update now" are audited at the board route.
+
+### 9A.6 Quarantine and how to clear it
+
+When an update fails and the way back also fails, the station quarantines the provider. The station card then shows "starts blocked after a failed update" and new sessions of that provider do not start. The quarantine stays after a restart. A provider refresh never clears it.
+
+1. Reinstall the provider by hand (see the reinstall hints).
+2. Open Settings, the station tab, the card "Update now".
+3. Press "Check" for that provider. The station checks the version, the install and the handshake. When they pass, the card says "Claude passed the checks. Sessions can start again."
+
+If the card says "Still blocked", read the reason, fix it and press "Check" again.
+
+Two more quarantine texts need a station restart: "an interrupted update is not finished" (the station stopped in the middle of an update; the next start recovers it) and "an update process did not stop" (the next start stops it first).
+
+### 9A.7 Reinstall hints
+
+- Native Claude: `claude install <version>` with the version that the card names.
+- Codex with npm: `npm install -g @openai/codex@<version>`.
+- Codex with Bun: `bun add -g @openai/codex@<version>`.
+
+Use the version that the card shows as "kept" or "back on". The folders in 9A.5 that stayed after a failed way back hold the old files.
+
+### 9A.8 `gpgv`
+
+Native Claude updates need `gpgv` (GnuPG) on the station. Without it the card says "install GnuPG (gpgv) to verify Claude updates", and the station does not update native Claude. Fleet Deck does not fall back to a checksum alone.
+
+- Arch Linux: `pacman -S gnupg`.
+- Debian and Ubuntu: `apt install gpgv`.
+- macOS: `brew install gnupg`.
+
 ## 10. Auto-continue
 
 Auto-continue is off for each session by default. Turn it on in the session view ("Continue after a station restart"). Only the owner on the board can turn it on; a coordinator or the local socket cannot. After a station restart, the station continues a lost session only when every rule of ADR-007 holds. Otherwise the session stays `lost`, and the timeline shows "Auto-continue skipped: &lt;reason&gt;".

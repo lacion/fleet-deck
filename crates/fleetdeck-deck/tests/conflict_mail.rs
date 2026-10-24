@@ -309,6 +309,7 @@ fn info_with_model_help(assist: bool) -> fleetdeck_proto::link::StationInfo {
         taildrive: None,
         fleet_git: None,
         fleet_summary: None,
+        cli_update: None,
     }
 }
 

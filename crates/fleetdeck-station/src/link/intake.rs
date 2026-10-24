@@ -491,6 +491,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
                 taildrive: ctx.fleet_git.taildrive_report(),
                 fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
                 fleet_summary: Some(policy.fleet_summary()),
+                cli_update: ctx.manager.cli_update_report().await,
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -517,6 +518,12 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "station.analytics" => intake_analytics::analytics(ctx, req.params).await,
+        m if m.starts_with("cli_update.") => {
+            match crate::cli_update::service::call(ctx.manager.cli_update(), m, req.params).await {
+                Ok(v) => ok(v),
+                Err((code, text)) => Outcome::Err(WireError::new(code, text)),
+            }
+        }
         "desktop.info" => intake_desktop::info(ctx, control, req.params).await,
         "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
         "desktop.capture_status" => intake_capture::status(ctx, control, req.params).await,

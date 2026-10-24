@@ -17,6 +17,7 @@ import {
   StationConfigDrift,
   useDriftReference,
 } from './StationConfigDrift';
+import { StationCliUpdate } from './StationCliUpdate';
 import { StationBusiest, StationResources } from './StationResources';
 import { stationsSummary } from './StationSummary';
 import { StationTaildrive, TaildriveFact } from './StationTaildrive';
@@ -321,6 +322,14 @@ export function StationsPanel({ stations, sessions, freshness, actions, drift: g
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {info?.cli_update === undefined ? null : (
+                    <StationCliUpdate
+                      report={info.cli_update}
+                      stationId={station.station_id}
+                      canAdmin={actions?.canAdmin === true}
+                      now={now}
+                    />
                   )}
                 </div>
                 <StationResources resources={info?.resources} />

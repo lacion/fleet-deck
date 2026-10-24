@@ -23,6 +23,7 @@
 //! coordinator receipts (G7); the others with `not_implemented` (DL-050,
 //! DL-053).
 
+pub mod cli_update_audit;
 pub mod coordinator_git_reads;
 mod coordinator_reads;
 pub mod desktop_authority;
@@ -610,6 +611,7 @@ mod tests {
             taildrive: None,
             fleet_git: None,
             fleet_summary: None,
+            cli_update: None,
         }
     }
 

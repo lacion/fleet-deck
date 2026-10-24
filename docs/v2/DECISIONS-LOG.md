@@ -4155,3 +4155,63 @@ Owner review: pending.
 ## DL-546: B27 is high risk: adversary design review and pre-PR review (design agent, 2026-10-24)
 
 - Decision: B27 lets agent-started sessions skip permission checks, removes grant limits and rebuilds the grant table. It gets the adversary DESIGN REVIEW before T3 and T4 start and the PRE-PR REVIEW of the final branch. `SECURITY-CHECKLIST.md` gets the rows of T1-T7.
+
+## DL-550: B28 the station stages, binds and then activates Claude and Codex, at an exact version (design agent, 2026-10-24, revision 2)
+
+- Context: B28; design `docs/v2/design/cli-update.md` §3.3, §3.6. Today nothing in Fleet Deck updates a provider CLI, but native Claude updates itself from inside station sessions.
+- Decision (revision 2): the station detects the install from the launcher chain that it runs. It stages the new version, binds the staged bytes to the signed digests, probes the staged copy, and only then activates it. Native Claude (only with the managed link `~/.local/bin/claude`): the download of `bootstrap.sh`, the SHA-256 against the signed manifest, a rename into `versions/`, a swap of the link. Codex by npm or Bun: a staging install into a private folder with scripts off, a fixed environment and explicit destinations; every staged package's lockfile integrity equals the signed integrity; the verified folders are renamed into the detected global `node_modules`. Claude by npm or Bun, Homebrew, system packages, the Codex standalone installer, custom launcher links and unknown layouts are report only. No shell; every version in an argv is digits and dots.
+- Rejected: `claude install <version>` and `npm|bun install -g` into the live install (bytes run before anything binds them); `claude update` / `codex update` (the version is chosen after the gate); `curl | sh`.
+
+## DL-551: B28 vendor signatures are checked and fail closed (design agent, 2026-10-24)
+
+- Decision: Claude: the release `manifest.json` is verified with `gpgv`, a keyring pinned in the station binary, and the `VALIDSIG` fingerprint `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`; the staged file's SHA-256 must equal the manifest checksum of the station's platform before the file runs (revision 2). Npm: at least one registry ECDSA P-256 signature with a pinned key over `<name>@<version>:<integrity>`, for the package and its platform packages, and every staged package's recorded integrity equals that signed integrity before anything in the stage runs (revision 2); Codex needs an SLSA provenance attestation (presence). No `gpgv`: no native Claude update. An unknown key: refused until a release pins it.
+- Rejected: a new OpenPGP crate; a checksum-only check.
+
+## DL-552: B28 the gate and the way back (design agent, 2026-10-24)
+
+- Decision: a target must be a release version, not `KNOWN_BROKEN`, not below `TESTED_MIN_VERSION`, not below the handoff minimum (and the bridge minimum on a shim host), newer than the installed version unless pinned, and at least `min_age_hours` old (default 48) unless pinned. Before the activation (revision 2): the staged copy reports the target and passes a handshake with the adapter's launch arguments (Claude `initialize` with models; Codex `initialize` and `account/read`). After it: the launcher resolves to the new copy and reports the target. Before any change, a local rollback copy is made and checked (native: a hard link or a copy outside `versions/`, SHA-256; npm, Bun: the previous folders renamed aside, tree digest). A failure goes back from that copy with no network. A failed way back writes a durable quarantine with a reinstall hint.
+
+## DL-553: B28 updates run only when no session of the provider runs, and they hold new starts (design agent, 2026-10-24)
+
+- Decision: `RestartState` gets `updating`; `hold_starts` is `restarting || updating`, so queued starts and resumes of every provider wait. An update and a restart exclude each other. The update starts only after `settle_starts(10 s)` and when no session of an instance of the kind has a live process. The owner can force it for native Claude only. A deferred setup start of the updating kind fails with `provider_updating`.
+- Rejected: a per-provider hold in the claim query; updating while npm or Bun sessions run.
+
+## DL-554: B28 the schedule is off by default; `[provider_updates]` holds the settings (design agent, 2026-10-24)
+
+- Decision: `[provider_updates]` with `enabled` (restart value, default false), `window_start` (03:00), `window_hours` (2), `timezone` (`local` via `date +%z`, `UTC` or a fixed offset), `claude_channel` (`stable`), `claude_pin`, `codex_pin`, `min_age_hours` (48). A window try every 15 min with a jitter per station; no update at the station start. With `enabled`, the Claude processes of the station get `DISABLE_AUTOUPDATER=1`.
+
+## DL-555: B28 the station refreshes its provider report after a change, and records changes that it did not make (design agent, 2026-10-24)
+
+- Decision: the provider report becomes refreshable (`refresh_providers`), which also sets or clears the broken mark and replaces the handoff versions. Every 15 min, also with updates off, the station compares `--version` with its report; a difference refreshes it and records an attempt with the trigger `external`. This amends DL-059 (one probe per process).
+
+## DL-556: B28 attempts are kept by the station and copied into the deck audit log (design agent, 2026-10-24)
+
+- Decision: station V48 `cli_update_attempts` (500 rows kept; V49 in the design, renumbered at the merge). `station.info` carries `cli_update` with `last_seq`; the deck asks `cli_update.attempts` and writes one audit row per finished attempt (actor `station:<name>`, action `cli_update.attempt`), with a cursor per station and incarnation (deck V53 `cli_update_cursor`) in the same transaction. The owner's `Check` and `Update now` are audited at the route. No child output leaves the station; it goes to a 0600 log file.
+
+## DL-557: B28 the board: state on the station card, actions in Settings (design agent, 2026-10-24)
+
+- Decision: the station card shows one update line per provider and the schedule, with a link to Settings for the owner. Settings → station → "Provider updates" holds the fields and a card with `Check` (no elevation) and `Update now…` (owner, elevation, a dialog that names the source, the checks and the way back). Routes `GET|POST /api/stations/{station}/cli-update`. Link feature `cli_update.v1`, methods `cli_update.status`, `cli_update.run`, `cli_update.attempts` (admin, not mutating at the link).
+
+## DL-558: B28 is high risk: adversary design review and pre-PR review (design agent, 2026-10-24)
+
+- Decision: B28 runs code from an external source as the owner on a timer and changes the start admission. It gets the adversary DESIGN REVIEW before T1-T8 and the PRE-PR REVIEW of the final branch. `SECURITY-CHECKLIST.md` gets a row.
+
+## DL-559: B28 owner questions answered by default (design agent, 2026-10-24)
+
+- Decision, until the owner answers: updates off by default; Claude `stable`; 48 h wait; force only for native Claude; no `gpgv` means no native Claude update; Homebrew report only; the owner's own Claude keeps its updater; no upper version bound; Claude by npm or Bun report only; native activation by the station (revision 2).
+
+## DL-560: B28 a durable journal, recovery before the manager, and a durable quarantine (design agent, 2026-10-24, revision 2)
+
+- Context: adversary DESIGN REVIEW findings 3, 4 and 8.
+- Decision: an attempt that may change an install writes a journal row with its attempt row, before any change, and removes it only in the transaction that records the result. The start recovery runs between `Store::open` and `SessionManager::start`; for an activated attempt it links its successor attempt and writes the quarantine in its first transaction, then restores. Quarantine rows (`rollback_failed`, `recovery_pending`, `process_left`) are loaded into the broken marks before the effect worker starts; only a passing update or `verify_current` (integrity where the method allows it, the version gate and the handshake) clears them; a provider refresh never does.
+- Rejected: marking running rows `interrupted` first and recovering after (a second crash loses them); a memory-only quarantine.
+
+## DL-561: B28 every child of an attempt is fenced (design agent, 2026-10-24, revision 2)
+
+- Context: adversary DESIGN REVIEW finding 5.
+- Decision: each child runs in its own process group with `FLEETDECK_CLI_UPDATE_ID=<marker>`; after it ends, TERM and KILL to the group and the marker scan of the setup cleanup (DL-148) must find no process before the attempt goes on. A survivor quarantines the provider and keeps the journal row; the next start fences first.
+
+## DL-562: B28 the deck audit import reads the incarnation first (design agent, 2026-10-24, revision 2)
+
+- Context: adversary DESIGN REVIEW finding 6.
+- Decision: the deck compares the stored incarnation with `station.info` before it builds `after_seq` (0 for a new incarnation); `cli_update.attempts` answers its incarnation with the rows; `cli_update_seen` keeps the imported attempt ids so a restored station shows no attempt twice.

@@ -7,6 +7,7 @@ mod error;
 mod fields;
 mod fields_knobs;
 mod fields_security;
+mod fields_updates;
 mod fs;
 mod holder;
 mod posture;

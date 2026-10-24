@@ -19,6 +19,8 @@ import { describe } from './http';
 import { Loading } from '../ui/Loading';
 import { NoticeIcon } from './NoticeIcon';
 import { OmarchyCard } from './OmarchyCard';
+import { CliUpdateCard } from './CliUpdateCard';
+import type { CliUpdateActions } from './cliUpdate';
 import type { DesktopToolsActions } from './desktopTools';
 import { DesktopToolsCard } from './DesktopToolsCard';
 import type { OmarchyActions } from './omarchy';
@@ -60,6 +62,7 @@ type Props = {
   readonly omarchy?: OmarchyActions | undefined;
   /** The desktop tools card (BG-1); same condition as the Omarchy card. */
   readonly desktopTools?: DesktopToolsActions | undefined;
+  readonly cliUpdate?: CliUpdateActions | undefined;
   /** The paired stations (the worker grant stations of the deck tab). */
   readonly stations?: readonly StationView[] | undefined;
   /** The operating system of the station (`traits.os`), for the default of `host`. */
@@ -170,6 +173,7 @@ export function SettingsTab({
   initial,
   omarchy,
   desktopTools,
+  cliUpdate,
   stations,
   os,
   slots,
@@ -473,6 +477,10 @@ export function SettingsTab({
     ) : null;
   const allSlots: Readonly<Record<string, SectionSlot>> =
     cards === null ? (slots ?? {}) : { ...slots, Desktop: { ...slots?.['Desktop'], after: cards } };
+  const updates =
+    live && cliUpdate !== undefined && stationId !== null ? (
+      <CliUpdateCard station={name} actions={cliUpdate} ask={ask} values={view.values} />
+    ) : null;
 
   return (
     <div className="fd-set-tab" data-target={key}>
@@ -517,7 +525,9 @@ export function SettingsTab({
           }
           stations={stations}
           os={os}
-          slots={allSlots}
+          slots={
+            updates === null ? allSlots : { ...allSlots, 'Provider updates': { after: updates } }
+          }
           omit={hidden}
           pending={Object.keys(pending)}
         />

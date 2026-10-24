@@ -10,7 +10,7 @@ use fleetdeck_proto::StationId;
 use fleetdeck_proto::link::{Outcome, StationInfo};
 use serde_json::json;
 
-use super::{DeckLink, fleet_git_sync};
+use super::{DeckLink, cli_update_audit, fleet_git_sync};
 use crate::store::{DeckError, DeckStore};
 
 /// How often the deck asks a live link for `station.info` again (DL-193).
@@ -85,6 +85,8 @@ pub(super) fn fetch_info(
                             "grant return check failed: no grant work on this link until the next answer"
                         ),
                     }
+                    // B28 §3.11: the audit import of provider updates.
+                    cli_update_audit::after_info(&ctx, &control, &id, info);
                 }
                 if matches!(answer, Ok(Some(_))) && !announced.swap(true, Ordering::Relaxed) {
                     tokio::spawn(async move { fleet_git_sync::sync_station(&ctx, id).await });

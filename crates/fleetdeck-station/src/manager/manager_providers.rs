@@ -48,45 +48,81 @@ impl SessionManager {
     /// The configured provider instances with the version and sign-in state
     /// of one probe each (`station.info`, M2 P4-2). The first call probes,
     /// each probe bounded by [`PROBE_TIMEOUT`]; later calls reuse the
-    /// result for the life of the station process (DL-059). An instance
-    /// without an adapter, or a failed probe, reports no version and
-    /// `unknown` sign-in.
+    /// result until [`Self::refresh_providers`] replaces it (DL-059, B28).
+    /// An instance without an adapter, or a failed probe, reports no
+    /// version and `unknown` sign-in.
     pub async fn providers(&self) -> Vec<StationProvider> {
+        let mut cache = self.providers.lock().await;
+        if let Some(list) = cache.as_ref() {
+            return self.with_live_modes(list.clone());
+        }
+        let list = self.probe_and_apply().await;
+        *cache = Some(list.clone());
+        self.with_live_modes(list)
+    }
+
+    /// The probe is cached; the default mode is a live setting (B27).
+    fn with_live_modes(&self, mut list: Vec<StationProvider>) -> Vec<StationProvider> {
         let live = self.policy.current();
-        self.providers
-            .get_or_init(|| async {
-                let mut out = Vec::new();
-                let policy = self.policy.current();
-                for (instance, kind) in policy.instances() {
-                    let probe = match self.target.adapter(instance) {
-                        Some(adapter) => probe_adapter(adapter.as_ref(), PROBE_TIMEOUT).await,
-                        None => None,
-                    };
-                    let entry = self.provider_entry(instance, *kind, probe);
-                    if entry.version_status == VersionStatus::Broken {
-                        // Starts of this instance are refused (R8.2, DL-162).
-                        self.target.mark_broken(instance, *kind);
-                    }
-                    if let Some(v) = &entry.version {
-                        // The coordinator handoff check (DL-219).
-                        self.coordinator.record_version(*kind, v.clone());
-                    }
-                    out.push(entry);
+        for entry in &mut list {
+            entry.default_mode = live
+                .default_modes
+                .reported(entry.provider)
+                .map(str::to_owned);
+        }
+        list
+    }
+
+    /// Probes every instance now, replaces the cache of [`Self::providers`]
+    /// and applies the result: a deny mark is set or cleared by the version
+    /// status, and the handoff versions of each kind are replaced (B28
+    /// §3.8). A quarantine is never touched. It runs after an attempt that
+    /// changed or may have changed an install.
+    pub async fn refresh_providers(&self) -> Vec<StationProvider> {
+        let mut cache = self.providers.lock().await;
+        let list = self.probe_and_apply().await;
+        *cache = Some(list.clone());
+        self.with_live_modes(list)
+    }
+
+    /// One probe of every configured instance, with the effects of its
+    /// result. The caller holds the mutex of the cache.
+    async fn probe_and_apply(&self) -> Vec<StationProvider> {
+        let mut out = Vec::new();
+        let policy = self.policy.current();
+        for (instance, kind) in policy.instances() {
+            let probe = match self.target.adapter(instance) {
+                Some(adapter) => probe_adapter(adapter.as_ref(), PROBE_TIMEOUT).await,
+                None => None,
+            };
+            let entry = self.provider_entry(instance, *kind, probe);
+            // Starts of a denied instance are refused (R8.2, DL-162).
+            self.target.set_denied(
+                instance,
+                *kind,
+                entry.version_status == VersionStatus::Broken,
+            );
+            out.push(entry);
+        }
+        // The coordinator handoff check (DL-219).
+        let mut kinds: Vec<ProviderKind> = Vec::new();
+        for entry in &out {
+            if !kinds.contains(&entry.provider) {
+                kinds.push(entry.provider);
+            }
+        }
+        for kind in kinds {
+            let mut versions: Vec<String> = Vec::new();
+            for entry in out.iter().filter(|e| e.provider == kind) {
+                if let Some(v) = &entry.version
+                    && !versions.contains(v)
+                {
+                    versions.push(v.clone());
                 }
-                out
-            })
-            .await
-            .iter()
-            .cloned()
-            .map(|mut entry| {
-                // The probe is cached; the default mode is a live setting.
-                entry.default_mode = live
-                    .default_modes
-                    .reported(entry.provider)
-                    .map(str::to_owned);
-                entry
-            })
-            .collect()
+            }
+            self.coordinator.replace_versions(kind, versions);
+        }
+        out
     }
 
     /// Like [`Self::providers`], but it probes again now: it does not read

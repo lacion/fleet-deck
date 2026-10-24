@@ -72,6 +72,7 @@ pub fn claude_info() -> StationInfo {
         taildrive: None,
         fleet_git: None,
         fleet_summary: None,
+        cli_update: None,
     }
 }
 

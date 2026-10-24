@@ -309,6 +309,11 @@ pub struct StationInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fleet_summary: Option<bool>,
+    /// The provider CLI updates of the station (B28). Absent from an older
+    /// station, or when the station has no update service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cli_update: Option<crate::cli_update::CliUpdateReport>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,

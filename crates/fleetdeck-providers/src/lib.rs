@@ -17,6 +17,8 @@ pub mod host;
 pub mod prices;
 pub mod rawlog;
 mod stdio;
+/// The update probe of a CLI: version and handshake (B28 §3.6.1).
+pub mod update_probe;
 pub mod version;
 
 pub use adapter::{

@@ -229,6 +229,23 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // Provider CLI updates (B28, design `cli-update.md` section 3.11):
+    // `admin`, and both handlers also require the owner's board login; the
+    // update (not the check) also needs the owner's elevation.
+    m(
+        "station.cli_update_status",
+        Method::GET,
+        "/api/stations/{station}/cli-update",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "station.cli_update_run",
+        Method::POST,
+        "/api/stations/{station}/cli-update",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "stations.workspaces",
         Method::GET,

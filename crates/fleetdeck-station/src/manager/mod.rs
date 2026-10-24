@@ -73,7 +73,7 @@ pub mod turns;
 mod usage_recount;
 mod worker_grant;
 pub mod workspaces;
-pub use adapters::{adapters_from_config, setup_envs_from_config};
+pub use adapters::{adapters_from_config, instance_env, setup_envs_from_config};
 pub use shim_configs::durable_configs;
 pub use stop_plan::StopPlanError;
 
@@ -96,6 +96,7 @@ pub use target::{Adapters, SessionTarget};
 
 #[path = "manager_execution.rs"]
 mod execution_checks;
+mod provider_update;
 #[path = "manager_providers.rs"]
 mod providers_info;
 
@@ -123,8 +124,8 @@ pub struct SessionManager {
     ids: SharedIds,
     shutdown: watch::Sender<bool>,
     tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
-    /// The provider report of `station.info`, probed once per process.
-    providers: tokio::sync::OnceCell<Vec<StationProvider>>,
+    /// The provider report of `station.info`, probed at the first call and again by a refresh (B28).
+    providers: tokio::sync::Mutex<Option<Vec<StationProvider>>>,
     draining: std::sync::atomic::AtomicBool,
     /// The submits that create work and are not decided yet (NV-25).
     drain_submits: std::sync::atomic::AtomicUsize,
@@ -138,6 +139,8 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The provider update service, once the station process set it (B28).
+    cli_update: std::sync::OnceLock<Arc<crate::cli_update::service::CliUpdates>>,
     /// The Fleet Git runtime of the station, once the link node set it
     /// (FG-12): the artifact share of a start and of a resume reads it.
     fleet_git: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
@@ -355,6 +358,9 @@ impl SessionManager {
         }
         let target = target.shared();
         target.adopt(restored, stop, restore_from).await;
+        // A quarantined provider refuses its starts from the first dispatch
+        // (B28 §3.8.1).
+        provider_update::load_quarantine(&store, &target).await?;
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
         let mut tasks = Vec::new();
@@ -394,13 +400,14 @@ impl SessionManager {
             ids,
             shutdown,
             tasks: std::sync::Mutex::new(tasks),
-            providers: tokio::sync::OnceCell::new(),
+            providers: tokio::sync::Mutex::new(None),
             draining: std::sync::atomic::AtomicBool::new(false),
             drain_submits: std::sync::atomic::AtomicUsize::new(0),
             restart,
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            cli_update: std::sync::OnceLock::new(),
             fleet_git: std::sync::OnceLock::new(),
             land: std::sync::OnceLock::new(),
             moves,

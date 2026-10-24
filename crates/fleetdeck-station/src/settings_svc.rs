@@ -280,6 +280,13 @@ impl StationSettings {
         // (PRE-PR r3 finding 2).
         let _handoff = manager.restart_state().lock_handoff().await;
         manager.begin_restart();
+        if manager.restart_state().updating().is_some() {
+            manager.end_restart();
+            return fixed(
+                "invalid_state",
+                "a provider update runs on this station; restart in a few minutes",
+            );
+        }
         if !manager.settle_starts(self.settle).await {
             manager.end_restart();
             return fixed("unavailable", "starts are still running; try again");

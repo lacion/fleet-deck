@@ -24,10 +24,11 @@
 //! admission clears it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use fleetdeck_proto::command::SessionCommand;
+use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Reject, RejectCode};
 
 use super::SessionManager;
@@ -46,6 +47,9 @@ pub struct RestartState {
     committed: AtomicBool,
     submits: AtomicUsize,
     claims: AtomicUsize,
+    /// The provider kind under an update (B28): 0 none, 1 Claude, 2 Codex,
+    /// 3 another kind.
+    updating: AtomicU8,
     /// Held by the admission for its whole check, and by the handoff of a
     /// deferred setup start.
     handoff: tokio::sync::Mutex<()>,
@@ -90,6 +94,48 @@ impl RestartState {
         }
     }
 
+    /// The provider kind under an update, if one holds the starts (B28
+    /// §3.7.1).
+    #[must_use]
+    pub fn updating(&self) -> Option<ProviderKind> {
+        match self.updating.load(Ordering::SeqCst) {
+            0 => None,
+            1 => Some(ProviderKind::Claude),
+            2 => Some(ProviderKind::Codex),
+            _ => Some(ProviderKind::Unknown),
+        }
+    }
+
+    /// Starts the update hold of `kind`. False when the station restarts or
+    /// another update holds: then nothing changed.
+    pub(super) fn begin_update(&self, kind: ProviderKind) -> bool {
+        let code = match kind {
+            ProviderKind::Claude => 1,
+            ProviderKind::Codex => 2,
+            ProviderKind::Unknown => 3,
+        };
+        if self.restarting()
+            || self
+                .updating
+                .compare_exchange(0, code, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return false;
+        }
+        // The restart admission sets `restarting` before it reads `updating`.
+        if self.restarting() {
+            self.updating.store(0, Ordering::SeqCst);
+            return false;
+        }
+        true
+    }
+
+    /// Ends the update hold and wakes the waiters.
+    pub(super) fn end_update(&self) {
+        self.updating.store(0, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
     pub(super) fn begin(&self) {
         self.restarting.store(true, Ordering::SeqCst);
         self.changed.notify_waiters();
@@ -117,7 +163,7 @@ impl RestartState {
     pub fn begin_claim(self: &Arc<Self>) -> crate::worker::Claim {
         let guard: Box<dyn std::any::Any + Send> = Box::new(self.enter_claim());
         crate::worker::Claim {
-            hold_starts: self.restarting(),
+            hold_starts: self.restarting() || self.updating().is_some(),
             guard: Some(guard),
         }
     }

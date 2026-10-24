@@ -40,6 +40,11 @@ pub use default_mode_cfg::{
     CLAUDE_PROVIDER_DEFAULT, CODEX_PROVIDER_DEFAULT, DefaultModes, codex_modes,
     widens as default_mode_widens,
 };
+#[path = "config_provider_updates.rs"]
+mod provider_updates_cfg;
+#[cfg(test)]
+pub(crate) use provider_updates_cfg::RAW_PROVIDER_UPDATES_KEYS;
+pub use provider_updates_cfg::{ClaudeChannel, ProviderUpdatesConfig, UpdateZone};
 #[path = "config_knobs_deck.rs"]
 mod knobs_deck_cfg;
 pub use knobs_deck_cfg::{DeckLimits, DeckRetention, DeckSecurity};
@@ -311,6 +316,8 @@ pub struct StationConfig {
     /// `[model_help]`: small generated text from the owner's own provider
     /// login (R10, DL-167).
     pub model_help: ModelHelpConfig,
+    /// `[provider_updates]`: the nightly update of Claude and Codex (B28).
+    pub provider_updates: ProviderUpdatesConfig,
     /// `tailscale_bin`: the absolute path of the program, or `None`: look it up.
     pub tailscale_bin: Option<PathBuf>,
     /// `clone_root`: where Fleet Git clones new project homes. `None`: the
@@ -464,6 +471,10 @@ impl StationConfig {
             Some(raw) => raw.validate()?,
             None => ModelHelpConfig::default(),
         };
+        let provider_updates = match raw.provider_updates {
+            Some(raw) => raw.validate()?,
+            None => ProviderUpdatesConfig::default(),
+        };
         let limits = match raw.limits {
             Some(raw) => raw.validate()?,
             None => StationLimits::default(),
@@ -524,6 +535,7 @@ impl StationConfig {
             trackers,
             member_deny,
             model_help,
+            provider_updates,
             tailscale_bin,
             clone_root: fleet_git.clone_root,
             traits: fleet_git.traits,

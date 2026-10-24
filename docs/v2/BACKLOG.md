@@ -375,7 +375,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Gate: run the probe and the handoff check (`coordinator/bindings_handoff.rs`) on the new version before it counts as updated.
   - Each update is a high-risk change (it runs code from an external source as the owner). Adversary DESIGN REVIEW before the build.
   - Settings: the schedule, the channel and the on/off switch in the station settings (B27 applies to the same settings).
-- **Status:** open (noted only).
+- **Status:** built on branch `bl/cli-update` (design `docs/v2/design/cli-update.md`, DL-550 to DL-562, tasks T1 to T11). Open until the merge into `v2`: the tests, the adversary PRE-PR REVIEW, and the live checks of the merge note.
 
 ## B29. An analytics page: per station and for the whole fleet, backfilled from the sessions (owner idea, 2026-10-24)
 

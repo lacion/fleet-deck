@@ -15,6 +15,7 @@ import { settingsActions } from '../settings/actions';
 import { tailnetActions } from '../tailnet/api';
 import { desktopActions, displayActions } from '../displays/actions';
 import { deckHttp } from '../settings/http';
+import { cliUpdateActions } from '../settings/cliUpdate';
 import { desktopToolsActions } from '../settings/desktopTools';
 import { omarchyActions } from '../settings/omarchy';
 import { captureActions } from '../desktop/capture';
@@ -64,6 +65,8 @@ const CAPTURE_WAIT_MS = 45_000;
 const LOOKUP_WAIT_MS = 15_000;
 // Omarchy admin: the deck waits up to 75 s for an action (design §4); the board waits a little longer.
 const OMARCHY_WAIT_MS = 90_000;
+/** An update call waits 90 s at the deck (B28): the board waits a little longer. */
+const CLI_UPDATE_WAIT_MS = 100_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -309,6 +312,9 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       omarchy: omarchyActions(deckHttp((path, init) => fetch(path, init), csrf, OMARCHY_WAIT_MS)),
       desktopTools: desktopToolsActions(
         deckHttp((path, init) => fetch(path, init), csrf, OMARCHY_WAIT_MS),
+      ),
+      cliUpdate: cliUpdateActions(
+        deckHttp((path, init) => fetch(path, init), csrf, CLI_UPDATE_WAIT_MS),
       ),
     };
   }, [connection, owner, canAdmin, guest]);
