@@ -46,6 +46,8 @@ pub struct DeckKnobs {
     pub delivery_ms: i64,
     /// `clone_transport = "ssh"`: a remote derived from the forge uses `git@host:repo.git` (Fleet Sync §1.3).
     pub clone_ssh: bool,
+    /// A station that comes back with a new version keeps the grants of its sessions (B26).
+    pub keep_grants_on_update: bool,
 }
 
 impl Default for DeckKnobs {
@@ -65,6 +67,7 @@ impl Default for DeckKnobs {
             audit_max_rows: 200_000,
             delivery_ms: 24 * HOUR_MS,
             clone_ssh: false,
+            keep_grants_on_update: true,
         }
     }
 }
@@ -89,6 +92,7 @@ impl DeckKnobs {
             audit_max_rows: i64::from(config.retention.audit_max_rows),
             delivery_ms: i64::from(config.limits.delivery_hours) * HOUR_MS,
             clone_ssh: config.clone_transport == CloneTransport::Ssh,
+            keep_grants_on_update: config.keep_grants_on_update,
         }
     }
 }
@@ -216,7 +220,15 @@ mod tests {
                 audit_max_rows: 12_000,
                 delivery_ms: 13 * 60 * 60 * 1000,
                 clone_ssh: true,
+                keep_grants_on_update: true,
             }
         );
+    }
+
+    #[test]
+    fn the_knobs_carry_keep_grants_on_update() {
+        assert!(DeckKnobs::default().keep_grants_on_update);
+        let config = DeckConfig::parse("keep_grants_on_update = false\n").unwrap();
+        assert!(!DeckKnobs::of(&config).keep_grants_on_update);
     }
 }

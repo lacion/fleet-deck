@@ -3,6 +3,7 @@
 
 mod fault;
 mod fields;
+mod keep_grants;
 mod knobs;
 mod p7b;
 mod save;
