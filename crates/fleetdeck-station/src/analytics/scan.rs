@@ -339,6 +339,10 @@ fn read_file(
             && guard_of(&file, r.offset).as_deref() == Some(r.guard.as_str())
     });
     let (start, mut state, mut malformed) = match resume {
+        // A Claude row has no parser state ('{}').
+        Some(r) if provider == ProviderKind::Claude => {
+            (r.offset, CodexState::default(), r.malformed)
+        }
         Some(r) => match serde_json::from_str::<CodexState>(&r.state) {
             Ok(state) => (r.offset, state, r.malformed),
             Err(_) => (0, CodexState::default(), 0),
@@ -506,6 +510,8 @@ pub(crate) async fn pass(
                 continue;
             };
             pending[i] += read.pending;
+            // A read clipped at the budget leaves bytes for the next pass.
+            limited |= read.clipped && read.pending > 0;
             remaining = if read.clipped {
                 0
             } else {
