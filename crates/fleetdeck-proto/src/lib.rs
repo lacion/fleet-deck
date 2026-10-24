@@ -7,6 +7,7 @@
 //! from it ([`ts::export_all`]).
 
 pub mod accounts;
+pub mod analytics;
 pub mod apps;
 pub mod artifacts;
 pub mod assist;

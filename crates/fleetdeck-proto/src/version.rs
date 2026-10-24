@@ -83,6 +83,10 @@ pub mod feature {
     /// native sessions of a station's provider homes (B7).
     pub const NATIVE_SESSIONS: &str = "native_sessions.v1";
 
+    /// `station.analytics`: the hour buckets of the transcript usage and the
+    /// Fleet Deck counters of a station (B29).
+    pub const ANALYTICS: &str = "analytics.v1";
+
     /// `session.branches` and `files.branch_diff`: the branches of the
     /// repository of a session and the committed diff of one (DL-191).
     pub const SESSION_BRANCHES: &str = "session_branches.v1";
@@ -325,6 +329,7 @@ pub mod feature {
         HISTORY,
         SUBAGENT,
         NATIVE_SESSIONS,
+        ANALYTICS,
         IMPORT_PIN,
         SESSION_BRANCHES,
         ARTIFACTS,

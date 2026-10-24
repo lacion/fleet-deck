@@ -443,3 +443,36 @@ fn app_methods_scopes() {
     assert!(feature::ALL.contains(&feature::MCP_APPS));
     assert!(!feature::REQUIRED.contains(&feature::MCP_APPS));
 }
+
+/// B29: `station.analytics` is a deck to station read method of `analytics.v1`.
+#[test]
+fn station_analytics_is_a_read_method_of_analytics_v1() {
+    let (d, s) = (Role::Deck, Role::Station);
+    let read = scopes(&[Scope::Read]);
+    let without = negotiated(&[feature::CONTROL]);
+    assert_eq!(
+        code_of(authorize(
+            "station.analytics",
+            d,
+            s,
+            None,
+            &negotiated(&[feature::CONTROL, feature::ANALYTICS]),
+            Some(&read)
+        )),
+        "ok"
+    );
+    assert_eq!(
+        code_of(authorize(
+            "station.analytics",
+            d,
+            s,
+            None,
+            &without,
+            Some(&read)
+        )),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    let spec = method("station.analytics").unwrap();
+    assert!(!spec.mutating);
+    assert!(feature::ALL.contains(&feature::ANALYTICS));
+}
