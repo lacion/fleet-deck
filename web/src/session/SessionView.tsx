@@ -67,6 +67,7 @@ import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns, useDiffTotal } from './workspace';
 import { shortModel } from '../ui/format';
 import { sessionRef } from '../ui/localSet';
+import { appsEnvOf } from '../apps/env';
 
 export { readFilesOpen } from './paneLayout';
 
@@ -497,6 +498,7 @@ export function SessionView(props: SessionViewProps) {
                 loadSubagent={loadSubagent}
                 tasks={tasks}
                 highlight={highlight}
+                apps={appsEnvOf(session, actions ?? null, guest)}
                 shell={
                   guest === null && actions != null
                     ? {

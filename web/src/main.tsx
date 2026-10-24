@@ -7,9 +7,12 @@ import {
   redeemDisplayLink,
   takeDisplayLink,
 } from './display/api';
+import { appActions } from './apps/actions';
+import { registerAppActions } from './apps/env';
 import { takeLoginLink } from './runtime/api';
 import { browserEnvironment, Connection } from './runtime/connection';
 import { RuntimeApp } from './runtime/RuntimeApp';
+import { deckHttp } from './settings/http';
 import { initDensity } from './ui/density';
 import { initTheme } from './ui/theme';
 import '@fontsource-variable/mona-sans/standard.css';
@@ -34,6 +37,10 @@ import './styles/sharing.css';
 import './styles/settings.css';
 import './styles/wall.css';
 import './styles/displays.css';
+import './styles/apps.css';
+
+/** The longest wait for one app call: the deck waits 70 s for the station (design §4.7). */
+const APP_CALL_WAIT_MS = 75_000;
 
 initTheme();
 initDensity();
@@ -96,6 +103,16 @@ if (isDisplayPath(window.location.pathname)) {
   const token = takeLoginLink(window.location, window.history);
   const connection = new Connection(browserEnvironment());
   connection.start(token);
+  // B15: the app calls of the chat go through the deck transport (the cookie and the CSRF token).
+  registerAppActions(
+    appActions(
+      deckHttp(
+        (path, init) => fetch(path, init),
+        () => connection.getSnapshot().login?.csrf ?? null,
+        APP_CALL_WAIT_MS,
+      ),
+    ),
+  );
   createRoot(root).render(
     <StrictMode>
       <RuntimeApp connection={connection} />

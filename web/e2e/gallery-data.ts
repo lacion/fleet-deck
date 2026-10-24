@@ -463,6 +463,44 @@ export function otterTimeline(now: number): EventEnvelope[] {
   }));
 }
 
+/** B15: the app of the gallery shots (the fake deck of fake-deck.ts serves its view and its page). */
+export const APP_ID = '01JGALLERYAPP0000000000000';
+
+/** B15: one MCP tool call of otter-n1rr that shipped an app (`tool.app`), after `otterTimeline`. */
+export function appTimeline(now: number): EventEnvelope[] {
+  const events: Event[] = [
+    {
+      kind: 'tool.started',
+      node_id: 'node-app',
+      parent_node_id: null,
+      tool_kind: 'mcp',
+      title: 'mcp__demo__show_counter',
+      input_summary: '{}',
+      files: [],
+      provider_refs: refs,
+    },
+    done('node-app'),
+    {
+      kind: 'tool.app',
+      node_id: 'node-app',
+      app_id: APP_ID,
+      server: 'demo',
+      tool: 'show_counter',
+      resource_uri: 'ui://demo/counter',
+      prefers_border: true,
+    },
+  ];
+  return events.map((event, i) => ({
+    station_seq: 700 + i + 1,
+    session_id: OTTER,
+    session_seq: 100 + i + 1,
+    at: now - (events.length - i) * 1_000,
+    proto_version: 1,
+    raw_ref: null,
+    event,
+  }));
+}
+
 /** The newest rows first: [minutes ago, kind, session callsign, text]. */
 const FEED: [number, ActivityItem['kind'], string, string][] = [
   [2, 'approval', 'otter-n1rr', `Permission: Bash ${NEXTEST}`],

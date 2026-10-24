@@ -58,6 +58,8 @@ export type Item =
       exit_code: number | null;
       /** B8: how a `!` shell command ended (`provider_refs.shell` of `tool.completed`); absent until then. */
       shell?: string;
+      /** B15: the MCP app of this call (`tool.app`); the chat shows an app row under the tool row. */
+      app?: { app_id: string; server: string; tool: string; prefers_border: boolean | undefined };
     }
   | {
       type: 'reasoning';
@@ -327,6 +329,20 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           } else {
             node.status = e.status === 'ok' ? 'done' : 'failed';
           }
+        }
+        break;
+      }
+      case 'tool.app': {
+        const e = event as Extract<Event, { kind: 'tool.app' }>;
+        const node = nodes.get(e.node_id);
+        // An event for an unknown node, or for a subagent card, is ignored.
+        if (node?.type === 'tool') {
+          node.app = {
+            app_id: e.app_id,
+            server: e.server,
+            tool: e.tool,
+            prefers_border: e.prefers_border,
+          };
         }
         break;
       }

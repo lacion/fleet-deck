@@ -607,3 +607,55 @@ describe('the whole prompt of a run (backlog B10)', () => {
     expect(run?.text).toBe('first line\nsecond line');
   });
 });
+
+describe('tool.app (B15)', () => {
+  const started: Event = {
+    kind: 'tool.started',
+    node_id: 'n-app',
+    parent_node_id: null,
+    tool_kind: 'mcp',
+    title: 'mcp__demo__show_counter',
+    input_summary: '{}',
+    files: [],
+    provider_refs: {},
+  };
+  const app = (node_id: string): Event => ({
+    kind: 'tool.app',
+    node_id,
+    app_id: '01JABCDEFGHJKMNPQRSTVWXYZ0',
+    server: 'demo',
+    tool: 'show_counter',
+    resource_uri: 'ui://demo/counter',
+    prefers_border: true,
+  });
+  const tools = (items: readonly Item[]) =>
+    items.filter((i): i is Extract<Item, { type: 'tool' }> => i.type === 'tool');
+
+  test('tool.app attaches to its tool node and ignores unknown nodes', () => {
+    const items = buildTimeline(envelopes('s', [started, app('n-app'), app('n-unknown')])).items;
+    expect(tools(items)).toHaveLength(1);
+    expect(tools(items)[0]?.app).toEqual({
+      app_id: '01JABCDEFGHJKMNPQRSTVWXYZ0',
+      server: 'demo',
+      tool: 'show_counter',
+      prefers_border: true,
+    });
+  });
+
+  test('a tool row without tool.app has no app field', () => {
+    const items = buildTimeline(envelopes('s', [started])).items;
+    expect(tools(items)[0]).not.toHaveProperty('app');
+  });
+
+  test('tool.app may follow the completion of the tool', () => {
+    const items = buildTimeline(
+      envelopes('s', [
+        started,
+        { kind: 'tool.completed', node_id: 'n-app', status: 'ok', files: [], exit_code: null },
+        app('n-app'),
+      ]),
+    ).items;
+    expect(tools(items)[0]?.status).toBe('ok');
+    expect(tools(items)[0]?.app?.tool).toBe('show_counter');
+  });
+});

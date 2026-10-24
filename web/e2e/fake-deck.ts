@@ -4,6 +4,7 @@
 // processes instead.
 import { expect, type Page, type Request, type WebSocketRoute } from '@playwright/test';
 import type {
+  AppOpenCall,
   DeckCommand,
   DeckSession,
   DisplayEvent,
@@ -813,4 +814,188 @@ export async function openSession(page: Page, title: string): Promise<void> {
 /** A terminal stream that stays open and silent (the board attaches to a shell). */
 export async function quietShells(page: Page): Promise<void> {
   await page.routeWebSocket('**/shells/*/attach', () => {});
+}
+
+// ---- B15 MCP Apps (design docs/v2/design/mcp-apps.md §4.7, §4.8) ----
+
+/** The bootstrap that the deck puts first in an app document (`APP_BOOTSTRAP` of app_public.rs). */
+export const APP_BOOTSTRAP = `<script>(()=>{"use strict";
+try{void document.cookie}catch(e){if(e&&e.name==="SecurityError"){Object.defineProperty(document,"cookie",{configurable:true,get:()=>"",set:()=>{}})}}
+const host=window.parent,ch=new MessageChannel(),port=ch.port1,send=MessagePort.prototype.postMessage;
+port.postMessage=function(m,_o,t){send.call(port,m,Array.isArray(t)?t:[])};
+Object.defineProperty(window,"parent",{configurable:true,enumerable:true,get:()=>port});
+port.onmessage=(ev)=>{const d=ev.data;
+const c=d&&((d.result&&d.result.hostContext)||(d.method==="ui/notifications/host-context-changed"&&d.params));
+if(c&&(c.theme==="light"||c.theme==="dark"))document.documentElement.style.colorScheme=c.theme;
+window.dispatchEvent(new MessageEvent("message",{data:d,source:port}))};
+port.start();
+host.postMessage({"fleet-deck-app-hello":1},"*",[ch.port2]);
+})();</script>`;
+
+/** The CSP of `GET /app/{token}` with no domains (§4.7). */
+export const APP_CSP =
+  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+/** The CSP of an artifact page (`SANDBOX_CSP` of artifact_routes.rs). */
+export const ARTIFACT_CSP =
+  "sandbox allow-scripts allow-popups allow-forms allow-modals; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
+
+/** A small counter app: it initializes, then calls `bump` when its button is pressed. */
+export const DEMO_APP = `<!doctype html><html><body style="margin:8px;font:14px sans-serif">
+<p id="counter">Count: 0</p><button id="bump" type="button">Bump</button>
+<script>
+let n=0;const pending=new Map();
+window.addEventListener("message",e=>{const d=e.data;if(d&&d.id!==undefined&&pending.has(d.id)){pending.get(d.id)(d);pending.delete(d.id)}});
+const rpc=(method,params)=>new Promise(res=>{const id=++n;pending.set(id,res);window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")});
+rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"demo",version:"1"},appCapabilities:{}}).then(()=>{
+window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/initialized",params:{}},"*");
+window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/size-changed",params:{height:120}},"*")});
+document.getElementById("bump").onclick=async()=>{const r=await rpc("tools/call",{name:"bump",arguments:{}});
+document.getElementById("counter").textContent=r.error?"Error: "+r.error.message:"Count: "+r.result.content[0].text};
+</script></body></html>`;
+
+/** The app routes of one session and the documents that the fake deck serves. */
+export type FakeApps = {
+  readonly appId: string;
+  /** The view token of the document: `GET /app/{token}`. */
+  token: string;
+  counter: number;
+  /** The bodies of the POSTs of the call route. */
+  calls: { request: { method: string; name?: string }; confirmed: boolean }[];
+  /** What `GET …/app-calls` answers. */
+  open: AppOpenCall[];
+  /** The releases that were posted: the call's own session and the call id. */
+  released: { session: string; callId: string }[];
+  /** `/app/{token}` documents by token (the bootstrap goes in front of them). */
+  documents: Record<string, string>;
+  /** `/a/{path}` pages (the artifact CSP); `delay` holds the request of `/a/slow.png` for 3 s. */
+  pages: Record<string, string>;
+  /** The paths `/a/beacon?...` that a page requested, in order. */
+  beacons: string[];
+};
+
+/** The prefix of `with_bootstrap` of app_public.rs: after a leading doctype, else in front. */
+export function withBootstrap(html: string): string {
+  const m = /^[\s\ufeff]*<!doctype[^>]*>/i.exec(html);
+  const at = m === null ? 0 : m[0].length;
+  return html.slice(0, at) + APP_BOOTSTRAP + html.slice(at);
+}
+
+/** Answers the app routes of `station/session`: the view, the call (confirm first), the list, the release. */
+export function fakeApps(
+  deck: FakeDeck,
+  station: string,
+  session: string,
+  appId: string,
+  open: AppOpenCall[] = [],
+): FakeApps {
+  const state: FakeApps = {
+    appId,
+    token: 'demo',
+    counter: 0,
+    calls: [],
+    open,
+    released: [],
+    documents: { demo: DEMO_APP },
+    pages: {},
+    beacons: [],
+  };
+  const base = `^/api/sessions/${station}/${session}`;
+  deck.route('GET', new RegExp(`${base}/apps/${appId}$`), () => ({
+    status: 200,
+    body: {
+      url: `/app/${state.token}`,
+      expires_at: Date.now() + 600_000,
+      server: 'demo',
+      tool: 'show_counter',
+      resource_uri: 'ui://demo/counter',
+      csp: { connect_domains: [], resource_domains: [] },
+      prefers_border: true,
+      tool_input: {},
+      tool_result: { content: [{ type: 'text', text: String(state.counter) }] },
+    },
+  }));
+  deck.route('POST', new RegExp(`${base}/apps/${appId}/call$`), (_m, raw) => {
+    const body = raw as {
+      request: { method: string; name?: string };
+      confirmed: boolean;
+    };
+    state.calls.push({ request: body.request, confirmed: body.confirmed });
+    if (!body.confirmed) {
+      return { status: 200, body: { outcome: 'confirm', tool: 'bump', title: null } };
+    }
+    state.counter += 1;
+    return {
+      status: 200,
+      body: {
+        outcome: 'done',
+        result: { content: [{ type: 'text', text: String(state.counter) }] },
+      },
+    };
+  });
+  deck.route('GET', new RegExp(`${base}/app-calls$`), () => ({
+    status: 200,
+    body: { calls: state.open },
+  }));
+  deck.route(
+    'POST',
+    new RegExp(`^/api/sessions/${station}/([^/]+)/app-calls/([^/]+)/release$`),
+    (m) => {
+      const callId = decodeURIComponent(m[2] ?? '');
+      state.released.push({ session: decodeURIComponent(m[1] ?? ''), callId });
+      state.open = state.open.filter((c) => c.call_id !== callId);
+      return { status: 200, body: { released: true } };
+    },
+  );
+  return state;
+}
+
+/**
+ * Serves `/app/{token}` (the §4.7 headers, the bootstrap first) and `/a/{path}` (the artifact CSP)
+ * of `apps` to `page`. A request of `/a/slow.png` waits for `release()`; `/a/beacon` is recorded.
+ */
+export async function installApps(page: Page, apps: FakeApps): Promise<{ release: () => void }> {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/^https?:\/\/[^/]+\/app\/[A-Za-z0-9_-]+$/, async (route) => {
+    const token = new URL(route.request().url()).pathname.slice('/app/'.length);
+    const html = apps.documents[token];
+    if (html === undefined) return route.fulfill({ status: 404, body: 'not found' });
+    return route.fulfill({
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'content-security-policy': APP_CSP,
+      },
+      body: withBootstrap(html),
+    });
+  });
+  await page.route(/^https?:\/\/[^/]+\/a\//, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.slice('/a/'.length);
+    if (path === 'slow.png') {
+      await gate;
+      return route.fulfill({ status: 404, body: 'late' });
+    }
+    if (path === 'beacon') {
+      apps.beacons.push(url.search);
+      return route.fulfill({ status: 204 });
+    }
+    const html = apps.pages[path];
+    if (html === undefined) return route.fulfill({ status: 404, body: 'not found' });
+    return route.fulfill({
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': ARTIFACT_CSP,
+      },
+      body: html,
+    });
+  });
+  return { release };
 }
