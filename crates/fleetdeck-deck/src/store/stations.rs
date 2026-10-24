@@ -238,9 +238,10 @@ impl DeckStore {
         Ok(out)
     }
 
-    /// Removes the station with `key` (its pin, grants, sessions and
-    /// timeline) and increments the revocation generation, in one
-    /// transaction. Returns the removed record.
+    /// Removes the station with `key` (its pin, sessions and timeline; the
+    /// grants of its sessions are revoked, `station_removed`) and increments
+    /// the revocation generation, in one transaction. Returns the removed
+    /// record.
     ///
     /// # Errors
     /// A database error.
@@ -257,7 +258,10 @@ impl DeckStore {
                 .optional()?
                 .map(RawRecord::parse)
                 .transpose()?;
+            let mut changed = BTreeSet::new();
             if let Some(rec) = &found {
+                changed =
+                    super::grant_audit::drop_station_tx(&tx, &rec.station_id, &rec.name, now)?;
                 super::fleet::block_unlisted_tasks(&tx, &rec.station_id, &BTreeSet::new(), now)?;
                 super::review::delete_station(&tx, &rec.station_id)?;
                 super::station_palettes::delete_station(&tx, &rec.station_id)?;
@@ -274,9 +278,11 @@ impl DeckStore {
                 bump_generation(&tx)?;
             }
             tx.commit()?;
-            Ok(found)
+            Ok((found, changed))
         })
         .await?;
+        let (out, changed) = out;
+        self.note_scope_changes(changed);
         if out.is_some() {
             self.commands_changed();
             self.board_changed();
@@ -292,6 +298,7 @@ impl DeckStore {
     /// [`DeckError::UnknownStation`] when `old` is not paired, or a database
     /// error.
     pub async fn rotate_station(&self, old: PeerKey, new: PeerKey) -> Result<()> {
+        let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let moved = tx.execute(
@@ -305,6 +312,7 @@ impl DeckStore {
                 "DELETE FROM pairing_completions WHERE station_key = ?1",
                 [key_hex(&old)],
             )?;
+            super::grant_audit::kept_on_rotation_tx(&tx, &key_hex(&new), now)?;
             bump_generation(&tx)?;
             tx.commit()?;
             Ok(())

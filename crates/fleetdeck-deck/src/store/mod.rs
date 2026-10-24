@@ -64,6 +64,7 @@ mod fleet_view_paging_tests;
 #[cfg(test)]
 mod fleet_view_tests;
 pub mod git_snapshots;
+mod grant_audit;
 pub mod grant_scopes;
 mod grant_spawn_caps;
 pub mod grants;

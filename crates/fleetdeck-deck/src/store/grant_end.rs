@@ -21,6 +21,10 @@ pub enum GrantEnd {
     /// Past `expires_at`, or stored `expired` for another reason.
     Lifetime,
     Revoked,
+    /// Ended because its station was updated (`station_updated`, B26).
+    StationUpdated,
+    /// Ended because its station started with new data (`station_reset`, B26).
+    StationReset,
 }
 
 /// What the link cache keeps of the ended newest grant of a session
@@ -39,7 +43,7 @@ impl EndFacts {
     #[must_use]
     pub fn at(self, now: i64) -> GrantEnd {
         match self.end {
-            GrantEnd::Revoked => GrantEnd::Revoked,
+            GrantEnd::Revoked | GrantEnd::StationUpdated | GrantEnd::StationReset => self.end,
             _ if now > self.expires_at => GrantEnd::Lifetime,
             end => end,
         }
@@ -54,7 +58,11 @@ pub fn grant_end(grant: &Grant, now: i64) -> Option<GrantEnd> {
         idle_ttl_ms: grant.idle_ttl_ms,
     };
     match grant.state {
-        GrantState::Revoked => Some(GrantEnd::Revoked),
+        GrantState::Revoked => Some(match grant.revoked_reason.as_deref() {
+            Some("station_updated") => GrantEnd::StationUpdated,
+            Some("station_reset") => GrantEnd::StationReset,
+            _ => GrantEnd::Revoked,
+        }),
         _ if now > grant.expires_at => Some(GrantEnd::Lifetime),
         GrantState::Expired if grant.revoked_reason.as_deref() == Some("idle") => Some(idle),
         GrantState::Expired => Some(GrantEnd::Lifetime),
@@ -77,6 +85,13 @@ pub fn end_text(end: GrantEnd) -> String {
         GrantEnd::Revoked => {
             "Your fleet grant was revoked. The owner can give a new grant on the board.".to_owned()
         }
+        GrantEnd::StationUpdated => "Your fleet grant ended when your station was updated, \
+            because the deck setting \"Keep grants on update\" is off. \
+            The owner can give a new grant on the board."
+            .to_owned(),
+        GrantEnd::StationReset => "Your fleet grant ended because your station started with new \
+            data. The owner can give a new grant on the board."
+            .to_owned(),
     }
 }
 
