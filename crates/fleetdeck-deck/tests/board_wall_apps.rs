@@ -23,7 +23,7 @@ use fleetdeck_proto::artifacts::{Artifact, ArtifactKind, ArtifactVersion};
 use fleetdeck_proto::display_directive::{ArtifactRef, DirectiveBody, DirectiveFilter};
 use fleetdeck_proto::event::{RequestKind, ResponseChannel};
 use fleetdeck_proto::link::Scope;
-use fleetdeck_proto::session::OpenRequest;
+use fleetdeck_proto::session::{Activity, OpenRequest};
 use serde_json::{Value, json};
 use share_support::*;
 
@@ -395,6 +395,9 @@ fn summary(id: &str, request: bool) -> fleetdeck_proto::SessionSummary {
     s.callsign = Some(format!("call-{id}"));
     s.title = Some(format!("title-{id}"));
     if request {
+        // A session with an open request waits for the owner: the fold sets
+        // the activity, and the card status follows it.
+        s.activity = Activity::NeedsYou;
         s.open_requests = vec![OpenRequest {
             request_id: "q1".into(),
             node_id: None,
