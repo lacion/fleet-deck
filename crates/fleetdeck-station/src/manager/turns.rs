@@ -160,6 +160,15 @@ impl SessionTurns {
         self.worktree.is_some()
     }
 
+    /// The worktree root of the session, as the turn rows store it (the same
+    /// text as `shell_runs.worktree_root`); `None` without a Git worktree.
+    #[must_use]
+    pub fn worktree_root(&self) -> Option<String> {
+        self.worktree
+            .as_ref()
+            .map(|w| w.root().to_string_lossy().into_owned())
+    }
+
     /// The process that runs the session's turns now.
     pub fn set_process(&self, process: ProcessIncarnation) {
         self.lock().process = Some(process);

@@ -14,15 +14,17 @@
 //!   ended** (design §4.6.1, "End proof").
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, OnceLock, PoisonError};
 
 use fleetdeck_proto::{ProviderInstanceId, SessionId};
 use fleetdeck_providers::LiveSession;
 use fleetdeck_providers::apps::AppBridge;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use super::SessionTarget;
 use crate::apps::Capture;
+use crate::apps::calls::{self, AppEnv, CallLimits, ProcessExits};
 use crate::manager::durable::{DurableCore, DurableDriver};
 use crate::manager::shim_station::Durable;
 use crate::manager::turns::SessionTurns;
@@ -47,13 +49,35 @@ pub struct AppHost {
     pub process: ProcessIncarnation,
 }
 
+/// What the end of a process needs (§4.6.1, "Process end").
+struct Ends {
+    store: Store,
+    exits: Arc<ProcessExits>,
+    /// The wake of the advance task; bound when the first host registers.
+    wake: OnceLock<Arc<Notify>>,
+}
+
 /// The registry of the app hosts, by session. Clones share one map.
-#[derive(Clone, Default)]
-pub(super) struct AppHosts(Arc<StdMutex<HashMap<SessionId, AppHost>>>);
+#[derive(Clone)]
+pub(super) struct AppHosts {
+    map: Arc<StdMutex<HashMap<SessionId, AppHost>>>,
+    ends: Arc<Ends>,
+}
 
 impl AppHosts {
+    fn new(store: Store) -> Self {
+        Self {
+            map: Arc::default(),
+            ends: Arc::new(Ends {
+                store,
+                exits: Arc::default(),
+                wake: OnceLock::new(),
+            }),
+        }
+    }
+
     fn map(&self) -> MutexGuard<'_, HashMap<SessionId, AppHost>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.map.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(super) fn register(&self, session: SessionId, host: AppHost) {
@@ -66,19 +90,54 @@ impl AppHosts {
 
     /// Removes the entry of `session` when it belongs to `process`; a newer
     /// process keeps its entry. Returns whether an entry was removed.
+    ///
+    /// For [`HostEnd::Exited`] it then records the exit of that process
+    /// (also when the entry belongs to a newer process) and settles the
+    /// `uncertain` app calls of that process in a task, in this order:
+    /// the record comes first, so a call task that marks its row later reads
+    /// it. [`HostEnd::Detached`] records nothing and changes no row: the shim
+    /// and its provider go on (§4.6.1, "End proof").
     pub(super) fn drop_host(
         &self,
         session: &SessionId,
         process: &ProcessIncarnation,
         end: HostEnd,
     ) -> bool {
-        let mut map = self.map();
-        if map.get(session).is_none_or(|host| &host.process != process) {
-            return false;
+        let removed = {
+            let mut map = self.map();
+            let own = map
+                .get(session)
+                .is_some_and(|host| &host.process == process);
+            if own {
+                map.remove(session);
+            }
+            own
+        };
+        if end == HostEnd::Exited {
+            self.ends.exits.record(session, process.as_str());
+            self.settle_exited(session, process);
         }
-        map.remove(session);
-        tracing::debug!(session = %session, ?end, "app host dropped");
-        true
+        tracing::debug!(session = %session, ?end, removed, "app host dropped");
+        removed
+    }
+
+    fn settle_exited(&self, session: &SessionId, process: &ProcessIncarnation) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(session = %session, "app calls not settled: no runtime");
+            return;
+        };
+        let (ends, session, process) = (Arc::clone(&self.ends), session.clone(), process.clone());
+        runtime.spawn(async move {
+            match calls::process_ended(&ends.store, &session, process.as_str()).await {
+                Ok(0) => {}
+                Ok(_) => {
+                    if let Some(wake) = ends.wake.get() {
+                        wake.notify_one();
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, session = %session, "app calls not settled"),
+            }
+        });
     }
 }
 
@@ -86,13 +145,15 @@ impl AppHosts {
 pub(super) struct Apps {
     hosts: AppHosts,
     capture: Capture,
+    limits: Arc<CallLimits>,
 }
 
 impl Apps {
     pub(super) fn new(store: Store) -> Self {
         Self {
-            hosts: AppHosts::default(),
+            hosts: AppHosts::new(store.clone()),
             capture: Capture::new(store),
+            limits: Arc::default(),
         }
     }
 
@@ -119,14 +180,30 @@ impl SessionTarget {
         }
     }
 
+    /// The environment of the app methods (`session.app_call`,
+    /// `session.app_calls`, `session.app_release`): the store, the exits that
+    /// this station process observed, the call limits and the wake of the
+    /// advance task.
+    #[must_use]
+    pub fn app_env(&self) -> AppEnv {
+        let mut env = AppEnv::new(self.store.clone(), Arc::clone(&self.ids));
+        env.exits = Arc::clone(&self.apps.hosts.ends.exits);
+        env.limits = Arc::clone(&self.apps.limits);
+        env.wake = self.shell_notify();
+        env
+    }
+
     /// Registers the app host of a session that entered the `Live` map.
-    pub(in crate::manager) fn register_app_host(&self, session: &SessionId, host: AppHost) {
+    pub fn register_app_host(&self, session: &SessionId, host: AppHost) {
+        // The advance task listens to the shell wake; an exit that settles
+        // app calls wakes it too (the first host binds it).
+        let _bound = self.apps.hosts.ends.wake.set(self.shell_notify());
         self.apps.hosts.register(session.clone(), host);
     }
 
     /// Removes the app host of `session` when it belongs to `process` (see
     /// the module documentation). Returns whether an entry was removed.
-    pub(in crate::manager) fn drop_app_host(
+    pub fn drop_app_host(
         &self,
         session: &SessionId,
         process: &ProcessIncarnation,
@@ -231,6 +308,21 @@ impl SessionTarget {
             Durable::Claude(d) => d.close_app_sink(session_id),
             Durable::Codex(d) => d.close_app_sink(session_id),
         }
+    }
+}
+
+impl crate::manager::SessionManager {
+    /// The app host of a live session (see [`SessionTarget::app_host`]); the
+    /// link methods of the apps use it.
+    #[must_use]
+    pub fn app_host(&self, session: &SessionId) -> Option<AppHost> {
+        self.target.app_host(session)
+    }
+
+    /// The environment of the app methods (see [`SessionTarget::app_env`]).
+    #[must_use]
+    pub fn app_env(&self) -> AppEnv {
+        self.target.app_env()
     }
 }
 

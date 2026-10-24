@@ -30,6 +30,7 @@ use std::path::Path;
 use fleetdeck_providers::{LiveSession, ProviderError};
 
 use super::turns::SessionTurns;
+use crate::store::app_calls::AppCallBarrier;
 use crate::store::shell_runs::Barrier;
 use crate::store::{
     Dispatch, ProcessIncarnation, RevertRow, RevertStep, RowState, Store, StoreError,
@@ -70,14 +71,21 @@ pub mod reason {
     pub const SHELL_RAN_AFTER_TURN: &str = "shell_ran_after_turn";
     /// A shell command of the folder is not settled (B8).
     pub const SHELL_RUNNING: &str = "shell_running";
+    /// An app tool call of the folder is not settled (B15).
+    pub const APP_CALL_RUNNING: &str = "app_call_running";
+    /// An app tool call ran in the folder after the target turn (B15).
+    pub const APP_CALL_RAN_AFTER_TURN: &str = "app_call_ran_after_turn";
 }
 
-/// The reason code of the shell barrier for a revert row (B8), if it holds.
+/// The reason code of the shell barrier and of the app call barrier (B8,
+/// B15) for a revert row, if one holds. The app barrier is read when the
+/// shell barrier is clear, so every place that meets the shell barrier also
+/// meets the app barrier.
 async fn shell_block(
     env: RevertEnv<'_>,
     row: &RevertRow,
 ) -> Result<Option<&'static str>, StoreError> {
-    Ok(env
+    let shell = env
         .store
         .shell_barrier(
             row.revert.worktree_root.clone(),
@@ -87,6 +95,20 @@ async fn shell_block(
         .map(|b| match b {
             Barrier::Running => reason::SHELL_RUNNING,
             Barrier::RanAfterTurn => reason::SHELL_RAN_AFTER_TURN,
+        });
+    if shell.is_some() {
+        return Ok(shell);
+    }
+    Ok(env
+        .store
+        .app_call_barrier(
+            row.revert.worktree_root.clone(),
+            row.revert.app_turn.0.clone(),
+        )
+        .await?
+        .map(|b| match b {
+            AppCallBarrier::Running => reason::APP_CALL_RUNNING,
+            AppCallBarrier::RanAfterTurn => reason::APP_CALL_RAN_AFTER_TURN,
         }))
 }
 
@@ -124,6 +146,18 @@ pub async fn run<R: Rollback + ?Sized>(
         }
     }
     let _fence = turns.fence().await;
+    // B15: an app call takes the fence only to insert its row, so a revert
+    // that passed the first check can have waited here while a call started.
+    // The barrier is checked a second time under the fence (it also covers a
+    // Codex shell of another session in the root).
+    match barrier_at_dispatch(env, revert_id).await {
+        Ok(Some(dispatch)) => return dispatch,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, revert_id, "revert store failure");
+            return Dispatch::Unknown(format!("store: {e}"));
+        }
+    }
     match execute(env, session, process, revert_id).await {
         Ok(dispatch) => dispatch,
         Err(e) => {
@@ -518,3 +552,7 @@ pub async fn recover(env: RevertEnv<'_>) -> Result<usize, StoreError> {
 #[cfg(test)]
 #[path = "revert_tests.rs"]
 mod revert_tests;
+
+#[cfg(test)]
+#[path = "revert_run_apps_tests.rs"]
+mod revert_run_apps_tests;

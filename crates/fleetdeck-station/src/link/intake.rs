@@ -40,6 +40,9 @@ mod intake_capture;
 // R13 P5b: the recording methods (stubs until task S1).
 #[path = "intake_recording.rs"]
 mod intake_recording;
+// B15: the `session.app_*` methods of MCP Apps.
+#[path = "intake_apps.rs"]
+mod apps;
 // R13 P5a: the `artifacts.*` methods, with `artifacts.delete`.
 #[path = "intake_artifacts.rs"]
 mod intake_artifacts;
@@ -538,6 +541,11 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         | "files.session_diff"
         | "files.display_changes"
         | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
+        "session.app_meta"
+        | "session.app_document"
+        | "session.app_call"
+        | "session.app_calls"
+        | "session.app_release" => apps::call(ctx, &req.method, req.params).await,
         "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file"
         | "artifacts.delete" => {
             intake_artifacts::artifact_method(ctx, control, &req.method, req.params).await
