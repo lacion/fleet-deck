@@ -13,6 +13,7 @@ use fleetdeck_proto::{RejectCode, StationId};
 
 use super::names::resolve_station;
 use super::tests::{World, code, decide, env, grant, grant_with, spawn, target, world};
+use crate::store::fleet_view::{FleetViewError, UNKNOWN_STATION};
 use crate::store::fleet_view_tests as view;
 use crate::store::grants::GrantClass;
 use crate::store::stations::NewStation;
@@ -198,6 +199,15 @@ async fn a_projects_filter_by_station_name_lists_the_items_of_the_station_id() {
     assert_eq!(by_id[0]["name"], "lib");
     assert_eq!(ask("beta").await, by_id);
     assert_eq!(ask("BETA").await, by_id);
-    // An unknown name stays as it is and matches no project.
-    assert_eq!(ask("nowhere").await, serde_json::json!([]));
+    // G2: a filter that names no station is refused, not an empty page.
+    let params = serde_json::json!({"caller": "coord-1", "view": "projects",
+                                    "station": "nowhere"});
+    let refused = w.s.fleet_view(&alpha, params).await;
+    assert!(
+        matches!(
+            refused,
+            Err(FleetViewError::Refused(code, text)) if (code, text) == UNKNOWN_STATION
+        ),
+        "{refused:?}"
+    );
 }
