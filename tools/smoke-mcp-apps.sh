@@ -289,12 +289,20 @@ smoke_one() {
     )
     WS=$(cd "$WS" && pwd -P)
     py wrappers "$NODE" "$WS" "$SERVER" "$REC/demo-server.log" 1
+    # A station offers the mode without permission checks only with
+    # allow_bypass_permissions; else the provider falls back to its safest
+    # mode and the show_counter call waits for an approval.
+    bypass=false
+    case $mode in
+    bypassPermissions | *danger-full-access*) bypass=true ;;
+    esac
     cat >"$NODE/station/station.toml" <<EOF
 host = "direct"
 name = "smoke"
 allowed_roots = ["~/projects"]
 max_sessions = 4
 listen = []
+allow_bypass_permissions = $bypass
 
 [[provider_instance]]
 id = "smoke-$driver"
