@@ -593,6 +593,8 @@ async fn fleet_control_may_target_a_worker_binding() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+#[path = "default_mode_tests.rs"]
+mod default_mode;
 #[path = "fleet_control_gate_tests.rs"]
 mod gate;
 #[path = "fleet_control_question_tests.rs"]

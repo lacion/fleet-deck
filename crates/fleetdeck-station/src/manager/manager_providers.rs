@@ -52,6 +52,7 @@ impl SessionManager {
     /// without an adapter, or a failed probe, reports no version and
     /// `unknown` sign-in.
     pub async fn providers(&self) -> Vec<StationProvider> {
+        let live = self.policy.current();
         self.providers
             .get_or_init(|| async {
                 let mut out = Vec::new();
@@ -75,7 +76,17 @@ impl SessionManager {
                 out
             })
             .await
-            .clone()
+            .iter()
+            .cloned()
+            .map(|mut entry| {
+                // The probe is cached; the default mode is a live setting.
+                entry.default_mode = live
+                    .default_modes
+                    .reported(entry.provider)
+                    .map(str::to_owned);
+                entry
+            })
+            .collect()
     }
 
     /// Like [`Self::providers`], but it probes again now: it does not read
@@ -154,7 +165,12 @@ impl SessionManager {
             auth: auth.to_owned(),
             capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
             version_status,
-            default_mode: None,
+            default_mode: self
+                .policy
+                .current()
+                .default_modes
+                .reported(kind)
+                .map(str::to_owned),
         }
     }
 }
