@@ -1,7 +1,8 @@
 //! The link presence of the stations (B22, design `last-seen.md` §3.3):
 //! which stations have a live link and since when (memory of this deck
 //! process), and the last time the deck heard each one
-//! (`stations.last_seen`).
+//! (`stations.last_seen`). It also keeps the `station.info` stream of each
+//! live link (G6, design `grant-idle.md` §3.2).
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -10,7 +11,68 @@ use std::sync::{MutexGuard, PoisonError};
 use fleetdeck_proto::StationId;
 use rusqlite::params;
 
-use super::{DeckStore, Result, call};
+use super::grant_scopes::turns::Stream;
+use super::{DeckStore, Inner, Result, call};
+
+impl Inner {
+    /// Records the stream of link `token` of `station` while that link
+    /// lives (G6 §3.2). Lock order: `link_features`, then `link_streams`.
+    pub(super) fn set_link_stream(&self, station: &StationId, token: u64, stream: Stream) -> bool {
+        let features = self
+            .link_features
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !features
+            .get(station)
+            .is_some_and(|links| links.contains_key(&token))
+        {
+            return false;
+        }
+        let mut streams = self
+            .link_streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        streams
+            .entry(station.clone())
+            .or_default()
+            .insert(token, stream);
+        true
+    }
+
+    /// Forgets the stream of link `token` (the link ended).
+    pub(super) fn forget_link_stream(&self, station: &StationId, token: u64) {
+        let mut streams = self
+            .link_streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(links) = streams.get_mut(station) {
+            links.remove(&token);
+            if links.is_empty() {
+                streams.remove(station);
+            }
+        }
+    }
+
+    /// The stream of the newest live link of `station` that answered
+    /// `station.info` (G6 §3.2 item 1).
+    pub(super) fn current_stream(&self, station: &StationId) -> Option<Stream> {
+        let features = self
+            .link_features
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let live = features.get(station)?;
+        let streams = self
+            .link_streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        streams
+            .get(station)?
+            .iter()
+            .rev()
+            .find(|(token, _)| live.contains_key(token))
+            .map(|(_, stream)| stream.clone())
+    }
+}
 
 impl DeckStore {
     /// Records whether a link to `station` is up. The first `up` keeps

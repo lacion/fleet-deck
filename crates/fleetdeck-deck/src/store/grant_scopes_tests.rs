@@ -410,7 +410,7 @@ async fn the_lazy_idle_expiry_of_a_call_and_of_a_query_rebuilds_the_scopes_in_it
     let refused = w.s.coordinator_query(w.a.clone(), query).await.unwrap();
     assert_eq!(
         refused.unwrap_err().message,
-        "the grant expired after its idle time"
+        "Your fleet grant expired (idle for 1 second). The owner can renew it on the board."
     );
     assert_eq!(state(&w, &g3).await.0, GrantState::Expired);
     assert!(!has(&w, &w.c).await);
@@ -514,4 +514,47 @@ async fn a_pairing_write_keeps_coordinate_for_a_grant_in_effect_and_never_adds_i
     let d = pin(&w.s, "delta", fresh, &[Scope::Admin, Scope::Coordinate]).await;
     assert!(!has(&w, &d).await);
     assert!(has(&w, &w.a).await);
+}
+
+#[tokio::test]
+async fn a_refused_query_of_an_ended_grant_says_why() {
+    let w = world().await;
+    // Another grant keeps alpha covered while the first ones end.
+    grant(&w, (&w.a, "coord-9"), &[], |_| {}).await;
+    let query = |w: &World, caller: &str, b: CoordinatorBinding| CoordinatorQueryEnvelope {
+        query_id: "q".to_owned(),
+        target_incarnation: w.s.incarnation().clone(),
+        caller: caller.into(),
+        binding: b,
+        deadline: w.s.now_ms() + 10_000,
+        query: CoordinatorQuery::ListSessions,
+    };
+
+    let g1 = grant(&w, (&w.a, "coord-1"), &[], |g| g.ttl_ms = 1_000).await;
+    let b1 = bound(&w, &g1).await;
+    w.det.advance(Duration::from_secs(2));
+    let refused =
+        w.s.coordinator_query(w.a.clone(), query(&w, "coord-1", b1))
+            .await
+            .unwrap();
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Your fleet grant expired (its lifetime ended). The owner can give a new grant on the board."
+    );
+
+    let g2 = grant(&w, (&w.a, "coord-2"), &[], |_| {}).await;
+    let b2 = bound(&w, &g2).await;
+    assert!(
+        w.s.revoke_grant(g2.grant_id.clone(), "owner".to_owned())
+            .await
+            .unwrap()
+    );
+    let refused =
+        w.s.coordinator_query(w.a.clone(), query(&w, "coord-2", b2))
+            .await
+            .unwrap();
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Your fleet grant was revoked. The owner can give a new grant on the board."
+    );
 }

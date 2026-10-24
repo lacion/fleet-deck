@@ -5,12 +5,42 @@ use std::fmt;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use fleetdeck_core::identity::{Fingerprint, PeerKey};
-use fleetdeck_proto::link::Scope;
+use fleetdeck_proto::link::{Scope, WireError};
 
 /// The scopes that this node granted to each paired key. Read for every
 /// inbound request, so a revocation applies to the next request at once.
 pub trait GrantSource: fmt::Debug + Send + Sync {
     fn scopes(&self, peer: &Fingerprint) -> BTreeSet<Scope>;
+
+    /// The message of a request from `peer` that the scope check refused,
+    /// when this source can say why the scope is missing (G6). `None`
+    /// keeps the generic text. It runs in the read loop of the link: no
+    /// blocking, no I/O.
+    fn refusal(
+        &self,
+        _peer: &Fingerprint,
+        _method: &str,
+        _params: &serde_json::Value,
+    ) -> Option<String> {
+        None
+    }
+}
+
+/// `e` with the text of `source` when `e` is the scope refusal of
+/// `methods::authorize` (code `forbidden`). The code and the decision stay.
+pub(crate) fn explain(
+    source: &dyn GrantSource,
+    peer: &Fingerprint,
+    method: &str,
+    params: &serde_json::Value,
+    mut e: WireError,
+) -> WireError {
+    if e.code == crate::methods::code::FORBIDDEN
+        && let Some(text) = source.refusal(peer, method, params)
+    {
+        e.message = text;
+    }
+    e
 }
 
 /// An in-memory [`GrantSource`]. A key without an entry has no scope.

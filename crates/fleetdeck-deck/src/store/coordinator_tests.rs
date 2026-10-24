@@ -271,7 +271,7 @@ async fn a_revoked_or_expired_grant_is_forbidden_in_the_decision_transaction_and
     assert_eq!(code(&r), Some(RejectCode::Forbidden));
     assert_eq!(
         r.reject.unwrap().message,
-        "the coordinator grant expired after its idle time"
+        "Your fleet grant expired (idle for 1 second). The owner can renew it on the board."
     );
     let g = w.s.grant(b.grant_id.clone()).await.unwrap().unwrap();
     assert_eq!(g.state, GrantState::Expired);
@@ -723,3 +723,66 @@ mod lifecycle;
 
 #[path = "coordinator_fleet_tests.rs"]
 mod fleet_ops;
+
+#[tokio::test]
+async fn a_refused_call_of_an_ended_grant_says_why() {
+    let w = world().await;
+    let mail_class = [GrantClass::Mail];
+    let message = |r: &Receipt| r.reject.clone().unwrap().message;
+    // Another grant keeps the station covered while the first ones end.
+    grant_with(&w, &mail_class, 0, &[], |g| {
+        g.session_id = "coord-2".into();
+        g.idle_ttl_ms = crate::store::grants::MAX_IDLE_TTL_MS;
+    })
+    .await;
+
+    // The lifetime ended.
+    let b = grant_with(&w, &mail_class, 0, &[], |g| g.ttl_ms = 1000).await;
+    w.det.advance(Duration::from_secs(2));
+    let r = decide(
+        &w,
+        env(&w, &b, "k1", mail(target(&w.alpha, "worker-1"), "hi")),
+    )
+    .await;
+    assert_eq!(
+        message(&r),
+        "Your fleet grant expired (its lifetime ended). The owner can give a new grant on the board."
+    );
+
+    // Revoked.
+    let b = grant_with(&w, &mail_class, 0, &[], |_| {}).await;
+    assert!(
+        w.s.revoke_grant(b.grant_id.clone(), "owner".to_owned())
+            .await
+            .unwrap()
+    );
+    let r = decide(
+        &w,
+        env(&w, &b, "k2", mail(target(&w.alpha, "worker-1"), "hi")),
+    )
+    .await;
+    assert_eq!(
+        message(&r),
+        "Your fleet grant was revoked. The owner can give a new grant on the board."
+    );
+}
+
+#[tokio::test]
+async fn a_refused_call_of_the_only_idle_grant_says_idle_not_that_no_grant_covers_the_station() {
+    let w = world().await;
+    let b = grant_with(&w, &[GrantClass::Mail], 0, &[], |g| g.idle_ttl_ms = 1000).await;
+    w.det.advance(Duration::from_secs(2));
+    // The sweep ends the grant and the station loses its coverage.
+    w.s.sweep_grants().await.unwrap();
+    let r = decide(
+        &w,
+        env(&w, &b, "k1", mail(target(&w.alpha, "worker-1"), "hi")),
+    )
+    .await;
+    let message = r.reject.unwrap().message;
+    assert_eq!(
+        message,
+        "Your fleet grant expired (idle for 1 second). The owner can renew it on the board."
+    );
+    assert_ne!(message, crate::store::grant_scopes::NOT_COVERED);
+}

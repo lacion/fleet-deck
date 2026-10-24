@@ -440,14 +440,16 @@ fn stop_call(f: &Fixture, b: &CoordinatorBinding, id: &str) -> CoordinatorCallEn
     }
 }
 
-fn assert_not_covered(receipt: &Receipt) {
+fn assert_refused(receipt: &Receipt, text: &str) {
     let reject = receipt.reject.as_ref().expect("the call must be refused");
     assert_eq!(reject.code, RejectCode::Forbidden, "{reject:?}");
-    assert_eq!(
-        reject.message,
-        "No coordinator grant covers this station now."
-    );
+    assert_eq!(reject.message, text);
 }
+
+const LIFETIME_TEXT: &str =
+    "Your fleet grant expired (its lifetime ended). The owner can give a new grant on the board.";
+const IDLE_TEXT: &str =
+    "Your fleet grant expired (idle for 1 second). The owner can renew it on the board.";
 
 #[tokio::test]
 async fn a_call_is_refused_when_its_grant_lapses_while_it_waits_for_its_session_read() {
@@ -459,7 +461,7 @@ async fn a_call_is_refused_when_its_grant_lapses_while_it_waits_for_its_session_
         store.decide_coordinator(station, envelope).await.unwrap()
     })
     .await;
-    assert_not_covered(&receipt);
+    assert_refused(&receipt, LIFETIME_TEXT);
 }
 
 #[tokio::test]
@@ -474,7 +476,7 @@ async fn a_call_is_refused_when_its_grant_goes_idle_while_it_waits_for_its_sessi
         store.decide_coordinator(station, envelope).await.unwrap()
     })
     .await;
-    assert_not_covered(&receipt);
+    assert_refused(&receipt, IDLE_TEXT);
 }
 
 #[tokio::test]
@@ -491,10 +493,7 @@ async fn a_query_is_refused_when_its_grant_lapses_while_it_waits_for_the_databas
         panic!("the lapsed grant must not answer a query");
     };
     assert_eq!(reject.code, RejectCode::Forbidden);
-    assert_eq!(
-        reject.message,
-        "No coordinator grant covers this station now."
-    );
+    assert_eq!(reject.message, LIFETIME_TEXT);
 }
 
 /// `coordinator.authority_check` whose `coordinator.policy_now` answer comes

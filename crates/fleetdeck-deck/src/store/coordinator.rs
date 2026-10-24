@@ -11,7 +11,8 @@
 //!    past `expires_at` or idle past its TTL → `forbidden`, not stored; a
 //!    binding that differs from the deck's → `binding_stale`, not stored.
 //!    Because this comes before the replay, a replay after a revocation
-//!    never returns the old acceptance.
+//!    never returns the old acceptance. A refused call of a grant that
+//!    ended says why (G6, `grant_end.rs`).
 //!    A call without a grant id is the worker path (R2.3): only
 //!    `ask_coordinator`, for a session of the calling station, at most ten
 //!    per hour ([`super::coordinator_fleet::decide_worker`]); the grant
@@ -22,7 +23,8 @@
 //! 5. A passed `retry_until` → `expired`, not stored.
 //! 6. Else the class, target and cap checks of [`super::coordinator_ops`]
 //!    and the intent commit with the stored receipt; `last_used_at` moves
-//!    only for an accepted new call.
+//!    only for an accepted new call. A running turn of the grant's session
+//!    also moves `last_used_at` (G6, `grant_turns.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -41,6 +43,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::coordinator_fleet::{decide_worker, mode_refusal};
 use super::coordinator_ops::{CallFlags, Context, Decision, decide, in_lineage, session_known};
 use super::grant_scopes::{NOT_COVERED, expire_idle, station_covered};
+use super::grants::grant_end::{GrantEnd, end_text, grant_end, grant_refusal};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant, get_grant};
 use super::members::scope_of;
 use super::{AuditResult, DeckStore, LinkV2, NewAudit, Result, call, new_id};
@@ -213,6 +216,11 @@ impl DeckStore {
                     None => false,
                 };
                 if !granted {
+                    if !worker
+                        && let Some(text) = grant_refusal(&tx, &station, &caller_session, now)?
+                    {
+                        return Ok(rejected(RejectCode::Forbidden, &text));
+                    }
                     return Ok(rejected(
                         RejectCode::Forbidden,
                         "the station is not paired or has no `coordinate` grant",
@@ -220,6 +228,11 @@ impl DeckStore {
                 }
                 // The exact rule, also for a worker call (design §2.3a).
                 if !station_covered(&tx, &station, now)? {
+                    if !worker
+                        && let Some(text) = grant_refusal(&tx, &station, &caller_session, now)?
+                    {
+                        return Ok(rejected(RejectCode::Forbidden, &text));
+                    }
                     return Ok(rejected(RejectCode::Forbidden, NOT_COVERED));
                 }
                 let grant = if worker {
@@ -234,7 +247,7 @@ impl DeckStore {
                     if grant.state != GrantState::Active || now > grant.expires_at {
                         return Ok(rejected(
                             RejectCode::Forbidden,
-                            "the coordinator grant is revoked or expired",
+                            &end_text(grant_end(&grant, now).unwrap_or(GrantEnd::Lifetime)),
                         ));
                     }
                     if grant.binding.as_ref() != Some(&binding) {
@@ -250,7 +263,9 @@ impl DeckStore {
                         expire_idle(tx, &inner, &grant.grant_id, now)?;
                         return Ok(rejected(
                             RejectCode::Forbidden,
-                            "the coordinator grant expired after its idle time",
+                            &end_text(GrantEnd::Idle {
+                                idle_ttl_ms: grant.idle_ttl_ms,
+                            }),
                         ));
                     }
                     Some(grant)

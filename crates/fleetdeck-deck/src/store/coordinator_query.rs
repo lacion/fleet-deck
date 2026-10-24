@@ -21,6 +21,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use super::grant_scopes::{NOT_COVERED, station_covered, sync_coordinate_scopes};
+use super::grants::grant_end::{GrantEnd, end_text, grant_end, grant_refusal};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant};
 use super::{DeckStore, Result, call};
 
@@ -109,10 +110,16 @@ fn check(
         None => false,
     };
     if !granted {
+        if let Some(text) = grant_refusal(conn, station, caller, now)? {
+            return Ok(Err(reject(RejectCode::Forbidden, &text)));
+        }
         return Ok(Err(reject(RejectCode::Forbidden, "no `coordinate` grant")));
     }
     // The exact rule (design §2.3a): a grant in effect names the station.
     if !station_covered(conn, station, now)? {
+        if let Some(text) = grant_refusal(conn, station, caller, now)? {
+            return Ok(Err(reject(RejectCode::Forbidden, &text)));
+        }
         return Ok(Err(reject(RejectCode::Forbidden, NOT_COVERED)));
     }
     let Some(grant) = caller_grant(conn, station, caller)? else {
@@ -124,7 +131,7 @@ fn check(
     if grant.state != GrantState::Active || now > grant.expires_at {
         return Ok(Err(reject(
             RejectCode::Forbidden,
-            "the grant is revoked or expired",
+            &end_text(grant_end(&grant, now).unwrap_or(GrantEnd::Lifetime)),
         )));
     }
     if grant.binding.as_ref() != Some(binding) {
@@ -147,7 +154,9 @@ fn check(
         *changed = sync_coordinate_scopes(conn, now)?;
         return Ok(Err(reject(
             RejectCode::Forbidden,
-            "the grant expired after its idle time",
+            &end_text(GrantEnd::Idle {
+                idle_ttl_ms: grant.idle_ttl_ms,
+            }),
         )));
     }
     Ok(Ok(grant))

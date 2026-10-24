@@ -26,6 +26,8 @@ use super::{DeckStore, Result, call, new_id};
 
 #[path = "fleet_answers.rs"]
 mod fleet_answers;
+#[path = "grant_end.rs"]
+pub(crate) mod grant_end;
 #[path = "owner_grant_schema.rs"]
 pub(super) mod owner_grant_schema;
 #[path = "owner_grants.rs"]

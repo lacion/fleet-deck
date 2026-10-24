@@ -193,6 +193,7 @@ impl DeckStore {
             .map(|(id, _)| id)
             .collect();
         let (id, inc) = (station.clone(), incarnation.clone());
+        let inner = Arc::clone(&self.inner);
         let (ids, delivery_ms) = (Arc::clone(&self.inner.ids), self.knobs().delivery_ms);
         let (applied, folded, jobs, scopes) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
@@ -247,6 +248,7 @@ impl DeckStore {
                 cap_timeline(&tx, &station, session)?;
             }
             set_cursor(&tx, &station, &incarnation, cursor)?;
+            super::grant_scopes::turns::touch_after_fold(&tx, &inner, &station)?;
             tx.commit()?;
             Ok((
                 Applied { applied, cursor },
@@ -317,6 +319,7 @@ impl DeckStore {
     ) -> Result<()> {
         let now = self.now_ms();
         let mark = (station.clone(), incarnation.clone());
+        let inner = Arc::clone(&self.inner);
         let scopes = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
@@ -373,6 +376,7 @@ impl DeckStore {
                 scopes = super::grants::apply_projection(&tx, &station, now, projection)?;
             }
             set_cursor(&tx, &station, &incarnation, watermark)?;
+            super::grant_scopes::turns::touch_after_fold(&tx, &inner, &station)?;
             tx.commit()?;
             Ok(scopes)
         })

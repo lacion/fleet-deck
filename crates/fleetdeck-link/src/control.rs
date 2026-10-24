@@ -726,7 +726,9 @@ async fn on_frame(
                     &p.negotiated,
                     Some(&granted),
                 ) {
-                    Err(e) => Err(Outcome::Err(e)),
+                    Err(e) => Err(Outcome::Err(crate::grants::explain(
+                        &*p.grants, &p.peer, &method, &params, e,
+                    ))),
                     Ok(_) if pending.open() >= p.config.max_outstanding => Err(refusal(
                         code::TOO_MANY_REQUESTS,
                         format!("{} requests are already open on this link", pending.open()),

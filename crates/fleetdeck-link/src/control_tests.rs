@@ -699,3 +699,6 @@ mod cancel;
 
 #[path = "control_rx_tests.rs"]
 mod rx;
+
+#[path = "control_refusal_tests.rs"]
+mod refusal;

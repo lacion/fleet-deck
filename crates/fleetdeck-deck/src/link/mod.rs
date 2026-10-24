@@ -204,7 +204,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         }
     };
     let id = station.station_id.clone();
-    let _live = ctx.up(&id, &control, data, remote);
+    let live = ctx.up(&id, &control, data, remote);
     if let Err(e) = ctx
         .store
         .station_heard(id.clone(), ctx.store.now_ms())
@@ -213,7 +213,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         tracing::warn!(error = %e, "station last_seen");
     }
     tracing::info!(station = %station.name, "station link up");
-    fetch_info(&ctx, &control, &id, &station.name);
+    fetch_info(&ctx, &control, &id, &station.name, live.token);
     seen::keep_seen(&ctx, &control, &id);
     let mut sync = Sync {
         ctx: Arc::clone(&ctx),

@@ -708,7 +708,9 @@ pub(super) fn revoke_tx(
         grant_narrowing::fail_removed_tx(tx, grant_id, &none, Removal::Revoked, now)?;
     }
     invalidate_coordinator_directives(tx, grant_id)?;
-    Ok((n == 1, sync_coordinate_scopes(tx, now)?))
+    let mut changed = sync_coordinate_scopes(tx, now)?;
+    changed.extend(super::grants_lifecycle::ended_station(tx, grant_id, n)?);
+    Ok((n == 1, changed))
 }
 
 /// Revokes the worker grant of a start command that did not run
