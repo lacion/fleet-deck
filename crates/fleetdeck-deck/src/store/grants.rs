@@ -15,19 +15,24 @@ use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use self::grant_rules::prepare_grant;
 #[cfg(test)]
 use super::DeckError;
 pub use super::grants_input::check_input_grant;
 use super::grants_input::input_scope_of;
 pub(super) use super::grants_lifecycle::{apply_projection, record_lifecycle, renew_generation};
 pub use super::worker_grant::{check_desktop_caps, check_recording_caps};
-use super::worker_grant::{create_grant_tx, prepare_grant, revoke_tx};
+use super::worker_grant::{create_grant_tx, revoke_tx};
 use super::{DeckStore, Result, call, new_id};
 
 #[path = "fleet_answers.rs"]
 mod fleet_answers;
 #[path = "grant_end.rs"]
 pub(crate) mod grant_end;
+#[path = "grant_limits_schema.rs"]
+pub(super) mod grant_limits_schema;
+#[path = "grant_rules.rs"]
+pub(crate) mod grant_rules;
 #[path = "owner_grant_schema.rs"]
 pub(super) mod owner_grant_schema;
 #[path = "owner_grants.rs"]
@@ -432,12 +437,13 @@ pub(crate) fn caller_grant(
 
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
-    /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
+    /// checked here: the caps and the idle time against `[grant_limits]`
+    /// (B27), the lifetime ≤ 7 days.
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a value out of range, or a database error.
     pub async fn create_grant(&self, grant: NewGrant) -> Result<Grant> {
-        let grant = prepare_grant(grant)?;
+        let grant = prepare_grant(grant, &self.knobs().grant, false)?;
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
         let (stored, changed) = call(&self.inner.db, move |conn| {
@@ -507,12 +513,13 @@ impl DeckStore {
     /// acknowledges that generation with `coordinator.bound`. Returns the
     /// pending generation, or `None` when the grant cannot be renewed. A
     /// repeated renewal returns the same generation. A worker grant does not
-    /// renew while 200 worker grants are in effect.
+    /// renew while `grant_limits.worker_grants` worker grants are in effect.
     ///
     /// # Errors
     /// A database error.
     pub async fn renew_grant(&self, grant_id: String) -> Result<Option<u32>> {
         let now = self.now_ms();
+        let limits = self.knobs().grant;
         call(&self.inner.db, move |conn| {
             let Some(grant) = get_grant(conn, &grant_id)? else {
                 return Ok(None);
@@ -526,7 +533,7 @@ impl DeckStore {
             else {
                 return Ok(None);
             };
-            if super::worker_grant_end::over_worker_cap(conn, &grant, now)? {
+            if super::worker_grant_end::over_worker_cap(conn, &grant, now, &limits)? {
                 return Ok(None);
             }
             let next = binding.generation.saturating_add(1);

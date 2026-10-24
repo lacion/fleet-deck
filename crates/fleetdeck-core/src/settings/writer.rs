@@ -345,6 +345,7 @@ impl<H: Holder> SettingsWriter<H> {
             self.sweep(&new_refs);
         }
         let restart = restart_override.unwrap_or_else(|| restart_keys::<H>(old, &new));
+        // The danger keys are the keys that relaxed a control (§3.6).
         let saved = SettingsSaved {
             values: H::values(&new),
             applied: live_keys::<H>(old, &new),
@@ -356,6 +357,7 @@ impl<H: Holder> SettingsWriter<H> {
             } else {
                 Durability::Uncertain
             },
+            relaxed: danger,
         };
         Ok((saved, new, prepared))
     }

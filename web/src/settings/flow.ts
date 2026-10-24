@@ -1,6 +1,6 @@
 // DL-172: what happens after a save, a secret or a restart: the deck's answer becomes one outcome
 // that the page shows. No function here keeps a secret: a value is read, sent and dropped.
-import type { RestartItem, SettingsSaved } from '../gen';
+import type { RestartItem, SettingsSaved, SettingsView } from '../gen';
 import type { Credentials, SettingsActions, Target } from './actions';
 import { DeckError, describe } from './http';
 
@@ -172,3 +172,29 @@ export async function tryRestart(
 
 /** What the page says when the restart cannot run. */
 export const UNSUPPORTED_TEXT = 'This station cannot restart itself. Restart it from its machine.';
+
+/** The posture part of a view (B27 §3.6): `relaxed` is absent for an older station. */
+export type Posture = Pick<SettingsView, 'relaxed'>;
+
+/**
+ * B27 §3.6: a save answer has no posture, so the tab reads the view again after a save. `null`:
+ * the read failed (the tab keeps the posture that it shows).
+ */
+export async function readPosture(
+  actions: SettingsActions,
+  target: Target,
+): Promise<Posture | null> {
+  try {
+    const fresh = await actions.view(target);
+    return fresh.relaxed === undefined ? {} : { relaxed: fresh.relaxed };
+  } catch {
+    return null;
+  }
+}
+
+/** `view` with the posture of `posture`; `null` keeps the posture of `view`. */
+export function withPosture(view: SettingsView, posture: Posture | null): SettingsView {
+  if (posture === null) return view;
+  const { relaxed: _old, ...rest } = view;
+  return { ...rest, ...posture };
+}

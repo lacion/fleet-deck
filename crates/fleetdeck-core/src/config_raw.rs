@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use fleetdeck_proto::ProviderInstanceId;
 use serde::Deserialize;
 
+use super::default_mode_cfg::RawDefaultModes;
 use super::knobs_station_cfg::{RawCapture, RawStationLimits, RawStationRetention};
 use super::model_help_cfg::RawModelHelp;
 use super::trackers_cfg::RawTracker;
@@ -55,6 +56,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "limits",
     "retention",
     "capture",
+    "default_mode",
 ];
 
 #[derive(Deserialize)]
@@ -94,6 +96,7 @@ pub(super) struct RawStation {
     pub(super) limits: Option<RawStationLimits>,
     pub(super) retention: Option<RawStationRetention>,
     pub(super) capture: Option<RawCapture>,
+    pub(super) default_mode: Option<RawDefaultModes>,
 }
 
 /// The keys of one `[[provider_instance]]` (`RawInstance`).

@@ -4,6 +4,7 @@
 use fleetdeck_proto::settings::{Apply, FieldKind, FieldMeta};
 
 use super::fields_knobs::{deck_knob_fields, station_knob_fields};
+use super::fields_security::{deck_security_fields, station_security_fields};
 use crate::config::MAX_HIBERNATE_AFTER_MIN;
 
 /// The builder of one entry.
@@ -34,7 +35,7 @@ impl F {
         self
     }
 
-    fn options(mut self, options: &[&str]) -> Self {
+    pub(super) fn options(mut self, options: &[&str]) -> Self {
         self.0.options = options.iter().map(|o| (*o).to_owned()).collect();
         self
     }
@@ -345,6 +346,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
     ]
     .into_iter()
     .map(|f| f.0)
+    .chain(station_security_fields())
     .chain(station_knob_fields())
     .collect()
 }
@@ -489,11 +491,11 @@ pub fn deck_fields() -> Vec<FieldMeta> {
         field(
             "worker_grant.spawn_cap",
             "Worker grant session limit",
-            K::Int,
+            K::Limit,
             Live,
-            "The most sessions that one worker can start. Default 2.",
+            "The most sessions that one worker can start. Default 2. No limit needs Highest session limit of a worker grant set to no limit.",
         )
-        .range(0, 10)
+        .range(0, 100_000)
         .danger(),
         field(
             "worker_grant.claude_mode",
@@ -502,7 +504,7 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             Live,
             "The most permissive Claude mode that a worker can give to a session that it starts. Default acceptEdits.",
         )
-        .options(&["default", "plan", "acceptEdits", "dontAsk", "auto"])
+        .options(&["default", "plan", "acceptEdits", "dontAsk", "auto", "bypassPermissions"])
         .danger(),
         field(
             "worker_grant.codex_mode",
@@ -520,6 +522,7 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "on-request/danger-full-access",
             "never/read-only",
             "never/workspace-write",
+            "never/danger-full-access",
         ])
         .danger(),
         field(
@@ -534,15 +537,16 @@ pub fn deck_fields() -> Vec<FieldMeta> {
         field(
             "worker_grant.idle_minutes",
             "Worker grant idle time (minutes)",
-            K::Int,
+            K::Limit,
             Live,
-            "A worker grant ends after this many minutes without use. Default 30.",
+            "A worker grant ends after this many minutes without use. Default 30. No limit: the grant ends at its lifetime or when its session ends.",
         )
-        .range(5, 1440)
+        .range(5, 10_080)
         .danger(),
     ]
     .into_iter()
     .map(|f| f.0)
+    .chain(deck_security_fields())
     .chain(deck_knob_fields())
     .collect()
 }

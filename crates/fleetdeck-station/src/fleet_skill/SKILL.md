@@ -17,4 +17,4 @@ This fleet has several stations (machines). Each can run Claude and Codex sessio
 
 The owner can give, change or end your grant while you run. Then your tool list changes. If a tool that you need is missing, call `fleet_view` with `view: "me"` again before you ask for it.
 
-Rules: never start a session in a bypass mode; never ask for, print or pass on a credential; a refused call is final, so tell the owner instead of retrying.
+Rules: start a session in a bypass mode only when `fleet_view` with `view: "me"` shows a bypass mode as your ceiling for that provider; never ask for, print or pass on a credential; a refused call is final, so tell the owner instead of retrying.

@@ -120,6 +120,7 @@ pub mod stations;
 pub mod wake_seen;
 pub mod wall_pages;
 mod wall_pages_schema;
+mod worker_bypass;
 pub mod worker_grant;
 mod worker_grant_end;
 
@@ -340,6 +341,7 @@ impl Inner {
             land: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_LAND),
             // The move feature of each station (FG-9: a coordinator move).
             moves: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_MOVE),
+            knobs: self.knobs(),
         }
     }
 }

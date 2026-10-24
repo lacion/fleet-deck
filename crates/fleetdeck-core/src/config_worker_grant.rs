@@ -4,6 +4,9 @@
 use serde::Deserialize;
 
 use crate::config::ConfigError;
+use crate::config_grant_limits::{
+    GrantLimits, Limit, NO_LIMIT_WORD, RawLimit, default_within, raised,
+};
 
 /// The most station names of a list (`["all"]` stands for every station).
 pub const MAX_WORKER_STATIONS: usize = 16;
@@ -12,7 +15,7 @@ pub const ALL_STATIONS: &str = "all";
 
 /// The Claude modes, most restrictive first (the same order as the deck's
 /// `coordinator_ops`; a deck test keeps both copies equal).
-const CLAUDE_MODES: &[&str] = &[
+pub(crate) const CLAUDE_MODES: &[&str] = &[
     "default",
     "plan",
     "acceptEdits",
@@ -21,10 +24,15 @@ const CLAUDE_MODES: &[&str] = &[
     "bypassPermissions",
 ];
 /// The Codex approval policies and sandboxes, most restrictive first.
-const CODEX_POLICIES: &[&str] = &["untrusted", "on-request", "never"];
-const CODEX_SANDBOXES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];
+pub(crate) const CODEX_POLICIES: &[&str] = &["untrusted", "on-request", "never"];
+pub(crate) const CODEX_SANDBOXES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];
 /// The mode of a Codex start without a mode.
 const CODEX_DEFAULT: &str = "untrusted/workspace-write";
+
+/// The Claude bypass mode (a ceiling only with `worker_grant.allow_bypass`).
+pub const CLAUDE_BYPASS: &str = "bypassPermissions";
+/// The Codex bypass mode (a ceiling only with `worker_grant.allow_bypass`).
+pub const CODEX_BYPASS: &str = "never/danger-full-access";
 
 /// The Claude ceilings that the setting accepts (every mode but the bypass one).
 pub const CLAUDE_CEILINGS: &[&str] = &["default", "plan", "acceptEdits", "dontAsk", "auto"];
@@ -47,14 +55,17 @@ pub struct WorkerGrantConfig {
     pub enabled: bool,
     /// Station names, or `["all"]` as the only entry.
     pub stations: Vec<String>,
-    /// The most sessions that a worker can start.
-    pub spawn_cap: u32,
+    /// The most sessions that a worker can start; `None`: no limit (B27).
+    pub spawn_cap: Limit,
     /// The Claude mode ceiling of the grant.
     pub claude_mode: String,
     /// The Codex mode ceiling of the grant.
     pub codex_mode: String,
     pub lifetime_hours: u32,
-    pub idle_minutes: u32,
+    /// The idle time; `None`: no idle limit, the grant ends at its lifetime (B27).
+    pub idle_minutes: Limit,
+    /// `allow_bypass`: the mode ceilings may be the bypass modes (B27 §3.4).
+    pub allow_bypass: bool,
 }
 
 impl Default for WorkerGrantConfig {
@@ -62,11 +73,12 @@ impl Default for WorkerGrantConfig {
         Self {
             enabled: true,
             stations: vec![ALL_STATIONS.to_owned()],
-            spawn_cap: 2,
+            spawn_cap: Some(2),
             claude_mode: "acceptEdits".to_owned(),
             codex_mode: "on-request/workspace-write".to_owned(),
             lifetime_hours: 12,
-            idle_minutes: 30,
+            idle_minutes: Some(30),
+            allow_bypass: false,
         }
     }
 }
@@ -90,18 +102,20 @@ pub(crate) const RAW_WORKER_GRANT_KEYS: &[&str] = &[
     "codex_mode",
     "lifetime_hours",
     "idle_minutes",
+    "allow_bypass",
 ];
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawWorkerGrant {
     enabled: Option<bool>,
     stations: Option<Vec<String>>,
-    spawn_cap: Option<u32>,
+    spawn_cap: Option<RawLimit>,
     claude_mode: Option<String>,
     codex_mode: Option<String>,
     lifetime_hours: Option<u32>,
-    idle_minutes: Option<u32>,
+    idle_minutes: Option<RawLimit>,
+    allow_bypass: Option<bool>,
 }
 
 fn invalid(key: &str, message: impl Into<String>) -> ConfigError {
@@ -125,6 +139,68 @@ fn bounded(
     }
 }
 
+/// A cap of the table: a number in `min..=ceiling`, or `"none"` when the
+/// matching grant limit is none too (B27 §3.2). An omitted key is `default`,
+/// which `default_within` lowers to the ceiling.
+fn capped(
+    key: &str,
+    value: Option<RawLimit>,
+    (min, ceiling, none_needs): (u32, Limit, &str),
+    max_open: u32,
+    default: u32,
+) -> Result<Limit, ConfigError> {
+    let max = ceiling.unwrap_or(max_open);
+    match value {
+        None => Ok(Some(default_within(default, ceiling))),
+        Some(RawLimit::Count(n)) if (min..=max).contains(&n) => Ok(Some(n)),
+        Some(RawLimit::Word(w)) if w == NO_LIMIT_WORD => {
+            if ceiling.is_none() {
+                Ok(None)
+            } else {
+                Err(invalid(
+                    key,
+                    format!("\"{NO_LIMIT_WORD}\" needs {none_needs} = \"{NO_LIMIT_WORD}\""),
+                ))
+            }
+        }
+        Some(RawLimit::Count(_)) => Err(invalid(
+            key,
+            format!("use a value from {min} to {max}, the grant limit of the deck"),
+        )),
+        Some(RawLimit::Word(_)) => Err(invalid(
+            key,
+            format!("use a whole number from {min} to {max}, or \"{NO_LIMIT_WORD}\""),
+        )),
+    }
+}
+
+/// The ceiling that `mode` needs, for `claude_mode` / `codex_mode`.
+fn mode_checked(
+    key: &str,
+    mode: String,
+    (ceilings, bypass): (&[&str], &str),
+    allow_bypass: bool,
+) -> Result<String, ConfigError> {
+    if ceilings.contains(&mode.as_str()) {
+        return Ok(mode);
+    }
+    if mode == bypass {
+        return if allow_bypass {
+            Ok(mode)
+        } else {
+            Err(invalid(
+                key,
+                format!("{bypass} needs worker_grant.allow_bypass = true"),
+            ))
+        };
+    }
+    let mut list = ceilings.to_vec();
+    if allow_bypass {
+        list.push(bypass);
+    }
+    Err(invalid(key, format!("use one of {}", list.join(", "))))
+}
+
 fn station_name_ok(name: &str) -> bool {
     (1..=63).contains(&name.len())
         && name
@@ -133,7 +209,7 @@ fn station_name_ok(name: &str) -> bool {
 }
 
 impl RawWorkerGrant {
-    pub(crate) fn validate(self) -> Result<WorkerGrantConfig, ConfigError> {
+    pub(crate) fn validate(self, limits: &GrantLimits) -> Result<WorkerGrantConfig, ConfigError> {
         let d = WorkerGrantConfig::default();
         let stations = match self.stations {
             None => d.stations.clone(),
@@ -159,24 +235,41 @@ impl RawWorkerGrant {
                 list
             }
         };
-        let claude_mode = self.claude_mode.unwrap_or(d.claude_mode);
-        if !CLAUDE_CEILINGS.contains(&claude_mode.as_str()) {
-            return Err(invalid(
-                "claude_mode",
-                format!("use one of {}", CLAUDE_CEILINGS.join(", ")),
-            ));
-        }
-        let codex_mode = self.codex_mode.unwrap_or(d.codex_mode);
-        if !CODEX_CEILINGS.contains(&codex_mode.as_str()) {
-            return Err(invalid(
-                "codex_mode",
-                format!("use one of {}", CODEX_CEILINGS.join(", ")),
-            ));
-        }
+        let allow_bypass = self.allow_bypass.unwrap_or(d.allow_bypass);
+        let claude_mode = mode_checked(
+            "claude_mode",
+            self.claude_mode.unwrap_or(d.claude_mode),
+            (CLAUDE_CEILINGS, CLAUDE_BYPASS),
+            allow_bypass,
+        )?;
+        let codex_mode = mode_checked(
+            "codex_mode",
+            self.codex_mode.unwrap_or(d.codex_mode),
+            (CODEX_CEILINGS, CODEX_BYPASS),
+            allow_bypass,
+        )?;
+        let spawn_cap = capped(
+            "spawn_cap",
+            self.spawn_cap,
+            (0, limits.worker_spawn_cap, "grant_limits.worker_spawn_cap"),
+            100_000,
+            d.spawn_cap.unwrap_or(0),
+        )?;
+        let idle_minutes = capped(
+            "idle_minutes",
+            self.idle_minutes,
+            (
+                5,
+                limits.idle_hours.map(|h| h * 60),
+                "grant_limits.idle_hours",
+            ),
+            10_080,
+            d.idle_minutes.unwrap_or(30),
+        )?;
         Ok(WorkerGrantConfig {
             enabled: self.enabled.unwrap_or(d.enabled),
             stations,
-            spawn_cap: bounded("spawn_cap", self.spawn_cap, d.spawn_cap, (0, 10))?,
+            spawn_cap,
             claude_mode,
             codex_mode,
             lifetime_hours: bounded(
@@ -185,7 +278,8 @@ impl RawWorkerGrant {
                 d.lifetime_hours,
                 (1, 168),
             )?,
-            idle_minutes: bounded("idle_minutes", self.idle_minutes, d.idle_minutes, (5, 1440))?,
+            idle_minutes,
+            allow_bypass,
         })
     }
 }
@@ -223,7 +317,10 @@ pub fn widens(old: &WorkerGrantConfig, new: &WorkerGrantConfig) -> Vec<&'static 
     if !old.enabled && new.enabled {
         keys.push("worker_grant.enabled");
     }
-    if new.spawn_cap > old.spawn_cap {
+    if !old.allow_bypass && new.allow_bypass {
+        keys.push("worker_grant.allow_bypass");
+    }
+    if raised(old.spawn_cap, new.spawn_cap) {
         keys.push("worker_grant.spawn_cap");
     }
     let stations_wider = if new.all_stations() {
@@ -239,7 +336,7 @@ pub fn widens(old: &WorkerGrantConfig, new: &WorkerGrantConfig) -> Vec<&'static 
     if new.lifetime_hours > old.lifetime_hours {
         keys.push("worker_grant.lifetime_hours");
     }
-    if new.idle_minutes > old.idle_minutes {
+    if raised(old.idle_minutes, new.idle_minutes) {
         keys.push("worker_grant.idle_minutes");
     }
     if new.claude_mode != old.claude_mode
@@ -275,8 +372,9 @@ mod tests {
             codex_mode: None,
             lifetime_hours: None,
             idle_minutes: None,
+            allow_bypass: None,
         }
-        .validate()
+        .validate(&GrantLimits::default())
         .unwrap();
         assert_eq!(c, WorkerGrantConfig::default());
         assert!(c.enabled && c.all_stations());
@@ -290,10 +388,10 @@ mod tests {
         assert_eq!(widens(&off, &base), ["worker_grant.enabled"]);
         assert!(widens(&base, &off).is_empty());
         assert_eq!(
-            widens(&base, &with(|c| c.spawn_cap = 3)),
+            widens(&base, &with(|c| c.spawn_cap = Some(3))),
             ["worker_grant.spawn_cap"]
         );
-        assert!(widens(&base, &with(|c| c.spawn_cap = 1)).is_empty());
+        assert!(widens(&base, &with(|c| c.spawn_cap = Some(1))).is_empty());
         let list = with(|c| c.stations = vec!["a".into()]);
         assert_eq!(widens(&list, &base), ["worker_grant.stations"]);
         assert!(widens(&base, &list).is_empty());
@@ -305,7 +403,7 @@ mod tests {
             ["worker_grant.lifetime_hours"]
         );
         assert_eq!(
-            widens(&base, &with(|c| c.idle_minutes = 31)),
+            widens(&base, &with(|c| c.idle_minutes = Some(31))),
             ["worker_grant.idle_minutes"]
         );
         assert_eq!(

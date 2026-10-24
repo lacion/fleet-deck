@@ -231,6 +231,7 @@ impl DeckStore {
                     &e,
                     now,
                     (ids.as_ref(), delivery_ms),
+                    &inner.knobs().grant,
                 )?);
                 let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
                     ids: ids.as_ref(),
@@ -373,7 +374,13 @@ impl DeckStore {
             super::review::delete_unlisted(&tx, &station, &named)?;
             let mut scopes = BTreeSet::new();
             if let Some(projection) = &coordinator {
-                scopes = super::grants::apply_projection(&tx, &station, now, projection)?;
+                scopes = super::grants::apply_projection(
+                    &tx,
+                    &station,
+                    now,
+                    projection,
+                    &inner.knobs().grant,
+                )?;
             }
             set_cursor(&tx, &station, &incarnation, watermark)?;
             super::grant_scopes::turns::touch_after_fold(&tx, &inner, &station)?;

@@ -18,6 +18,7 @@ mod coordinator_start;
 mod coordinator_tools;
 pub mod decide;
 mod decide_rename;
+pub mod default_mode;
 pub mod drain;
 pub mod durable;
 pub mod files;

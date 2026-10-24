@@ -15,9 +15,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use fleetdeck_core::config::StationConfig;
 use fleetdeck_core::paths::Env;
 use fleetdeck_core::restart::Restart;
-use fleetdeck_core::settings::{SaveError, SettingsWriter, StationHolder, view_station};
+use fleetdeck_core::settings::{
+    SaveError, SettingsWriter, StationHolder, view_station, view_station_running,
+};
 use fleetdeck_link::methods::code;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::settings::{
@@ -53,6 +56,9 @@ pub struct StationSettings {
     /// Gets the inode of the config file and of every secret file after a
     /// write (PRE-PR r2 finding 1).
     private: Arc<PrivatePaths>,
+    /// The config that the process started with: the posture compares the
+    /// file with it (B27 §3.6).
+    running: Option<Arc<StationConfig>>,
 }
 
 impl std::fmt::Debug for StationSettings {
@@ -121,7 +127,15 @@ impl StationSettings {
             settle: RESTART_SETTLE,
             restart,
             private,
+            running: None,
         }
+    }
+
+    /// Sets the config that the process started with (B27 §3.6).
+    #[must_use]
+    pub fn with_running(mut self, running: Arc<StationConfig>) -> Self {
+        self.running = Some(running);
+        self
     }
 
     /// Changes the wait of a restart admission (tests shorten it).
@@ -135,7 +149,11 @@ impl StationSettings {
     /// `{ set }`.
     pub async fn get(&self) -> Outcome {
         let (path, store, env) = (self.path.clone(), self.store.clone(), self.env.clone());
-        let task = tokio::task::spawn_blocking(move || view_station(&path, &env, &store, &[]));
+        let running = self.running.clone();
+        let task = tokio::task::spawn_blocking(move || match &running {
+            Some(running) => view_station_running(&path, &env, &store, &[], running),
+            None => view_station(&path, &env, &store, &[]),
+        });
         match task.await {
             Ok(Ok(view)) => ok(view),
             // A parse error can quote the file: only a fixed text goes out.

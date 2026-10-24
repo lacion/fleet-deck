@@ -82,8 +82,9 @@ pub(super) async fn owner_start(
         return Err(invalid("a coordinator grant needs a class".to_owned()));
     }
     // MCP P0 §2.2: the spawn cap and the mode ceilings, rules 1 to 5.
+    let grant_limits = board.live.get().knobs.grant;
     let (spawn_cap, max_modes) =
-        super::grant_spawn::take_spawn_fields(spec, &classes).map_err(invalid)?;
+        super::grant_spawn::take_spawn_fields(spec, &classes, &grant_limits).map_err(invalid)?;
     for target in &targets {
         let paired = board
             .store
@@ -104,7 +105,8 @@ pub(super) async fn owner_start(
     let widened = grant.stations.len() > 1;
     grant.classes = classes;
     if grant.classes.contains(&GrantClass::Spawn) {
-        grant.spawn_cap = spawn_cap.unwrap_or(crate::store::grants::DEFAULT_SPAWN_CAP);
+        grant.spawn_cap = spawn_cap
+            .unwrap_or_else(|| crate::store::grants::grant_rules::default_spawn_cap(&grant_limits));
     }
     grant.max_modes = max_modes;
     grant.scope = spec.scope;
@@ -184,15 +186,15 @@ pub(super) async fn owner_start(
     if fleet || widened {
         // The answer cap is checked first: a bad request is a bad request
         // with or without elevation.
+        // An omitted cap is resolved to the limit before the check (B27).
         let answers = grant.classes.contains(&GrantClass::Answer);
         match grant.answer_cap {
             Some(_) if !answers => {
                 return Err(invalid("answer_cap needs the answer class".to_owned()));
             }
-            Some(cap) if cap > crate::store::grants::MAX_ANSWER_CAP => {
-                return Err(invalid("answer_cap is 0 to 5000".to_owned()));
-            }
-            _ => {}
+            Some(cap) => crate::store::grants::grant_rules::check_answer_cap(cap, &grant_limits)
+                .map_err(|m| invalid(m.to_owned()))?,
+            None => {}
         }
         // The desktop caps, before the elevation, like the answer cap.
         crate::store::grants::check_desktop_caps(

@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use fleetdeck_core::config::{CloneTransport, DeckConfig};
+use fleetdeck_core::config_grant_limits::GrantLimits;
 
 use crate::fleet_git_radar::RadarOptions;
 use crate::store::DeckStore;
@@ -48,6 +49,10 @@ pub struct DeckKnobs {
     pub clone_ssh: bool,
     /// A station that comes back with a new version keeps the grants of its sessions (B26).
     pub keep_grants_on_update: bool,
+    /// `[grant_limits]` (B27 §3.2), read at each grant creation and cap change.
+    pub grant: GrantLimits,
+    /// `worker_grant.allow_bypass` (B27 §3.4), read at each decision and dispatch check.
+    pub worker_bypass: bool,
 }
 
 impl Default for DeckKnobs {
@@ -68,6 +73,8 @@ impl Default for DeckKnobs {
             delivery_ms: 24 * HOUR_MS,
             clone_ssh: false,
             keep_grants_on_update: true,
+            grant: GrantLimits::default(),
+            worker_bypass: false,
         }
     }
 }
@@ -93,6 +100,8 @@ impl DeckKnobs {
             delivery_ms: i64::from(config.limits.delivery_hours) * HOUR_MS,
             clone_ssh: config.clone_transport == CloneTransport::Ssh,
             keep_grants_on_update: config.keep_grants_on_update,
+            grant: config.grant_limits,
+            worker_bypass: config.worker_grant.allow_bypass,
         }
     }
 }
@@ -221,6 +230,8 @@ mod tests {
                 delivery_ms: 13 * 60 * 60 * 1000,
                 clone_ssh: true,
                 keep_grants_on_update: true,
+                grant: GrantLimits::default(),
+                worker_bypass: false,
             }
         );
     }

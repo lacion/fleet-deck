@@ -76,6 +76,7 @@ fn view(revision: &str) -> SettingsView {
         ],
         revision: revision.to_owned(),
         overrides: Vec::new(),
+        relaxed: None,
     }
 }
 
@@ -109,6 +110,7 @@ fn saved(restart: &[&str]) -> SettingsSaved {
         unapplied: Vec::new(),
         revision: "r2".into(),
         durability: Durability::Confirmed,
+        relaxed: Vec::new(),
     }
 }
 

@@ -445,6 +445,8 @@ fn start(
     effort::check(spec.effort.as_deref())?;
     if facts.origin_text {
         spec.mode = Some(restrict_mode(provider, spec.mode.as_deref())?);
+    } else if spec.mode.is_none() && d.authority().is_none() {
+        spec.mode = policy.default_mode(provider).map(str::to_owned);
     }
     // A worker grant (MCP P4a §6.2) that the station cannot hand off is
     // dropped from the spec; the start goes on without it and records the

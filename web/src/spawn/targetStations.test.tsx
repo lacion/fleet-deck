@@ -50,10 +50,17 @@ describe('the target stations of a coordinator grant (ADR-006 Creation)', () => 
   });
 
   test('the spec carries the targets only when some are picked', () => {
-    expect(grantFields(NO_FLEET, [])).toEqual({ classes: ['read', 'mail', 'drive'] });
-    expect(grantFields(NO_FLEET)).toEqual({ classes: ['read', 'mail', 'drive'] });
+    expect(grantFields(NO_FLEET, [])).toEqual({
+      classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
+    });
+    expect(grantFields(NO_FLEET)).toEqual({
+      classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
+    });
     expect(grantFields(NO_FLEET, ['station-b', 'station-c'])).toEqual({
       classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
       stations: ['station-b', 'station-c'],
     });
   });

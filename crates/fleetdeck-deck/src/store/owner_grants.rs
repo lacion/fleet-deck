@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use fleetdeck_core::config_grant_limits::GrantLimits;
 use fleetdeck_core::ids::{IdSource, new_id};
 use fleetdeck_proto::command::{
     CommandOrigin, CoordinatorSpec, DeckCommandState, GrantKind, RETRY_WINDOW_MS, ReceiptState,
@@ -25,19 +26,20 @@ use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use self::owner_grant_plan::plan;
+use super::grant_rules::prepare_grant;
 use super::owner_spec::{SpecFeatures, station_spec};
-use super::{
-    DEFAULT_ANSWER_CAP, DEFAULT_SPAWN_CAP, GRANT_COLUMNS, Grant, GrantClass, GrantState,
-    MAX_ANSWER_CAP, NewGrant, finish, get_grant, grant_row,
-};
+use super::{GRANT_COLUMNS, Grant, GrantClass, GrantState, NewGrant, finish, get_grant, grant_row};
 use crate::store::coordinator::grant_narrowing::{Removal, fail_removed_tx};
 use crate::store::grant_scopes::{in_effect, sync_coordinate_scopes};
-use crate::store::grant_spawn_caps::spawn_caps;
 use crate::store::stations::station_by_id;
-use crate::store::worker_grant::{create_grant_tx, prepare_grant, revoke_tx};
+use crate::store::worker_grant::{create_grant_tx, revoke_tx};
 use crate::store::{
     DeckError, DeckStore, LinkFeature, NewCommand, Result, call, commands, to_i64, to_u64,
 };
+
+#[path = "owner_grant_plan.rs"]
+mod owner_grant_plan;
 
 /// The method of the command that [`queue_set_tx`] stores.
 const SET_METHOD: &str = "session.coordinator_set";
@@ -60,6 +62,8 @@ pub struct OwnerRow {
 pub(crate) struct Ctx<'a> {
     pub ids: &'a dyn IdSource,
     pub features: SpecFeatures,
+    /// `[grant_limits]` at the time of the call (B27).
+    pub limits: GrantLimits,
 }
 
 /// A give (design §6.1). `station` and `session` replace the same fields of
@@ -307,7 +311,7 @@ pub(crate) fn give_tx(
     } = req;
     grant.station_id = station.clone();
     grant.session_id = session.clone();
-    let grant = prepare_grant(grant)?;
+    let grant = prepare_grant(grant, &ctx.limits, false)?;
     if has_held_grant(tx, &station, &session, now)? {
         return Ok(Err(GiveError::HasGrant));
     }
@@ -340,68 +344,6 @@ pub(crate) fn give_tx(
     Ok(Ok((stored, scopes)))
 }
 
-/// What a change writes besides the classes.
-struct Plan {
-    spawn_cap: u32,
-    max_modes: BTreeMap<String, String>,
-    answer_cap: Option<u32>,
-}
-
-/// The rules of a change that do not need the elevation (design §6.2) and the
-/// values that it writes. Only the fields of newly added classes change.
-fn plan(before: &Grant, ch: &Change) -> std::result::Result<Plan, &'static str> {
-    if START_ONLY
-        .iter()
-        .any(|c| before.classes.contains(c) != ch.classes.contains(c))
-    {
-        return Err("desktop, screenshot and input access is given only at start");
-    }
-    if ch.classes.is_empty() {
-        return Err("a coordinator grant needs a class");
-    }
-    let added = |c: GrantClass| ch.classes.contains(&c) && !before.classes.contains(&c);
-    let (spawn, manage, answer) = (
-        added(GrantClass::Spawn),
-        added(GrantClass::Manage),
-        added(GrantClass::Answer),
-    );
-    if (ch.spawn_cap.is_some() && !spawn)
-        || (ch.max_modes.is_some() && !spawn && !manage)
-        || (ch.answer_cap.is_some() && !answer)
-    {
-        return Err("a cap is changed with the caps route");
-    }
-    let mut out = Plan {
-        spawn_cap: before.spawn_cap,
-        max_modes: before.max_modes.clone(),
-        answer_cap: before.answer_cap,
-    };
-    if spawn {
-        out.spawn_cap = ch.spawn_cap.unwrap_or(DEFAULT_SPAWN_CAP);
-        out.max_modes = ch.max_modes.clone().unwrap_or_default();
-    } else if manage && let Some(modes) = &ch.max_modes {
-        out.max_modes = modes.clone();
-    }
-    if spawn || (manage && ch.max_modes.is_some()) {
-        // The creation rules, on the grant as it will be.
-        let after = Grant {
-            classes: ch.classes.clone(),
-            spawn_cap: out.spawn_cap,
-            max_modes: out.max_modes.clone(),
-            ..before.clone()
-        };
-        spawn_caps(&after, spawn.then_some(out.spawn_cap), Some(&out.max_modes))?;
-    }
-    if answer {
-        let cap = ch.answer_cap.unwrap_or(DEFAULT_ANSWER_CAP);
-        if cap > MAX_ANSWER_CAP {
-            return Err("answer_cap is 0 to 5000");
-        }
-        out.answer_cap = Some(cap);
-    }
-    Ok(out)
-}
-
 /// The grant before and after a change, and the stations whose scopes changed.
 pub type Changed = ((Grant, Grant), BTreeSet<StationId>);
 
@@ -428,7 +370,7 @@ pub(crate) fn change_tx(
     let Some((station, session, _)) = row_of_grant(tx, grant_id)? else {
         return Ok(Err(ChangeError::NoRow));
     };
-    let plan = match plan(&before, &ch) {
+    let plan = match plan(&before, &ch, &ctx.limits) {
         Ok(plan) => plan,
         Err(text) => return Ok(Err(ChangeError::Invalid(text))),
     };
@@ -668,11 +610,13 @@ impl DeckStore {
         let features = self.spec_features(&station);
         let now = self.now_ms();
         let ids = Arc::clone(&self.inner.ids);
+        let limits = self.knobs().grant;
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let ctx = Ctx {
                 ids: ids.as_ref(),
                 features,
+                limits,
             };
             let out = give_tx(
                 &tx,
@@ -715,11 +659,13 @@ impl DeckStore {
         let mut ch = ch;
         ch.now = self.now_ms();
         let ids = Arc::clone(&self.inner.ids);
+        let limits = self.knobs().grant;
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let ctx = Ctx {
                 ids: ids.as_ref(),
                 features,
+                limits,
             };
             let out = change_tx(&tx, &ctx, &grant_id, ch)?;
             if out.is_ok() {
@@ -767,11 +713,13 @@ impl DeckStore {
         let features = self.spec_features(&station);
         let now = self.now_ms();
         let ids = Arc::clone(&self.inner.ids);
+        let limits = self.knobs().grant;
         let queued = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let ctx = Ctx {
                 ids: ids.as_ref(),
                 features,
+                limits,
             };
             let out = reconcile_tx(&tx, &ctx, &station, now)?;
             tx.commit()?;

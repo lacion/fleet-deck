@@ -16,4 +16,9 @@ restart_needed: Array<string>,
 /**
  * The changed keys that could not apply at once (always empty today).
  */
-unapplied: Array<string>, revision: string, durability: Durability, };
+unapplied: Array<string>, revision: string, durability: Durability, 
+/**
+ * The keys of this save that relaxed a control (its danger keys, B27
+ * §3.6). Empty from an older station.
+ */
+relaxed?: Array<string>, };

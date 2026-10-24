@@ -32,6 +32,14 @@ pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
 };
+#[path = "config_default_mode.rs"]
+mod default_mode_cfg;
+#[cfg(test)]
+pub(crate) use default_mode_cfg::RAW_DEFAULT_MODE_KEYS;
+pub use default_mode_cfg::{
+    CLAUDE_PROVIDER_DEFAULT, CODEX_PROVIDER_DEFAULT, DefaultModes, codex_modes,
+    widens as default_mode_widens,
+};
 #[path = "config_knobs_deck.rs"]
 mod knobs_deck_cfg;
 pub use knobs_deck_cfg::{DeckLimits, DeckRetention, DeckSecurity};
@@ -315,12 +323,14 @@ pub struct StationConfig {
     pub allow_local_remotes: bool,
     /// `[taildrive_mounts]`: `<machine>/<share>` to the mount folder (FG-12).
     pub taildrive_mounts: BTreeMap<String, PathBuf>,
-    /// `[limits]`: the time limits of the station (knobs K1; nothing reads them yet).
+    /// `[limits]`: the time limits of the station (knobs K1 and K3).
     pub limits: StationLimits,
     /// `[retention]`: how long the station keeps its history, events and raw logs.
     pub retention: StationRetention,
     /// `[capture]`: the storage and recording limits of screenshots and recordings.
     pub capture: CaptureLimits,
+    /// `[default_mode]`: the mode of a start that gives none (B27).
+    pub default_mode: DefaultModes,
 }
 
 impl StationConfig {
@@ -463,6 +473,11 @@ impl StationConfig {
             Some(raw) => raw.validate()?,
             None => CaptureLimits::default(),
         };
+        let allow_bypass_permissions = raw.allow_bypass_permissions.unwrap_or(false);
+        let default_mode = match raw.default_mode {
+            Some(raw) => raw.validate(allow_bypass_permissions)?,
+            None => DefaultModes::default(),
+        };
         let capture_monitors = capture_cfg::capture_monitors(raw.capture_monitors)?;
         let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
         let fleet_git = fleet_git_cfg::parse(
@@ -482,7 +497,7 @@ impl StationConfig {
             max_sessions,
             allow_setup_cmd: raw.allow_setup_cmd.unwrap_or(false),
             allow_shell: raw.allow_shell.unwrap_or(false),
-            allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
+            allow_bypass_permissions,
             allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
             allow_desktop: raw.allow_desktop.unwrap_or(false),
             allow_desktop_capture: raw.allow_desktop_capture.unwrap_or(false),
@@ -511,6 +526,7 @@ impl StationConfig {
             limits,
             retention,
             capture,
+            default_mode,
         })
     }
 

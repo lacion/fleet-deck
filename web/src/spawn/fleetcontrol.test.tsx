@@ -9,6 +9,7 @@ import {
   fleetBlocked,
   fleetElevation,
   fleetOn,
+  idleLimitProblem,
   grantFields,
   fleetProblem,
   imageBudgetProblem,
@@ -23,7 +24,7 @@ import {
 } from './fleetControl';
 import { spawnActions } from './spawn';
 
-const PROBLEM = 'The answer limit is a whole number from 0 to 5000.';
+const PROBLEM = 'The answer limit is a whole number.';
 const spec = {
   provider_instance: 'claude',
   cwd: '/home/me/app',
@@ -34,7 +35,10 @@ const spec = {
 
 describe('grantFields (ADR-008 §3)', () => {
   test('all switches off give exactly the lineage classes', () => {
-    expect(grantFields(NO_FLEET)).toEqual({ classes: ['read', 'mail', 'drive'] });
+    expect(grantFields(NO_FLEET)).toEqual({
+      classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
+    });
     expect(fleetOn(NO_FLEET)).toBe(false);
   });
 
@@ -53,10 +57,12 @@ describe('grantFields (ADR-008 §3)', () => {
     ]);
     expect(grantFields({ ...NO_FLEET, scope: true })).toEqual({
       classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
       scope: 'fleet',
     });
     expect(grantFields({ ...NO_FLEET, answer: true, answerCap: '12' })).toEqual({
       classes: ['read', 'mail', 'drive', 'answer'],
+      idle_ttl_ms: 1_800_000,
       answer_cap: 12,
     });
     const all = grantFields({
@@ -69,6 +75,7 @@ describe('grantFields (ADR-008 §3)', () => {
     });
     expect(all).toEqual({
       classes: ['read', 'mail', 'drive', 'inspect', 'manage', 'answer'],
+      idle_ttl_ms: 1_800_000,
       scope: 'fleet',
       answer_cap: 0,
       max_modes: { claude: 'acceptEdits', codex: 'on-request/workspace-write' },
@@ -86,11 +93,15 @@ describe('the spawn switch (MCP P0 §2.5)', () => {
     expect(fleetOn({ ...NO_FLEET, spawn: true })).toBe(false);
   });
   test('spawn off sends neither spawn_cap nor max_modes', () => {
-    expect(grantFields(NO_FLEET)).toEqual({ classes: ['read', 'mail', 'drive'] });
+    expect(grantFields(NO_FLEET)).toEqual({
+      classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
+    });
   });
   test('spawn on adds the class after drive, the cap and both ceilings', () => {
     expect(grantFields({ ...NO_FLEET, spawn: true, spawnCap: ' 7 ', inspect: true })).toEqual({
       classes: ['read', 'mail', 'drive', 'spawn', 'inspect'],
+      idle_ttl_ms: 1_800_000,
       spawn_cap: 7,
       max_modes: { claude: 'acceptEdits', codex: 'on-request/workspace-write' },
     });
@@ -105,14 +116,15 @@ describe('the spawn switch (MCP P0 §2.5)', () => {
       }),
     ).toEqual({
       classes: ['read', 'mail', 'drive', 'manage'],
+      idle_ttl_ms: 1_800_000,
       max_modes: { claude: 'plan', codex: 'never/read-only' },
     });
   });
   test('spawnCapProblem', () => {
-    const PROBLEM_TEXT = 'The session limit is a whole number from 0 to 50.';
+    const PROBLEM_TEXT = 'The session limit is a whole number.';
     const on = (spawnCap: string) => spawnCapProblem({ ...NO_FLEET, spawn: true, spawnCap });
-    for (const bad of ['', '2.5', '51']) expect(on(bad)).toBe(PROBLEM_TEXT);
-    for (const ok of ['0', '50']) expect(on(ok)).toBeNull();
+    for (const bad of ['', '2.5', '-1']) expect(on(bad)).toBe(PROBLEM_TEXT);
+    for (const ok of ['0', '50', '51', '4000000']) expect(on(ok)).toBeNull();
     expect(spawnCapProblem({ ...NO_FLEET, spawn: false, spawnCap: '' })).toBeNull();
     expect(fleetProblem({ ...NO_FLEET, spawn: true, spawnCap: '' })).toBe(PROBLEM_TEXT);
   });
@@ -154,12 +166,14 @@ describe('grantFields with desktop and capture (R13 P6)', () => {
   test('desktop adds its class and desktop_cap only', () => {
     expect(grantFields({ ...NO_FLEET, desktop: true, desktopCap: '12' })).toEqual({
       classes: ['read', 'mail', 'drive', 'desktop'],
+      idle_ttl_ms: 1_800_000,
       desktop_cap: 12,
     });
   });
   test('capture adds its class and all three limits, the image bytes in MiB x 1,048,576', () => {
     expect(grantFields({ ...NO_FLEET, capture: true })).toEqual({
       classes: ['read', 'mail', 'drive', 'capture'],
+      idle_ttl_ms: 1_800_000,
       desktop_cap: 300,
       capture_cap: 20,
       image_byte_cap: 67_108_864,
@@ -170,6 +184,7 @@ describe('grantFields with desktop and capture (R13 P6)', () => {
       grantFields({ ...NO_FLEET, desktop: true, capture: true, desktopCap: '7', imageMib: '1' }),
     ).toEqual({
       classes: ['read', 'mail', 'drive', 'desktop', 'capture'],
+      idle_ttl_ms: 1_800_000,
       desktop_cap: 7,
       capture_cap: 20,
       image_byte_cap: 1_048_576,
@@ -190,9 +205,11 @@ describe('the recording opt-in (R13 P5b-2)', () => {
     expect(grantFields({ ...NO_FLEET, capture: true })).not.toHaveProperty('allow_recording');
     expect(grantFields({ ...NO_FLEET, recording: true })).toEqual({
       classes: ['read', 'mail', 'drive'],
+      idle_ttl_ms: 1_800_000,
     });
     expect(grantFields({ ...on, recordingCap: '7', recordingSeconds: '90' })).toEqual({
       classes: ['read', 'mail', 'drive', 'capture'],
+      idle_ttl_ms: 1_800_000,
       desktop_cap: 300,
       capture_cap: 20,
       image_byte_cap: 67_108_864,
@@ -257,13 +274,11 @@ describe('the desktop limit problems', () => {
 
 describe('answerCapProblem', () => {
   const on = (answerCap: string) => answerCapProblem({ ...NO_FLEET, answer: true, answerCap });
-  test('0, 500 and 5000 are fine', () => {
-    expect(on('500')).toBeNull();
-    expect(on('0')).toBeNull();
-    expect(on('5000')).toBeNull();
+  test('0, 500, 5000 and 5001 are fine: the deck checks the upper bound', () => {
+    for (const ok of ['500', '0', '5000', '5001']) expect(on(ok)).toBeNull();
   });
-  test('5001, -1, 1.5, empty and text give the problem', () => {
-    for (const bad of ['5001', '-1', '1.5', '', 'abc']) expect(on(bad)).toBe(PROBLEM);
+  test('-1, 1.5, empty and text give the problem', () => {
+    for (const bad of ['-1', '1.5', '', 'abc']) expect(on(bad)).toBe(PROBLEM);
   });
   test('answer off never has a problem', () => {
     expect(answerCapProblem({ ...NO_FLEET, answer: false, answerCap: 'abc' })).toBeNull();
@@ -418,12 +433,12 @@ describe('FleetControlFields', () => {
     expect(out).not.toContain('confirm it is you');
   });
 
-  test('the answer limit shows with answer on, with the error for 5001', () => {
+  test('the answer limit shows with answer on, with the error for text', () => {
     const ok = html({ ...NO_FLEET, answer: true });
     expect(ok).toContain('Answer limit');
     expect(ok).toContain('confirm it is you');
     expect(ok).not.toContain(PROBLEM);
-    const bad = html({ ...NO_FLEET, answer: true, answerCap: '5001' });
+    const bad = html({ ...NO_FLEET, answer: true, answerCap: 'abc' });
     expect(bad).toContain(PROBLEM);
     expect(bad).toContain('role="alert"');
   });
@@ -712,5 +727,50 @@ describe('the input opt-in (R13 P7 §3.4, §9.1)', () => {
     expect(calls[0]).toMatchObject({ desktop: false, input: false });
     expect(calls[1]).toMatchObject({ capture: false, recording: false, input: false });
     expect(calls[2]).toMatchObject({ desktop: true, capture: true, input: false });
+  });
+});
+
+describe('"No limit" and the idle limit (B27 §3.7)', () => {
+  const NONE = 4_294_967_295;
+  const IDLE = 'The idle limit is a whole number of minutes from 1 to 10080.';
+  test('the idle limit is 30 minutes by default and always sent', () => {
+    expect(NO_FLEET.idleMinutes).toBe('30');
+    expect(grantFields(NO_FLEET).idle_ttl_ms).toBe(1_800_000);
+    expect(grantFields({ ...NO_FLEET, idleMinutes: ' 45 ' }).idle_ttl_ms).toBe(2_700_000);
+  });
+  test('"No limit" sends 4294967295 for the idle, session and answer limits', () => {
+    expect(grantFields({ ...NO_FLEET, idleNone: true }).idle_ttl_ms).toBe(NONE);
+    const f = { ...NO_FLEET, spawn: true, spawnNone: true, answer: true, answerNone: true };
+    expect(grantFields(f).spawn_cap).toBe(NONE);
+    expect(grantFields(f).answer_cap).toBe(NONE);
+    expect(grantFields({ ...f, spawnNone: false, spawnCap: '4' }).spawn_cap).toBe(4);
+  });
+  test('"No limit" turns the text problem off', () => {
+    const f = { ...NO_FLEET, spawn: true, spawnCap: '', answer: true, answerCap: '' };
+    expect(fleetProblem(f)).toBe('The session limit is a whole number.');
+    expect(fleetProblem({ ...f, spawnNone: true })).toBe(PROBLEM);
+    expect(fleetProblem({ ...f, spawnNone: true, answerNone: true })).toBeNull();
+  });
+  test('the idle problem text, with no problem while "No limit" is on', () => {
+    for (const bad of ['', '0', '10081', '1.5', 'x']) {
+      expect(idleLimitProblem({ ...NO_FLEET, idleMinutes: bad })).toBe(IDLE);
+    }
+    for (const ok of ['1', '30', '10080']) {
+      expect(idleLimitProblem({ ...NO_FLEET, idleMinutes: ok })).toBeNull();
+    }
+    expect(idleLimitProblem({ ...NO_FLEET, idleMinutes: '', idleNone: true })).toBeNull();
+    expect(fleetProblem({ ...NO_FLEET, idleMinutes: '0' })).toBe(IDLE);
+  });
+  test('the fields show the idle input and the "No limit" boxes, with the input off while checked', () => {
+    const render = (fleet: FleetControl, live = false) =>
+      renderToStaticMarkup(<FleetControlFields fleet={fleet} onChange={() => {}} live={live} />);
+    const html = render({ ...NO_FLEET, spawn: true, answer: true });
+    expect(html).toContain('Idle limit (minutes)');
+    expect(html).toContain('aria-label="Idle limit (minutes): no limit"');
+    expect(html).toContain('aria-label="Session limit: no limit"');
+    expect(html).toContain('aria-label="Answer limit: no limit"');
+    expect(html).not.toContain('disabled=""');
+    expect(render({ ...NO_FLEET, idleNone: true })).toContain('disabled=""');
+    expect(render(NO_FLEET, true)).not.toContain('Idle limit');
   });
 });

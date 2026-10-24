@@ -173,6 +173,7 @@ impl DeckStore {
         allow_increase: bool,
     ) -> Result<std::result::Result<CapsChanged, CapsError>> {
         let grant_id = grant_id.to_owned();
+        let grant_limits = self.knobs().grant;
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(grant) = get_grant(&tx, &grant_id)? else {
@@ -225,7 +226,12 @@ impl DeckStore {
             ) {
                 return Ok(Err(CapsError::Invalid(text)));
             }
-            let spawn = match spawn_caps(&grant, change.spawn_cap, change.max_modes.as_ref()) {
+            let spawn = match spawn_caps(
+                &grant,
+                change.spawn_cap,
+                change.max_modes.as_ref(),
+                &grant_limits,
+            ) {
                 Ok(spawn) => spawn,
                 Err(text) => return Ok(Err(CapsError::Invalid(text))),
             };

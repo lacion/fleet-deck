@@ -16,6 +16,7 @@ use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
 use fleetdeck_providers::host::StopPolicy;
 
+use super::default_mode::DefaultModeState;
 use super::policy_capture::gib;
 use super::policy_limits::{StationTimeouts, scrollback_of, stop_policy};
 use crate::store::OfflineApprovalPolicy;
@@ -77,6 +78,8 @@ pub struct Policy {
     allow_shell: bool,
     /// `allow_bypass_permissions` of `station.toml` (NV-24).
     allow_bypass_permissions: bool,
+    /// `[default_mode]` and the bypass the adapters offer (B27 §3.5).
+    pub(super) default_modes: DefaultModeState,
     /// `allow_fleet_control` of `station.toml` (ADR-008 §3).
     allow_fleet_control: bool,
     /// `allow_desktop` of `station.toml` (R13 §6.4).
@@ -174,6 +177,7 @@ impl Policy {
             trackers: config.trackers.clone(),
             allow_shell: config.allow_shell,
             allow_bypass_permissions: config.allow_bypass_permissions,
+            default_modes: DefaultModeState::from_config(config),
             allow_fleet_control: config.allow_fleet_control,
             allow_desktop: config.allow_desktop,
             allow_desktop_capture: config.allow_desktop_capture,
@@ -265,6 +269,7 @@ impl Policy {
             trackers: Vec::new(),
             allow_shell: true,
             allow_bypass_permissions: false,
+            default_modes: DefaultModeState::default(),
             allow_fleet_control: false,
             allow_desktop: false,
             allow_desktop_capture: false,
@@ -403,6 +408,12 @@ impl Policy {
     #[must_use]
     pub fn allow_bypass_permissions(&self) -> bool {
         self.allow_bypass_permissions
+    }
+
+    /// The mode of a start without a mode on `kind` (B27 §3.5).
+    #[must_use]
+    pub fn default_mode(&self, kind: ProviderKind) -> Option<&str> {
+        self.default_modes.effective(kind)
     }
 
     /// Whether coordinators with a fleet-control grant may act on this
@@ -552,6 +563,8 @@ impl Policy {
         next.taildrive_mounts.clone_from(&self.taildrive_mounts);
         // The stop grace applies at a restart (knobs K3).
         next.stop = self.stop;
+        // The adapters offer bypass as at the start (B27 §3.5).
+        next.default_modes.bypass_offered = self.default_modes.bypass_offered;
         next
     }
 

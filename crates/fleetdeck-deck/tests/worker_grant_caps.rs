@@ -285,7 +285,10 @@ async fn the_caps_route_refuses_bad_spawn_fields() {
 async fn bad_fields_are_refused(r: &Rig, token: &str) {
     let gid = spawner(r, "coord-bad").await;
     for (body, text) in [
-        (json!({"spawn_cap": 51}), "spawn_cap is 0 to 50"),
+        (
+            json!({"spawn_cap": 51}),
+            "spawn_cap is above the grant limit of the deck (Settings, Grant limits)",
+        ),
         (
             json!({"max_modes": {"gemini": "x"}}),
             "max_modes has only the families claude and codex",
@@ -376,7 +379,7 @@ async fn other_grants(r: &Rig) {
     let caps = rows[0]["new"].as_object().unwrap();
     assert!(caps.contains_key("max_modes") && !caps.contains_key("spawn_cap"));
 
-    // A worker grant has a spawn cap of at most 10.
+    // A worker grant has a spawn cap of at most 10 by default (the worker spawn limit).
     let worker = bound_edit(f, &f.station, "coord-worker", &SPAWNER, |g| {
         g.kind = GrantKind::Worker;
         g.spawn_cap = 2;
@@ -392,7 +395,10 @@ async fn other_grants(r: &Rig) {
         .caps(&worker, json!({"spawn_cap": 11}), Some(&token))
         .await;
     expect(&resp, 400, "invalid_grant");
-    message(&resp, "a worker grant has a spawn cap of at most 10");
+    message(
+        &resp,
+        "a worker grant's spawn cap is above the grant limit of the deck (Settings, Grant limits)",
+    );
     let resp = r.caps(&worker, json!({"spawn_cap": 1}), None).await;
     assert_eq!(resp.status, 200, "{}", resp.body);
     assert_eq!(resp.body["spawn_cap"], 1);

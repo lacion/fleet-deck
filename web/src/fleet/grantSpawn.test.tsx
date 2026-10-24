@@ -137,16 +137,12 @@ describe('the session rules form', () => {
     expect(revoked).not.toContain('Change session rules');
   });
 
-  test('a worker grant: 11 is a problem with Save disabled, and the row title says Worker', () => {
+  test('a text that is not a whole number is a problem with Save disabled, and the row title says Worker', () => {
     const w: GrantView = { ...grant, kind: 'worker' };
-    const v = { ...spawnValues(w), spawnCap: '11' };
-    expect(sessionLimitProblem(w, v)).toBe('The session limit is a whole number from 0 to 10.');
+    const v = { ...spawnValues(w), spawnCap: 'x' };
+    expect(sessionLimitProblem(w, v)).toBe('The session limit is a whole number.');
+    expect(sessionLimitProblem(w, { ...v, spawnCap: '-1' })).not.toBeNull();
     expect(sessionLimitProblem(w, { ...v, spawnCap: '10' })).toBeNull();
-    expect(sessionLimitProblem(grant, { ...v, spawnCap: '11' })).toBeNull();
-    expect(sessionLimitProblem(grant, { ...v, spawnCap: '51' })).toBe(
-      'The session limit is a whole number from 0 to 50.',
-    );
-    expect(sessionLimitProblem(grant, { ...v, spawnCap: 'x' })).not.toBeNull();
     const html = renderToStaticMarkup(
       <SpawnForm
         grant={w}
@@ -157,7 +153,7 @@ describe('the session rules form', () => {
         onCancel={() => {}}
       />,
     );
-    expect(html).toContain('The session limit is a whole number from 0 to 10.');
+    expect(html).toContain('The session limit is a whole number.');
     expect(html).toMatch(/<button type="submit" disabled="">Save<\/button>/);
     expect(grantTitle({ ...w, session_id: 'coord-1' })).toBe('Worker coord-1');
     expect(grantTitle(grant)).toBe('Coordinator coord-1');
@@ -266,5 +262,105 @@ describe('modeWithin', () => {
     expect(modeWithin('codex', 'bogus', CODEX)).toBe(false);
     expect(modeWithin('codex', 'on-request/bogus', CODEX)).toBe(false);
     expect(modeWithin('codex', 'plan', CODEX)).toBe(false);
+  });
+});
+
+describe('"No limit" (B27 §3.7)', () => {
+  const NONE = 4_294_967_295;
+  test('a grant with no limit shows the box checked and keeps a number for the input', () => {
+    const v = spawnValues({ ...grant, spawn_cap: NONE });
+    expect(v.spawnNone).toBe(true);
+    expect(v.spawnCap).toBe('3');
+    expect(spawnValues(grant).spawnNone).toBe(false);
+  });
+  test('the box is a checkbox that turns the input off', () => {
+    const render = (spawnNone: boolean) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          grant={grant}
+          values={{ ...spawnValues(grant), spawnNone }}
+          busy={false}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+    expect(render(false)).toContain('aria-label="Session limit: no limit"');
+    expect(render(false)).not.toContain('disabled=""><');
+    expect(render(true)).toMatch(/<input[^>]*disabled=""[^>]*value="3"|value="3"[^>]*disabled=""/);
+  });
+  test('no limit has no text problem and sends NO_LIMIT', () => {
+    const w: GrantView = { ...grant, kind: 'worker' };
+    const v = { ...spawnValues(w), spawnCap: '', spawnNone: true };
+    expect(sessionLimitProblem(w, v)).toBeNull();
+    expect(spawnBody(w, v)).toEqual({ spawn_cap: NONE });
+  });
+  test('no limit counts as widening: it asks the elevation', async () => {
+    const a = actions();
+    const k = asker('123456');
+    await saveSpawn(grant, { ...spawnValues(grant), spawnNone: true }, a, k.ask);
+    expect(k.labels).toEqual([['Session limits']]);
+    expect(a.calls).toEqual([{ grantId: 'g', caps: { spawn_cap: NONE }, elevation: '123456' }]);
+  });
+  test('a grant that already has no limit and is not changed sends nothing', () => {
+    const g: GrantView = { ...grant, spawn_cap: NONE };
+    expect(spawnBody(g, spawnValues(g))).toEqual({});
+  });
+});
+
+// Review finding (B27): the deck enforces its configured grant limits; the board checks no
+// upper bound, so a grant above the old fixed ceilings (10 workers, 50 coordinators) stays editable.
+describe('a grant above the old fixed ceilings', () => {
+  const big: GrantView = { ...grant, spawn_cap: 100 };
+  const bigWorker: GrantView = { ...grant, kind: 'worker', spawn_cap: 40 };
+
+  test('the prefilled cap has no problem, and the input has no maximum', () => {
+    for (const g of [big, bigWorker]) {
+      expect(sessionLimitProblem(g, spawnValues(g))).toBeNull();
+      const html = renderToStaticMarkup(
+        <SpawnForm
+          grant={g}
+          values={spawnValues(g)}
+          busy={false}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+      expect(html).not.toContain('max=');
+      expect(html).not.toContain('role="alert"');
+      expect(html).toMatch(/<button type="submit">Save<\/button>/);
+    }
+    expect(sessionLimitProblem(big, { ...spawnValues(big), spawnCap: '500' })).toBeNull();
+  });
+
+  test('a coordinator cap of 100 lowered to 60 sends only spawn_cap, with no ask', async () => {
+    const a = actions();
+    const k = asker('code');
+    const v = { ...spawnValues(big), spawnCap: '60' };
+    expect(sessionLimitProblem(big, v)).toBeNull();
+    await saveSpawn(big, v, a, k.ask);
+    expect(k.labels).toEqual([]);
+    expect(a.calls).toEqual([{ grantId: 'g', caps: { spawn_cap: 60 }, elevation: undefined }]);
+  });
+
+  test('a worker cap of 40 lowered to 12 sends only spawn_cap, with no ask', async () => {
+    const a = actions();
+    const k = asker('code');
+    await saveSpawn(bigWorker, { ...spawnValues(bigWorker), spawnCap: '12' }, a, k.ask);
+    expect(k.labels).toEqual([]);
+    expect(a.calls).toEqual([{ grantId: 'g', caps: { spawn_cap: 12 }, elevation: undefined }]);
+  });
+
+  test('a mode-only change keeps the prefilled cap 100 and sends only max_modes', async () => {
+    const a = actions();
+    const k = asker('code');
+    const v = { ...spawnValues(big), claude: 'plan' };
+    expect(sessionLimitProblem(big, v)).toBeNull();
+    await saveSpawn(big, v, a, k.ask);
+    expect(k.labels).toEqual([]);
+    expect(a.calls).toEqual([
+      { grantId: 'g', caps: { max_modes: { claude: 'plan', codex: CODEX } }, elevation: undefined },
+    ]);
   });
 });

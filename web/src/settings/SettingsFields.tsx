@@ -168,17 +168,90 @@ const LOCK = (
   </span>
 );
 
-/** The warning under the bypass switch while it is on (§2.2: bypass is a hazard state). */
+const NO_LIMIT_TEXT =
+  "No limit: only the grant lifetime and the station's Most sessions stop a runaway agent.";
+const WORKER_MODE_TEXT = 'Sessions that a worker starts can skip every permission check.';
+const DEFAULT_MODE_TEXT =
+  'Sessions that start without a mode, also scheduled ones and worker sessions, start in this mode.';
+
+/** One row of the hazard table (B27 §3.7): the keys, when it shows, and its text. */
+type Hazard = {
+  readonly keys: readonly string[];
+  readonly when: (value: unknown) => boolean;
+  readonly text: string;
+};
+
+const isNone = (v: unknown): boolean => v === 'none';
+
+/** The hazard lines under a field, by key (§2.2: a relaxed control is a hazard state). */
+export const HAZARDS: readonly Hazard[] = [
+  {
+    keys: ['allow_bypass_permissions'],
+    when: (v) => v === true,
+    text: 'Sessions on this station can run every tool without asking.',
+  },
+  {
+    keys: ['keep_grants_on_update'],
+    when: (v) => v === false,
+    text: 'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.',
+  },
+  {
+    keys: ['worker_grant.allow_bypass'],
+    when: (v) => v === true,
+    text: 'Workers can start sessions that run every tool without asking.',
+  },
+  {
+    keys: ['worker_grant.claude_mode'],
+    when: (v) => v === 'bypassPermissions',
+    text: WORKER_MODE_TEXT,
+  },
+  {
+    keys: ['worker_grant.codex_mode'],
+    when: (v) => v === 'never/danger-full-access',
+    text: WORKER_MODE_TEXT,
+  },
+  {
+    keys: ['worker_grant.spawn_cap', 'grant_limits.spawn_cap', 'grant_limits.worker_spawn_cap'],
+    when: isNone,
+    text: NO_LIMIT_TEXT,
+  },
+  {
+    keys: ['worker_grant.idle_minutes', 'grant_limits.idle_hours'],
+    when: isNone,
+    text: 'No idle limit: a grant stays in effect until its lifetime ends, also when nobody uses it.',
+  },
+  {
+    keys: ['grant_limits.answer_cap'],
+    when: isNone,
+    text: 'No limit: an agent can answer every approval while its grant lasts.',
+  },
+  {
+    keys: ['grant_limits.worker_grants'],
+    when: isNone,
+    text: 'No limit: every session that you start can get a worker grant.',
+  },
+  {
+    keys: ['default_mode.claude'],
+    when: (v) => typeof v === 'string' && v !== '' && v !== 'default',
+    text: DEFAULT_MODE_TEXT,
+  },
+  {
+    keys: ['default_mode.codex'],
+    when: (v) => typeof v === 'string' && v !== '' && v !== 'untrusted/workspace-write',
+    text: DEFAULT_MODE_TEXT,
+  },
+];
+
+/** The text of the hazard line of a field now, or `null`. */
+export function hazardText(key: string, value: unknown): string | null {
+  const row = HAZARDS.find((h) => h.keys.includes(key));
+  return row?.when(value) ? row.text : null;
+}
+
+/** The warning under a control that is in a hazard state (bypass, no limit, a wide mode). */
 function hazardOf(meta: FieldMeta, value: unknown): ReactNode {
-  let text: string;
-  if (meta.key === 'allow_bypass_permissions' && value === true) {
-    text = 'Sessions on this station can run every tool without asking.';
-  } else if (meta.key === 'keep_grants_on_update' && value === false) {
-    text =
-      'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.';
-  } else {
-    return null;
-  }
+  const text = hazardText(meta.key, value);
+  if (text === null) return null;
   return (
     <p className="fd-set-hazard">
       <Icon of={TriangleAlert} size={14} />

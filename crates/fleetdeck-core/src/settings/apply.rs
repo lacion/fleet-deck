@@ -10,6 +10,7 @@ use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Tab
 
 use super::error::SaveError;
 use crate::config::{RAW_INSTANCE_KEYS, valid_env_key};
+use crate::config_grant_limits::NO_LIMIT_WORD;
 
 const INSTANCES: &str = "provider_instance";
 
@@ -43,6 +44,17 @@ pub(super) fn apply_changes(
                     return Err(bad());
                 }
                 set_value(doc, key, n.into())?;
+            }
+            FieldKind::Limit => {
+                if new.as_str() == Some(NO_LIMIT_WORD) {
+                    set_value(doc, key, NO_LIMIT_WORD.into())?;
+                } else {
+                    let n = new.as_i64().ok_or_else(bad)?;
+                    if meta.min.is_some_and(|m| n < m) || meta.max.is_some_and(|m| n > m) {
+                        return Err(bad());
+                    }
+                    set_value(doc, key, n.into())?;
+                }
             }
             FieldKind::Text | FieldKind::Path | FieldKind::Enum => {
                 let s = new.as_str().ok_or_else(bad)?;

@@ -6,8 +6,10 @@ mod fields;
 mod keep_grants;
 mod knobs;
 mod p7b;
+mod posture;
 mod save;
 mod secrets;
+mod security;
 mod tailnet_auto;
 mod testfs;
 

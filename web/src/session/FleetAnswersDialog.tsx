@@ -2,6 +2,7 @@
 import { useRef } from 'react';
 import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
+import { limitText } from '../fleet/limitText';
 import { Icon, X } from '../ui/icons';
 import { type FleetAnswers, resultText } from './fleetAnswers';
 
@@ -40,7 +41,7 @@ export function FleetAnswersDialog({ data, onClose }: Props) {
         <h2>Answers of this coordinator</h2>
         {data.answer_cap === null ? null : (
           <p className="fd-note">
-            Answer limit: {data.answer_used} of {data.answer_cap} used
+            Answer limit: {data.answer_used} of {limitText(data.answer_cap)} used
           </p>
         )}
         {data.answers.length === 0 ? (

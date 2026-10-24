@@ -354,7 +354,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - A default agent mode: a setting per station or per project, used when a spawn does not give a mode. It must never be more permissive than the station's allowed ceiling, unless the owner set that ceiling.
   - Each relaxation changes the threat model, so each needs its own review (adversary DESIGN REVIEW for bypass and for the approval step).
   - Show the active posture on the board (for example a "Relaxed: bypass allowed for workers" line in Settings).
-- **Status:** open (noted only).
+- **Status:** built on branch `bl/security-options` (T1 to T8, DL-540 to DL-546; design `docs/v2/design/security-options.md`). Pending at the merge: `make check`, one run of the tests, and the adversary PRE-PR review (high risk).
 
 ## B28. Update Claude and Codex automatically from the station service (owner request, 2026-10-22)
 

@@ -12,6 +12,7 @@ import { AccessFields } from './AccessForm';
 import { type FleetActions, type FleetResult, grantStatus, NOT_LIVE } from './fleet';
 import { GrantDesktop } from './GrantDesktop';
 import { GrantSpawn, grantTitle, hasCeilings } from './GrantSpawn';
+import { limitText } from './limitText';
 import { ceilingLabel } from './modes';
 import {
   type AccessValues,
@@ -296,7 +297,7 @@ export function SessionAccessBody({
         {grant.classes.includes('spawn') ? (
           <>
             <dt>Sessions started</dt>
-            <dd>{`${grant.spawn_used} of ${grant.spawn_cap}`}</dd>
+            <dd>{`${grant.spawn_used} of ${limitText(grant.spawn_cap)}`}</dd>
           </>
         ) : null}
         {modes.length === 0 ? null : (

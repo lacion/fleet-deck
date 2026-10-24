@@ -191,6 +191,11 @@ export function spawnModes(p: StationProvider | undefined): readonly string[] {
   return p?.capabilities?.modes ?? [];
 }
 
+/** B27 §3.7: the mode that a start without a mode gets on the station for a provider, or `undefined`. */
+export function defaultModeOf(p: StationProvider | undefined): string | undefined {
+  return p?.default_mode;
+}
+
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 

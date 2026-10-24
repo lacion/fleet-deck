@@ -48,6 +48,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
                 auth: auth.to_owned(),
                 capabilities: None,
                 version_status: Default::default(),
+                default_mode: None,
             }],
             assist_tokens_today: None,
             assist_cap: None,

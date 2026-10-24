@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::http::StatusCode;
+use fleetdeck_core::config_grant_limits::GrantLimits;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::command::CoordinatorSpec;
 use fleetdeck_proto::coordinator_desktop_text::{code as desktop_code, text as desktop_text};
@@ -13,18 +14,21 @@ use fleetdeck_proto::version::feature;
 use super::Board;
 use super::guard::ApiError;
 use crate::store::coordinator_ops::valid_ceiling;
-use crate::store::grants::MAX_SPAWN_CAP;
+use crate::store::grants::grant_rules::check_spawn_cap;
 use crate::store::{Grant, GrantClass, LinkFeature};
+use fleetdeck_proto::command::GrantKind;
 
 /// Takes `spawn_cap` and `max_modes` out of the spec (they never go on to a
 /// station) and checks the rules 1 to 5 of MCP P0 §2.2 in order. The `Err`
-/// text is the message of the rule.
+/// text is the message of the rule. The spawn cap is checked against
+/// `limits.spawn_cap` (an owner grant, B27).
 ///
 /// # Errors
 /// The message of the first rule that the fields break.
 pub(super) fn take_spawn_fields(
     spec: &mut CoordinatorSpec,
     classes: &BTreeSet<GrantClass>,
+    limits: &GrantLimits,
 ) -> Result<(Option<u32>, BTreeMap<String, String>), String> {
     let spawn_cap = spec.spawn_cap.take();
     let max_modes = std::mem::take(&mut spec.max_modes);
@@ -32,8 +36,8 @@ pub(super) fn take_spawn_fields(
     if spawn_cap.is_some() && !spawns {
         return Err("spawn_cap needs the spawn class".to_owned());
     }
-    if spawn_cap.is_some_and(|cap| cap > MAX_SPAWN_CAP) {
-        return Err("spawn_cap is 0 to 50".to_owned());
+    if let Some(cap) = spawn_cap {
+        check_spawn_cap(cap, GrantKind::Coordinator, limits).map_err(str::to_owned)?;
     }
     if !max_modes.is_empty() && !spawns && !classes.contains(&GrantClass::Manage) {
         return Err("max_modes needs the spawn or manage class".to_owned());

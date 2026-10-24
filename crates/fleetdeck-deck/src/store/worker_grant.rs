@@ -5,13 +5,14 @@
 //!   transaction whether a start gets a worker grant, stores the decision
 //!   (`worker_attach`), the grant and the pending command together, and
 //!   answers a retry of the same command ID from the stored decision.
-//! - The grant creation steps (`prepare_grant`, `create_grant_tx`) and the
-//!   desktop cap rules live here so that `grants.rs` stays small.
+//! - The grant creation step `create_grant_tx` and the desktop cap rules live
+//!   here so that `grants.rs` stays small; `prepare_grant` is in `grant_rules.rs`.
 //! - A worker grant is revoked without the owner when the station skipped it
 //!   or its start failed, and the retention of §7 removes old rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use fleetdeck_core::config_grant_limits::GrantLimits;
 use fleetdeck_core::config_worker_grant::WorkerGrantConfig;
 use fleetdeck_core::ids::new_id;
 use fleetdeck_proto::command::{
@@ -19,19 +20,16 @@ use fleetdeck_proto::command::{
     SessionCommand,
 };
 use fleetdeck_proto::coordinator_desktop_text::limits;
-use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::version::feature;
-use fleetdeck_proto::{CommandEnvelope, CommandId, StationId};
+use fleetdeck_proto::{CommandEnvelope, CommandId, StationId, grant_limit::NO_LIMIT};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::coordinator::grant_narrowing::{self, Removal};
 use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grant_scopes::{active_grants, in_effect, sync_coordinate_scopes};
-use super::grants::{
-    DEFAULT_ANSWER_CAP, Grant, GrantClass, MAX_ANSWER_CAP, MAX_IDLE_TTL_MS, MAX_SPAWN_CAP,
-    MAX_TTL_MS, NewGrant, get_grant,
-};
-use super::grants_input::{check_input_grant, scope_text};
+use super::grants::grant_rules::prepare_grant;
+use super::grants::{Grant, GrantClass, NewGrant, get_grant};
+use super::grants_input::scope_text;
 use super::{DeckCommand, DeckError, DeckStore, LinkFeature, NewCommand, Result, call, commands};
 
 #[path = "schedules_author_schema.rs"]
@@ -41,12 +39,14 @@ pub(super) mod tokens_kind_schema;
 #[path = "worker_attach_schema.rs"]
 pub(super) mod worker_attach_schema;
 
-/// The most worker grants in effect deck-wide (§7).
+/// The default of the most worker grants in effect deck-wide (§7); the limit
+/// is `grant_limits.worker_grants`.
 pub const WORKER_GRANT_CAP: usize = 200;
 /// The most stations of one worker grant (the limit of an owner grant).
 const MAX_WORKER_STATIONS: usize = 16;
-/// The highest spawn cap of a worker grant (§2).
-pub(crate) const MAX_WORKER_SPAWN_CAP: u32 = 10;
+/// The default of the highest spawn cap of a worker grant (§2); the limit is
+/// `grant_limits.worker_spawn_cap`.
+pub const MAX_WORKER_SPAWN_CAP: u32 = 10;
 /// How long the retention keeps a terminal worker grant and a `none`
 /// decision (§7).
 pub const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -152,115 +152,6 @@ pub fn check_recording_caps(
     }
     if recording_second_cap > limits::RECORDING_SECOND_CAP_MAX {
         return Err("recording_second_cap is 0 to 600000");
-    }
-    Ok(())
-}
-
-/// The rules and the defaults of a new grant, the same for every creator.
-///
-/// # Errors
-/// [`DeckError::Invalid`] for a value out of range.
-pub(super) fn prepare_grant(mut grant: NewGrant) -> Result<NewGrant> {
-    if grant.spawn_cap > MAX_SPAWN_CAP
-        || !(1..=MAX_IDLE_TTL_MS).contains(&grant.idle_ttl_ms)
-        || !(1..=MAX_TTL_MS).contains(&grant.ttl_ms)
-        || grant.stations.is_empty()
-    {
-        return Err(DeckError::Invalid(
-            "a grant needs a cap of at most 50, an idle TTL of at most 24 h, a lifetime of \
-             at most 7 days and at least one station"
-                .to_owned(),
-        ));
-    }
-    // The answer cap (ADR-008 §3): 0 to 5000, only with the `answer`
-    // class, 500 when the class has no value.
-    let answers = grant.classes.contains(&GrantClass::Answer);
-    match grant.answer_cap {
-        Some(_) if !answers => {
-            return Err(DeckError::Invalid(
-                "answer_cap needs the answer class".to_owned(),
-            ));
-        }
-        Some(cap) if cap > MAX_ANSWER_CAP => {
-            return Err(DeckError::Invalid("answer_cap is 0 to 5000".to_owned()));
-        }
-        None if answers => grant.answer_cap = Some(DEFAULT_ANSWER_CAP),
-        _ => {}
-    }
-    // The desktop caps (R13 P6 §8.1).
-    check_desktop_caps(
-        &grant.classes,
-        grant.desktop_cap,
-        grant.capture_cap,
-        grant.image_byte_cap,
-    )
-    .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-    check_recording_caps(
-        &grant.classes,
-        grant.recording_cap,
-        grant.recording_second_cap,
-    )
-    .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-    let input = (grant.input_cap, grant.input_character_cap);
-    check_input_grant(
-        &grant.classes,
-        (grant.allow_input, grant.allow_click),
-        grant.input_scope,
-        input,
-    )
-    .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-    if grant.allow_input {
-        grant.input_scope.get_or_insert(InputScope::OwnWindows);
-    }
-    if grant.classes.contains(&GrantClass::Desktop) || grant.classes.contains(&GrantClass::Capture)
-    {
-        grant.desktop_cap.get_or_insert(limits::DESKTOP_CAP_DEFAULT);
-    }
-    if grant.classes.contains(&GrantClass::Capture) {
-        grant.capture_cap.get_or_insert(limits::CAPTURE_CAP_DEFAULT);
-        grant
-            .image_byte_cap
-            .get_or_insert(limits::IMAGE_BYTE_CAP_DEFAULT);
-    }
-    if grant.kind == GrantKind::Worker {
-        check_worker_grant(&grant)?;
-    }
-    Ok(grant)
-}
-
-/// A worker grant has exactly the classes read, mail, drive and spawn, the
-/// lineage scope, a spawn cap of at most 10, valid non-bypass ceilings and no
-/// other allowance (§4).
-fn check_worker_grant(grant: &NewGrant) -> Result<()> {
-    let classes = BTreeSet::from([
-        GrantClass::Read,
-        GrantClass::Mail,
-        GrantClass::Drive,
-        GrantClass::Spawn,
-    ]);
-    let bad = |m: &str| Err(DeckError::Invalid(m.to_owned()));
-    if grant.classes != classes || grant.scope != GrantScope::Lineage {
-        return bad(
-            "a worker grant has the classes read, mail, drive and spawn and the lineage scope",
-        );
-    }
-    if grant.spawn_cap > MAX_WORKER_SPAWN_CAP {
-        return bad("a worker grant has a spawn cap of at most 10");
-    }
-    let ceilings_ok = grant.max_modes.iter().all(|(family, mode)| {
-        matches!(family.as_str(), "claude" | "codex")
-            && super::coordinator_ops::valid_ceiling(family, mode)
-    });
-    if !ceilings_ok {
-        return bad("a worker grant needs valid mode ceilings");
-    }
-    if grant.answer_cap.is_some()
-        || grant.desktop_cap.is_some()
-        || grant.allow_input
-        || grant.allow_click
-        || grant.recording_cap != 0
-    {
-        return bad("a worker grant has no answer, desktop or input allowance");
     }
     Ok(())
 }
@@ -406,6 +297,15 @@ pub(super) fn worker_grants_in_effect(tx: &Connection, now: i64) -> Result<usize
         .count())
 }
 
+/// True when the worker grants in effect reach `grant_limits.worker_grants`
+/// (never with no limit).
+pub(super) fn over_worker_grants(tx: &Connection, now: i64, limits: &GrantLimits) -> Result<bool> {
+    let Some(most) = limits.worker_grants else {
+        return Ok(false);
+    };
+    Ok(worker_grants_in_effect(tx, now)? >= usize::try_from(most).unwrap_or(usize::MAX))
+}
+
 /// The stored command of `command_id` when it is the same request as
 /// `original` (the deck's worker `CoordinatorSpec` is not part of the
 /// request), or [`DeckError::CommandIdReused`] (shape 7e).
@@ -512,9 +412,10 @@ impl DeckStore {
             .iter()
             .all(|f| self.link_feature(&req.station, f) == LinkFeature::Negotiated);
         let grant_id: String = new_id(self.inner.ids.as_ref());
+        let limits = self.knobs().grant;
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let out = attach(&tx, &req, links, &grant_id, now)?;
+            let out = attach(&tx, &req, (links, &limits), &grant_id, now)?;
             tx.commit()?;
             Ok(out)
         })
@@ -534,7 +435,7 @@ impl DeckStore {
 fn attach(
     tx: &Connection,
     req: &WorkerStart,
-    links: bool,
+    (links, limits): (bool, &GrantLimits),
     grant_id: &str,
     now: i64,
 ) -> Result<Attached> {
@@ -586,7 +487,7 @@ fn attach(
         Decision::None("setting_off")
     } else if !links {
         Decision::None("link_features")
-    } else if worker_grants_in_effect(tx, now)? >= WORKER_GRANT_CAP {
+    } else if over_worker_grants(tx, now, limits)? {
         audit_tx(
             tx,
             now,
@@ -612,15 +513,16 @@ fn attach(
                 GrantClass::Spawn,
             ]);
             grant.stations = grant_stations(tx, &req.station, w)?;
-            grant.spawn_cap = w.spawn_cap;
+            grant.spawn_cap = w.spawn_cap.unwrap_or(NO_LIMIT);
             grant.max_modes = BTreeMap::from([
                 ("claude".to_owned(), w.claude_mode.clone()),
                 ("codex".to_owned(), w.codex_mode.clone()),
             ]);
-            grant.idle_ttl_ms = i64::from(w.idle_minutes) * 60_000;
             grant.ttl_ms = i64::from(w.lifetime_hours) * 3_600_000;
+            grant.idle_ttl_ms =
+                Option::map_or(w.idle_minutes, grant.ttl_ms, |m| i64::from(m) * 60_000);
             grant.start_command_id = Some(id.0.clone());
-            let grant = prepare_grant(grant)?;
+            let grant = prepare_grant(grant, limits, w.allow_bypass)?;
             let (g, changed) = create_grant_tx(tx, grant_id, &grant, now)?;
             scopes = changed;
             if let SessionCommand::Start { spec, .. } = &mut command {

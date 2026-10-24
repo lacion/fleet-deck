@@ -18,6 +18,8 @@ use ts_rs::TS;
 pub enum FieldKind {
     Bool,
     Int,
+    /// A whole number in `min..=max`, or the text `none` (no limit, B27).
+    Limit,
     Text,
     Enum,
     Path,
@@ -98,6 +100,40 @@ pub struct SettingsView {
     pub revision: String,
     /// The keys that the running process took from a command-line flag.
     pub overrides: Vec<String>,
+    /// The relaxed controls of this file (B27 §3.6). `None` from an older
+    /// station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub relaxed: Option<Vec<Relaxed>>,
+}
+
+/// Where a relaxed control is in effect (B27 §3.6, revision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "settings/")]
+pub enum RelaxedState {
+    /// In the file and in the running process.
+    Active,
+    /// In the file; the running process applies it at the next restart.
+    AfterRestart,
+    /// Not in the file any more; the running process keeps it until the
+    /// next restart.
+    UntilRestart,
+    /// From a command-line flag of the running process (the file value is
+    /// not used).
+    CommandLine,
+}
+
+/// One security control that is weaker than its secure default (B27 §3.6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "settings/")]
+pub struct Relaxed {
+    /// The settings key.
+    pub key: String,
+    /// The fixed text of the board line.
+    pub text: String,
+    /// Where it is in effect (revision 2).
+    pub state: RelaxedState,
 }
 
 /// A save: the keys to change (`null` removes a key) and the revision that
@@ -127,6 +163,11 @@ pub struct SettingsSaved {
     pub unapplied: Vec<String>,
     pub revision: String,
     pub durability: Durability,
+    /// The keys of this save that relaxed a control (its danger keys, B27
+    /// §3.6). Empty from an older station.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub relaxed: Vec<String>,
 }
 
 /// A secret value that the owner types in the board. It crosses the deck

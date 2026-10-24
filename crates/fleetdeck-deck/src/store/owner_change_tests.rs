@@ -12,6 +12,8 @@ use rusqlite::params;
 
 use super::*;
 use super::{World, give, grant, new_grant, row_of, set_state, sets, worker_grant, world};
+use crate::store::grants::grant_rules::{OVER_ANSWER_LIMIT, OVER_SPAWN_LIMIT};
+use crate::store::grants::{DEFAULT_ANSWER_CAP, DEFAULT_SPAWN_CAP};
 
 fn classes(list: &[GrantClass]) -> BTreeSet<GrantClass> {
     list.iter().copied().collect()
@@ -148,7 +150,7 @@ async fn class_and_cap_changes_need_elevation_for_every_widening() {
     // The caps of a newly added class follow the creation rules.
     let mut ch = change(&[Read, Mail, Answer], true);
     ch.answer_cap = Some(6000);
-    assert_eq!(invalid(&w, &id, ch).await, "answer_cap is 0 to 5000");
+    assert_eq!(invalid(&w, &id, ch).await, OVER_ANSWER_LIMIT);
     let (_, answers) = apply(&w, &id, change(&[Read, Mail, Spawn, Answer], true))
         .await
         .unwrap();
@@ -202,7 +204,7 @@ async fn class_and_cap_changes_need_elevation_for_every_widening() {
         .unwrap();
     let mut ch = change(&[Read, Mail, Spawn, Answer], true);
     ch.spawn_cap = Some(51);
-    assert_eq!(invalid(&w, &id, ch).await, "spawn_cap is 0 to 50");
+    assert_eq!(invalid(&w, &id, ch).await, OVER_SPAWN_LIMIT);
     let mut ch = change(&[Read, Mail, Spawn, Answer], true);
     ch.max_modes = Some(BTreeMap::from([("bogus".to_owned(), "plan".to_owned())]));
     assert_eq!(

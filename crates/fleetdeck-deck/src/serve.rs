@@ -220,6 +220,7 @@ impl RunningDeck {
             path: settings_path,
             overrides,
             gate: Arc::default(),
+            running: Some(Arc::new(config.clone())),
         };
         // "Use Tailscale automatically" (tailnet design 14.4) runs before
         // any listener binds.

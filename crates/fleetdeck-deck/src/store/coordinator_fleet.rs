@@ -290,7 +290,7 @@ pub(super) fn decide_worker(
 // ---------------------------------------------------------------------------
 
 /// The provider family and the mode of a session from the read model.
-fn session_family(
+pub(super) fn session_family(
     ctx: &Context,
     station: &StationId,
     session: &SessionId,

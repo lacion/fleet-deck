@@ -27,6 +27,7 @@ use super::coordinator_fleet::{self, ask, send_group};
 use super::fleet::write_completion;
 use super::grants::{Grant, GrantClass};
 use super::outbox::{NewOutboxItem, insert_item};
+use super::worker_bypass::{audit_bypass_start, bypass_refusal, resolved_mode};
 use crate::link::router::CommandKind;
 use crate::routing::{Needs, pick_session};
 
@@ -36,21 +37,14 @@ pub(super) const INTENT_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 /// section 6.1).
 pub(super) const FLEET_INTENT_TTL_MS: i64 = 10 * 60 * 1000;
 
-/// Claude native modes, most restrictive first (the provider adapter's
-/// `NATIVE_MODES`).
-const CLAUDE_MODES: &[&str] = &[
-    "default",
-    "plan",
-    "acceptEdits",
-    "dontAsk",
-    "auto",
-    "bypassPermissions",
-];
-/// Codex approval policies and sandboxes, most restrictive first.
-const CODEX_POLICIES: &[&str] = &["untrusted", "on-request", "never"];
-const CODEX_SANDBOXES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];
-/// The mode of a Codex start without a mode (the adapter's default).
-const CODEX_DEFAULT: &str = "untrusted/workspace-write";
+#[path = "coordinator_modes.rs"]
+pub(super) mod modes;
+pub use modes::{is_bypass, mode_within, valid_ceiling};
+
+/// A start without a mode resolved to a bypass mode that the rules of a worker
+/// bypass start refuse (B27 §3.5).
+const DEFAULT_BYPASS_REFUSED: &str =
+    "this station's default mode is a bypass mode that your grant cannot use here: give a mode";
 
 /// The facts that the decision reads before its transaction.
 pub(crate) struct Context {
@@ -108,53 +102,6 @@ pub(super) fn classes_of(op: &CoordinatorOp) -> BTreeSet<GrantClass> {
         CoordinatorOp::Land { .. } | CoordinatorOp::Move { .. } => vec![GrantClass::Manage],
     };
     classes.into_iter().collect()
-}
-
-/// True for a mode that skips the permission checks (ADR-008 §5.2): Claude
-/// `bypassPermissions`, or Codex approval `never` with the sandbox
-/// `danger-full-access`. No coordinator operation starts, resumes or sets a
-/// session into one.
-#[must_use]
-pub fn is_bypass(family: &str, mode: Option<&str>) -> bool {
-    match family {
-        "claude" => mode == Some("bypassPermissions"),
-        "codex" => mode
-            .and_then(|m| m.split_once('/'))
-            .is_some_and(|(policy, sandbox)| policy == "never" && sandbox == "danger-full-access"),
-        _ => false,
-    }
-}
-
-/// Is `mode` (or the provider default) within `ceiling` for `family`?
-/// Unknown families and unknown modes fail closed. No order across
-/// families is inferred (ADR-006 §4).
-#[must_use]
-pub fn mode_within(family: &str, mode: Option<&str>, ceiling: &str) -> bool {
-    let at = |list: &[&str], m: &str| list.iter().position(|x| *x == m);
-    match family {
-        "claude" => {
-            let m = mode.unwrap_or("default");
-            matches!((at(CLAUDE_MODES, m), at(CLAUDE_MODES, ceiling)), (Some(a), Some(b)) if a <= b)
-        }
-        "codex" => {
-            let parse = |s: &str| {
-                let (p, b) = s.split_once('/')?;
-                Some((at(CODEX_POLICIES, p)?, at(CODEX_SANDBOXES, b)?))
-            };
-            match (parse(mode.unwrap_or(CODEX_DEFAULT)), parse(ceiling)) {
-                (Some((p, s)), Some((cp, cs))) => p <= cp && s <= cs,
-                _ => false,
-            }
-        }
-        _ => false,
-    }
-}
-
-/// Whether `ceiling` is a valid mode ceiling for `family` (MCP P0 §2.2 rule 5):
-/// a known mode of the family that is not a bypass mode.
-#[must_use]
-pub fn valid_ceiling(family: &str, ceiling: &str) -> bool {
-    mode_within(family, Some(ceiling), ceiling) && !is_bypass(family, Some(ceiling))
 }
 
 pub(super) fn family_of(
@@ -712,11 +659,32 @@ pub(super) fn start(
             format!("the grant has no mode ceiling for `{family}`"),
         );
     };
-    if is_bypass(&family, spec.mode.as_deref()) {
-        return no(
-            RejectCode::Forbidden,
-            "a coordinator never starts a session in a bypass mode",
-        );
+    // A start without a mode gets a concrete mode from the deck (B27 §3.5):
+    // the station never fills the mode of a command with authority.
+    let mut spec = spec;
+    let defaulted = spec.mode.is_none();
+    if defaulted {
+        let target = (station, &spec.provider_instance);
+        let Some(mode) = resolved_mode(grant, ctx, target, (&family, ceiling)) else {
+            return no(
+                RejectCode::Forbidden,
+                format!("the mode is above the grant's ceiling `{ceiling}`"),
+            );
+        };
+        spec.mode = Some(mode);
+    }
+    let bypass = is_bypass(&family, spec.mode.as_deref());
+    if bypass {
+        let target = (station, &spec.provider_instance);
+        let mode = spec.mode.as_deref().unwrap_or_default();
+        if let Some(why) = bypass_refusal(grant, ctx, target, (&family, mode)) {
+            let why = if defaulted {
+                DEFAULT_BYPASS_REFUSED.to_owned()
+            } else {
+                why
+            };
+            return no(RejectCode::Forbidden, why);
+        }
     }
     if !mode_within(&family, spec.mode.as_deref(), ceiling) {
         return no(
@@ -748,6 +716,7 @@ pub(super) fn start(
     if !known {
         return no(RejectCode::InvalidCommand, "the station is not paired");
     }
+    let bypass_mode = bypass.then(|| spec.mode.clone().unwrap_or_default());
     enqueue(
         tx,
         ctx,
@@ -764,6 +733,9 @@ pub(super) fn start(
         },
         now,
     )?;
+    if let Some(mode) = bypass_mode {
+        audit_bypass_start(tx, grant, station, (&family, &mode), (command_id, now))?;
+    }
     tx.execute(
         "UPDATE tokens SET spawn_used = spawn_used + 1 WHERE grant_id = ?1",
         [grant.grant_id.as_str()],

@@ -1,16 +1,17 @@
 //! The end of a worker grant by its session and the cap on its renewal (MCP P4a
 //! PRE-PR R1): `session.ended` revokes the worker grants of that session, and a
-//! renewal never makes more than [`WORKER_GRANT_CAP`] worker grants in effect.
+//! renewal never makes more worker grants in effect than `grant_limits.worker_grants`.
 
 use std::collections::BTreeSet;
 
+use fleetdeck_core::config_grant_limits::GrantLimits;
 use fleetdeck_proto::command::GrantKind;
 use fleetdeck_proto::{CommandId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Result;
 use super::grants::Grant;
-use super::worker_grant::{WORKER_GRANT_CAP, revoke_tx, worker_grants_in_effect};
+use super::worker_grant::{over_worker_grants, revoke_tx};
 
 /// Folds `session.ended` of `station` (MCP P4a §6.4, PRE-PR R1 MAJOR 1): every worker grant of
 /// that station and session that is not revoked is revoked with the reason `session_ended`. A grant
@@ -69,7 +70,12 @@ pub(super) fn revoke_if_ended(
 }
 
 /// True when reactivating `grant` would pass the worker cap (PRE-PR R1 MAJOR 2): a worker grant and
-/// `WORKER_GRANT_CAP` worker grants already in effect.
-pub(super) fn over_worker_cap(tx: &Connection, grant: &Grant, now: i64) -> Result<bool> {
-    Ok(grant.kind == GrantKind::Worker && worker_grants_in_effect(tx, now)? >= WORKER_GRANT_CAP)
+/// `limits.worker_grants` worker grants already in effect.
+pub(super) fn over_worker_cap(
+    tx: &Connection,
+    grant: &Grant,
+    now: i64,
+    limits: &GrantLimits,
+) -> Result<bool> {
+    Ok(grant.kind == GrantKind::Worker && over_worker_grants(tx, now, limits)?)
 }
