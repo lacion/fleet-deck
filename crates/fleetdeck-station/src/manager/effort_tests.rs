@@ -326,10 +326,13 @@ async fn a_start_with_an_effort_appends_effort_chosen_once() {
     assert!(again.duplicate);
     assert_eq!(rig.chosen().await, ["high"]);
 
-    // An import carries its choice the same way.
+    // An import carries its choice the same way. It needs a station where no
+    // run without a known conversation id may still run (an import waits for
+    // those), so it gets a rig of its own.
+    let mut rig = Rig::new().await;
     let imported = rig.accepted(rig.import(Some("low"))).await;
     let imported = imported.receipt.result.unwrap().session_id.unwrap();
-    assert_eq!(rig.chosen().await, ["high", "low"]);
+    assert_eq!(rig.chosen().await, ["low"]);
     assert_eq!(
         rig.summary(&imported).await.effort_choice.as_deref(),
         Some("low")

@@ -66,7 +66,7 @@ mod tests {
     fn v44_database_is_too_new_for_the_v43_list() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("station.db");
-        drop(Db::open(&path, migrations()).unwrap());
+        drop(Db::open(&path, migrations_upto(44)).unwrap());
         let Err(err) = Db::open(&path, migrations_upto(43)) else {
             panic!("the V43 list opened a V44 database");
         };
