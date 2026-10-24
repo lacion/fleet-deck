@@ -146,7 +146,7 @@ fn every_command_method_has_the_scope_of_its_link_method() {
         assert!(api.mutating);
         n += 1;
     }
-    assert_eq!(n, 20);
+    assert_eq!(n, 22);
 }
 
 /// The settings, secret relay, restart and elevation routes (DL-172) are
