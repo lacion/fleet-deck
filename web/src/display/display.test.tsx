@@ -339,7 +339,7 @@ describe('the directive', () => {
     });
   }
 
-  test('a page directive shows Mission until the page pane exists', () => {
+  test('a page directive maps to the page route', () => {
     const route = directiveRoute({
       mode: 'page',
       page: { page_id: '01J0000000000000000000000A' },
@@ -348,7 +348,8 @@ describe('the directive', () => {
     });
     expect(route).toMatchObject({
       name: 'wall',
-      mode: 'mission',
+      mode: 'page',
+      page: { id: '01J0000000000000000000000A' },
       pin: true,
       stations: [],
       repo: '',

@@ -381,7 +381,7 @@ describe('startHandover', () => {
 
 describe('returnToBoard', () => {
   test('a pending resume keeps its follow-up', async () => {
-    const f = fixture({ state: 'exited', terminal: hold });
+    const f = fixture({ state: 'exited' });
     const result = await returnToBoard({
       watch: f.watch,
       shellLive: async () => false,

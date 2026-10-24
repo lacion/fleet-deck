@@ -159,13 +159,16 @@ describe('the agent view of a workflow agent (B12)', () => {
     const bare = view('wf:t1:3');
     expect(bare).toContain('<span class="fd-agent-title">Bare</span>');
     expect(bare).toContain('<dt>Workflow</dt>');
+    // Only the facts of the agent: the Properties panel of the session always has a Model row.
+    const facts = /<dl class="fd-agent-facts">.*?<\/dl>/.exec(bare)?.[0] ?? '';
+    expect(facts).toContain('<dt>Workflow</dt>');
     for (const missing of [
       '<dt>Phase</dt>',
       '<dt>Model</dt>',
       '<dt>Tool calls</dt>',
       '<dt>Tokens</dt>',
     ]) {
-      expect(bare).not.toContain(missing);
+      expect(facts).not.toContain(missing);
     }
     expect(bare).not.toContain('Task</p>');
     expect(bare).not.toContain('Result</p>');
