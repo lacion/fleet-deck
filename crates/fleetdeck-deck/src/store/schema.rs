@@ -783,14 +783,14 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::worker_grant::tokens_kind_schema::SQL),
         M::up(super::worker_grant::schedules_author_schema::SQL),
         M::up(super::worker_grant::worker_attach_schema::SQL),
-        // V46 (MCP P4b): `session_owner_grant` and `required_classes`.
+        // V46 (MCP P4b): session_owner_grant, required_classes; V47 (Fleet Sync FS-3): secret_files.
         M::up(super::grants::owner_grant_schema::SQL),
-        // V47 (Fleet Sync FS-3): secret_files.
         M::up(super::secret_files::SQL),
-        // V48 to V50: wall pages and the page mode (B17), the wake key with the session (G5), displays.allow_apps (B17 wall apps).
+        // V48 to V50: wall pages and the page mode (B17), the wake key with the session (G5), displays.allow_apps (B17 wall apps); V53 (B28): the audit cursor of provider updates.
         M::up(super::wall_pages_schema::SQL),
         M::up(super::wake_seen::schema::SQL),
         M::up(super::display_apps_schema::SQL),
+        M::up(super::cli_update_cursor_schema::SQL),
     ])
 }
 

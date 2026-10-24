@@ -25,6 +25,8 @@ pub mod auth;
 pub mod board_fence;
 pub mod branch_map;
 pub mod chat;
+mod cli_update_audit;
+mod cli_update_cursor_schema;
 pub mod commands;
 pub mod conflicts;
 pub mod coordinator;
