@@ -104,6 +104,7 @@ async fn a_restart_right_after_the_launch_binds_the_later_agents() {
 }
 
 #[tokio::test]
+#[ignore = "B25: shim_resume_rig::as_shim_station restarts the manager on the same database while a task of the old one still writes (database is locked); see docs/v2/BACKLOG.md B25"]
 async fn a_shim_hosted_session_binds_workflow_agents() {
     let mut rig = Rig::direct(None).await;
     let session = rig.start("claude").await;
@@ -169,6 +170,7 @@ fn complete_run(n: usize) -> Vec<NewEvent> {
 }
 
 #[tokio::test]
+#[ignore = "B25: shim_resume_rig::as_shim_station restarts the manager on the same database while a task of the old one still writes (database is locked); see docs/v2/BACKLOG.md B25"]
 async fn an_adopted_session_binds_33_runs_before_its_observer_reads_them() {
     let mut rig = Rig::direct(None).await;
     let session = rig.start("claude").await;
