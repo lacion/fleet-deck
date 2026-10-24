@@ -191,7 +191,7 @@ fn signal_member(leader: u32, member: &ProcStat, sig: Signal) {
     else {
         return;
     };
-    let fd = match rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) {
+    let fd = match super::leader::pidfd_open(pid) {
         Ok(fd) => fd,
         // The member is gone.
         Err(rustix::io::Errno::SRCH) => return,
@@ -209,7 +209,7 @@ fn signal_member(leader: u32, member: &ProcStat, sig: Signal) {
     if fresh.session != leader || fresh.start_time != member.start_time {
         return;
     }
-    match rustix::process::pidfd_send_signal(&fd, sig) {
+    match super::leader::pidfd_send_signal(&fd, sig) {
         Ok(()) | Err(rustix::io::Errno::SRCH) => {}
         Err(e) => tracing::warn!(pid = member.pid, ?sig, error = %e, "cannot signal a member"),
     }

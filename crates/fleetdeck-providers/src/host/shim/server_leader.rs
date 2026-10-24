@@ -14,6 +14,7 @@ use tokio::sync::watch;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum LeaderWait {
     /// The leader terminated; it stays a zombie (`WNOWAIT`): `L` is pinned.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Ended,
     /// The wait failed; the leader may or may not be reaped. Fail closed.
     Failed(rustix::io::Errno),
@@ -66,13 +67,37 @@ pub(super) fn start_wait(pid: u32) -> tokio::sync::oneshot::Receiver<LeaderWait>
     rx
 }
 
+/// Linux: opens a pidfd of `pid`.
+#[cfg(target_os = "linux")]
+pub(super) fn pidfd_open(pid: rustix::process::Pid) -> Result<OwnedFd, rustix::io::Errno> {
+    rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+}
+
+/// Not Linux: there is no pidfd (DL-182); the code only has to compile.
+#[cfg(not(target_os = "linux"))]
+pub(super) fn pidfd_open(_pid: rustix::process::Pid) -> Result<OwnedFd, rustix::io::Errno> {
+    Err(rustix::io::Errno::NOSYS)
+}
+
+/// Linux: sends `sig` to the process of the pidfd `fd`.
+#[cfg(target_os = "linux")]
+pub(super) fn pidfd_send_signal(fd: &OwnedFd, sig: Signal) -> Result<(), rustix::io::Errno> {
+    rustix::process::pidfd_send_signal(fd, sig)
+}
+
+/// Not Linux: there is no pidfd (DL-182); the code only has to compile.
+#[cfg(not(target_os = "linux"))]
+pub(super) fn pidfd_send_signal(_fd: &OwnedFd, _sig: Signal) -> Result<(), rustix::io::Errno> {
+    Err(rustix::io::Errno::NOSYS)
+}
+
 /// Opens a pidfd of the leader, right after the spawn (the leader is
 /// unreaped, so the pidfd names the provider). Any error: no pidfd.
 pub(super) fn open_leader_fd(pid: u32) -> Option<OwnedFd> {
     let pid = i32::try_from(pid)
         .ok()
         .and_then(rustix::process::Pid::from_raw)?;
-    match rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) {
+    match pidfd_open(pid) {
         Ok(fd) => Some(fd),
         Err(e) => {
             tracing::debug!(error = %e, "no pidfd of the provider");
@@ -135,7 +160,7 @@ impl Leader {
                 Target::Group(pid) => super::process::signal_group(pid, sig),
                 Target::LeaderFd => {
                     if let Some(fd) = &for_send
-                        && let Err(e) = rustix::process::pidfd_send_signal(fd, sig)
+                        && let Err(e) = pidfd_send_signal(fd, sig)
                     {
                         tracing::debug!(?sig, error = %e, "cannot signal the provider by pidfd");
                     }
