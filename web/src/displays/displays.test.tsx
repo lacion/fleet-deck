@@ -356,11 +356,12 @@ describe('a display row', () => {
       'Never connected',
       'title="Added 3 d ago"',
       'Stations it shows',
+      'Allow apps on this wall',
     ]) {
       expect(html).toContain(text);
     }
     // Every field is a settings field row (§4.7), the station names are wide type (§2.3).
-    expect(html.match(/class="fd-fieldwrap" data-layout="row"/g)?.length).toBe(7);
+    expect(html.match(/class="fd-fieldwrap" data-layout="row"/g)?.length).toBe(8);
     expect(html).toContain('<span class="fd-wide">Alpha</span>');
     expect(html).not.toContain('<fieldset');
     // One control clears the binding: the "None" station.
