@@ -71,9 +71,11 @@ fn the_deck_knob_entries_follow_the_design_table() {
 fn the_station_knob_entries_follow_the_design_table() {
     let fields = station_fields();
     check_entries(&fields, STATION_KNOBS);
-    let tail: Vec<&str> = fields[fields.len() - STATION_KNOBS.len()..]
+    // The bool knob `analytics.transcripts` is not a number knob: it is not in the table.
+    let tail: Vec<&str> = fields[fields.len() - STATION_KNOBS.len() - 1..]
         .iter()
         .map(|f| f.key.as_str())
+        .filter(|k| *k != "analytics.transcripts")
         .collect();
     let want: Vec<&str> = STATION_KNOBS.iter().map(|k| k.key).collect();
     assert_eq!(tail, want);

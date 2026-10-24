@@ -299,3 +299,35 @@ fn an_unknown_key_in_a_table_is_refused() {
     assert!(StationConfig::parse("[retention]\naudit_days = 90\n", &env()).is_err());
     assert!(DeckConfig::parse("[retention]\nhistory_days = 90\n").is_err());
 }
+
+#[test]
+fn analytics_transcripts_defaults_to_true() {
+    let c = StationConfig::parse("", &env()).unwrap();
+    assert!(c.analytics.transcripts);
+    assert_eq!(c.analytics, super::StationAnalytics::default());
+    let c = StationConfig::parse("[analytics]\n", &env()).unwrap();
+    assert!(c.analytics.transcripts);
+}
+
+#[test]
+fn analytics_transcripts_false_parses() {
+    let c = StationConfig::parse("[analytics]\ntranscripts = false\n", &env()).unwrap();
+    assert!(!c.analytics.transcripts);
+    assert!(StationConfig::parse("[analytics]\ntranscripts = 1\n", &env()).is_err());
+    let e = StationConfig::parse("[analytics]\nnope = true\n", &env())
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("unknown field"), "{e}");
+}
+
+#[test]
+fn the_field_is_listed_with_restart() {
+    let fields = crate::settings::station_fields();
+    let f = fields
+        .iter()
+        .find(|f| f.key == "analytics.transcripts")
+        .expect("the field is listed");
+    assert_eq!(f.kind, fleetdeck_proto::settings::FieldKind::Bool);
+    assert_eq!(f.apply, fleetdeck_proto::settings::Apply::Restart);
+    assert!(f.help.contains("Default on."));
+}

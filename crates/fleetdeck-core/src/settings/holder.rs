@@ -484,6 +484,10 @@ fn insert_station_knobs(m: &mut Map<String, Value>, c: &StationConfig) {
     for (key, value) in numbers {
         m.insert(key.into(), json!(value));
     }
+    m.insert(
+        "analytics.transcripts".into(),
+        json!(c.analytics.transcripts),
+    );
 }
 
 /// The deck knobs whose change needs the elevation (knobs design section 2):
