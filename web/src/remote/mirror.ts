@@ -231,7 +231,7 @@ export function routeDirective(
               artifact_id: route.artifact.id,
               version: route.artifact.version,
             },
-            app: false,
+            app: route.artifact.app === true,
             pin,
             filter,
           };

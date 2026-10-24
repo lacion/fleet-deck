@@ -9,7 +9,7 @@ import { SettingsProvider, type SettingsEnv } from '../settings/context';
 import type { SettingsActions } from '../settings/actions';
 import { DeckError, type DeckIo } from '../settings/http';
 import { station } from '../testing/fleet';
-import { directiveFor, SendToWall, SendToWallDialog } from '../wall/SendToWall';
+import { canRunAsApp, directiveFor, SendToWall, SendToWallDialog } from '../wall/SendToWall';
 import {
   displayActions,
   desktopActions,
@@ -18,7 +18,14 @@ import {
   type DisplayActions,
 } from './actions';
 import { AddDisplay, COST_TEXT } from './AddDisplay';
-import { DisplayRow, changeOf, isDirty, QUIET_PROBLEM, seenText } from './DisplayRow';
+import {
+  ALLOW_APPS_HINT,
+  DisplayRow,
+  changeOf,
+  isDirty,
+  QUIET_PROBLEM,
+  seenText,
+} from './DisplayRow';
 import { ADD_TEXT, DisplaysTab, DisplaysView } from './DisplaysTab';
 import { ELEVATION_LABELS, withElevation } from './elevate';
 import { PendingPairings } from './PendingPairings';
@@ -258,6 +265,7 @@ describe('a display row', () => {
     ceiling: ['station-a'],
     showDiffs: false,
     wake: true,
+    allowApps: false,
     quiet: '22:00-07:00',
     bindStation: 'station-a',
     bindMonitor: 'DP-1',
@@ -684,5 +692,89 @@ describe('the Desktop panel', () => {
     expect(isWebUrl('javascript:alert(1)')).toBe(false);
     expect(isWebUrl('not a url')).toBe(false);
     expect(isWebUrl(`https://e.com/${'a'.repeat(2100)}`)).toBe(false);
+  });
+});
+
+describe('wall apps in the display row', () => {
+  const draftOf = (extra: Record<string, unknown> = {}) => ({
+    name: 'Wall',
+    ceiling: ['station-a'],
+    showDiffs: false,
+    wake: true,
+    allowApps: false,
+    quiet: '',
+    bindStation: '',
+    bindMonitor: '',
+    ...extra,
+  });
+  const askedElevation = (calls: (string | null)[]) => async (elevation: string | null) => {
+    calls.push(elevation);
+    if (elevation === null) throw new DeckError(400, 'x', 'elevation_required', {});
+    return 'saved';
+  };
+  const settings = {
+    elevation: () => null,
+    forgetElevation: () => {},
+  } as unknown as SettingsActions;
+
+  test('the_switch_asks_for_elevation', async () => {
+    const out = changeOf(display(), draftOf({ allowApps: true }));
+    expect(out).toEqual({ change: { allow_apps: true } });
+    if (!('change' in out)) throw new Error('no change');
+    const seen: (string | null)[] = [];
+    const run = askedElevation(seen);
+    const result = await withElevation(settings, async () => 'token', run);
+    expect(result).toBe('saved');
+    expect(seen).toEqual([null, 'token']);
+    const { io, calls } = fakeIo({
+      '/api/displays/D1/settings': display({ allow_apps: true }),
+    });
+    await displayActions(io).change('D1', out.change, 'token');
+    expect(calls[0]?.body).toEqual({ allow_apps: true, elevation: 'token' });
+  });
+
+  test('turning_apps_off_sends_false_without_elevation', async () => {
+    const on = display({ allow_apps: true });
+    const out = changeOf(on, draftOf({ allowApps: false }));
+    expect(out).toEqual({ change: { allow_apps: false } });
+    expect(changeOf(on, draftOf({ allowApps: true }))).toEqual({ change: {} });
+    const seen: (string | null)[] = [];
+    const result = await withElevation(
+      settings,
+      async () => 'never',
+      async (e) => {
+        seen.push(e);
+        return 'saved';
+      },
+    );
+    expect(result).toBe('saved');
+    expect(seen).toEqual([null]);
+  });
+
+  test('the hint ends with the network sentence', () => {
+    expect(ALLOW_APPS_HINT).toContain('It cannot reach the network.');
+  });
+
+  test('run_it_as_an_app_shows_only_for_a_single_html_file_and_an_allowing_display', () => {
+    const artifact = (single_html?: boolean) => ({
+      kind: 'artifact' as const,
+      station_id: 's',
+      artifact_id: 'a',
+      version: 1,
+      ...(single_html === undefined ? {} : { single_html }),
+    });
+    const allowing = display({ allow_apps: true });
+    expect(canRunAsApp(artifact(true), allowing)).toBe(true);
+    expect(canRunAsApp(artifact(true), display({ allow_apps: false }))).toBe(false);
+    expect(canRunAsApp(artifact(false), allowing)).toBe(false);
+    expect(canRunAsApp(artifact(), allowing)).toBe(false);
+    expect(canRunAsApp(artifact(true), undefined)).toBe(false);
+    expect(canRunAsApp({ kind: 'session', station_id: 's', session_id: 'x' }, allowing)).toBe(
+      false,
+    );
+    const body = directiveFor(artifact(true), 'focus', true, true);
+    expect(body.mode === 'artifact' && body.app).toBe(true);
+    const plain = directiveFor(artifact(true), 'focus', true);
+    expect(plain.mode === 'artifact' && plain.app).toBe(false);
   });
 });

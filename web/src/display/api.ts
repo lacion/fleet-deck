@@ -15,7 +15,7 @@ import { type Fetch, request } from '../runtime/api';
 
 /** The features that a wall display declares (B17): in `features=` of the socket and in the header
  * of every request. The declaration grants no authority; the deck checks every use. */
-export const DISPLAY_FEATURES = 'artifacts_video.v1 wall_control.v1 wall_pages.v1';
+export const DISPLAY_FEATURES = 'artifacts_video.v1 wall_control.v1 wall_pages.v1 wall_apps.v1';
 
 /** The header that makes the deck answer the display login when the browser holds both cookies. */
 export const DISPLAY_HEADER = 'X-Fleetdeck-Display';
@@ -171,6 +171,7 @@ export function directiveRoute(body: DirectiveBody, base: WallRoute = wallDefaul
           station: body.artifact.station_id,
           id: body.artifact.artifact_id,
           version: body.artifact.version,
+          ...(body.app ? { app: true } : {}),
         },
       };
   }
@@ -197,6 +198,15 @@ export function displayChanges(v: unknown): DisplayChanges {
 /** The path of the one file of an artifact version (`_` is the one file, R15). */
 export const artifactPath = (station: string, id: string, version: number): string =>
   `/api/displays/self/artifact/${encodeURIComponent(station)}/${encodeURIComponent(id)}/${version}/_`;
+
+/** The URL of an app frame and of its probe: the declaration travels in the query (a frame cannot
+ * carry a header); it grants nothing. */
+export const appArtifactPath = (station: string, id: string, version: number): string =>
+  `${artifactPath(station, id, version)}?features=wall_apps.v1`;
+
+/** The path of the app feed of one artifact version (C1). */
+export const appFeedPath = (station: string, id: string, version: number): string =>
+  `/api/displays/self/app-feed/${encodeURIComponent(station)}/${encodeURIComponent(id)}/${version}`;
 
 /** The path of the wall page that the directive of this display shows (B17 §3.2.4). */
 export const pagePath = (pageId: string): string =>

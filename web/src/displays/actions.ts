@@ -32,6 +32,7 @@ export type DisplayChange = {
   readonly ceiling?: readonly StationId[];
   readonly show_diffs?: boolean;
   readonly wake_on_needs_you?: boolean;
+  readonly allow_apps?: boolean;
   /** `null` clears the quiet hours. */
   readonly quiet_hours?: string | null;
   /** `null` clears the binding. */

@@ -36,6 +36,8 @@ export type WallRoute = {
     readonly station: string;
     readonly id: string;
     readonly version?: number;
+    /** Wall apps: run the file as an app (set only when true; the deck decides the policy). */
+    readonly app?: boolean;
   };
   /** B17: the wall page (an entry of the allow-list, by id, never a URL) that the `page` mode shows. */
   readonly page?: { readonly id: string };
@@ -195,6 +197,8 @@ function parseWall(query: string): WallRoute {
       : Number.isInteger(versionNumber) && versionNumber >= 1
         ? { ...artifactRef, version: versionNumber }
         : artifactRef;
+  const artifactApp =
+    artifact === undefined || q.get('app') !== '1' ? artifact : { ...artifact, app: true };
   const batchText = q.get('batch');
   const batch = batchText === null || batchText === '' ? undefined : batchText;
   const pageText = q.get('page');
@@ -216,7 +220,7 @@ function parseWall(query: string): WallRoute {
     shape: WALL_SHAPES.find((v) => v === shape) ?? 'auto',
     ...(session === undefined ? {} : { session }),
     ...(batch === undefined ? {} : { batch }),
-    ...(artifact === undefined ? {} : { artifact }),
+    ...(artifactApp === undefined ? {} : { artifact: artifactApp }),
     ...(page === undefined ? {} : { page }),
     pin: q.get('pin') === '1',
   };
@@ -234,6 +238,7 @@ function formatWall(route: WallRoute): string {
   if (route.artifact !== undefined) {
     q.set('artifact', `${route.artifact.station}/${route.artifact.id}`);
     if (route.artifact.version !== undefined) q.set('version', String(route.artifact.version));
+    if (route.artifact.app === true) q.set('app', '1');
   }
   if (route.page !== undefined) q.set('page', route.page.id);
   if (route.pin) q.set('pin', '1');

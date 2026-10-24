@@ -26,6 +26,7 @@ type Draft = {
   readonly ceiling: readonly string[];
   readonly showDiffs: boolean;
   readonly wake: boolean;
+  readonly allowApps: boolean;
   /** `HH:MM-HH:MM`, or `''`: no quiet hours. */
   readonly quiet: string;
   readonly bindStation: string;
@@ -37,6 +38,7 @@ const draftOf = (d: DisplayView): Draft => ({
   ceiling: d.ceiling,
   showDiffs: d.show_diffs,
   wake: d.wake_on_needs_you,
+  allowApps: d.allow_apps,
   quiet: d.quiet_hours ?? '',
   bindStation: d.binding?.station_id ?? '',
   bindMonitor: d.binding?.monitor ?? '',
@@ -44,6 +46,10 @@ const draftOf = (d: DisplayView): Draft => ({
 
 const sameSet = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((x) => b.includes(x));
+
+/** The hint of the switch "Allow apps on this wall" (wall apps, design §3.4.4). */
+export const ALLOW_APPS_HINT =
+  'An app is an HTML artifact that runs its own scripts in a closed frame. It sees only the cards of the session that made it and of the sessions that this session started. It cannot reach the network.';
 
 /** The quiet hours that the switch turns on when the display has none yet. */
 export const QUIET_DEFAULT = '22:00-07:00';
@@ -65,6 +71,7 @@ export function changeOf(
   if (!sameSet(draft.ceiling, d.ceiling)) change.ceiling = draft.ceiling;
   if (draft.showDiffs !== d.show_diffs) change.show_diffs = draft.showDiffs;
   if (draft.wake !== d.wake_on_needs_you) change.wake_on_needs_you = draft.wake;
+  if (draft.allowApps !== d.allow_apps) change.allow_apps = draft.allowApps;
   const quiet = draft.quiet.trim();
   if (quiet !== '' && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quiet)) return { problem: QUIET_PROBLEM };
   if (quiet !== (d.quiet_hours ?? '')) change.quiet_hours = quiet === '' ? null : quiet;
@@ -481,6 +488,16 @@ export function DisplayRow({
           aria-checked={draft.showDiffs}
           checked={draft.showDiffs}
           onChange={(e) => patch({ showDiffs: e.target.checked })}
+        />
+      </Field>
+      <Field label="Allow apps on this wall" layout="row" hint={ALLOW_APPS_HINT}>
+        <input
+          type="checkbox"
+          role="switch"
+          className="fd-switch"
+          aria-checked={draft.allowApps}
+          checked={draft.allowApps}
+          onChange={(e) => patch({ allowApps: e.target.checked })}
         />
       </Field>
       <Binding draft={draft} saved={base.binding} stations={stations} patch={patch} />

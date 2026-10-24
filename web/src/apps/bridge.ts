@@ -61,6 +61,8 @@ export type BridgePolicy = {
   readonly resources: boolean;
   readonly message: boolean;
   readonly link: boolean;
+  /** The role of the host: absent is the chat role (the wall role is the wall apps of C2). */
+  readonly role?: 'chat' | 'wall';
 };
 
 export const CHAT_POLICY: BridgePolicy = {
@@ -68,6 +70,15 @@ export const CHAT_POLICY: BridgePolicy = {
   resources: true,
   message: true,
   link: true,
+};
+
+/** The wall role: an app may only initialize and receive the wall feed. */
+export const WALL_POLICY: BridgePolicy = {
+  tools: false,
+  resources: false,
+  message: false,
+  link: false,
+  role: 'wall',
 };
 
 /** Why the bridge closed by itself (the owner's Hide or leaving the view calls `teardown`). */
@@ -94,6 +105,8 @@ export type BridgeEnv = {
   style(): StyleReader;
   theme(): BoardTheme;
   width(): number;
+  /** The height of the frame (the wall role tells it in the container size). */
+  height?(): number;
   device(): DeviceFacts;
   /** The call route. A station error is a thrown error with the station's message. */
   call(request: AppRequest, confirmed: boolean): Promise<AppCallReply>;
@@ -126,7 +139,8 @@ class RpcError extends Error {
   }
 }
 const declined = (): RpcError => new RpcError(-32000, 'Declined by the user');
-const unsupported = (): RpcError => new RpcError(-32601, 'Not supported by Fleet Deck.');
+const unsupported = (wall = false): RpcError =>
+  new RpcError(-32601, wall ? 'Not available on a wall' : 'Not supported by Fleet Deck.');
 
 function sizeOk(data: unknown): boolean {
   try {
@@ -174,6 +188,8 @@ export type Bridge = {
   teardown(reason: string): Promise<void>;
   /** Closes for good without a message. */
   close(): void;
+  /** The wall role: sends the feed to the app (a no-op in the chat role). */
+  wallData(data: unknown): void;
   /** True while the bridge accepts messages. */
   isOpen(): boolean;
 };
@@ -191,11 +207,28 @@ export function createBridge(env: BridgeEnv): Bridge {
   let dialogTail: Promise<void> = Promise.resolve();
   let teardownAck: (() => void) | null = null;
   let lastContext: Json = {};
+  const wall = env.policy.role === 'wall';
+  let wallKept: unknown;
+  let wallSent: string | null = null;
 
   const csp = env.view.csp;
 
   function hostContext(): Json {
     const d = env.device();
+    if (wall) {
+      return {
+        theme: env.theme(),
+        styles: { variables: themeVariables(env.style()) },
+        displayMode: 'fullscreen',
+        availableDisplayModes: ['fullscreen'],
+        containerDimensions: { width: env.width(), height: env.height?.() ?? 0 },
+        locale: d.locale,
+        timeZone: d.timeZone,
+        platform: 'web',
+        userAgent: `fleet-deck/${env.version}`,
+        deviceCapabilities: { touch: d.touch, hover: d.hover },
+      };
+    }
     return {
       theme: env.theme(),
       styles: { variables: themeVariables(env.style()) },
@@ -215,6 +248,19 @@ export function createBridge(env: BridgeEnv): Bridge {
     if (open && port !== null) port.postMessage({ jsonrpc: '2.0', ...message });
   };
   const notify = (method: string, params: Json): void => send({ method, params });
+
+  function sendWallData(): void {
+    if (!wall || !open || port === null || !initRequested || wallKept === undefined) return;
+    let text: string | undefined;
+    try {
+      text = JSON.stringify(wallKept);
+    } catch {
+      return;
+    }
+    if (typeof text !== 'string' || text === wallSent) return;
+    wallSent = text;
+    notify('notifications/fleetdeck/wall-data', wallKept as Json);
+  }
 
   function shut(reason: CloseReason | null): void {
     if (!open) return;
@@ -291,7 +337,7 @@ export function createBridge(env: BridgeEnv): Bridge {
   }
 
   async function callTool(params: unknown): Promise<unknown> {
-    if (!env.policy.tools) throw unsupported();
+    if (!env.policy.tools) throw unsupported(wall);
     if (!record(params) || typeof params['name'] !== 'string') {
       throw new RpcError(-32602, 'Invalid params.');
     }
@@ -319,7 +365,7 @@ export function createBridge(env: BridgeEnv): Bridge {
   }
 
   async function readResource(params: unknown): Promise<unknown> {
-    if (!env.policy.resources) throw unsupported();
+    if (!env.policy.resources) throw unsupported(wall);
     if (!record(params) || typeof params['uri'] !== 'string') {
       throw new RpcError(-32602, 'Invalid params.');
     }
@@ -334,7 +380,7 @@ export function createBridge(env: BridgeEnv): Bridge {
   }
 
   async function message(params: unknown): Promise<unknown> {
-    if (!env.policy.message) throw unsupported();
+    if (!env.policy.message) throw unsupported(wall);
     const text = record(params) ? messageText(params['content']) : null;
     if (text === null) throw new RpcError(-32602, 'Only text messages are supported.');
     if (!(await dialog(() => env.confirmMessage(text)))) throw declined();
@@ -347,7 +393,7 @@ export function createBridge(env: BridgeEnv): Bridge {
   }
 
   async function openLink(params: unknown): Promise<unknown> {
-    if (!env.policy.link) throw unsupported();
+    if (!env.policy.link) throw unsupported(wall);
     let url: URL | null = null;
     try {
       if (record(params) && typeof params['url'] === 'string') url = new URL(params['url']);
@@ -371,9 +417,7 @@ export function createBridge(env: BridgeEnv): Bridge {
       protocolVersion: PROTOCOL_VERSION,
       hostInfo: { name: 'fleet-deck', version: env.version },
       hostCapabilities: {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
+        ...(wall ? {} : { openLinks: {}, serverTools: {}, serverResources: {} }),
         logging: {},
         sandbox: {
           permissions: {},
@@ -398,9 +442,10 @@ export function createBridge(env: BridgeEnv): Bridge {
       case 'ui/open-link':
         return openLink(params);
       case 'ui/request-display-mode':
+        if (wall) throw unsupported(true);
         return { mode: 'inline' };
       default:
-        throw unsupported();
+        throw unsupported(wall);
     }
   }
 
@@ -427,12 +472,17 @@ export function createBridge(env: BridgeEnv): Bridge {
       case 'ui/notifications/initialized':
         if (replayed) return;
         replayed = true;
+        if (wall) {
+          sendWallData();
+          return;
+        }
         notify('ui/notifications/tool-input', {
           arguments: record(env.view.tool_input) ? env.view.tool_input : {},
         });
         notify('ui/notifications/tool-result', toolResult(env.view.tool_result));
         return;
       case 'ui/notifications/size-changed': {
+        if (wall) return;
         const h = record(params) ? params['height'] : undefined;
         if (typeof h === 'number' && Number.isFinite(h)) {
           env.setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.round(h))));
@@ -440,6 +490,7 @@ export function createBridge(env: BridgeEnv): Bridge {
         return;
       }
       case 'ui/notifications/request-teardown':
+        if (wall) return;
         void bridge.teardown('The app asked to close.').then(() => env.closed('teardown'));
         return;
       default:
@@ -493,6 +544,11 @@ export function createBridge(env: BridgeEnv): Bridge {
     },
     close() {
       shut(null);
+    },
+    wallData(data) {
+      if (!wall) return;
+      wallKept = data;
+      sendWallData();
     },
     isOpen: () => open,
   };

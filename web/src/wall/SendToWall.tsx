@@ -18,6 +18,8 @@ export type WallTarget =
       readonly station_id: string;
       readonly artifact_id: string;
       readonly version: number;
+      /** The version is one HTML file (the deck's rule for `app: true`). */
+      readonly single_html?: boolean;
     };
 
 /** The directive body for `target` (`filter` is none: the ceiling of the display stays). */
@@ -25,6 +27,7 @@ export function directiveFor(
   target: WallTarget,
   mode: 'focus' | 'review',
   pin: boolean,
+  app = false,
 ): DirectiveBody {
   return target.kind === 'artifact'
     ? {
@@ -34,7 +37,7 @@ export function directiveFor(
           artifact_id: target.artifact_id,
           version: target.version,
         },
-        app: false,
+        app,
         pin,
         filter: null,
       }
@@ -45,6 +48,10 @@ export function directiveFor(
         filter: null,
       };
 }
+
+/** "Run it as an app" shows for one HTML file and a display that allows apps. */
+export const canRunAsApp = (target: WallTarget, display: DisplayView | undefined): boolean =>
+  target.kind === 'artifact' && target.single_html === true && display?.allow_apps === true;
 
 type Loaded =
   | { readonly kind: 'loading' }
@@ -65,6 +72,7 @@ export function SendToWallDialog({
   const [chosen, setChosen] = useState('');
   const [mode, setMode] = useState<'focus' | 'review'>('focus');
   const [pin, setPin] = useState(true);
+  const [asApp, setAsApp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
@@ -84,12 +92,17 @@ export function SendToWallDialog({
     };
   }, [actions]);
   const displays = loaded.kind === 'ready' ? loaded.displays : [];
+  // The checkbox shows for one HTML file and a display that allows apps; a hidden one sends false.
+  const showApp = canRunAsApp(
+    target,
+    displays.find((d) => d.display_id === chosen),
+  );
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (busy || chosen === '') return;
     setBusy(true);
     setError(null);
-    actions.directive(chosen, directiveFor(target, mode, pin)).then(
+    actions.directive(chosen, directiveFor(target, mode, pin, showApp && asApp)).then(
       () => {
         setBusy(false);
         setSent(`Sent to ${displays.find((d) => d.display_id === chosen)?.name ?? 'the display'}.`);
@@ -154,6 +167,12 @@ export function SendToWallDialog({
         ) : (
           <p className="fd-note">The wall shows version {target.version} of this artifact.</p>
         )}
+        {showApp ? (
+          <label className="fd-disp-check">
+            <input type="checkbox" checked={asApp} onChange={(e) => setAsApp(e.target.checked)} />{' '}
+            Run it as an app
+          </label>
+        ) : null}
         <label className="fd-disp-check">
           <input type="checkbox" checked={pin} onChange={(e) => setPin(e.target.checked)} /> Keep it
           on screen

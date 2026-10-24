@@ -80,11 +80,11 @@ describe('the display header', () => {
     expect(seen[0]?.headers).toEqual({
       'Content-Type': 'application/json',
       'X-Fleetdeck-Display': '1',
-      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1',
+      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1 wall_apps.v1',
     });
     expect(seen[1]?.headers).toEqual({
       'X-Fleetdeck-Display': '1',
-      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1',
+      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1 wall_apps.v1',
     });
   });
 
@@ -93,8 +93,9 @@ describe('the display header', () => {
       'artifacts_video.v1',
       'wall_control.v1',
       'wall_pages.v1',
+      'wall_apps.v1',
     ]);
-    // The socket of a display declares the three tokens; the board socket still declares one.
+    // The socket of a display declares the four tokens; the board socket still declares one.
     const display = socketUrl('https://deck.example/display#/wall', DISPLAY_FEATURES);
     expect(display.searchParams.get('features')?.split(/[ ,]/)).toContain('wall_control.v1');
     expect(display.pathname).toBe('/api/ws');
