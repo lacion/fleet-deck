@@ -4,7 +4,8 @@
 //! the fixture records:
 //! - `spawn` starts a fresh [`CodexCore`] (a new process of the same session),
 //! - `host` applies the recorded host command,
-//! - `in` must equal the next frame that the core wrote (byte-for-byte as JSON),
+//! - `in` must equal the next frame that the core wrote (byte-for-byte as JSON,
+//!   without the production `config` of a thread request, see `spike_view`),
 //! - `out` feeds the recorded app-server frame to the core,
 //! - `exit` tells the core that the process ended.
 //!
@@ -88,7 +89,7 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
                     index,
                     expected: frame.clone(),
                 })?;
-                if &actual != frame {
+                if actual != spike_view(frame) {
                     return Err(ReplayError::WriteMismatch {
                         index,
                         expected: frame.clone(),
@@ -122,6 +123,22 @@ pub fn replay(fx: &Fixture) -> Result<ReplayReport, ReplayError> {
     finish_process(&mut core, &mut report);
     ensure_empty(&mut queue, fx.records.len())?;
     Ok(report)
+}
+
+/// The recorded write as the spike core makes it. The production core (B18,
+/// docs/v2/design/effort.md §9.2 item 7) also sends the session effort as
+/// `config` of `thread/start`, `thread/resume` and `thread/fork`; the shared
+/// fixtures carry that key, and the spike never sent it.
+fn spike_view(frame: &Value) -> Value {
+    let mut frame = frame.clone();
+    let thread = frame
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(|m| matches!(m, "thread/start" | "thread/resume" | "thread/fork"));
+    if thread && let Some(params) = frame.get_mut("params").and_then(Value::as_object_mut) {
+        params.remove("config");
+    }
+    frame
 }
 
 fn collect(outs: Vec<Output>, report: &mut ReplayReport, queue: &mut VecDeque<Value>) {

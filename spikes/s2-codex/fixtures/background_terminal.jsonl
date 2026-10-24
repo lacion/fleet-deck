@@ -5,7 +5,7 @@
 {"dir":"out","frame":{"id":"fd-1","result":{"codexHome":"<home>/.codex","platformFamily":"unix","platformOs":"linux","userAgent":"fleet-deck-spike/0.160.0 (Ubuntu 24.4.0; x86_64) unknown (fleet-deck-spike; 0.0.0)"}}}
 {"dir":"in","frame":{"method":"initialized"}}
 {"dir":"host","cmd":{"cwd":"<workdir>","effort":"low","mode":"untrusted/workspace-write","model":"gpt-5.6-luna","op":"open_thread"}}
-{"dir":"in","frame":{"id":"fd-2","method":"thread/start","params":{"approvalPolicy":"untrusted","cwd":"<workdir>","ephemeral":false,"model":"gpt-5.6-luna","sandbox":"workspace-write"}}}
+{"dir":"in","frame":{"id":"fd-2","method":"thread/start","params":{"config":{"model_reasoning_effort":"low"},"approvalPolicy":"untrusted","cwd":"<workdir>","ephemeral":false,"model":"gpt-5.6-luna","sandbox":"workspace-write"}}}
 {"dir":"out","frame":{"emittedAtMs":1791688944514,"method":"remoteControl/status/changed","params":{"environmentId":null,"installationId":"<redacted>","serverName":"<redacted>","status":"disabled"}}}
 {"dir":"out","frame":{"emittedAtMs":1791688944588,"method":"mcpServer/startupStatus/updated","params":{"error":null,"failureReason":null,"name":"codex_apps","status":"starting","threadId":"01a128fb-ab88-7823-8634-f69d7320280c"}}}
 {"dir":"out","frame":{"emittedAtMs":1791688944588,"method":"mcpServer/startupStatus/updated","params":{"error":null,"failureReason":null,"name":"codegraph","status":"starting","threadId":"01a128fb-ab88-7823-8634-f69d7320280c"}}}

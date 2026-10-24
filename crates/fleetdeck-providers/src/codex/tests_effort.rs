@@ -23,10 +23,11 @@ fn open_core(request_models: bool, spec: &SessionSpec) -> (CodexCore, Vec<Output
     (core, out)
 }
 
-/// The outputs of a thread answer.
+/// The outputs of a thread answer, without the `skills/list` write (B11).
 fn answered(answer: Value, request_models: bool) -> (CodexCore, Vec<Output>) {
     let (mut core, out) = open_core(request_models, &SessionSpec::default());
-    let after = reply(&mut core, &out, answer);
+    let mut after = reply(&mut core, &out, answer);
+    after.retain(|o| !matches!(o, Output::Write(w) if w["method"] == "skills/list"));
     (core, after)
 }
 

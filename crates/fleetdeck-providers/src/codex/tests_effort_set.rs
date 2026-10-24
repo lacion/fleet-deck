@@ -109,7 +109,9 @@ fn core_with_models(data: &[Value]) -> (CodexCore, Vec<Output>) {
         json!({"userAgent": "fleetdeck/0.160.0 (Linux)"}),
     );
     let out = core.open_thread(&SessionSpec::default()).unwrap();
-    let after = reply(&mut core, &out, json!({"thread": {"id": T}, "model": "m"}));
+    let mut after = reply(&mut core, &out, json!({"thread": {"id": T}, "model": "m"}));
+    // `reply` answers the last write: drop `skills/list` (B11) to answer `model/list`.
+    after.retain(|o| !matches!(o, Output::Write(w) if w["method"] == "skills/list"));
     let done = reply(&mut core, &after, json!({"data": data, "nextCursor": null}));
     (core, done)
 }
