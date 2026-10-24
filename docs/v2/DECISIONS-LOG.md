@@ -4014,17 +4014,17 @@ Owner review: pending.
 
 - The effort state of the provider cores is in `#[serde(default)]` fields, never in a new `HostRequest` variant; the `Instant` is skipped; the checkpoint version stays 1, so upgrade and rollback restore a live shim. (§4.3.1, §9.5)
 
-## DL-490: B18, Phase 2 evidence
+## DL-516: B18, Phase 2 evidence
 
 - A `set_effort` effect settles only on `effort.set_result` with its effect id: `accepted` (the provider's ack) confirms first; `applied`, `adjusted`, `unverified` report the verification (and confirm when nothing confirmed before); `refused`, `superseded` retire. Claude verifies with a `get_settings` read written after the change; Codex settles the pick that its turn request sent. An ack is never an observation. (§9.2)
 - Changed later: the ack of `apply_flag_settings` emits nothing; `effort.set_result` settles the effect (see docs/v2/design/effort.md §Revision 2 (design review round 1))
 
-## DL-491: B18, Phase 2 choice
+## DL-517: B18, Phase 2 choice
 
 - The owner's choice is `summary.effort_choice`, apart from the observed `summary.effort`; it is set by `effort.chosen` and by the `accepted` result at the provider's ack, never by a verification result; resume and restore pass the choice. (§9.2 item 5)
 - Changed later: the choice is also set by the `accepted` result at the provider's ack (see docs/v2/design/effort.md §Revision 3 (design review round 2))
 
-## DL-492: B18, Phase 2 gate
+## DL-518: B18, Phase 2 gate
 
 - An effort command needs `session_effort.v1` at admission and at every send and resend; `Down` waits, `Without` refuses. (§9.2 item 1)
 - Changed later: the gate runs at admission and at every send and resend (see docs/v2/design/effort.md §Revision 2 (design review round 1))
