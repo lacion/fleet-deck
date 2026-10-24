@@ -21,8 +21,10 @@
 //! the one HTML file of an `artifact` directive with `app: true`, on a display
 //! with `allow_apps` on (read live), for a request that declares
 //! `wall_apps.v1` (the header or the query `features=`). That answer has the
-//! app policy of B15 (scripts, `connect-src 'none'`). There is no share row,
-//! no capability URL and no audit row for a read.
+//! app policy of B15 (scripts, `connect-src 'none'`). Its last check and the
+//! check before each chunk also need the directive generation that chose the
+//! policy and the app permission still on. There is no share row, no
+//! capability URL and no audit row for a read.
 
 use std::sync::Arc;
 
@@ -46,6 +48,7 @@ use super::artifact_routes::stream::{
 use super::display_view::{in_scope, scope_of};
 use super::guard::ApiError;
 use crate::coordinator_desktop::effective_directive;
+use crate::store::display_directives::EffectiveScope;
 use crate::store::{DisplayLogin, Principal};
 use fleetdeck_proto::apps::AppCsp;
 
@@ -168,17 +171,43 @@ fn displayable(files: &[String]) -> bool {
     matches!(files, [only] if ArtifactKind::of_path(only) != ArtifactKind::Other)
 }
 
+/// What one [`authorize`] saw: the generation of the directive, its `app`
+/// flag, the live `allow_apps` of the display (false when the flag is off)
+/// and the effective scope that was read between the two equal directive
+/// reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Authority {
+    pub generation: u64,
+    pub app_flag: bool,
+    pub allow_apps: bool,
+    pub scope: EffectiveScope,
+}
+
+impl Authority {
+    /// True when the directive and the display allow an app.
+    pub fn app(&self) -> bool {
+        self.app_flag && self.allow_apps
+    }
+
+    /// True when `now` still allows an answer that was decided on `self`
+    /// (B17 §3.4.2): the same directive generation (a new directive, also of
+    /// the same artifact, or a reset by a setting change, moves it up), and
+    /// for an app answer the app flag and `allow_apps` still on.
+    pub fn holds(&self, now: &Self, app: bool) -> bool {
+        now.generation == self.generation && (!app || now.app())
+    }
+}
+
 /// The directive, the scope and the artifact of this moment (R13 §5D items
 /// 17 and 20): the directive names exactly `target`, the station is in the
 /// scope, and a repository filter matches the repository of the artifact's
 /// session. The directive is read before and after the scope, and the two
-/// reads must be equal. The answer is the `app` flag of the directive and the
-/// live `allow_apps` of the display (false when the flag is off).
+/// reads must be equal.
 pub(super) async fn authorize(
     board: &Arc<Board>,
     login: &DisplayLogin,
     target: &ArtifactRef,
-) -> Result<(bool, bool), ApiError> {
+) -> Result<Authority, ApiError> {
     let read = || async {
         effective_directive(&board.link, &login.display_id)
             .await
@@ -231,7 +260,29 @@ pub(super) async fn authorize(
     if read().await? != before {
         return Err(miss());
     }
-    Ok((app_flag, allow_apps))
+    Ok(Authority {
+        generation: before.generation,
+        app_flag,
+        allow_apps,
+        scope,
+    })
+}
+
+/// [`authorize`], and the answer must still hold what `decided` allowed
+/// (see [`Authority::holds`]).
+async fn authorize_bound(
+    board: &Arc<Board>,
+    login: &DisplayLogin,
+    target: &ArtifactRef,
+    decided: &Authority,
+    app: bool,
+) -> Result<(), ApiError> {
+    let now = authorize(board, login, target).await?;
+    if decided.holds(&now, app) {
+        Ok(())
+    } else {
+        Err(miss())
+    }
 }
 
 /// `GET /api/displays/self/artifact/{station}/{id}/{version}/{*path}`.
@@ -291,16 +342,30 @@ async fn artifact(
     let cache = ensure_cached(&board, &rec, &target.artifact_id, version)
         .await
         .map_err(failure)?;
-    let (app_flag, allow_apps) = authorize(&board, &login, &target).await?;
+    let decided = authorize(&board, &login, &target).await?;
     let mut headers = display_headers(&path);
-    let gate: Gate = {
+    // The gate of the body: an inert answer needs the authority of each
+    // moment; an app answer also needs the directive generation and the app
+    // permission that chose its policy (B17 §3.4.2).
+    let gate_for = |app: bool| -> Gate {
         let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
+        let decided = decided.clone();
         Arc::new(move || {
             let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
-            Box::pin(async move { authorize(&board, &login, &target).await.is_ok() })
+            let decided = decided.clone();
+            Box::pin(async move {
+                if app {
+                    authorize_bound(&board, &login, &target, &decided, true)
+                        .await
+                        .is_ok()
+                } else {
+                    authorize(&board, &login, &target).await.is_ok()
+                }
+            })
         })
     };
     if cache == Cache::Stream {
+        let gate = gate_for(false);
         headers.insert(header::CONTENT_SECURITY_POLICY, policy_header(false)?);
         return stream_with(
             &board,
@@ -327,7 +392,7 @@ async fn artifact(
         .ok_or_else(miss)?;
     // An app gets `APP_BOOTSTRAP` in its HTML (B17 C1b). A file that is not
     // UTF-8 stays inert with its bytes unchanged (fail closed).
-    let wants_app = is_app(app_flag, allow_apps, declared, &path, cache);
+    let wants_app = is_app(decided.app_flag, decided.allow_apps, declared, &path, cache);
     let (app, bytes) = match (wants_app, String::from_utf8(bytes)) {
         (true, Ok(text)) => (true, super::app_public::with_bootstrap(&text).into_bytes()),
         (_, Ok(text)) => (false, text.into_bytes()),
@@ -335,8 +400,14 @@ async fn artifact(
     };
     headers.insert(header::CONTENT_SECURITY_POLICY, policy_header(app)?);
     // The authority of this moment, right before the bytes leave; the body
-    // then checks it again before each chunk.
-    authorize(&board, &login, &target).await?;
+    // then checks it again before each chunk. An app answer also needs the
+    // generation and the app permission that chose its policy.
+    if app {
+        authorize_bound(&board, &login, &target, &decided, true).await?;
+    } else {
+        authorize(&board, &login, &target).await?;
+    }
+    let gate = gate_for(app);
     Ok(serve_cached(
         &board.store,
         &rec.station_id,

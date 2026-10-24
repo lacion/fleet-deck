@@ -10,7 +10,9 @@
 //! The feed holds the display cards (the reduced cards that a display
 //! already gets) of the author session of the artifact and of the sessions
 //! that this session started (the spawn lineage of every grant of the author,
-//! one level), inside the effective scope. At most [`MAX_FEED_CARDS`] cards
+//! one level), inside the effective scope of the directive generation that
+//! the answer is bound to: every check must see the generation of the first
+//! one. At most [`MAX_FEED_CARDS`] cards
 //! and [`MAX_FEED_BYTES`] bytes. A card has no tool, no request text and no
 //! mail. The answer is `no-store`.
 
@@ -29,7 +31,7 @@ use serde::Serialize;
 
 use super::Board;
 use super::display_artifact::{authorize, miss};
-use super::display_view::{display_cards, scope_of};
+use super::display_view::display_cards;
 use super::guard::ApiError;
 use crate::store::Principal;
 
@@ -87,8 +89,8 @@ async fn feed(
         artifact_id: id,
         version,
     };
-    let allowed = |(app_flag, allow_apps): (bool, bool)| app_flag && allow_apps;
-    if !allowed(authorize(&board, &login, &target).await?) {
+    let first = authorize(&board, &login, &target).await?;
+    if !first.app() {
         return Err(miss());
     }
     let row = board
@@ -116,10 +118,14 @@ async fn feed(
             .into_iter()
             .map(|s| (s.station_id, s.name))
             .collect();
-        // The scope is read after the data, right before the filter.
         let all = board.store.sessions().await.map_err(ApiError::internal)?;
-        let scope = scope_of(&board, &login).await?;
-        sessions = display_cards(&all, &scope)
+        // The scope comes from the last check, after the data: it is the
+        // scope of the directive generation that the answer is bound to.
+        let last = authorize(&board, &login, &target).await?;
+        if !first.holds(&last, true) {
+            return Err(miss());
+        }
+        sessions = display_cards(&all, &last.scope)
             .into_iter()
             .filter(|c| {
                 set.iter()
@@ -142,8 +148,11 @@ async fn feed(
             })
             .collect();
     }
-    // The authority of this moment, right before the answer leaves.
-    if !allowed(authorize(&board, &login, &target).await?) {
+    // The authority of this moment, right before the answer leaves: the
+    // same directive generation as the first check (a new directive, also of
+    // the same artifact with another filter, ends the answer), and the app
+    // still allowed.
+    if !first.holds(&authorize(&board, &login, &target).await?, true) {
         return Err(miss());
     }
     let body = fit(WallAppFeed {

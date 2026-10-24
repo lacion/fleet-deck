@@ -35,7 +35,9 @@ use super::guard::{ApiError, DISPLAY_COOKIE, PENDING_COOKIE, cookie, owner_only}
 use super::settings_routes::{is_elevated, owner};
 use crate::board_fence;
 use crate::store::auth::LoginSession;
-use crate::store::displays::{DisplayChange, NewDisplay, check_quiet_hours, clean_name};
+use crate::store::displays::{
+    CheckedUpdate, DisplayChange, NewDisplay, check_quiet_hours, clean_name,
+};
 use crate::store::displays_binding::{BindError, check_monitor};
 use crate::store::displays_pairing::{Approval, Claim};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
@@ -121,13 +123,18 @@ fn require_elevation(
     if is_elevated(board, session, elevation) {
         return Ok(());
     }
+    Err(elevation_required())
+}
+
+/// The `400 elevation_required` of a display change.
+fn elevation_required() -> ApiError {
     let mut keys = serde_json::Map::new();
     keys.insert("keys".to_owned(), json!(["displays"]));
-    Err(bad(
+    bad(
         "elevation_required",
         "a recent sign-in is needed to give a display access",
     )
-    .with_details(keys))
+    .with_details(keys)
 }
 
 // ---------------------------------------------------------------- pairing
@@ -672,8 +679,9 @@ async fn change_display(
     };
     // Setting or changing the binding needs elevation; clearing it does not.
     let binding_set = new_binding.is_some() && new_binding != old.binding;
-    if more_stations || diffs_on || apps_on || binding_set {
-        require_elevation(board, session, body.elevation.as_deref())?;
+    let elevated = is_elevated(board, session, body.elevation.as_deref());
+    if (more_stations || diffs_on || apps_on || binding_set) && !elevated {
+        return Err(elevation_required());
     }
     let change = DisplayChange {
         name,
@@ -683,12 +691,19 @@ async fn change_display(
         allow_apps: body.allow_apps,
         quiet_hours: body.quiet_hours,
     };
-    let updated = board
+    // The store checks the elevation again against the row that it writes:
+    // `old` is a snapshot, and a concurrent change (an owner who turns
+    // `allow_apps` off) must not make this change a silent re-enable.
+    let updated = match board
         .store
-        .display_update(id.to_owned(), change)
+        .display_update_checked(id.to_owned(), change, elevated)
         .await
         .map_err(deck_error)?
-        .ok_or_else(unknown_display)?;
+    {
+        CheckedUpdate::Done(d) => d,
+        CheckedUpdate::Unknown => return Err(unknown_display()),
+        CheckedUpdate::NeedsElevation => return Err(elevation_required()),
+    };
     match body.binding {
         None => Ok(updated.view()),
         Some(_) => board

@@ -20,7 +20,7 @@ use fleetdeck_deck::store::displays::DisplayChange;
 use fleetdeck_deck::store::stations::NewStation;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::{Artifact, ArtifactKind, ArtifactVersion};
-use fleetdeck_proto::display_directive::{ArtifactRef, DirectiveBody};
+use fleetdeck_proto::display_directive::{ArtifactRef, DirectiveBody, DirectiveFilter};
 use fleetdeck_proto::event::{RequestKind, ResponseChannel};
 use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::session::OpenRequest;
@@ -695,4 +695,58 @@ async fn the_feed_route_is_closed_to_a_login_that_ended() {
     r.c.store.display_revoke(r.display.clone()).await.unwrap();
     let res = r.feed("app1", 1).await;
     assert_eq!(res.status, 401, "{}", res.text);
+}
+
+/// B17 §3.4.2 and §3.4.3 (pre-PR review): the answers of an app are bound
+/// to the directive generation that allowed them. The same app artifact sent
+/// again (here with a narrower station filter) is a new generation, and the
+/// feed then holds only the cards of the new scope.
+#[tokio::test]
+async fn the_same_app_artifact_again_is_a_new_generation_with_its_own_scope() {
+    let r = app_rig().await;
+    let far = far_station_id(&r).await;
+    r.c.store
+        .display_update(
+            r.display.clone(),
+            DisplayChange {
+                ceiling: Some(vec![r.station_id(), StationId::new(far)]),
+                ..DisplayChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    r.direct("app1", 1, true).await;
+    let generation = || async {
+        let v = get_with(&r.c, "/api/displays/self/directive", &r.cookie).await;
+        v.body["generation"].as_u64().unwrap()
+    };
+    let wide = generation().await;
+    let mut got = ids(&r.feed("app1", 1).await);
+    got.sort();
+    assert_eq!(got, ["author", "far", "kid", "kid2"]);
+    // The same artifact, narrowed to the station of the author.
+    let body = DirectiveBody::Artifact {
+        artifact: ArtifactRef {
+            station_id: r.station_id(),
+            artifact_id: "app1".to_owned(),
+            version: 1,
+        },
+        app: true,
+        pin: false,
+        filter: Some(DirectiveFilter {
+            stations: vec![r.station_id()],
+            repo: None,
+        }),
+    };
+    r.c.store
+        .display_directive_set(r.display.clone(), DirectiveSender::Owner, body)
+        .await
+        .unwrap();
+    assert!(generation().await > wide);
+    let mut got = ids(&r.feed("app1", 1).await);
+    got.sort();
+    assert_eq!(got, ["author", "kid", "kid2"]);
+    // The app answer holds on the new generation.
+    let res = r.file("app1", "page.html", "", &[FEATURES]).await;
+    assert_eq!(csp(&res), APP);
 }

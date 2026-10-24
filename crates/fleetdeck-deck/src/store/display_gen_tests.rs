@@ -13,8 +13,8 @@ use fleetdeck_proto::display::DisplayBinding;
 use fleetdeck_testkit::Det;
 use rusqlite::params;
 
-use super::displays::DisplayChange;
 use super::displays::NewDisplay;
+use super::displays::{CheckedUpdate, DisplayChange, widens};
 use super::displays_binding::BindError;
 use super::displays_pairing::{Approval, Claim, ExpectedLaunch};
 use super::stations::NewStation;
@@ -650,5 +650,119 @@ fn an_existing_display_login_and_link_read_generation_zero_after_v25() {
             [],
         )
         .is_err()
+    );
+}
+
+fn apps(on: bool) -> DisplayChange {
+    DisplayChange {
+        allow_apps: Some(on),
+        ..DisplayChange::default()
+    }
+}
+
+/// B17 §3.4.2: the elevation check reads the row that the update writes. A
+/// request that saw `allow_apps` on (so it asked no elevation) and writes
+/// after the owner turned it off must not turn it on again.
+#[tokio::test]
+async fn an_unelevated_update_cannot_undo_a_concurrent_revocation() {
+    let r = rig().await;
+    let d = r.display("Wall").await;
+    r.s.display_update(d.clone(), apps(true))
+        .await
+        .unwrap()
+        .unwrap();
+    // The request reads its snapshot: on, so no elevation is needed.
+    let snapshot = r.s.display_get(d.clone()).await.unwrap().unwrap();
+    assert!(!widens(&snapshot, &apps(true)));
+    // The owner turns it off before the request writes.
+    let off =
+        r.s.display_update_checked(d.clone(), apps(false), false)
+            .await
+            .unwrap();
+    assert!(matches!(off, CheckedUpdate::Done(ref rec) if !rec.allow_apps));
+    // The request writes now, without elevation: refused, nothing changed.
+    let late =
+        r.s.display_update_checked(d.clone(), apps(true), false)
+            .await
+            .unwrap();
+    assert_eq!(late, CheckedUpdate::NeedsElevation);
+    assert!(
+        !r.s.display_get(d.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .allow_apps
+    );
+    // With elevation it goes on; the same value again needs none.
+    for elevated in [true, false] {
+        let on =
+            r.s.display_update_checked(d.clone(), apps(true), elevated)
+                .await
+                .unwrap();
+        assert!(matches!(on, CheckedUpdate::Done(ref rec) if rec.allow_apps));
+    }
+}
+
+#[tokio::test]
+async fn a_checked_update_needs_elevation_only_to_widen() {
+    let r = rig().await;
+    let d = r.display("Wall").await;
+    let wider = [
+        apps(true),
+        DisplayChange {
+            show_diffs: Some(true),
+            ..DisplayChange::default()
+        },
+        DisplayChange {
+            ceiling: Some(vec![r.a.clone(), r.b.clone()]),
+            ..DisplayChange::default()
+        },
+    ];
+    for change in wider {
+        let change = DisplayChange {
+            name: Some("Renamed".into()),
+            ..change
+        };
+        let got =
+            r.s.display_update_checked(d.clone(), change.clone(), false)
+                .await
+                .unwrap();
+        assert_eq!(got, CheckedUpdate::NeedsElevation, "{change:?}");
+        let row = r.s.display_get(d.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                row.name.as_str(),
+                row.allow_apps,
+                row.show_diffs,
+                row.ceiling.len()
+            ),
+            ("Wall", false, false, 1),
+            "{change:?}"
+        );
+    }
+    let narrower = [
+        apps(false),
+        DisplayChange {
+            show_diffs: Some(false),
+            ..DisplayChange::default()
+        },
+        DisplayChange {
+            ceiling: Some(vec![r.a.clone()]),
+            name: Some("Renamed".into()),
+            ..DisplayChange::default()
+        },
+    ];
+    for change in narrower {
+        let got =
+            r.s.display_update_checked(d.clone(), change.clone(), false)
+                .await
+                .unwrap();
+        assert!(matches!(got, CheckedUpdate::Done(_)), "{change:?}");
+    }
+    assert_eq!(
+        r.s.display_update_checked("nope".into(), apps(true), true)
+            .await
+            .unwrap(),
+        CheckedUpdate::Unknown
     );
 }

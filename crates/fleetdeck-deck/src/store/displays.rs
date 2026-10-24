@@ -147,6 +147,30 @@ pub struct DisplayChange {
     pub quiet_hours: Option<Option<String>>,
 }
 
+/// The answer of [`DeckStore::display_update_checked`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedUpdate {
+    Done(DisplayRecord),
+    /// The display does not exist or is revoked.
+    Unknown,
+    /// The change needs elevation against the row of this moment; nothing
+    /// changed.
+    NeedsElevation,
+}
+
+/// True when `change` gives the display more access than `old`: a station
+/// that the ceiling does not hold, or `show_diffs` or `allow_apps` from off
+/// to on.
+#[must_use]
+pub fn widens(old: &DisplayRecord, change: &DisplayChange) -> bool {
+    change
+        .ceiling
+        .as_ref()
+        .is_some_and(|c| c.iter().any(|s| !old.ceiling.contains(s)))
+        || (change.show_diffs == Some(true) && !old.show_diffs)
+        || (change.allow_apps == Some(true) && !old.allow_apps)
+}
+
 /// Deletes every session, every unused link and every pairing of a display.
 /// The caller holds the transaction.
 pub(super) fn delete_logins(conn: &Connection, display_id: &str) -> Result<()> {
@@ -427,8 +451,8 @@ impl DeckStore {
         call(&self.inner.db, move |conn| load(conn, &display_id)).await
     }
 
-    /// Changes the settings of a display. `None` when it does not exist or is
-    /// revoked.
+    /// Changes the settings of a display with no elevation check (the caller
+    /// checked it). `None` when it does not exist or is revoked.
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a bad value; a database error.
@@ -437,6 +461,31 @@ impl DeckStore {
         display_id: String,
         change: DisplayChange,
     ) -> Result<Option<DisplayRecord>> {
+        Ok(
+            match self
+                .display_update_checked(display_id, change, true)
+                .await?
+            {
+                CheckedUpdate::Done(record) => Some(record),
+                CheckedUpdate::Unknown | CheckedUpdate::NeedsElevation => None,
+            },
+        )
+    }
+
+    /// Changes the settings of a display. The elevation check reads the row
+    /// in the same transaction as the write (B17 §3.4.2): a change that gives
+    /// the display more access than the stored row has (a new station,
+    /// `show_diffs` or `allow_apps` from off to on) needs `elevated`, else
+    /// nothing changes and the answer is [`CheckedUpdate::NeedsElevation`].
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad value; a database error.
+    pub async fn display_update_checked(
+        &self,
+        display_id: String,
+        change: DisplayChange,
+        elevated: bool,
+    ) -> Result<CheckedUpdate> {
         let name = change.name.as_deref().map(clean_name).transpose()?;
         if let Some(Some(q)) = &change.quiet_hours {
             check_quiet_hours(q)?;
@@ -444,8 +493,11 @@ impl DeckStore {
         let record = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(old) = load(&tx, &display_id)? else {
-                return Ok(None);
+                return Ok(CheckedUpdate::Unknown);
             };
+            if !elevated && widens(&old, &change) {
+                return Ok(CheckedUpdate::NeedsElevation);
+            }
             if let Some(ceiling) = &change.ceiling {
                 check_ceiling(&tx, ceiling)?;
             }
@@ -478,11 +530,11 @@ impl DeckStore {
             }
             let record = load(&tx, &display_id)?;
             tx.commit()?;
-            Ok(record)
+            Ok(record.map_or(CheckedUpdate::Unknown, CheckedUpdate::Done))
         })
         .await?;
         // The sockets of the wall take the new ceiling at once (R13 §5).
-        if record.is_some() {
+        if matches!(record, CheckedUpdate::Done(_)) {
             self.board_changed();
         }
         Ok(record)
