@@ -97,15 +97,16 @@ const pageN = `<!doctype html>
   } catch (e) {
     open = 'null';
   }
-  let top = 'done';
+  // Not "top": a global "let top" collides with window.top and stops the whole script.
+  let moved = 'done';
   try {
     window.top.location.href = 'https://example.invalid/';
   } catch (e) {
-    top = 'blocked';
+    moved = 'blocked';
   }
   setTimeout(() => {
-    if (top === 'done') top = 'blocked';
-    fetch('/report?open=' + open + '&top=' + top).catch(() => {});
+    if (moved === 'done') moved = 'blocked';
+    fetch('/report?open=' + open + '&top=' + moved).catch(() => {});
   }, 1500);
 </script>`;
 

@@ -359,9 +359,9 @@ export class Station extends Node {
       if (frame.type === 'user') input.messages.push(String(frame.message?.content));
       if (frame.type === 'control_request') {
         const subtype = String(frame.request?.subtype);
-        // The station's usage poll, not a board command: its count follows
-        // the poll timer.
-        if (subtype === 'get_usage') continue;
+        // The station's usage poll and its effort read (B18), not board
+        // commands: their counts follow the station's own timing.
+        if (subtype === 'get_usage' || subtype === 'get_settings') continue;
         input.controls[subtype] = (input.controls[subtype] ?? 0) + 1;
       }
       if (frame.type === 'control_response') input.answers += 1;

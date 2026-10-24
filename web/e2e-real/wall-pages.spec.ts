@@ -106,7 +106,8 @@ async function showPage(name: string): Promise<void> {
   await row.locator('summary[aria-label="Display actions"]').click();
   await row.getByRole('button', { name: 'Show a page…' }).click();
   const dialog = ownerPage.getByRole('dialog', { name: /^Show a page on / });
-  await dialog.getByLabel('Page', { exact: true }).selectOption({ label: name });
+  // The label wraps the select, so its name also holds the chosen option ("Page Page P").
+  await dialog.getByRole('combobox', { name: /^Page/ }).selectOption({ label: name });
   await dialog.getByRole('button', { name: 'Show the page' }).click();
   await expect(dialog.getByText('The wall shows the page.')).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();
