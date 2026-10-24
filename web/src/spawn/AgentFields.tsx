@@ -29,6 +29,7 @@ export function AgentFields({
   modes,
   mode,
   onMode,
+  defaultMode,
 }: {
   readonly providers: readonly StationProvider[];
   readonly instance: string;
@@ -50,6 +51,8 @@ export function AgentFields({
   readonly modes: readonly string[];
   readonly mode: string;
   readonly onMode: (mode: string) => void;
+  /** B27: the mode of a start without a mode on this station, when the provider reports it. */
+  readonly defaultMode?: string | undefined;
 }) {
   const options = providers.map((p) => {
     const choice = providerChoice(p, limits.get(p.instance) ?? null, now, p.instance === roomiest);
@@ -86,7 +89,11 @@ export function AgentFields({
             value={mode}
             onChange={(event) => onMode(event.target.value)}
           >
-            <option value="">Default mode</option>
+            <option value="">
+              {defaultMode === undefined
+                ? 'Default mode'
+                : `Station default (${modeLabel(defaultMode)})`}
+            </option>
             {modes.map((m) => (
               <option key={m} value={m}>
                 {modeLabel(m)}

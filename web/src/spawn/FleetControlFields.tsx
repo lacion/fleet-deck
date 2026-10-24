@@ -6,6 +6,7 @@ import {
   desktopCapProblem,
   type FleetControl,
   fleetOn,
+  idleLimitProblem,
   imageBudgetProblem,
   inputCapProblem,
   inputCharsProblem,
@@ -110,12 +111,27 @@ const INPUT_SIGN_OUT_NOTE =
 type LimitProps = {
   readonly label: string;
   readonly value: string;
-  readonly max: number;
+  /** The upper bound of the input; none when the deck checks the bound (B27). */
+  readonly max?: number;
+  /** The lowest number; 0 by default. */
+  readonly min?: number;
   readonly problem: string | null;
   readonly onChange: (value: string) => void;
+  /** B27: with `onNone`, a "No limit" checkbox; while `none` is true the input is off. */
+  readonly none?: boolean;
+  readonly onNone?: (none: boolean) => void;
 };
 
-export function LimitInput({ label, value, max, problem, onChange }: LimitProps) {
+export function LimitInput({
+  label,
+  value,
+  max,
+  min = 0,
+  problem,
+  onChange,
+  none = false,
+  onNone,
+}: LimitProps) {
   return (
     <>
       <label>
@@ -123,12 +139,24 @@ export function LimitInput({ label, value, max, problem, onChange }: LimitProps)
         <input
           type="number"
           inputMode="numeric"
-          min={0}
+          min={min}
           max={max}
           value={value}
+          disabled={none}
           onChange={(event) => onChange(event.target.value)}
         />
       </label>
+      {onNone === undefined ? null : (
+        <label className="fd-spawn-opt">
+          <input
+            type="checkbox"
+            aria-label={`${label}: no limit`}
+            checked={none}
+            onChange={(event) => onNone(event.target.checked)}
+          />
+          No limit
+        </label>
+      )}
       {problem === null ? null : (
         <p className="fd-note" role="alert">
           {problem}
@@ -173,9 +201,10 @@ export function FleetControlFields({ fleet: given, onChange, live = false }: Pro
           <LimitInput
             label="Session limit"
             value={fleet.spawnCap}
-            max={50}
             problem={spawnCapProblem(fleet)}
             onChange={(spawnCap) => onChange({ ...fleet, spawnCap })}
+            none={fleet.spawnNone}
+            onNone={(spawnNone) => onChange({ ...fleet, spawnNone })}
           />
         ) : null}
         {fleet.spawn || fleet.manage ? (
@@ -210,6 +239,18 @@ export function FleetControlFields({ fleet: given, onChange, live = false }: Pro
           </>
         ) : null}
       </fieldset>
+      {live ? null : (
+        <LimitInput
+          label="Idle limit (minutes)"
+          value={fleet.idleMinutes}
+          min={1}
+          max={10080}
+          problem={idleLimitProblem(fleet)}
+          onChange={(idleMinutes) => onChange({ ...fleet, idleMinutes })}
+          none={fleet.idleNone}
+          onNone={(idleNone) => onChange({ ...fleet, idleNone })}
+        />
+      )}
       {switches.map((s) => (
         <label key={s.key} className="fd-spawn-opt">
           <input
@@ -314,9 +355,10 @@ export function FleetControlFields({ fleet: given, onChange, live = false }: Pro
         <LimitInput
           label="Answer limit"
           value={fleet.answerCap}
-          max={MAX_ANSWER_CAP}
           problem={answerCapProblem(fleet)}
           onChange={(answerCap) => onChange({ ...fleet, answerCap })}
+          none={fleet.answerNone}
+          onNone={(answerNone) => onChange({ ...fleet, answerNone })}
         />
       ) : null}
       {fleet.desktop || fleet.capture ? (

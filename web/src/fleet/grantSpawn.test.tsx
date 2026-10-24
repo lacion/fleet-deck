@@ -268,3 +268,46 @@ describe('modeWithin', () => {
     expect(modeWithin('codex', 'plan', CODEX)).toBe(false);
   });
 });
+
+describe('"No limit" (B27 §3.7)', () => {
+  const NONE = 4_294_967_295;
+  test('a grant with no limit shows the box checked and keeps a number for the input', () => {
+    const v = spawnValues({ ...grant, spawn_cap: NONE });
+    expect(v.spawnNone).toBe(true);
+    expect(v.spawnCap).toBe('3');
+    expect(spawnValues(grant).spawnNone).toBe(false);
+  });
+  test('the box is a checkbox that turns the input off', () => {
+    const render = (spawnNone: boolean) =>
+      renderToStaticMarkup(
+        <SpawnForm
+          grant={grant}
+          values={{ ...spawnValues(grant), spawnNone }}
+          busy={false}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+    expect(render(false)).toContain('aria-label="Session limit: no limit"');
+    expect(render(false)).not.toContain('disabled=""><');
+    expect(render(true)).toMatch(/<input[^>]*disabled=""[^>]*value="3"|value="3"[^>]*disabled=""/);
+  });
+  test('no limit has no text problem and sends NO_LIMIT', () => {
+    const w: GrantView = { ...grant, kind: 'worker' };
+    const v = { ...spawnValues(w), spawnCap: '', spawnNone: true };
+    expect(sessionLimitProblem(w, v)).toBeNull();
+    expect(spawnBody(w, v)).toEqual({ spawn_cap: NONE });
+  });
+  test('no limit counts as widening: it asks the elevation', async () => {
+    const a = actions();
+    const k = asker('123456');
+    await saveSpawn(grant, { ...spawnValues(grant), spawnNone: true }, a, k.ask);
+    expect(k.labels).toEqual([['Session limits']]);
+    expect(a.calls).toEqual([{ grantId: 'g', caps: { spawn_cap: NONE }, elevation: '123456' }]);
+  });
+  test('a grant that already has no limit and is not changed sends nothing', () => {
+    const g: GrantView = { ...grant, spawn_cap: NONE };
+    expect(spawnBody(g, spawnValues(g))).toEqual({});
+  });
+});

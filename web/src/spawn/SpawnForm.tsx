@@ -47,6 +47,7 @@ import {
   batchPrompts,
   branchProblem,
   DIR_PLACEHOLDER,
+  defaultModeOf,
   importIdProblem,
   knownModels,
   limitBadge,
@@ -409,14 +410,12 @@ export function SpawnForm({
               model: model.trim() === '' ? null : model.trim(),
               ...(effort.value === '' ? {} : { effort: effort.value }),
               title: title.trim() === '' ? null : title.trim(),
-              // The deck creates the grant and fills in its id, expiry and
-              // control skill (ADR-006 §4, DL-217); 0 means its default.
+              // The deck fills in the grant id, expiry and control skill (ADR-006 §4, DL-217).
               ...(coordinator && !importing
                 ? {
                     coordinator: {
                       grant_id: '',
                       ...grantFields(fleet, fleetShown ? targetIds : []),
-                      idle_ttl_ms: 0,
                       expires_at: 0,
                       control_skill: { version: '', text: '' },
                     },
@@ -578,6 +577,7 @@ export function SpawnForm({
                   modes={modes}
                   mode={mode}
                   onMode={setMode}
+                  defaultMode={defaultModeOf(provider)}
                 />
               )}
               {mode === 'bypassPermissions' ? (

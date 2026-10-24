@@ -1,6 +1,8 @@
 // ADR-008 §3: the "Fleet control" switches of the spawn form. A coordinator grant with a switch on
 // is a fleet-control grant: it needs the owner's elevation and carries the extra classes.
 
+import { NO_LIMIT } from '../fleet/limitText';
+
 export type FleetControl = {
   readonly scope: boolean;
   readonly inspect: boolean;
@@ -35,6 +37,14 @@ export type FleetControl = {
   readonly spawn: boolean;
   /** The session limit (spawn cap). */
   readonly spawnCap: string;
+  /** "No limit" is checked for the session limit (B27); the text is kept for when it is cleared. */
+  readonly spawnNone: boolean;
+  /** "No limit" is checked for the answer limit (B27). */
+  readonly answerNone: boolean;
+  /** The idle limit of the grant in minutes (B27). */
+  readonly idleMinutes: string;
+  /** "No limit" is checked for the idle limit (B27): the grant has no idle limit. */
+  readonly idleNone: boolean;
   /** The highest Claude mode that its sessions may get. */
   readonly claudeCeiling: string;
   /** The highest Codex `policy/sandbox` mode that its sessions may get. */
@@ -63,11 +73,15 @@ export const NO_FLEET: FleetControl = {
   anyAck: false,
   spawn: false,
   spawnCap: '3',
+  spawnNone: false,
+  answerNone: false,
+  idleMinutes: '30',
+  idleNone: false,
   claudeCeiling: 'acceptEdits',
   codexCeiling: 'on-request/workspace-write',
 };
 
-/** The largest answer limit that the deck accepts. */
+/** The largest desktop, screenshot, recording and input limit that the deck accepts. */
 export const MAX_ANSWER_CAP = 5000;
 
 /** True when any fleet-control switch is on. The `spawn` switch is not fleet control. */
@@ -75,15 +89,23 @@ export function fleetOn(f: FleetControl): boolean {
   return f.scope || f.inspect || f.manage || f.answer || f.desktop || f.capture;
 }
 
-/** The problem of the answer cap text, or null: an integer 0..5000 (only checked when `answer` is on). */
+/** The problem of the answer cap text, or null: a whole number (only checked when `answer` is on and "No limit" is off). The deck checks the upper bound. */
 export function answerCapProblem(f: FleetControl): string | null {
-  if (!f.answer) return null;
-  const text = f.answerCap.trim();
-  if (/^\d+$/.test(text) && Number(text) <= MAX_ANSWER_CAP) return null;
-  return 'The answer limit is a whole number from 0 to 5000.';
+  if (!f.answer || f.answerNone) return null;
+  if (/^\d+$/.test(f.answerCap.trim())) return null;
+  return 'The answer limit is a whole number.';
 }
 
-const MAX_SPAWN_CAP = 50;
+const MAX_IDLE_MINUTES = 10080;
+
+/** The problem of the idle limit text, or null: whole minutes from 1 to 10080 (not checked while "No limit" is on). */
+export function idleLimitProblem(f: FleetControl): string | null {
+  if (f.idleNone) return null;
+  const text = f.idleMinutes.trim();
+  if (/^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= MAX_IDLE_MINUTES) return null;
+  return 'The idle limit is a whole number of minutes from 1 to 10080.';
+}
+
 const MAX_DESKTOP_CAP = 5000;
 const MAX_IMAGE_MIB = 1024;
 const MAX_RECORDING_SECONDS = 600_000;
@@ -156,18 +178,19 @@ export function anyAckProblem(f: FleetControl): string | null {
   return 'Check "Allow input in other application windows" to give this agent the broader scope.';
 }
 
-/** The problem of the session limit text, or null: an integer 0..50 (only checked when `spawn` is on). */
+/** The problem of the session limit text, or null: a whole number (only checked when `spawn` is on and "No limit" is off). The deck checks the upper bound. */
 export function spawnCapProblem(f: FleetControl): string | null {
-  if (!f.spawn) return null;
-  if (wholeUpTo(f.spawnCap, MAX_SPAWN_CAP)) return null;
-  return 'The session limit is a whole number from 0 to 50.';
+  if (!f.spawn || f.spawnNone) return null;
+  if (/^\d+$/.test(f.spawnCap.trim())) return null;
+  return 'The session limit is a whole number.';
 }
 
-/** The first problem of the limit inputs (session, answer, desktop, screenshot, image budget, recording, input) and the acknowledgment, or null. */
+/** The first problem of the limit inputs (session, answer, idle, desktop, screenshot, image budget, recording, input) and the acknowledgment, or null. */
 export function fleetProblem(f: FleetControl): string | null {
   return (
     spawnCapProblem(f) ??
     answerCapProblem(f) ??
+    idleLimitProblem(f) ??
     desktopCapProblem(f) ??
     captureCapProblem(f) ??
     imageBudgetProblem(f) ??
@@ -195,6 +218,7 @@ export function grantFields(
   classes: string[];
   scope?: 'fleet';
   answer_cap?: number;
+  idle_ttl_ms: number;
   desktop_cap?: number;
   capture_cap?: number;
   image_byte_cap?: number;
@@ -222,12 +246,13 @@ export function grantFields(
       ...(f.desktop ? ['desktop'] : []),
       ...(f.capture ? ['capture'] : []),
     ],
-    ...(f.spawn ? { spawn_cap: Number(f.spawnCap.trim()) } : {}),
+    idle_ttl_ms: f.idleNone ? NO_LIMIT : Number(f.idleMinutes.trim()) * 60_000,
+    ...(f.spawn ? { spawn_cap: f.spawnNone ? NO_LIMIT : Number(f.spawnCap.trim()) } : {}),
     ...(f.spawn || f.manage
       ? { max_modes: { claude: f.claudeCeiling, codex: f.codexCeiling } }
       : {}),
     ...(f.scope ? { scope: 'fleet' as const } : {}),
-    ...(f.answer ? { answer_cap: Number(f.answerCap.trim()) } : {}),
+    ...(f.answer ? { answer_cap: f.answerNone ? NO_LIMIT : Number(f.answerCap.trim()) } : {}),
     ...(f.desktop || f.capture ? { desktop_cap: Number(f.desktopCap.trim()) } : {}),
     ...(f.capture
       ? {

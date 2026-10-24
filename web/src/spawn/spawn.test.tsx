@@ -138,6 +138,14 @@ describe('spawn form (P4-4)', () => {
     expect(versionWarning(broken)).toContain('known to break the protocol');
   });
 
+  test('the empty mode option names the station default when it is reported (B27)', () => {
+    const [claude, codex] = info().providers;
+    if (!claude || !codex) throw new Error('the info fixture has two providers');
+    const providers = [{ ...claude, default_mode: 'acceptEdits' }, codex];
+    const html = form([reported('station-a', { info: info({ providers }) })]);
+    expect(html).toContain('<option value="" selected="">Station default (Accept edits)</option>');
+  });
+
   test('the form offers station, provider, mode and the picker', () => {
     const html = form([reported()]);
     expect(html).toContain('<h2>New session</h2>');

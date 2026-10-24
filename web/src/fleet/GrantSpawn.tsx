@@ -4,6 +4,7 @@ import type { GrantView } from '../gen';
 import type { ElevationAsk } from '../settings/elevation';
 import { CLAUDE_CEILINGS, CODEX_CEILINGS, LimitInput } from '../spawn/FleetControlFields';
 import type { FleetActions, FleetResult } from './fleet';
+import { NO_LIMIT } from './limitText';
 import { ceilingLabel } from './modes';
 
 /** The select value of a family without a ceiling; its option text is "Not allowed". */
@@ -12,6 +13,8 @@ export const NOT_ALLOWED = '';
 /** The inputs of the session rules form. */
 export type SpawnValues = {
   readonly spawnCap: string;
+  /** "No limit" is checked for the session limit (B27). */
+  readonly spawnNone: boolean;
   readonly claude: string;
   readonly codex: string;
 };
@@ -34,7 +37,8 @@ export function grantTitle(g: GrantView): string {
 /** The values of a grant, as the form shows them. */
 export function spawnValues(g: GrantView): SpawnValues {
   return {
-    spawnCap: String(g.spawn_cap),
+    spawnCap: g.spawn_cap === NO_LIMIT ? '3' : String(g.spawn_cap),
+    spawnNone: g.spawn_cap === NO_LIMIT,
     claude: g.max_modes?.['claude'] ?? NOT_ALLOWED,
     codex: g.max_modes?.['codex'] ?? NOT_ALLOWED,
   };
@@ -51,7 +55,7 @@ const limitMax = (g: GrantView): number => (g.kind === 'worker' ? 10 : 50);
 
 /** The problem of the session limit text, or null (only checked for a grant with the class `spawn`). */
 export function sessionLimitProblem(g: GrantView, v: SpawnValues): string | null {
-  if (!hasLimit(g)) return null;
+  if (!hasLimit(g) || v.spawnNone) return null;
   const max = limitMax(g);
   const t = v.spawnCap.trim();
   if (/^\d+$/.test(t) && Number(t) <= max) return null;
@@ -80,9 +84,8 @@ export function modeWithin(family: 'claude' | 'codex', mode: string, ceiling: st
 export function spawnBody(g: GrantView, v: SpawnValues): SpawnBody {
   const was = spawnValues(g);
   const body: SpawnBody = {};
-  if (hasLimit(g) && Number(v.spawnCap.trim()) !== g.spawn_cap) {
-    body.spawn_cap = Number(v.spawnCap.trim());
-  }
+  const cap = v.spawnNone ? NO_LIMIT : Number(v.spawnCap.trim());
+  if (hasLimit(g) && cap !== g.spawn_cap) body.spawn_cap = cap;
   if (hasCeilings(g) && (v.claude !== was.claude || v.codex !== was.codex)) {
     body.max_modes = {
       ...(v.claude === NOT_ALLOWED ? {} : { claude: v.claude }),
@@ -153,6 +156,8 @@ export function SpawnForm({ grant, values, busy, onChange, onSave, onCancel }: F
           max={limitMax(grant)}
           problem={problem}
           onChange={(spawnCap) => onChange({ ...values, spawnCap })}
+          none={values.spawnNone}
+          onNone={(spawnNone) => onChange({ ...values, spawnNone })}
         />
       ) : null}
       {hasCeilings(grant) ? (
