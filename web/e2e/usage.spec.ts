@@ -29,11 +29,24 @@ test('the fleet shows usage totals and live rate-limit meters', async ({ page })
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
   const quiet = session('s2', 10, {
-    usage: { input_tokens: null, output_tokens: null, cost_usd: null, cost_inferred: false },
+    usage: {
+      input_tokens: null,
+      output_tokens: null,
+      cost_usd: null,
+      cost_inferred: false,
+      scheme: 2,
+    },
   });
   deck.sessions = [
     session('s1', 30, {
-      usage: { input_tokens: 1000, output_tokens: null, cost_usd: 0.5, cost_inferred: false },
+      // B14: a count of the new rules (scheme 2); a count without a scheme is an old count.
+      usage: {
+        input_tokens: 1000,
+        output_tokens: null,
+        cost_usd: 0.5,
+        cost_inferred: false,
+        scheme: 2,
+      },
     }),
     quiet,
   ];
@@ -43,7 +56,8 @@ test('the fleet shows usage totals and live rate-limit meters', async ({ page })
   await openPanel(page, 'Usage');
   const usage = page.getByRole('region', { name: 'Usage' });
   await expect(usage).toContainText('1,000 (1 session unknown)');
-  await expect(usage.getByRole('definition').nth(1)).toHaveText('unknown');
+  // New input, cache read, cache write, output, at API prices (B14): the output is unknown.
+  await expect(usage.getByRole('definition').nth(3)).toHaveText('unknown');
   await expect(usage).toContainText('Alpha · personal · five_hour');
   await expect(usage).toContainText('30% used');
   await expect(usage).toContainText('Alpha · personal · weekly');

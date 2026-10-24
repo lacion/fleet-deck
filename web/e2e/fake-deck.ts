@@ -681,7 +681,8 @@ export class FakeDeck {
     for (const r of this.routes) {
       const match = method === r.method ? r.re.exec(path) : null;
       if (match === null) continue;
-      if (!csrf && !display) {
+      // A read needs no CSRF token (the deck checks it on a change only).
+      if (method !== 'GET' && !csrf && !display) {
         return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
       }
       return r.handler(match, body, url.searchParams);
