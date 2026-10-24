@@ -267,6 +267,9 @@ impl RunningDeck {
         let (shutdown, rx) = watch::channel(false);
         let tailnet = config.tailnet_hostname.clone();
         let board_store = store.clone();
+        // The relay of the wall controls; its incarnation is random, and a
+        // failed random source stops the start.
+        let wall_controls = Arc::new(crate::wall_control::WallControlHub::new()?);
         let board_link = Arc::clone(node.link());
         let board_node = Arc::clone(&node);
         let tls_dir = deck_dir.clone();
@@ -289,6 +292,7 @@ impl RunningDeck {
         let build = |kept: Option<BoardTls>| {
             let tailnet = tailnet.clone();
             let board_store = board_store.clone();
+            let wall_controls = Arc::clone(&wall_controls);
             let board_link = Arc::clone(&board_link);
             let board_node = Arc::clone(&board_node);
             let tls_dir = tls_dir.clone();
@@ -332,6 +336,7 @@ impl RunningDeck {
                     tickets: crate::http::ws::Tickets::default(),
                     ws_recheck: crate::http::ws::RECHECK,
                     ws_display_send: crate::http::ws::DISPLAY_SEND,
+                    wall_controls,
                     stop_watch: crate::http::execution_routes::StopWatch::DEFAULT,
                     maintenance_watch:
                         crate::http::execution_routes::StopWatch::MAINTENANCE_DEFAULT,

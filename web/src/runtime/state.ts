@@ -285,6 +285,10 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
         ...state,
         driveRequests: { ...state.driveRequests, [sessionKey(msg)]: msg.requests },
       };
+    // The wall control relay (B17): only a display socket that declared `wall_control.v1`
+    // gets it, and it never changes the read model.
+    case 'wall_control':
+      return state;
     default:
       msg satisfies never;
       throw new Error('Unknown board message');

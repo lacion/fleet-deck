@@ -1,12 +1,14 @@
 // R13 P1: the read-only chat of the focus mode. It shows the newest items of the timeline: no
 // composer, no filters and no control. The agent text goes through the chat Markdown in its
 // read-only form (no copy button); the tool calls run on a flight path (DESIGN-SYSTEM §4.5).
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Markdown } from '../chat/Markdown';
 import { agentLine } from '../chat/notices';
 import { pairWaiting } from '../chat/waiting';
 import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
 import { toolText } from '../watch/tooltext';
+import { atEnd } from './control';
 import { displayChatLines } from './displayLines';
 
 /** The words that a screen reader says for the node of a call that is not done (the node shape
@@ -16,6 +18,9 @@ const STATE_WORD = {
   waiting: 'Waiting for your answer',
   ended: 'Ended',
 } as const;
+
+/** The line at the foot of a chat that the owner scrolled back (B17 §3.1.5). */
+export const SCROLLED_BACK_TEXT = 'Scrolled back. New lines are below.';
 
 /** The most items that the pane draws. */
 export const CHAT_ITEMS = 120;
@@ -147,17 +152,42 @@ export function ChatPane({
   display,
   ready,
   unavailable,
+  initialBack = false,
 }: {
   readonly events: readonly EventEnvelope[];
   /** The events of a wall display timeline; they replace `events` when there are some. */
   readonly display?: readonly DisplayEvent[] | undefined;
   readonly ready: boolean;
   readonly unavailable: boolean;
+  /** The first state of the scrolled-back line (tests). */
+  readonly initialBack?: boolean;
 }) {
+  // The chat follows its end. A remote scroll moves it back (the section stays `overflow: hidden`;
+  // a programmatic scroll works on it): new lines then do not move it, until `bottom`.
+  const box = useRef<HTMLElement>(null);
+  const follow = useRef(!initialBack);
+  const [back, setBack] = useState(initialBack);
+  const onScroll = () => {
+    const el = box.current;
+    if (el === null) return;
+    const end = atEnd(el);
+    follow.current = end;
+    setBack(!end);
+  };
   const lines: readonly Line[] =
     display !== undefined && display.length > 0 ? displayChatLines(display) : chatLines(events);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el !== null && follow.current) el.scrollTop = el.scrollHeight;
+  });
   return (
-    <section className="fd-wall-chat" aria-label="Chat">
+    <section
+      className="fd-wall-chat"
+      aria-label="Chat"
+      data-wall-scroll="chat"
+      ref={box}
+      onScroll={onScroll}
+    >
       {unavailable ? (
         <p className="fd-wall-note">Unavailable</p>
       ) : lines.length === 0 ? (
@@ -169,6 +199,7 @@ export function ChatPane({
           ))}
         </div>
       )}
+      {back ? <p className="fd-wall-note fd-wall-chat-back">{SCROLLED_BACK_TEXT}</p> : null}
     </section>
   );
 }

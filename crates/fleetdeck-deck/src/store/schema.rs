@@ -787,6 +787,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::grants::owner_grant_schema::SQL),
         // V47 (Fleet Sync FS-3): secret_files.
         M::up(super::secret_files::SQL),
+        // V48 (B17 wall pages): `wall_pages` and the `page` mode.
+        M::up(super::wall_pages_schema::SQL),
     ])
 }
 

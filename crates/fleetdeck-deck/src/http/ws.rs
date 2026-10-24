@@ -46,7 +46,7 @@ use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Board;
-use super::artifact_projection::{project_events, video_aware_socket};
+use super::artifact_projection::{declares, project_events, video_aware_socket};
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
 use crate::board_fence::{self, Ticket};
@@ -58,6 +58,8 @@ use crate::store::{DeckError, DeckStore, LiveEvents, Principal, SocialEvent};
 
 #[path = "ws_display.rs"]
 mod display;
+#[path = "ws_wall_control.rs"]
+mod wall;
 
 /// How long a WebSocket ticket is valid.
 pub const TICKET_TTL_MS: i64 = 30_000;
@@ -150,6 +152,11 @@ pub async fn upgrade(
     // legacy shape, which every board reads.
     let query = query.map(|Query(q)| q).unwrap_or_default();
     let video = video_aware_socket(&headers, &query);
+    let wall = declares(
+        &headers,
+        &query,
+        fleetdeck_proto::version::feature::WALL_CONTROL,
+    );
     ws.max_message_size(MAX_CLIENT_MESSAGE)
         .max_frame_size(MAX_CLIENT_MESSAGE)
         .on_upgrade(move |mut socket| async move {
@@ -168,7 +175,7 @@ pub async fn upgrade(
             }
             let socket_id = board.store.new_socket_id();
             let store = board.store.clone();
-            let mut session = Session::new(board, principal, socket, socket_id, video);
+            let mut session = Session::new(board, principal, socket, socket_id, video, wall);
             session.fence.clone_from(&fence);
             if let Err(e) = session.run().await {
                 tracing::debug!(error = %e, "board socket");
@@ -232,6 +239,8 @@ struct Session {
     /// The socket declared `artifacts_video.v1` (R13 P5b): without it the
     /// timeline events show kind `other` for a video.
     video: bool,
+    /// The socket declared `wall_control.v1` (B17): a display gets the frames.
+    wall: bool,
     /// The entry of this socket in the board-fence registry (R13 P7 §7.6);
     /// `None` for a token or a display.
     fence: Option<Ticket>,
@@ -288,6 +297,7 @@ impl Session {
         socket: WebSocket,
         socket_id: u64,
         video: bool,
+        wall: bool,
     ) -> Self {
         Self {
             board,
@@ -299,6 +309,7 @@ impl Session {
             subs: BTreeMap::new(),
             scope: None,
             video,
+            wall,
             fence: None,
         }
     }
@@ -369,6 +380,7 @@ impl Session {
             Principal::Display(_) => self.board.ws_recheck.min(DISPLAY_RECHECK),
             _ => self.board.ws_recheck,
         };
+        let mut feed = self.wall_attach(self.wall).await?;
         let mut recheck = tokio::time::interval(every);
         recheck.tick().await;
         let fence = self.fence.clone();
@@ -401,6 +413,11 @@ impl Session {
                     Err(RecvError::Lagged(_)) => self.catch_up().await?,
                     Err(RecvError::Closed) => return Ok(()),
                 },
+                frame = wall::next_frame(&mut feed) => {
+                    if !self.wall_forward(feed.as_ref(), frame).await? {
+                        return Ok(());
+                    }
+                }
                 social = social_rx.recv() => match social {
                     Ok(event) => self.social(&event).await?,
                     Err(RecvError::Lagged(_)) => {}

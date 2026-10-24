@@ -4,6 +4,8 @@
 // on, a new station and a new binding need the owner's elevation (the deck says so;
 // `withElevation`). The fields are the settings field rows (§4.7, `Field layout="row"`).
 import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import type { DisplayView, MonitorInfo, StationView } from '../gen';
 import type { SettingsActions } from '../settings/actions';
@@ -16,6 +18,7 @@ import { Menu } from '../ui/Menu';
 import { Field } from '../ui/page';
 import type { DisplayActions, DisplayChange } from './actions';
 import { withElevation } from './elevate';
+import { ShowPageDialog } from './ShowPage';
 import { StationChoices } from './StationChoices';
 
 type Draft = {
@@ -265,6 +268,7 @@ export function DisplayRow({
   ask,
   onDone,
   now,
+  pages = false,
 }: {
   readonly display: DisplayView;
   readonly stations: readonly StationView[];
@@ -273,6 +277,8 @@ export function DisplayRow({
   readonly ask: ElevationAsk;
   readonly onDone: () => void;
   readonly now: number;
+  /** The deck has the wall pages (`wall_pages.v1`): the menu has "Show a page…". */
+  readonly pages?: boolean;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(display));
   const [base, setBase] = useState(display);
@@ -281,6 +287,7 @@ export function DisplayRow({
   const [note, setNote] = useState<Note | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [showing, setShowing] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   // The menu closes when Revoke… opens the confirmation: the focus goes to its safe answer.
   useEffect(() => {
@@ -363,6 +370,15 @@ export function DisplayRow({
             <>
               <button
                 type="button"
+                onClick={() => {
+                  close();
+                  window.location.hash = formatHash({ name: 'remote', id: display.display_id });
+                }}
+              >
+                Remote control
+              </button>
+              <button
+                type="button"
                 disabled={busy}
                 onClick={() => {
                   close();
@@ -379,6 +395,18 @@ export function DisplayRow({
               >
                 Switch to Mission view
               </button>
+              {pages ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    close();
+                    setShowing(true);
+                  }}
+                >
+                  Show a page…
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="fd-danger"
@@ -394,6 +422,16 @@ export function DisplayRow({
           )}
         </Menu>
       </header>
+      {showing
+        ? createPortal(
+            <ShowPageDialog
+              display={display}
+              actions={actions}
+              onClose={() => setShowing(false)}
+            />,
+            document.body,
+          )
+        : null}
       {confirm ? (
         <div className="fd-disp-confirm" role="alertdialog" aria-label="Revoke this display">
           <p>Revoke this display? Its screen stops in 5 seconds.</p>

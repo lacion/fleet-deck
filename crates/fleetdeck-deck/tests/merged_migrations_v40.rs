@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 
 const DECK_BEFORE: usize = 40;
-const DECK_AFTER: i64 = 47;
+const DECK_AFTER: i64 = 48;
 const STATION_BEFORE: usize = 39;
 const STATION_AFTER: i64 = 45;
 

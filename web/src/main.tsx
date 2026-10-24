@@ -34,6 +34,7 @@ import './styles/sharing.css';
 import './styles/settings.css';
 import './styles/wall.css';
 import './styles/displays.css';
+import './styles/remote.css';
 
 initTheme();
 initDensity();

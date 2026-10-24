@@ -79,6 +79,11 @@ fn batch_id_ok(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+/// A page id: 26 characters of `[0-9A-Za-z]` (a ULID).
+fn page_id_ok(id: &str) -> bool {
+    id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 /// The shape of a body, with no database access.
 ///
 /// # Errors
@@ -98,6 +103,9 @@ pub(in crate::store) fn check_shape(body: &DirectiveBody) -> std::result::Result
                 || !control_free(&artifact.artifact_id) =>
         {
             Err("the artifact reference is not valid")
+        }
+        DirectiveBody::Page { page, .. } if !page_id_ok(&page.page_id) => {
+            Err("the page reference is not valid")
         }
         _ => Ok(()),
     }
@@ -199,6 +207,13 @@ pub(in crate::store) fn check_references(
                 return Err(DirectiveError::OutsideCeiling);
             }
             if !artifact_exists(conn, artifact)? {
+                return Err(DirectiveError::Invalid("unknown reference"));
+            }
+            Ok(Vec::new())
+        }
+        // A page has no session reference: the list stays empty (B17 §3.2.5).
+        DirectiveBody::Page { page, .. } => {
+            if crate::store::wall_pages::find(conn, &page.page_id)?.is_none() {
                 return Err(DirectiveError::Invalid("unknown reference"));
             }
             Ok(Vec::new())

@@ -116,6 +116,8 @@ pub mod station_machines;
 pub mod station_palettes;
 pub mod stations;
 pub mod wake_seen;
+pub mod wall_pages;
+mod wall_pages_schema;
 pub mod worker_grant;
 mod worker_grant_end;
 

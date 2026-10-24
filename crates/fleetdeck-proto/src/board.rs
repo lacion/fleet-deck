@@ -352,6 +352,11 @@ pub enum BoardServerMessage {
         session_id: SessionId,
         requests: Vec<String>,
     },
+    /// A wall frame for a display socket that declared `wall_control.v1`
+    /// (B17 §3.1). No other socket gets it.
+    WallControl {
+        frame: crate::wall_control::WallControlFrame,
+    },
     /// A refused client message; the socket stays open.
     Error { code: String, message: String },
 }

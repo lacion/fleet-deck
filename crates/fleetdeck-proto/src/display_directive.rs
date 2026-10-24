@@ -56,6 +56,8 @@ pub enum DirectiveMode {
     Race,
     Artifact,
     Ambient,
+    /// B17: a page of the allow-list of the deck (`wall_pages`).
+    Page,
 }
 
 /// The body of `POST /api/displays/{id}/directive` and the directive that a
@@ -105,6 +107,14 @@ pub enum DirectiveBody {
         #[serde(default)]
         filter: Option<DirectiveFilter>,
     },
+    /// B17: a page of the allow-list, by id and never by URL.
+    Page {
+        page: crate::wall_pages::PageRef,
+        #[serde(default)]
+        pin: bool,
+        #[serde(default)]
+        filter: Option<DirectiveFilter>,
+    },
 }
 
 impl DirectiveBody {
@@ -126,6 +136,7 @@ impl DirectiveBody {
             Self::Race { .. } => DirectiveMode::Race,
             Self::Artifact { .. } => DirectiveMode::Artifact,
             Self::Ambient { .. } => DirectiveMode::Ambient,
+            Self::Page { .. } => DirectiveMode::Page,
         }
     }
 
@@ -138,7 +149,8 @@ impl DirectiveBody {
             | Self::Review { filter, .. }
             | Self::Race { filter, .. }
             | Self::Artifact { filter, .. }
-            | Self::Ambient { filter, .. } => filter.as_ref(),
+            | Self::Ambient { filter, .. }
+            | Self::Page { filter, .. } => filter.as_ref(),
         }
     }
 }
@@ -167,6 +179,23 @@ mod tests {
             r#"{"mode":"artifact","artifact":{"station_id":"s","artifact_id":"a"}}"#,
             r#"{"mode":"other"}"#,
             r#"{"mode":"mission","url":"https://x"}"#,
+        ] {
+            assert!(serde_json::from_str::<DirectiveBody>(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn page_takes_only_its_own_fields() {
+        let ok = r#"{"mode":"page","page":{"page_id":"01J0000000000000000000000A"},"pin":true}"#;
+        let parsed: DirectiveBody = serde_json::from_str(ok).unwrap();
+        assert_eq!(parsed.mode(), DirectiveMode::Page);
+        assert!(parsed.filter().is_none());
+        for bad in [
+            r#"{"mode":"page"}"#,
+            r#"{"mode":"page","page":{"page_id":"a"},"url":"https://x"}"#,
+            r#"{"mode":"page","page":{"page_id":"a","url":"https://x"}}"#,
+            r#"{"mode":"page","page":{"page_id":"a"},"session":{"station_id":"s","session_id":"x"}}"#,
+            r#"{"mode":"mission","page":{"page_id":"a"}}"#,
         ] {
             assert!(serde_json::from_str::<DirectiveBody>(bad).is_err(), "{bad}");
         }

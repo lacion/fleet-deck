@@ -209,6 +209,11 @@ pub(super) fn write_directive(
         Err(DirectiveError::Store(e)) => return Err(e),
         Err(e) => return Ok(Err(e)),
     };
+    // A page directive is the owner's alone (B17 §3.2.5): a second barrier,
+    // because the station and coordinator senders cannot build one today.
+    if matches!(body, DirectiveBody::Page { .. }) && !matches!(sender, DirectiveSender::Owner) {
+        return Ok(Err(DirectiveError::NotGranted));
+    }
     let (kind, sender_id) = match sender {
         DirectiveSender::Owner => ("owner", String::new()),
         DirectiveSender::Station(id) => ("station", id.as_str().to_owned()),
@@ -311,5 +316,6 @@ pub fn mode_name(body: &DirectiveBody) -> &'static str {
         DirectiveMode::Race => "race",
         DirectiveMode::Artifact => "artifact",
         DirectiveMode::Ambient => "ambient",
+        DirectiveMode::Page => "page",
     }
 }

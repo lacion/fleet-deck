@@ -10,8 +10,15 @@ import type {
   DisplayLinkMade,
   DisplayList,
   DisplayView,
+  NewWallPage,
   StationId,
+  WallControl,
+  WallControlAck,
+  WallPage,
+  WallPageList,
+  WallRemoteView,
 } from '../gen';
+import { controlAck, remoteView } from '../remote/api';
 import { DeckError, type DeckIo } from '../settings/http';
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -52,9 +59,35 @@ export type DisplayActions = {
   change(id: string, change: DisplayChange, elevation: string | null): Promise<DisplayView>;
   revoke(id: string): Promise<void>;
   directive(id: string, body: DirectiveBody): Promise<DirectiveView>;
+  /** B17: `GET /api/displays/{id}/remote?after=<seq>`: the state of the wall remote. */
+  remote(id: string, after: number): Promise<WallRemoteView>;
+  /** B17: `POST /api/displays/{id}/control`: one scroll or select step. */
+  control(id: string, control: WallControl): Promise<WallControlAck>;
+  /** B17: `POST /api/displays/{id}/remote/navigate`: an owner directive that the wall reads at once. */
+  remoteNavigate(id: string, directive: DirectiveBody): Promise<WallControlAck>;
+  /** B17: `GET /api/wall-pages`: the allow-list of wall pages, oldest first (owner only). */
+  wallPages(): Promise<WallPageList>;
+  /** B17: `POST /api/wall-pages`: adds an entry; the elevation is in the body (key `wall_pages`). */
+  addWallPage(page: NewWallPage, elevation: string | null): Promise<WallPage>;
+  /** B17: `POST /api/wall-pages/{id}/delete`: the number of displays that went back to Mission. */
+  deleteWallPage(id: string): Promise<number>;
 };
 
 const withElevation = (elevation: string | null) => (elevation === null ? {} : { elevation });
+
+function wallPage(v: unknown): WallPage {
+  if (
+    !record(v) ||
+    typeof v['page_id'] !== 'string' ||
+    typeof v['label'] !== 'string' ||
+    typeof v['url'] !== 'string' ||
+    typeof v['origin'] !== 'string' ||
+    (v['fit'] !== 'screen' && v['fit'] !== 'long')
+  ) {
+    throw new Error('The deck sent an invalid wall page.');
+  }
+  return v as WallPage;
+}
 
 function view(v: unknown): DisplayView {
   if (!record(v) || typeof v['display_id'] !== 'string' || typeof v['name'] !== 'string') {
@@ -107,6 +140,28 @@ export function displayActions(io: DeckIo): DisplayActions {
         throw new Error('The deck sent an invalid directive.');
       }
       return v as DirectiveView;
+    },
+    remote: async (id, after) =>
+      remoteView(await io.get(`/api/displays/${seg(id)}/remote?after=${after}`)),
+    control: async (id, control) =>
+      controlAck(await io.post(`/api/displays/${seg(id)}/control`, { control })),
+    remoteNavigate: async (id, directive) =>
+      controlAck(await io.post(`/api/displays/${seg(id)}/remote/navigate`, { directive })),
+    wallPages: async () => {
+      const v = await io.get('/api/wall-pages');
+      if (!record(v) || !Array.isArray(v['pages'])) {
+        throw new Error('The deck sent an invalid wall page list.');
+      }
+      return { pages: v['pages'].map(wallPage) };
+    },
+    addWallPage: async (page, elevation) =>
+      wallPage(await io.post('/api/wall-pages', { ...page, ...withElevation(elevation) })),
+    deleteWallPage: async (id) => {
+      const v = await io.post(`/api/wall-pages/${seg(id)}/delete`, {});
+      if (!record(v) || typeof v['displays_reset'] !== 'number') {
+        throw new Error('The deck sent an invalid answer.');
+      }
+      return v['displays_reset'];
     },
   };
 }

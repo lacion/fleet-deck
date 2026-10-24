@@ -46,12 +46,18 @@ pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; 
 /// artifact path. CSP has no path-only source, so the path follows the
 /// origin of the request. `frame_origin` is `https://host[:port]` and must
 /// come from an allowed board origin; `None` gives `frame-src 'none'`.
+/// `page_origin` (B17 §3.2.6) is the origin of the one wall page that the
+/// display shows now; the caller checked its grammar.
 #[must_use]
-pub fn display_csp(frame_origin: Option<&str>) -> String {
-    let frame = match frame_origin {
+pub fn display_csp(frame_origin: Option<&str>, page_origin: Option<&str>) -> String {
+    let mut frame = match frame_origin {
         Some(origin) => format!("frame-src {origin}/api/displays/self/artifact/"),
         None => "frame-src 'none'".to_owned(),
     };
+    if let Some(origin) = page_origin {
+        frame.push(' ');
+        frame.push_str(origin);
+    }
     CSP.replace("frame-src 'self'", &frame)
 }
 
@@ -77,8 +83,9 @@ impl BoardAssets {
 
 impl BoardAssets {
     /// The board `index.html` with the content security policy `csp` (the
-    /// display document). A deck without board files answers the plain 404.
-    pub fn index_with_csp(&self, csp: &str) -> Response {
+    /// display document) and the `Cache-Control` value `cache`. A deck
+    /// without board files answers the plain 404.
+    pub fn index_with_csp(&self, csp: &str, cache: &'static str) -> Response {
         let Ok(csp) = HeaderValue::from_str(csp) else {
             return with_headers(
                 StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -92,7 +99,7 @@ impl BoardAssets {
                     Body::from(data),
                 )
                     .into_response();
-                with_policy(response, "no-cache", csp)
+                with_policy(response, cache, csp)
             }
             None => with_headers(
                 (
@@ -214,16 +221,43 @@ mod tests {
 
     #[test]
     fn the_display_policy_changes_only_the_frame_source() {
-        let own = display_csp(Some("https://deck.example:7420"));
+        let own = display_csp(Some("https://deck.example:7420"), None);
         assert!(own.contains("frame-src https://deck.example:7420/api/displays/self/artifact/;"));
         assert!(!own.contains("frame-src 'self'"));
-        let none = display_csp(None);
+        let none = display_csp(None, None);
         assert!(none.contains("frame-src 'none';"));
         // Everything else is the board policy.
         for policy in [&own, &none] {
             assert!(policy.contains("script-src 'self'; style-src 'self';"));
             assert!(policy.contains("frame-ancestors 'none'"));
             assert!(policy.contains("connect-src 'self'"));
+        }
+    }
+
+    #[test]
+    fn display_csp_with_and_without_a_page_origin() {
+        let without = display_csp(Some("https://deck.example:7420"), None);
+        assert!(
+            without.contains("frame-src https://deck.example:7420/api/displays/self/artifact/;")
+        );
+        let with = display_csp(
+            Some("https://deck.example:7420"),
+            Some("https://grafana.example"),
+        );
+        assert!(with.contains(
+            "frame-src https://deck.example:7420/api/displays/self/artifact/ https://grafana.example;"
+        ));
+        let alone = display_csp(None, Some("http://localhost:3000"));
+        assert!(alone.contains("frame-src 'none' http://localhost:3000;"));
+        // Only the `frame-src` differs from the policy without a page.
+        for (a, b) in [(&with, &without), (&alone, &display_csp(None, None))] {
+            let strip = |p: &str| {
+                p.split("; ")
+                    .filter(|d| !d.starts_with("frame-src"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            };
+            assert_eq!(strip(a), strip(b));
         }
     }
 

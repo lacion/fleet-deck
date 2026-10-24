@@ -64,6 +64,8 @@ pub mod subagent;
 pub mod ts;
 pub mod untrusted;
 pub mod version;
+pub mod wall_control;
+pub mod wall_pages;
 
 pub use capability::{Capabilities, Degradation, Operation, Unsupported};
 pub use command::{CommandEnvelope, Receipt, Reject, RejectCode, SessionCommand};

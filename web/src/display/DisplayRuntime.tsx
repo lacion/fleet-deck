@@ -1,7 +1,8 @@
 // R13 P2c: the runtime of the wall display document (`/display`). One `Connection` (with the
 // display header on every request) owns the login, the socket and the timelines. The page shows:
 // the pair page without a login, and the wall with a display login. It has no control; a
-// directive from the deck moves the wall (`useDirective`).
+// directive from the deck moves the wall (`useDirective`), and the control frames of the deck scroll
+// it and select an item (B17).
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { type Navigate, useRoute, wallDefaults } from '../app/routes';
 import type { SessionKey } from '../gen';
@@ -33,7 +34,7 @@ function Wall({ connection }: { readonly connection: Connection }) {
     if (route.name !== 'wall') (navigate as Navigate)(wallDefaults, { replace: true });
   }, [route.name, navigate]);
   const get = useMemo(() => (path: string) => connection.get(path), [connection]);
-  const generation = useDirective(get, route, navigate, () => {
+  const { generation, reread } = useDirective(get, route, navigate, () => {
     // The login ended or the display was revoked: ask again who this is (the pair page shows).
     connection.stop();
     connection.start();
@@ -44,9 +45,12 @@ function Wall({ connection }: { readonly connection: Connection }) {
     connection.start();
   });
   const env = useMemo<DisplayEnv>(
-    () => ({ get, ...(generation === null ? {} : { generation }) }),
-    [get, generation],
+    () => ({ get, reread, ...(generation === null ? {} : { generation }) }),
+    [get, reread, generation],
   );
+  // B17: the frames of the deck. `WallPage` keeps the control state and calls `reread` (the
+  // `navigate` frame, or a frame for a newer generation) through the env.
+  const controls = useMemo(() => connection.onControl, [connection]);
   const views = useMemo(() => viewsActions(get, refused), [get]);
   const watch = useMemo(() => (key: SessionKey) => connection.watch(key), [connection]);
   if (route.name !== 'wall') return null;
@@ -62,6 +66,7 @@ function Wall({ connection }: { readonly connection: Connection }) {
       timelines={state.timelines}
       watch={watch}
       views={views}
+      controls={controls}
     />
   );
 }

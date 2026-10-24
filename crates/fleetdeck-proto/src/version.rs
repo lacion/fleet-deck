@@ -270,6 +270,18 @@ pub mod feature {
     /// per-session grant record (MCP P4b §9).
     pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
 
+    /// B17 §3.1: the wall control relay and the owner remote (the routes
+    /// `POST /api/displays/{id}/control`, `POST .../remote/navigate`, `GET
+    /// .../remote`, and the `wall_control` frame of a display socket). A
+    /// board feature: no station and no link method uses it.
+    pub const WALL_CONTROL: &str = "wall_control.v1";
+
+    /// B17 §3.2: the wall pages allow-list (the routes `GET|POST
+    /// /api/wall-pages`, `POST /api/wall-pages/{id}/delete`) and, with B2,
+    /// the `page` directive. A board feature: no station and no link method
+    /// uses it.
+    pub const WALL_PAGES: &str = "wall_pages.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -336,6 +348,8 @@ pub mod feature {
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
         WORKFLOWS,
+        WALL_CONTROL,
+        WALL_PAGES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -512,7 +526,7 @@ mod tests {
             at(feature::DESKTOP_TOOL_INSTALL),
             at(feature::PROVISION_REPORT) + 2
         );
-        // Later features (for example `workflows.v1`) follow in `ALL`.
+        // Later features (for example `workflows.v1`, `wall_control.v1`) follow in `ALL`.
     }
 
     #[test]

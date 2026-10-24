@@ -111,6 +111,8 @@ use crate::share::{
 };
 use crate::subagent::{SubagentLog, SubagentQuery, WorkflowAgentQuery};
 use crate::version::{Negotiated, VersionOffer};
+use crate::wall_control as wc;
+use crate::wall_pages as wp;
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
 /// and Unix ms stay below 2^53).
@@ -355,6 +357,23 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         DirectiveMode::export_all(&cfg),
         DirectiveBody::export_all(&cfg),
         DirectiveView::export_all(&cfg),
+        wc::WallArea::export_all(&cfg),
+        wc::ScrollStep::export_all(&cfg),
+        wc::WallControl::export_all(&cfg),
+        wc::WallControlBody::export_all(&cfg),
+        wc::RemoteNavigate::export_all(&cfg),
+        wc::WallRemoteState::export_all(&cfg),
+        wc::WallEvent::export_all(&cfg),
+        wc::WallControlFrame::export_all(&cfg),
+        wc::WallControlAck::export_all(&cfg),
+        wc::WallLink::export_all(&cfg),
+        wc::WallRemoteView::export_all(&cfg),
+        wp::PageFit::export_all(&cfg),
+        wp::WallPage::export_all(&cfg),
+        wp::NewWallPage::export_all(&cfg),
+        wp::WallPageList::export_all(&cfg),
+        wp::PageRef::export_all(&cfg),
+        wp::DisplayPage::export_all(&cfg),
         DisplayChangesQuery::export_all(&cfg),
         DisplayFileChange::export_all(&cfg),
         DisplayChanges::export_all(&cfg),

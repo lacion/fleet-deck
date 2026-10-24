@@ -12,13 +12,15 @@ use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use fleetdeck_proto::display_directive::{DirectiveBody, DirectiveView, MAX_DIRECTIVE_BODY};
+use fleetdeck_proto::version::feature;
 
 use super::Board;
 use super::account_routes::body_error;
+use super::artifact_projection::declares;
 use super::guard::ApiError;
 use super::settings_routes::owner;
 use crate::coordinator_desktop::effective_directive;
@@ -43,7 +45,7 @@ fn unknown_display() -> ApiError {
 
 /// 413 for a body above the limit, else 400 `invalid_directive` with a fixed
 /// text (the parser text can repeat the input).
-fn rejection(e: &JsonRejection) -> ApiError {
+pub(super) fn rejection(e: &JsonRejection) -> ApiError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
         return body_error(e);
     }
@@ -79,6 +81,7 @@ fn detail(body: &DirectiveBody, members: usize) -> String {
     let mut text = match body {
         DirectiveBody::Mission { .. } => "mode=mission".to_owned(),
         DirectiveBody::Ambient { .. } => "mode=ambient".to_owned(),
+        DirectiveBody::Page { page, .. } => format!("mode=page page={}", page.page_id),
         DirectiveBody::Focus { session, .. } => format!(
             "mode=focus session={}/{}",
             session.station_id.as_str(),
@@ -123,38 +126,59 @@ async fn record<T>(
     board.store.audit_or_log(row.target(target)).await;
 }
 
-/// `POST /api/displays/{id}/directive`.
+/// The owner sets a directive: the owner check, the checks of
+/// `display_directive_set_counted`, and the `display.directive` audit row.
+/// A body that did not parse is refused before the store and writes no row.
+/// `POST /api/displays/{id}/directive` and the remote navigation share it.
 ///
 /// # Errors
 /// 400 `invalid_directive`, 403 `outside_ceiling`, 403 `not_granted`, 404
 /// `display_unknown`, 413 `too_large`.
+pub(super) async fn owner_set(
+    board: &Board,
+    principal: &Principal,
+    id: &str,
+    body: Result<DirectiveBody, ApiError>,
+) -> Result<DirectiveView, ApiError> {
+    owner(board, principal, ACTION, id, "sends a directive").await?;
+    let body = body?;
+    let outcome = board
+        .store
+        .display_directive_set_counted(id.to_owned(), DirectiveSender::Owner, body.clone())
+        .await;
+    let (result, text) = match outcome {
+        Ok((view, members)) => (Ok(view), Some(detail(&body, members))),
+        Err(e) => (Err(directive_error(e)), None),
+    };
+    record(board, id, text, &result).await;
+    result
+}
+
+/// `POST /api/displays/{id}/directive`.
+///
+/// # Errors
+/// See [`owner_set`].
 async fn set(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path(id): Path<String>,
     body: Result<Json<DirectiveBody>, JsonRejection>,
 ) -> Result<Json<DirectiveView>, ApiError> {
-    owner(&board, &principal, ACTION, &id, "sends a directive").await?;
-    let Json(body) = body.map_err(|e| rejection(&e))?;
-    let outcome = board
-        .store
-        .display_directive_set_counted(id.clone(), DirectiveSender::Owner, body.clone())
-        .await;
-    let (result, text) = match outcome {
-        Ok((view, members)) => (Ok(Json(view)), Some(detail(&body, members))),
-        Err(e) => (Err(directive_error(e)), None),
-    };
-    record(&board, &id, text, &result).await;
-    result
+    let body = body.map(|Json(b)| b).map_err(|e| rejection(&e));
+    owner_set(&board, &principal, &id, body).await.map(Json)
 }
 
-/// `GET /api/displays/self/directive`.
+/// `GET /api/displays/self/directive`. A wall that does not declare
+/// `wall_pages.v1` reads `mission`, with the same generation, for a stored
+/// `page` directive (B17 §3.2.5): an older wall never gets a mode that it
+/// cannot draw.
 ///
 /// # Errors
 /// 403 `display_only`; 401 `login_required` for a revoked display.
 async fn read(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
 ) -> Result<Json<DirectiveView>, ApiError> {
     let Principal::Display(login) = principal else {
         return Err(ApiError::new(
@@ -163,9 +187,14 @@ async fn read(
             "only a wall display login does this",
         ));
     };
-    effective_directive(&board.link, &login.display_id)
+    let mut view = effective_directive(&board.link, &login.display_id)
         .await
         .map_err(ApiError::internal)?
-        .map(Json)
-        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first"))
+        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first"))?;
+    if matches!(view.directive, DirectiveBody::Page { .. })
+        && !declares(&headers, &[], feature::WALL_PAGES)
+    {
+        view.directive = DirectiveBody::mission();
+    }
+    Ok(Json(view))
 }

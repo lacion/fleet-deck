@@ -117,6 +117,7 @@ fn exactly_these_methods_are_open_to_a_display() {
             "displays.self",
             "displays.self_artifact",
             "displays.self_directive",
+            "displays.self_page",
             "displays.self_palette",
             "displays.session_changes",
             "fleet.extras",

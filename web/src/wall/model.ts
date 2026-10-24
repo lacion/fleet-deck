@@ -101,8 +101,8 @@ export type ModeTargets = {
 
 /**
  * The route after `←` (-1) or `→` (+1): the next mode in the cycle that has a target. `focus` and
- * `review` use the route session, then `fallback` (the focused tile, else the first tile); `race`
- * and `artifact` need their target in the route; `mission` and `ambient` always work.
+ * `review` use the route session, then `fallback` (the focused tile, else the first tile); `race`,
+ * `artifact` and `page` need their target in the route; `mission` and `ambient` always work.
  */
 export function stepMode(
   route: WallRoute,
@@ -131,6 +131,7 @@ export function withMode(
   }
   if (mode === 'race') return route.batch === undefined ? null : { ...route, mode };
   if (mode === 'artifact') return route.artifact === undefined ? null : { ...route, mode };
+  if (mode === 'page') return route.page === undefined ? null : { ...route, mode };
   return { ...route, mode };
 }
 

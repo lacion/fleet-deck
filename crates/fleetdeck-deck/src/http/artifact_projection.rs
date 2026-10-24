@@ -2,11 +2,11 @@
 //! task K2, design `omarchy-p5b.md` §11.1, §14): a request or a socket without
 //! `artifacts_video.v1` sees kind `other` and no recording provenance.
 //!
-//! - [`video_aware`] reads the request header `X-FleetDeck-Features` (a comma
-//!   or space separated token list; only `artifacts_video.v1` matters).
-//!   [`video_aware_socket`] adds the query parameter `features=` of a
+//! - [`declares`] reads the request header `X-FleetDeck-Features` (a comma
+//!   or space separated token list) and the query parameter `features=` of a
 //!   WebSocket URL, because a browser cannot set a header on a WebSocket. The
-//!   declaration grants no authority.
+//!   declaration grants no authority. [`video_aware`] and
+//!   [`video_aware_socket`] ask it for `artifacts_video.v1`.
 //! - The `project_*` functions change the answer at send time. A stored row or
 //!   event never changes (§14.9). The raw and range byte routes are not
 //!   projected: they serve bytes.
@@ -27,32 +27,40 @@ pub(crate) const FEATURES_HEADER: &str = "X-FleetDeck-Features";
 /// The query parameter of a WebSocket URL with the same token list.
 const FEATURES_PARAM: &str = "features";
 
-/// True when a token list (comma, space or tab separated) holds
-/// `artifacts_video.v1`.
-fn declares_video(list: &str) -> bool {
-    list.split([',', ' ', '\t'])
-        .any(|token| token == feature::ARTIFACTS_VIDEO)
+/// True when a token list (comma, space or tab separated) holds `token`.
+fn has_token(list: &str, token: &str) -> bool {
+    list.split([',', ' ', '\t']).any(|t| t == token)
+}
+
+/// True when the request or the upgrade request of a WebSocket declares
+/// `token`: in the header `X-FleetDeck-Features` (a comma, space or tab
+/// separated token list; the other tokens do not matter) or in the query
+/// parameter `features=` (a browser cannot set a header on a WebSocket). The
+/// declaration grants no authority.
+#[must_use]
+pub(crate) fn declares(headers: &HeaderMap, query: &[(String, String)], token: &str) -> bool {
+    headers
+        .get_all(FEATURES_HEADER)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|list| has_token(list, token))
+        || query
+            .iter()
+            .any(|(k, v)| k == FEATURES_PARAM && has_token(v, token))
 }
 
 /// True when the request declares `artifacts_video.v1` (a comma or space
 /// separated token list; the other tokens do not matter).
 #[must_use]
 pub(crate) fn video_aware(headers: &HeaderMap) -> bool {
-    headers
-        .get_all(FEATURES_HEADER)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .any(declares_video)
+    declares(headers, &[], feature::ARTIFACTS_VIDEO)
 }
 
 /// True when the upgrade request of a WebSocket declares `artifacts_video.v1`:
 /// in the header (a non-browser client) or in the query parameter `features=`.
 #[must_use]
 pub(crate) fn video_aware_socket(headers: &HeaderMap, query: &[(String, String)]) -> bool {
-    video_aware(headers)
-        || query
-            .iter()
-            .any(|(k, v)| k == FEATURES_PARAM && declares_video(v))
+    declares(headers, query, feature::ARTIFACTS_VIDEO)
 }
 
 /// An artifact of the index for a board without the feature: kind `video`
@@ -224,6 +232,45 @@ mod tests {
             &none,
             &q("ticket", "artifacts_video.v1")
         ));
+    }
+
+    #[test]
+    fn declares_reads_the_header_and_the_query() {
+        let q = |k: &str, v: &str| vec![(k.to_owned(), v.to_owned())];
+        let none = HeaderMap::new();
+        let token = "wall_control.v1";
+        assert!(declares(&with(&[token]), &[], token));
+        assert!(declares(&with(&["a.v1, wall_control.v1"]), &[], token));
+        assert!(declares(&with(&["a.v1", "wall_control.v1"]), &[], token));
+        assert!(declares(
+            &none,
+            &q("features", "a.v1,wall_control.v1"),
+            token
+        ));
+        assert!(declares(
+            &none,
+            &q("features", "a.v1 wall_control.v1"),
+            token
+        ));
+        assert!(declares(
+            &none,
+            &q("features", "wall_control.v1\tb.v1"),
+            token
+        ));
+        for (headers, query) in [
+            (with(&[]), vec![]),
+            (with(&["wall_control"]), vec![]),
+            (with(&["wall_control.v2"]), vec![]),
+            (with(&["xwall_control.v1"]), vec![]),
+            (with(&["artifacts_video.v1"]), vec![]),
+            (none.clone(), q("features", "wall_control.v2")),
+            (none.clone(), q("ticket", "wall_control.v1")),
+        ] {
+            assert!(!declares(&headers, &query, token), "{headers:?} {query:?}");
+        }
+        // One list can declare more than one token.
+        let both = with(&["artifacts_video.v1 wall_control.v1"]);
+        assert!(declares(&both, &[], token) && video_aware(&both));
     }
 
     #[test]

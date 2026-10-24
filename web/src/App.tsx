@@ -67,6 +67,7 @@ import { SharesPage } from './sharing/SharesPage';
 import { SpacesPage } from './sharing/SpacesPage';
 import { SettingsProvider, type SettingsEnv } from './settings/context';
 import { SettingsPage } from './settings/SettingsPage';
+import { RemotePage } from './remote/RemotePage';
 import { WallPage } from './wall/WallPage';
 import { WatchPage } from './watch/WatchPage';
 
@@ -510,6 +511,7 @@ export function App({
         );
 
   const back: Navigate = navigate;
+  const board = { sessions, stations, timelines, watch, sessionActions, views, artifacts };
   // The folder picker of the Projects and Automations forms: only with the drive scope.
   const folderList = spawn?.canDrive === true && freshness === 'live' ? spawn.list : undefined;
   const content = (() => {
@@ -589,6 +591,8 @@ export function App({
       case 'wall':
         // R13 P1: the wall replaces the whole layout (see `layoutNode`).
         return null;
+      case 'remote':
+        return <RemotePage id={route.id} freshness={freshness} board={board} />;
       case 'activity':
         return (
           <ActivityPage

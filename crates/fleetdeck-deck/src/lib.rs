@@ -39,6 +39,7 @@ pub mod serve;
 pub mod store;
 pub mod tailnet_auto;
 pub mod wake;
+pub mod wall_control;
 
 pub use link::{DeckLink, DeckNode, NodeError};
 pub use peers::{DeckPeers, Expected};

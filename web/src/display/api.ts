@@ -5,11 +5,17 @@ import type {
   DirectiveBody,
   DirectiveView,
   DisplayChanges,
+  DisplayPage,
   PairingPoll,
   PairingStarted,
 } from '../gen';
+import { FEATURES_HEADER } from '../artifacts/video';
 import { type Environment, browserEnvironment } from '../runtime/connection';
 import { type Fetch, request } from '../runtime/api';
+
+/** The features that a wall display declares (B17): in `features=` of the socket and in the header
+ * of every request. The declaration grants no authority; the deck checks every use. */
+export const DISPLAY_FEATURES = 'artifacts_video.v1 wall_control.v1 wall_pages.v1';
 
 /** The header that makes the deck answer the display login when the browser holds both cookies. */
 export const DISPLAY_HEADER = 'X-Fleetdeck-Display';
@@ -17,18 +23,23 @@ export const DISPLAY_HEADER = 'X-Fleetdeck-Display';
 /** The path of the display document. */
 export const DISPLAY_PATH = '/display';
 
-/** `fetcher` with the display header on every request. */
+/** `fetcher` with the display header and the display features on every request. */
 export const withDisplayHeader =
   (fetcher: Fetch): Fetch =>
   (path, init) =>
     fetcher(path, {
       ...init,
-      headers: { ...(init.headers as Record<string, string> | undefined), [DISPLAY_HEADER]: '1' },
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        [DISPLAY_HEADER]: '1',
+        [FEATURES_HEADER]: DISPLAY_FEATURES,
+      },
     });
 
-/** The board environment, with the display header on every request. */
+/** The board environment, with the display header and the display features on every request, and
+ * the display features in the query of the socket. */
 export function displayEnvironment(): Environment {
-  const base = browserEnvironment();
+  const base = browserEnvironment(DISPLAY_FEATURES);
   return { ...base, fetch: withDisplayHeader(base.fetch) };
 }
 
@@ -135,12 +146,14 @@ export function directiveView(v: unknown): DirectiveView {
  * directive is not used here, because the deck enforces it.
  */
 export function directiveRoute(body: DirectiveBody, base: WallRoute = wallDefaults): WallRoute {
-  const { session: _s, batch: _b, artifact: _a, ...keep } = base;
+  const { session: _s, batch: _b, artifact: _a, page: _p, ...keep } = base;
   const common = { ...keep, name: 'wall' as const, pin: body.pin, stations: [], repo: '' };
   switch (body.mode) {
     case 'mission':
     case 'ambient':
       return { ...common, mode: body.mode };
+    case 'page':
+      return { ...common, mode: 'page', page: { id: body.page.page_id } };
     case 'focus':
     case 'review':
       return {
@@ -184,3 +197,21 @@ export function displayChanges(v: unknown): DisplayChanges {
 /** The path of the one file of an artifact version (`_` is the one file, R15). */
 export const artifactPath = (station: string, id: string, version: number): string =>
   `/api/displays/self/artifact/${encodeURIComponent(station)}/${encodeURIComponent(id)}/${version}/_`;
+
+/** The path of the wall page that the directive of this display shows (B17 §3.2.4). */
+export const pagePath = (pageId: string): string =>
+  `/api/displays/self/page/${encodeURIComponent(pageId)}`;
+
+/** Validates the answer of `GET /api/displays/self/page/{page_id}`. */
+export function displayPage(v: unknown): DisplayPage {
+  if (
+    !record(v) ||
+    typeof v['page_id'] !== 'string' ||
+    typeof v['label'] !== 'string' ||
+    typeof v['url'] !== 'string' ||
+    (v['fit'] !== 'screen' && v['fit'] !== 'long')
+  ) {
+    throw new Error('The deck sent an invalid page.');
+  }
+  return v as DisplayPage;
+}

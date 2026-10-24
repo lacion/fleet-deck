@@ -2,11 +2,15 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { wallDefaults } from '../app/routes';
-import type { DirectiveBody } from '../gen';
+import type { DirectiveBody, WallControlFrame, WallRemoteState } from '../gen';
 import { ApiError } from '../runtime/api';
+import { Connection, newerControl, socketUrl } from '../runtime/connection';
+import { FakeEnvironment, settle } from '../runtime/testing';
+import { applyFrame, initialControl, shownRemote } from '../wall/control';
 import {
   artifactPath,
   changesPath,
+  DISPLAY_FEATURES,
   directiveRoute,
   directiveView,
   displayChanges,
@@ -76,8 +80,172 @@ describe('the display header', () => {
     expect(seen[0]?.headers).toEqual({
       'Content-Type': 'application/json',
       'X-Fleetdeck-Display': '1',
+      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1',
     });
-    expect(seen[1]?.headers).toEqual({ 'X-Fleetdeck-Display': '1' });
+    expect(seen[1]?.headers).toEqual({
+      'X-Fleetdeck-Display': '1',
+      'X-FleetDeck-Features': 'artifacts_video.v1 wall_control.v1 wall_pages.v1',
+    });
+  });
+
+  test('the_display_socket_declares_wall_control', () => {
+    expect(DISPLAY_FEATURES.split(' ')).toEqual([
+      'artifacts_video.v1',
+      'wall_control.v1',
+      'wall_pages.v1',
+    ]);
+    // The socket of a display declares the three tokens; the board socket still declares one.
+    const display = socketUrl('https://deck.example/display#/wall', DISPLAY_FEATURES);
+    expect(display.searchParams.get('features')?.split(/[ ,]/)).toContain('wall_control.v1');
+    expect(display.pathname).toBe('/api/ws');
+    expect(socketUrl('https://deck.example/').search).toBe('?features=artifacts_video.v1');
+  });
+});
+
+describe('the wall control frames (B17)', () => {
+  const picked: WallRemoteState = {
+    selected: { station_id: 'st', session_id: 'se' },
+    frame_tenths: 30,
+  };
+  const frame = (
+    seq: number,
+    generation: number,
+    event: WallControlFrame['event'],
+    state: WallRemoteState,
+    incarnation = 'inc',
+  ): WallControlFrame => ({ incarnation, seq, generation, event, state });
+
+  async function live() {
+    const env = new FakeEnvironment();
+    const connection = new Connection(env);
+    connection.start();
+    await settle();
+    env.latest().live();
+    return { env, connection };
+  }
+  const send = (socket: { onmessage: ((e: { data: string }) => void) | null }, value: unknown) =>
+    socket.onmessage?.({ data: JSON.stringify(value) });
+
+  test('a_wall_control_frame_reaches_the_wall', async () => {
+    const { env, connection } = await live();
+    const seen: WallControlFrame[] = [];
+    const stop = connection.onControl((f) => seen.push(f));
+    const before = connection.getSnapshot();
+    const f = frame(1, 2, { kind: 'control', control: { op: 'select', item: null } }, picked);
+    env.latest().message({ type: 'wall_control', frame: f });
+    expect(seen).toEqual([f]);
+    // The read model does not change, and the connection stays up.
+    expect(connection.getSnapshot()).toBe(before);
+    expect(connection.getSnapshot().transport).toBe('connected');
+    // A listener that stopped gets nothing; one that throws does not end the connection.
+    stop();
+    connection.onControl(() => {
+      throw new Error('boom');
+    });
+    env
+      .latest()
+      .message({ type: 'wall_control', frame: frame(2, 2, { kind: 'navigate' }, picked) });
+    expect(seen).toHaveLength(1);
+    expect(connection.getSnapshot().transport).toBe('connected');
+    // The wall applies it: the state of the generation that it shows, with the hold.
+    const out = applyFrame(initialControl, f, { shown: 2, now: 1_000 });
+    expect(shownRemote(out.state, 2)).toEqual(picked);
+    expect(out.state.holdUntil).toBe(121_000);
+  });
+
+  test('a_navigate_frame_rereads_the_directive_at_once', () => {
+    // The wall shows generation 4; the owner remote stored generation 5 and sent `navigate`.
+    const out = applyFrame(initialControl, frame(1, 5, { kind: 'navigate' }, picked), {
+      shown: 4,
+      now: 0,
+    });
+    expect(out.reread).toBe(true);
+    // The poll then applies generation 5 once, and the kept state shows with it.
+    expect(shownRemote(out.state, 5)).toEqual(picked);
+    // The frame of the generation that is shown does not read again.
+    const same = applyFrame(out.state, frame(2, 5, { kind: 'navigate' }, picked), {
+      shown: 5,
+      now: 0,
+    });
+    expect(same.reread).toBe(false);
+  });
+
+  test('a_sync_before_the_wall_listens_is_replayed_as_sync', async () => {
+    // The first frame of a display socket is the `sync` of the checkpoint; it can come before the
+    // effect of `WallPage` subscribes. The connection keeps the newest frame and gives it to a new
+    // listener as a `sync` (no event, no hold, no scroll effect).
+    const { env, connection } = await live();
+    env.latest().message({ type: 'wall_control', frame: frame(4, 2, { kind: 'sync' }, picked) });
+    const seen: WallControlFrame[] = [];
+    connection.onControl((f) => seen.push(f));
+    expect(seen).toEqual([frame(4, 2, { kind: 'sync' }, picked)]);
+    let state = initialControl;
+    for (const f of seen) state = applyFrame(state, f, { shown: 2, now: 7 }).state;
+    expect(shownRemote(state, 2)).toEqual(picked);
+    expect(state.holdUntil).toBe(0);
+    // A control that came before the listener is replayed as a `sync`, never as a second scroll.
+    const scroll = frame(
+      5,
+      2,
+      { kind: 'control', control: { op: 'scroll', area: 'stream', step: 'page_down' } },
+      picked,
+    );
+    env.latest().message({ type: 'wall_control', frame: scroll });
+    const late: WallControlFrame[] = [];
+    connection.onControl((f) => late.push(f));
+    expect(late).toEqual([{ ...scroll, event: { kind: 'sync' } }]);
+  });
+
+  test('the_kept_frame_never_moves_back_in_one_incarnation', () => {
+    const moved: WallRemoteState = { selected: null, frame_tenths: 50 };
+    const newer = frame(6, 3, { kind: 'navigate' }, moved);
+    expect(newerControl(newer, frame(5, 2, { kind: 'sync' }, picked))).toBe(newer);
+    const same = frame(6, 3, { kind: 'sync' }, moved);
+    expect(newerControl(newer, same)).toBe(same);
+    // A restarted deck (a new incarnation) starts again at a low `seq`.
+    const restarted = frame(0, 3, { kind: 'sync' }, picked, 'inc-2');
+    expect(newerControl(newer, restarted)).toBe(restarted);
+    expect(newerControl(null, newer)).toBe(newer);
+  });
+
+  test('the_sync_frame_restores_the_selection_after_a_reconnect', async () => {
+    const { env, connection } = await live();
+    let state = initialControl;
+    connection.onControl((f) => {
+      state = applyFrame(state, f, { shown: 2, now: 5 }).state;
+    });
+    const select = frame(3, 2, { kind: 'control', control: { op: 'select', item: null } }, picked);
+    env.latest().message({ type: 'wall_control', frame: select });
+    expect(shownRemote(state, 2)).toEqual(picked);
+    // The socket drops; the wall loses the control state of its page only if it reloads. The new
+    // socket starts with a `sync` of the checkpoint, which sets the state again.
+    env.latest().drop();
+    env.advance(500);
+    await settle();
+    env.latest().live();
+    const moved: WallRemoteState = { selected: null, frame_tenths: 0 };
+    env.latest().message({ type: 'wall_control', frame: frame(5, 2, { kind: 'sync' }, moved) });
+    expect(shownRemote(state, 2)).toEqual(moved);
+    expect(state.holdUntil).toBe(5 + 120_000);
+    // A reloaded wall has no state: the same `sync` gives the selection.
+    const reloaded = applyFrame(initialControl, frame(5, 2, { kind: 'sync' }, picked), {
+      shown: 2,
+      now: 9,
+    });
+    expect(shownRemote(reloaded.state, 2)).toEqual(picked);
+    expect(reloaded.state.holdUntil).toBe(0);
+  });
+
+  test('an_unknown_frame_still_reconnects', async () => {
+    for (const bad of [
+      { type: 'wall_unknown', frame: {} },
+      { type: 'wall_control', frame: { incarnation: 1 } },
+      { type: 'wall_control' },
+    ]) {
+      const { env, connection } = await live();
+      send(env.latest(), bad);
+      expect(connection.getSnapshot().transport).toBe('reconnecting');
+    }
   });
 });
 
@@ -170,6 +338,22 @@ describe('the directive', () => {
       expect(route).toMatchObject({ name: 'wall', pin: body.pin, stations: [], repo: '', ...want });
     });
   }
+
+  test('a page directive shows Mission until the page pane exists', () => {
+    const route = directiveRoute({
+      mode: 'page',
+      page: { page_id: '01J0000000000000000000000A' },
+      pin: true,
+      filter: null,
+    });
+    expect(route).toMatchObject({
+      name: 'wall',
+      mode: 'mission',
+      pin: true,
+      stations: [],
+      repo: '',
+    });
+  });
 
   test('the scale and the shape stay and a stale target goes', () => {
     const base = {

@@ -722,7 +722,10 @@ async fn revoke(
     const ACTION: &str = "display.revoke";
     owner(&board, &principal, ACTION, &id, "revokes a display").await?;
     let result = match board.store.display_revoke(id.clone()).await {
-        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(true) => {
+            board.wall_controls.forget(&id);
+            Ok(StatusCode::NO_CONTENT)
+        }
         Ok(false) => Err(unknown_display()),
         Err(e) => Err(ApiError::internal(e)),
     };
