@@ -2,6 +2,9 @@
 # Live smoke of MCP Apps (B15 T9, docs/v2/design/mcp-apps.md, T9). Manual: run
 # it on the owner's machine with the real `codex` and `claude` CLIs signed in.
 # It spends a small number of tokens. No test and no CI job runs it.
+# The station and the deck run with a temporary HOME; the provider CLIs run
+# with the owner's real HOME (their sign-in), so their transcripts land in the
+# owner's provider homes.
 #
 # For each provider it starts a temporary station and a temporary deck, pairs
 # them, and starts one session with the demo MCP server
@@ -117,9 +120,12 @@ elif cmd == "wrappers":
     cfg = os.path.join(node, "claude-mcp.json")
     with open(cfg, "w") as f:
         json.dump(claude_cfg, f)
+    # The station runs with a temporary HOME; the providers need the owner's
+    # real one, where their sign-in lives.
+    real_home = "HOME=%s " % shlex.quote(os.environ["HOME"])
     for name, line in (
-        ("codex-demo", " ".join(codex)),
-        ("claude-demo", "exec claude --mcp-config %s \"$@\"" % shlex.quote(cfg)),
+        ("codex-demo", real_home + " ".join(codex)),
+        ("claude-demo", real_home + "exec claude --mcp-config %s \"$@\"" % shlex.quote(cfg)),
     ):
         path = os.path.join(node, name)
         with open(path, "w") as f:
@@ -215,10 +221,13 @@ tailnet_auto = false
 EOF
     fds() { HOME="$NODE/home" RUST_LOG=warn "$FD" --data-dir "$NODE/station" "$@"; }
     fdd() { HOME="$NODE/home" RUST_LOG=warn "$FD" --data-dir "$NODE/deck" "$@"; }
-    fds station serve >"$REC/station.log" 2>&1 &
+    # Started without the functions, so that $! is the process itself.
+    HOME="$NODE/home" RUST_LOG=warn "$FD" --data-dir "$NODE/station" station serve \
+        >"$REC/station.log" 2>&1 &
     PIDS="$PIDS $!"
     wait_for "the station starts" fds station sessions
-    fdd deck serve >"$REC/deck.log" 2>&1 &
+    HOME="$NODE/home" RUST_LOG=warn "$FD" --data-dir "$NODE/deck" deck serve \
+        >"$REC/deck.log" 2>&1 &
     PIDS="$PIDS $!"
     wait_for "the deck starts" fdd deck stations
     fds station invite --listen 127.0.0.1:0 >"$NODE/invite.txt"
