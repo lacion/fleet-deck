@@ -31,7 +31,6 @@ use crate::store::{Caller, Dispatch, OfflineApprovalPolicy, ReadResult, Store, S
 use crate::worker::EffectTarget;
 
 const WAIT: Duration = Duration::from_secs(10);
-const BROKEN: &str = "2.1.289";
 const DENY_TEXT: &str = "this claude version is known to break the protocol";
 
 /// An adapter with a settable probe version that counts probes and starts.
@@ -485,7 +484,7 @@ async fn write_quarantine(store: &Store, text: &str) {
 }
 
 #[tokio::test]
-async fn a_quarantine_row_refuses_a_queued_start_after_a_restart() {
+async fn a_quarantine_row_refuses_starts_after_a_restart() {
     let text = "claude failed after an update and the way back failed. Reinstall it on this station: claude install 2.1.309";
     let first = rig().await;
     let store = first.manager.store().clone();
@@ -500,6 +499,9 @@ async fn a_quarantine_row_refuses_a_queued_start_after_a_restart() {
     drop(hold);
     write_quarantine(&store, text).await;
     let second = rig_with(fleetdeck_providers::claude::TESTED_MIN_VERSION, Some(store)).await;
+    // The restart retires the queued start without a dispatch (the effect
+    // recovery); a new start is refused with the quarantine text (§3.8.1).
+    submit_start(&second.manager, &second.det, &second.cwd, "cmd-2").await;
     assert_eq!(start_failed_message(&second.manager).await, text);
     assert_eq!(second.claude.starts.load(Ordering::SeqCst), 0);
     assert_eq!(first.claude.starts.load(Ordering::SeqCst), 0);
@@ -507,9 +509,12 @@ async fn a_quarantine_row_refuses_a_queued_start_after_a_restart() {
 
 #[tokio::test]
 async fn refresh_providers_replaces_the_cache_and_clears_a_deny_mark() {
-    let rig = rig_with(BROKEN, None).await;
+    let rig = rig_with("2.1.300", None).await;
     let before = rig.manager.providers().await;
-    assert_eq!(before[0].version_status, VersionStatus::Broken);
+    // `KNOWN_BROKEN` is empty today: the test sets the deny mark itself.
+    rig.manager
+        .target
+        .mark_broken(&claude_id(), ProviderKind::Claude);
     assert_eq!(
         rig.manager.target.broken_reason(&claude_id()).as_deref(),
         Some(DENY_TEXT)
@@ -525,7 +530,12 @@ async fn refresh_providers_replaces_the_cache_and_clears_a_deny_mark() {
         .iter()
         .find(|p| p.instance.as_str() == "claude")
         .unwrap();
+    assert_eq!(
+        claude.version.as_deref(),
+        Some(fleetdeck_providers::claude::TESTED_MIN_VERSION)
+    );
     assert_eq!(claude.version_status, VersionStatus::Ok);
+    assert_ne!(fresh, before);
     assert_eq!(rig.manager.providers().await, fresh);
     assert_eq!(rig.claude.probes.load(Ordering::SeqCst), probes + 1);
     assert_eq!(rig.manager.target.broken_reason(&claude_id()), None);
@@ -543,8 +553,9 @@ async fn refresh_providers_does_not_clear_a_quarantine() {
         rig.manager.target.broken_reason(&claude_id()).as_deref(),
         Some("quarantined text")
     );
-    // A deny result does not replace it, and a clean result does not clear it.
-    rig.claude.set_version(BROKEN);
+    // A new result does not clear it (a deny mark never replaces it either:
+    // `set_denied` keeps a `Quarantined` mark).
+    rig.claude.set_version("2.1.300");
     let _ = rig.manager.refresh_providers().await;
     assert_eq!(
         rig.manager.target.broken_reason(&claude_id()).as_deref(),
@@ -555,9 +566,26 @@ async fn refresh_providers_does_not_clear_a_quarantine() {
 }
 
 #[tokio::test]
+async fn a_deny_mark_does_not_replace_a_quarantine() {
+    let rig = rig().await;
+    rig.manager.target.quarantine(ProviderKind::Claude, "q");
+    rig.manager
+        .target
+        .mark_broken(&claude_id(), ProviderKind::Claude);
+    assert_eq!(
+        rig.manager.target.broken_reason(&claude_id()).as_deref(),
+        Some("q")
+    );
+}
+
+#[tokio::test]
 async fn release_quarantine_keeps_a_deny_mark() {
-    let rig = rig_with(BROKEN, None).await;
+    let rig = rig().await;
     let _ = rig.manager.providers().await;
+    // `KNOWN_BROKEN` is empty today: the test sets the deny mark itself.
+    rig.manager
+        .target
+        .mark_broken(&claude_id(), ProviderKind::Claude);
     // No quarantine: the deny mark stays.
     rig.manager.target.release_quarantine(ProviderKind::Claude);
     assert_eq!(
@@ -565,7 +593,8 @@ async fn release_quarantine_keeps_a_deny_mark() {
         Some(DENY_TEXT)
     );
     // A quarantine replaces the deny mark; its release leaves no mark, and
-    // the next refresh sets the deny mark again.
+    // the next refresh sets only the mark that its result calls for (none
+    // for a version that is not on the deny list).
     rig.manager.target.quarantine(ProviderKind::Claude, "q");
     assert_eq!(
         rig.manager.target.broken_reason(&claude_id()).as_deref(),
@@ -574,10 +603,7 @@ async fn release_quarantine_keeps_a_deny_mark() {
     rig.manager.target.release_quarantine(ProviderKind::Claude);
     assert_eq!(rig.manager.target.broken_reason(&claude_id()), None);
     let _ = rig.manager.refresh_providers().await;
-    assert_eq!(
-        rig.manager.target.broken_reason(&claude_id()).as_deref(),
-        Some(DENY_TEXT)
-    );
+    assert_eq!(rig.manager.target.broken_reason(&claude_id()), None);
 }
 
 #[tokio::test]

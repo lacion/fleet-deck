@@ -71,12 +71,14 @@ fn the_deck_knob_entries_follow_the_design_table() {
 fn the_station_knob_entries_follow_the_design_table() {
     let fields = station_fields();
     check_entries(&fields, STATION_KNOBS);
-    // The bool knob `analytics.transcripts` is not a number knob: it is not in the table.
-    let tail: Vec<&str> = fields[fields.len() - STATION_KNOBS.len() - 1..]
+    // The bool knob `analytics.transcripts` is not a number knob: it is not
+    // in the table. The `[provider_updates]` fields (B28) come after the knobs.
+    let knobs: Vec<&str> = fields
         .iter()
         .map(|f| f.key.as_str())
-        .filter(|k| *k != "analytics.transcripts")
+        .filter(|k| *k != "analytics.transcripts" && !k.starts_with("provider_updates."))
         .collect();
+    let tail = &knobs[knobs.len() - STATION_KNOBS.len()..];
     let want: Vec<&str> = STATION_KNOBS.iter().map(|k| k.key).collect();
     assert_eq!(tail, want);
     // Texts of the design that carry a promise.

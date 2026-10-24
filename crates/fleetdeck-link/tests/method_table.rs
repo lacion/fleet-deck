@@ -100,8 +100,8 @@ fn the_code_method_table_equals_the_adr_method_table() {
     // + 1 (MCP P4b `session.coordinator_set`) + 3 (Fleet Sync FS-3 secret files)
     // + 1 (Fleet Sync `project.secret_browse`) + 2 (B12 workflows)
     // + 1 (B20 `session.usage_recount`) + 1 (B18 `session.set_effort`)
-    // + 5 (B15 MCP Apps) + 1 (B29 `station.analytics`).
-    assert_eq!(adr.len(), 162, "{:?}", adr.keys());
+    // + 5 (B15 MCP Apps) + 1 (B29 `station.analytics`) + 3 (B28 `cli_update.*`).
+    assert_eq!(adr.len(), 165, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
