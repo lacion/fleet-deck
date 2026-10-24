@@ -378,8 +378,14 @@ EOF
     revert_is() {
         want=$1
         before=$(py reverts "$DB" "$session" | wc -l)
-        fdd deck command smoke \
-            "{\"op\":\"revert\",\"session_id\":\"$session\",\"turn_id\":\"$turn\"}" >/dev/null
+        answer=$(fdd deck command smoke \
+            "{\"op\":\"revert\",\"session_id\":\"$session\",\"turn_id\":\"$turn\"}")
+        echo "$answer" >>"$REC/revert-answers.txt"
+        # A refusal at the admission has no revert row and no revert.updated
+        # event: the command answer holds it.
+        case $answer in
+        *rejected:*) fail "$driver revert was refused at the admission, wanted '$want' (a revert.updated event): $answer" ;;
+        esac
         wait_for "a refused revert of $driver" sh -c \
             "[ \"\$(python3 -I '$TMP/h.py' reverts '$DB' '$session' | wc -l)\" -gt $before ]"
         got=$(py reverts "$DB" "$session" | tail -n 1)
