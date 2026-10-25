@@ -1,0 +1,224 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { StationResources as Resources } from '../gen';
+import { card } from '../testing/fleet';
+import { bytesText, loadText } from './resources';
+import { StationBusiest, StationResources } from './StationResources';
+
+const full: Resources = {
+  at: 1,
+  disks: [
+    { label: 'Data', path: '/var/data', total_bytes: 500e9, free_bytes: 200e9 },
+    { label: '/work', path: '/work', total_bytes: 1e12, free_bytes: 600e9 },
+  ],
+  memory: { total_bytes: 16e9, available_bytes: 8e9 },
+  cpu: { cores: 4, load1_x100: 100, load5_x100: 200 },
+  sessions: [],
+};
+
+const html = (resources: Resources | undefined) =>
+  renderToStaticMarkup(<StationResources resources={resources} />);
+
+/** A row as markup: the label, the bar, the value and its aside. */
+const row = (label: string, value: string, aside: string) =>
+  new RegExp(
+    `<span class="fd-station-res-label">${label}</span><span class="fd-meter"[^>]*><span[^>]*></span></span><span class="fd-station-res-value">${value} <span class="fd-station-res-aside"><span class="fd-station-res-sep">· </span>${aside}</span></span>`,
+  );
+
+describe('the size text of a station card', () => {
+  test('MB under 1 GB, one decimal under 100 GB, whole GB under 1 TB, then TB', () => {
+    expect(bytesText(0)).toBe('0 MB');
+    expect(bytesText(340e6)).toBe('340 MB');
+    expect(bytesText(999.6e6)).toBe('1 GB');
+    expect(bytesText(1.6e9)).toBe('1.6 GB');
+    expect(bytesText(6.0e9)).toBe('6 GB');
+    expect(bytesText(46.83e9)).toBe('46.8 GB');
+    expect(bytesText(99.96e9)).toBe('100 GB');
+    expect(bytesText(217.04e9)).toBe('217 GB');
+    expect(bytesText(864.1e9)).toBe('864 GB');
+    expect(bytesText(999.6e9)).toBe('1 TB');
+    expect(bytesText(1081.1e9)).toBe('1.08 TB');
+    expect(bytesText(1998.2e9)).toBe('2 TB');
+    expect(bytesText(1.1e12)).toBe('1.1 TB');
+  });
+});
+
+describe('the load text of a station', () => {
+  test('one decimal from the value × 100', () => {
+    expect(loadText(700)).toBe('7.0');
+    expect(loadText(30)).toBe('0.3');
+    expect(loadText(1250)).toBe('12.5');
+  });
+});
+
+describe('station resources (DL-193)', () => {
+  test('a full report shows a row for each disk, the memory and the CPU', () => {
+    const out = html(full);
+    expect(out).toContain('aria-label="Resources"');
+    expect(out).toContain('data-prop="resources"');
+    expect(out.match(/<li/g)?.length).toBe(4);
+    expect(out).toMatch(row('Data', '300 GB of 500 GB', '200 GB free'));
+    expect(out).toMatch(row('/work', '400 GB of 1 TB', '600 GB free'));
+    expect(out).toMatch(row('Memory', '8 GB of 16 GB', '8 GB free'));
+    expect(out).toMatch(row('CPU', 'Load 2.0', '4 cores'));
+    // The tooltip of a row keeps the aside, which a phone card hides.
+    expect(out).toContain('<li title="Average load of the last 5 minutes · 4 cores">');
+    expect(out).toContain('title="/var/data · 200 GB free"');
+    expect(out).toContain('<li title="8 GB free">');
+    expect(out.indexOf('>Data<')).toBeLessThan(out.indexOf('>Memory<'));
+    expect(out.indexOf('>Memory<')).toBeLessThan(out.indexOf('>CPU<'));
+    expect(out).toContain('style="width:60%"');
+  });
+
+  test('one core is "1 core"', () => {
+    expect(html({ ...full, cpu: { cores: 1, load1_x100: 0, load5_x100: 30 } })).toMatch(
+      row('CPU', 'Load 0.3', '1 core'),
+    );
+  });
+
+  test('a missing memory and CPU leave the disk rows only', () => {
+    const out = html({ ...full, memory: null, cpu: null });
+    expect(out.match(/<li/g)?.length).toBe(2);
+    expect(out).not.toContain('>Memory<');
+    expect(out).not.toContain('>CPU<');
+  });
+
+  test('a low disk row has data-low and the others do not', () => {
+    const out = html({
+      ...full,
+      disks: [
+        {
+          label: 'Data',
+          path: '/var/data',
+          total_bytes: 500e9,
+          free_bytes: 3e9,
+        },
+      ],
+    });
+    expect(out.match(/data-low/g)?.length).toBe(1);
+    expect(out).toMatch(/<li data-low="" title="\/var\/data · 3 GB free">/);
+    expect(out.match(/data-level="high"/g)?.length).toBe(1);
+  });
+
+  test('the warning line shows only with a warning', () => {
+    expect(html(full)).not.toContain('Low resources');
+    const low = html({
+      ...full,
+      cpu: { cores: 4, load1_x100: 0, load5_x100: 1000 },
+    });
+    expect(low).toContain('Low resources. New sessions can be slow or fail here.');
+    expect(low).toContain('role="status"');
+  });
+
+  test('no report renders nothing', () => {
+    expect(html(undefined)).toBe('');
+  });
+
+  describe('the session load (R13 §10)', () => {
+    const load = (id: string, cpu: number | null, rss: number | null) => ({
+      session_id: id,
+      cpu_pct: cpu,
+      rss_bytes: rss,
+      procs: 3,
+    });
+    const cards = [
+      card('s-called', 'working', 'station-a', {
+        callsign: 'Falcon',
+        title: 'A title',
+      }),
+      card('s-titled', 'working', 'station-a', {
+        callsign: 'Bravo',
+        title: null,
+      }),
+      card('s4', 'working', 'station-a', { callsign: null, title: 'Fix the build' }),
+    ];
+    const busy: Resources = {
+      ...full,
+      sessions: [
+        load('s-called', 340, 1.2e9),
+        load('s-titled', 120, 500e6),
+        load('abcdefghijkl', null, null),
+        load('s4', 10, 1e9),
+        load('s5', 5, 1e9),
+        load('s6', 1, 1e9),
+      ],
+    };
+    const render = (resources: Resources | undefined) =>
+      renderToStaticMarkup(
+        <StationBusiest resources={resources} station="station-a" sessions={cards} />,
+      );
+
+    test('the section is a property of its own with 5 rows in the given order', () => {
+      const out = render(busy);
+      // "Session load", not "Busiest sessions": an idle session at 0 % is a row of a load table.
+      // The units head their columns once.
+      expect(out).toContain(
+        '<div class="fd-station-prop" data-prop="busiest"><div class="fd-station-busy-head"><h4 class="fd-station-prop-label">Session load</h4><span class="fd-station-busy-unit" aria-hidden="true">CPU</span><span class="fd-station-busy-unit" aria-hidden="true">Memory</span></div>',
+      );
+      expect(out).toContain('aria-label="Session load"');
+      expect(out).not.toContain('<details');
+      expect(out.match(/<li/g)?.length).toBe(5);
+      expect(out).not.toContain('s6');
+      expect(out.indexOf('s-called')).toBeLessThan(out.indexOf('s-titled'));
+      expect(out.indexOf('s-titled')).toBeLessThan(out.indexOf('abcdefgh'));
+      // The resource rows are not part of it.
+      expect(html(busy)).not.toContain('Session load');
+    });
+
+    test('a row names the title with the callsign after it, else the callsign, else the id', () => {
+      const out = render(busy);
+      // The title, then the callsign (condensed, quiet); the tooltip has both (a phone hides the
+      // callsign).
+      expect(out).toMatch(
+        /<a href="[^"]+" title="A title · Falcon"><span class="fd-station-busy-who"><span class="fd-station-busy-name">A title<\/span> <span class="fd-callsign fd-station-busy-cs">Falcon<\/span><\/span>/,
+      );
+      // No title: the callsign is the name, condensed, with no second callsign.
+      expect(out).toMatch(
+        /<a href="[^"]+"><span class="fd-station-busy-who"><span class="fd-station-busy-name fd-callsign">Bravo<\/span><\/span>/,
+      );
+      // No callsign: the title alone.
+      expect(out).toMatch(
+        /<a href="[^"]+" title="Fix the build"><span class="fd-station-busy-who"><span class="fd-station-busy-name">Fix the build<\/span><\/span>/,
+      );
+      // No title and no callsign: a session that the station does not know is its id.
+      expect(out).toMatch(
+        /<a href="[^"]+"><span class="fd-station-busy-who"><span class="fd-station-busy-name">abcdefgh<\/span><\/span>/,
+      );
+      expect(out.match(/fd-station-busy-cs/g)?.length).toBe(1);
+    });
+
+    test('a row is one link with the CPU and the memory in their columns, a dash for none', () => {
+      const out = render(busy);
+      const cells = (cpu: string, mem: string) =>
+        `<span class="fd-station-busy-num">${cpu}</span> <span class="fd-station-busy-num">${mem}</span></a>`;
+      // The column heads carry the units; the link names them for a screen reader.
+      const vh = (value: string, unit: string) => `${value}<span class="fd-vh"> ${unit}</span>`;
+      expect(out).toContain(cells(vh('340%', 'CPU'), vh('1.2 GB', 'memory')));
+      expect(out).toContain(cells(vh('120%', 'CPU'), vh('500 MB', 'memory')));
+      expect(out).toContain(cells('—', '—'));
+      expect(out).not.toContain('% CPU<');
+      expect(out.match(/<a /g)?.length).toBe(5);
+    });
+
+    test('a row links to the session', () => {
+      expect(render(busy)).toContain('href="#/s/station-a/s-called"');
+    });
+
+    test('a phone card folds the load: a closed fold with the count, the units over the rows', () => {
+      const out = renderToStaticMarkup(
+        <StationBusiest resources={busy} station="station-a" sessions={cards} folded />,
+      );
+      expect(out).toContain(
+        '<details class="fd-station-prop fd-station-busy-fold" data-prop="busiest"><summary class="fd-station-prop-label" data-variant="toggle">Session load <span class="fd-count">5<span class="fd-vh"> sessions</span></span></summary><div class="fd-station-busy-head"><span></span><span class="fd-station-busy-unit" aria-hidden="true">CPU</span>',
+      );
+      expect(out).not.toContain('<details open');
+      expect(out).not.toContain('<h4');
+      expect(out.match(/<a /g)?.length).toBe(5);
+    });
+
+    test('an empty list or no report shows no section', () => {
+      expect(render(full)).toBe('');
+      expect(render(undefined)).toBe('');
+    });
+  });
+});

@@ -1,0 +1,22 @@
+# Fleet Deck deck as a systemd user service (PLAN Phase 7, DL-400).
+# Install: see packaging/README.md. The deck keeps no agent processes, so the
+# default control-group stop is correct.
+[Unit]
+Description=Fleet Deck deck
+Documentation=https://github.com/lacion/fleet-deck/blob/v2/packaging/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/fleetdeck deck serve
+Environment=FLEETDECK_LOG_FORMAT=json
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

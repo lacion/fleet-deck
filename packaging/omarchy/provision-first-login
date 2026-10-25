@@ -1,0 +1,38 @@
+#!/bin/sh
+# The Fleet Deck first-login provisioning hook (docs/v2/design/omarchy-p8.md,
+# section 5.1). The XDG autostart entry fleetdeck-provision.desktop starts it
+# at the login of the user. The package installs it root:root 0755 at
+# /usr/lib/fleetdeck/provision-first-login.
+#
+# The hook runs as the logged-in user. When the private provisioning file
+# exists, it hands the file to the hidden command `fleetdeck
+# provision-supervise`, which runs `provision-bootstrap` and reports a stop
+# before the link to the pinned deck. The hook never installs a package and
+# never downloads anything: the trusted installer image supplies the package.
+set -u
+
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    case "$XDG_CONFIG_HOME" in
+        /*) ;;
+        *)
+            echo "fleetdeck: XDG_CONFIG_HOME must be an absolute path." >&2
+            exit 1
+            ;;
+    esac
+    config_home=$XDG_CONFIG_HOME
+else
+    if [ -z "${HOME:-}" ]; then
+        echo "fleetdeck: HOME is not set." >&2
+        exit 1
+    fi
+    config_home=$HOME/.config
+fi
+
+file=$config_home/fleetdeck/provision.toml
+
+# A normal login of a provisioned or an unprovisioned machine: nothing to do.
+if [ ! -e "$file" ]; then
+    exit 0
+fi
+
+exec /usr/bin/fleetdeck provision-supervise --file "$file"

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Fleet Deck station as a launchd user agent (PLAN Phase 7, DL-400).
+     Install: see packaging/README.md. launchd does not expand "~", so a
+     /bin/sh wrapper starts the binary from $HOME/.cargo/bin and writes stderr
+     to ~/Library/Logs/fleetdeck/station.log.
+     AbandonProcessGroup: a stop or an upgrade ends the station only; the
+     provider shims keep running (ADR-005 §7 "Station graceful stop"). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.fleetdeck.station</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>mkdir -p "$HOME/Library/Logs/fleetdeck" &amp;&amp; exec "$HOME/.cargo/bin/fleetdeck" station serve 2&gt;&gt;"$HOME/Library/Logs/fleetdeck/station.log"</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>FLEETDECK_LOG_FORMAT</key>
+        <string>json</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>AbandonProcessGroup</key>
+    <true/>
+    <key>ExitTimeOut</key>
+    <integer>30</integer>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

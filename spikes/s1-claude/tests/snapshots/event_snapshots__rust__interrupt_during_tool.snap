@@ -1,0 +1,110 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "85073a1b-1519-4675-821f-bb48e77087c7"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-408e-8000-54b046d72764",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0002-408e-8000-54b046d72764"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-408e-8000-54b046d72764",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "shell",
+    "title": "Bash",
+    "provider_refs": {
+      "tool_use_id": "toolu_01U7NT8gKjjeioxWHDsm9aL6"
+    }
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-3",
+    "node_id": "node-2",
+    "request_kind": "command",
+    "title": "Bash",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "allow_always",
+        "label": "Allow always (this session)"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "53c51f10-f503-474d-8515-f5b92e821556",
+      "tool_use_id": "toolu_01U7NT8gKjjeioxWHDsm9aL6"
+    }
+  },
+  {
+    "kind": "approval.resolved",
+    "request_id": "req-3",
+    "option_id": "allow"
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "failed"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 221,
+      "cost_usd": 0.00844225
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "interrupted",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 221,
+      "cost_usd": 0.00844225
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-408e-8000-54b046d72764",
+    "turn_id": "turn-1",
+    "state": "cancelled"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 1
+  }
+]

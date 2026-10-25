@@ -1,0 +1,221 @@
+//! The session holds of Fleet Git (FG-8, design §11.4, §3.5 V30): at most one
+//! durable hold for each session. A land holds its session from its decision
+//! until its run ends; a move (phase 4) uses the same table. While a hold
+//! exists, the station refuses or skips every input that could change the
+//! session or its branch.
+
+use fleetdeck_proto::{Reject, RejectCode, SessionId};
+use rusqlite::{Connection, OptionalExtension, params};
+
+use super::{DecideError, Result, Store, call};
+
+/// The hold of a land (`holder_id` is the land id).
+pub const KIND_LAND: &str = "land";
+/// The hold of the source of a move (phase 4).
+pub const KIND_MOVE: &str = "move";
+/// The hold of the target of a move (phase 4).
+pub const KIND_MOVE_IN: &str = "move_in";
+
+/// The refusal text of a session that a land holds (design §11.4).
+pub const HELD: &str = "A land holds this session. Wait until it ends.";
+/// The refusal text of the source of a move (design §12.3 step 1).
+pub const HELD_MOVE: &str = "The session is being moved.";
+/// The refusal text of the target of a move when the source station is not
+/// known (design §12.3 step 4). With the source it is "This session is still
+/// arriving from <id>." (T4.2c).
+pub const HELD_MOVE_IN: &str = "This session is still arriving from another station.";
+
+/// One row of `session_holds`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHold {
+    pub session_id: SessionId,
+    /// `land`, `move` or `move_in`.
+    pub kind: String,
+    /// The land id or the move id.
+    pub holder_id: String,
+    pub created_at: i64,
+}
+
+/// The hold of `session_id`, if any.
+///
+/// # Errors
+/// A database error.
+pub fn get(conn: &Connection, session_id: &SessionId) -> Result<Option<SessionHold>> {
+    Ok(conn
+        .query_row(
+            "SELECT session_id, kind, holder_id, created_at FROM session_holds
+             WHERE session_id = ?1",
+            params![session_id.as_str()],
+            |r| {
+                Ok(SessionHold {
+                    session_id: SessionId::from(r.get::<_, String>(0)?),
+                    kind: r.get(1)?,
+                    holder_id: r.get(2)?,
+                    created_at: r.get(3)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Is a hold on `session_id`?
+///
+/// # Errors
+/// A database error.
+pub fn held(conn: &Connection, session_id: &SessionId) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM session_holds WHERE session_id = ?1)",
+        params![session_id.as_str()],
+        |r| r.get(0),
+    )?)
+}
+
+/// The refusal text of a hold, by its kind (design §11.4, §12.3). The text of
+/// a `move_in` hold names the source station of its `move_in_runs` row and
+/// depends on the state of the row: an abandoned copy, a failed resume and an
+/// undone move have their own texts (design §12.3, §12.4A, §12.7).
+fn text_of_hold(conn: &Connection, hold: &SessionHold) -> Result<String> {
+    use fleetdeck_proto::fleet_git::MoveInState;
+    Ok(match hold.kind.as_str() {
+        KIND_MOVE => HELD_MOVE.to_owned(),
+        KIND_MOVE_IN => {
+            let row = super::move_runs::get_in(conn, &hold.holder_id)?;
+            let source = row
+                .as_ref()
+                .and_then(|r| r.source_station.clone())
+                .unwrap_or_else(|| "the source station".to_owned());
+            match row.map(|r| r.state) {
+                Some(MoveInState::ResumeFailed) => format!(
+                    "This session could not resume the conversation. Undo the move to continue on {source}."
+                ),
+                Some(MoveInState::Failed) => {
+                    format!("This move was undone. The session continues on {source}.")
+                }
+                Some(MoveInState::Abandoned) => format!(
+                    "This copy of the conversation was not used. The session stays on {source}."
+                ),
+                Some(_) if source != "the source station" => {
+                    format!("This session is still arriving from {source}.")
+                }
+                _ => HELD_MOVE_IN.to_owned(),
+            }
+        }
+        _ => HELD.to_owned(),
+    })
+}
+
+fn reject(text: impl Into<String>) -> DecideError {
+    DecideError::Reject(Reject::new(RejectCode::InvalidState, text))
+}
+
+/// The refusal of a session that moved away (design §12.4): `Some` for a
+/// session with `summary.moved_to`.
+pub(crate) fn moved_text(conn: &Connection, session_id: &SessionId) -> Result<Option<String>> {
+    Ok(super::log::summary(conn, session_id)?
+        .and_then(|s| s.moved_to)
+        .map(|m| format!("The session moved to {}. Open it there.", m.station_id)))
+}
+
+/// The check of a hold alone (the trash: a moved session can be trashed,
+/// design §12.4).
+///
+/// # Errors
+/// The rejection, or a database error.
+pub fn check_hold(conn: &Connection, session_id: &SessionId) -> Result<(), DecideError> {
+    match get(conn, session_id)? {
+        Some(hold) => Err(reject(text_of_hold(conn, &hold)?)),
+        None => Ok(()),
+    }
+}
+
+/// The decision check of a command that a hold or a move refuses (design
+/// §11.4, §12.3, §12.4): a stored `invalid_state` rejection with the text of
+/// the hold kind, or "The session moved to <station>. Open it there." for a
+/// moved session.
+///
+/// # Errors
+/// The rejection, or a database error.
+pub fn check_free(conn: &Connection, session_id: &SessionId) -> Result<(), DecideError> {
+    check_hold(conn, session_id)?;
+    match moved_text(conn, session_id)? {
+        Some(text) => Err(reject(text)),
+        None => Ok(()),
+    }
+}
+
+/// Inserts the hold of a session. The primary key refuses a second hold.
+///
+/// # Errors
+/// A database error (a constraint error when the session is held already).
+pub fn insert(
+    conn: &Connection,
+    session_id: &SessionId,
+    kind: &str,
+    holder_id: &str,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO session_holds (session_id, kind, holder_id, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![session_id.as_str(), kind, holder_id, now],
+    )?;
+    Ok(())
+}
+
+/// Deletes the hold of `holder_id` on `session_id`. A hold of another holder
+/// stays. Returns whether a row was deleted.
+///
+/// # Errors
+/// A database error.
+pub fn delete(conn: &Connection, session_id: &SessionId, holder_id: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "DELETE FROM session_holds WHERE session_id = ?1 AND holder_id = ?2",
+        params![session_id.as_str(), holder_id],
+    )? > 0)
+}
+
+impl Store {
+    /// Inserts the hold of `holder_id` on a session.
+    ///
+    /// # Errors
+    /// A database error (a constraint error when the session is held).
+    pub async fn session_hold_insert(
+        &self,
+        session_id: SessionId,
+        kind: &'static str,
+        holder_id: String,
+    ) -> Result<()> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            insert(conn, &session_id, kind, &holder_id, now)
+        })
+        .await
+    }
+
+    /// Deletes the hold of `holder_id` on a session; true when it existed.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn session_hold_delete(
+        &self,
+        session_id: SessionId,
+        holder_id: String,
+    ) -> Result<bool> {
+        call(&self.inner.db, move |conn| {
+            delete(conn, &session_id, &holder_id)
+        })
+        .await
+    }
+
+    /// The hold of a session, if any.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn session_hold(&self, session_id: SessionId) -> Result<Option<SessionHold>> {
+        call(&self.inner.db, move |conn| get(conn, &session_id)).await
+    }
+}
+
+#[cfg(test)]
+#[path = "session_holds_tests.rs"]
+mod tests;

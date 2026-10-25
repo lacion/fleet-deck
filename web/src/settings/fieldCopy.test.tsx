@@ -1,0 +1,252 @@
+// The marks of a field (badges, the password lock, the section note) and the board's own words for
+// the registry (copy.ts): labels, help, option names, the bypass warning, the section slots.
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { fieldLabel, helpOf, unitOf } from './copy';
+import { FIELDS, meta, view } from './fixtures';
+import { badgesOf, labelOf, sectionId } from './model';
+import { SettingsFields } from './SettingsFields';
+
+const noop = () => {};
+
+const fields = (extra: Partial<Parameters<typeof SettingsFields>[0]> = {}) =>
+  renderToStaticMarkup(
+    <SettingsFields
+      view={view()}
+      edits={{}}
+      errors={{}}
+      onEdit={noop}
+      stationId="st-alpha"
+      savedIds={['claude']}
+      secretBlocked={null}
+      onSecret={noop}
+      {...extra}
+    />,
+  );
+
+describe('the badges of a field', () => {
+  test('restart and command line; a danger field has no badge', () => {
+    const listen = FIELDS.find((f) => f.key === 'listen');
+    expect(listen).toBeDefined();
+    if (listen === undefined) return;
+    expect(listen.danger).toBe(true);
+    expect(badgesOf(listen, ['listen'])).toEqual([
+      { text: 'Applies after a restart' },
+      { text: 'Set by the command line (--listen)' },
+    ]);
+    expect(badgesOf(meta('name', 'Name', 'text'), [])).toEqual([]);
+  });
+
+  test('they are in the page, and a command line key is disabled', () => {
+    const html = fields();
+    expect(html).toContain('Applies after a restart');
+    expect(html).toContain('Set by the command line (--listen)');
+    expect(html).not.toContain('Needs re-auth');
+    expect(html).toContain('aria-label="Listen addresses 1"');
+    expect(html).toMatch(/<input[^>]*aria-label="Listen addresses 1" disabled=""/);
+  });
+
+  test('a danger field in a mixed section has a lock after its label and hidden words', () => {
+    const html = fields();
+    // Sessions: max_sessions (no danger) and host (danger).
+    const sessions = /<section[^>]*aria-label="Sessions"[\s\S]*?<\/section>/.exec(html)?.[0] ?? '';
+    expect(sessions).toMatch(
+      /Where sessions run<span class="fd-set-lock" title="Saving asks for your password" aria-hidden="true">/,
+    );
+    expect(sessions).toContain('<span class="fd-vh"> Saving asks for your password.</span>');
+    expect(sessions).not.toContain('fd-set-secnote');
+    // The label of the control keeps its name: the lock is hidden from assistive technology.
+    expect(sessions).toMatch(/Most sessions<\/span><input/);
+  });
+
+  test('a section whose fields all ask for the password says it once, next to its heading', () => {
+    const grant = [
+      meta('worker_grant.enabled', 'Worker grant', 'bool', { danger: true }),
+      meta('worker_grant.spawn_cap', 'Worker grant session limit', 'int', { danger: true }),
+    ];
+    const html = fields({ view: view({ fields: grant, values: {} }), stationId: null });
+    expect(html).toContain(
+      '<h2 class="fd-set-sechead">Worker grants</h2><span class="fd-set-secnote">',
+    );
+    expect(html.split('Saving asks for your password').length - 1).toBe(1);
+    expect(html).not.toContain('fd-set-lock');
+    // The labels do not repeat the heading.
+    expect(html).toContain('>Give new sessions a grant<');
+    expect(html).toContain('>Sessions per worker<');
+    expect(html).not.toContain('>Worker grant<');
+  });
+});
+
+describe('the board copy of the fields', () => {
+  test('the bypass switch warns while it is on, and its help has no raw mode names', () => {
+    const bypass = meta('allow_bypass_permissions', 'Allow bypass permissions', 'bool', {
+      help: 'Offer the mode that skips every permission check (Claude bypassPermissions, Codex danger-full-access) for sessions on this station.',
+    });
+    const on = fields({
+      view: view({ fields: [bypass], values: { allow_bypass_permissions: true } }),
+    });
+    expect(on).toContain('<p class="fd-set-hazard"><svg');
+    expect(on).toContain('Sessions on this station can run every tool without asking.');
+    // Bypass is a hazard (DESIGN-SYSTEM §2.2): its switch has the --hazard on track, not --ok.
+    expect(on).toContain('class="fd-switch" data-tone="hazard"');
+    // Every switch says what it lets happen (one verb form on the page).
+    expect(on).toContain(
+      'Lets sessions on this station use the Bypass mode, which skips every permission check.',
+    );
+    expect(on).not.toContain('bypassPermissions');
+    const off = fields({
+      view: view({ fields: [bypass], values: { allow_bypass_permissions: false } }),
+    });
+    expect(off).not.toContain('fd-set-hazard');
+  });
+
+  test('the_keep_grants_switch_shows_a_warning_while_it_is_off', () => {
+    const keep = meta('keep_grants_on_update', 'Keep grants on update', 'bool', {});
+    const off = fields({
+      view: view({ fields: [keep], values: { keep_grants_on_update: false } }),
+    });
+    expect(off).toContain('fd-set-hazard');
+    expect(off).toContain(
+      'Each station update ends the fleet grants of the sessions on that station. You give them again after the update.',
+    );
+    const on = fields({ view: view({ fields: [keep], values: { keep_grants_on_update: true } }) });
+    expect(on).not.toContain('fd-set-hazard');
+  });
+
+  test('the host help reads the same on every station version', () => {
+    const old = meta('host', 'Where sessions run', 'enum', {
+      options: ['direct', 'shim'],
+      help: 'direct: sessions end when the station stops. shim: sessions keep running while the station restarts.',
+    });
+    const html = fields({ view: view({ fields: [old], values: { host: 'shim' } }) });
+    expect(html).toContain(
+      'Directly: sessions end when the station stops. Apart from the station: sessions keep running while the station restarts.',
+    );
+    expect(html).not.toContain('direct: sessions');
+  });
+
+  test('the empty option of host says the default of the station system', () => {
+    const host = meta('host', 'Where sessions run', 'enum', { options: ['direct', 'shim'] });
+    const at = (os: string | undefined) =>
+      fields({ view: view({ fields: [host], values: { host: 'shim' } }), os });
+    // "Shim" is an internal word: the option says where the sessions run.
+    expect(at('linux')).toContain('<option value="">Default (Apart from the station)</option>');
+    expect(at('macos')).toContain('<option value="">Default (Directly)</option>');
+    expect(at(undefined)).toContain('<option value="">Default</option>');
+  });
+
+  test('the worker grant modes show words; the wire values stay', () => {
+    const fieldsOf = [
+      meta('worker_grant.claude_mode', 'Worker grant Claude mode', 'enum', {
+        options: ['default', 'plan', 'acceptEdits', 'dontAsk', 'auto'],
+        danger: true,
+      }),
+      meta('worker_grant.codex_mode', 'Worker grant Codex mode', 'enum', {
+        options: ['untrusted/read-only', 'on-request/workspace-write', 'never/workspace-write'],
+        danger: true,
+      }),
+      meta('clone_transport', 'Clone with', 'enum', { options: ['https', 'ssh'] }),
+    ];
+    const html = fields({
+      view: view({
+        fields: fieldsOf,
+        values: {
+          'worker_grant.claude_mode': 'acceptEdits',
+          'worker_grant.codex_mode': 'on-request/workspace-write',
+          clone_transport: 'ssh',
+        },
+      }),
+      stationId: null,
+    });
+    expect(html).toContain('<option value="">Default (Accept edits)</option>');
+    expect(html).toContain('<option value="default">Ask</option>');
+    expect(html).toContain('<option value="acceptEdits" selected="">Accept edits</option>');
+    expect(html).toContain('<option value="dontAsk">Don&#x27;t ask</option>');
+    expect(html).toContain('<option value="">Default (Ask when needed · workspace write)</option>');
+    expect(html).toContain(
+      '<option value="untrusted/read-only">Ask for untrusted commands · read only</option>',
+    );
+    expect(html).toContain(
+      '<option value="on-request/workspace-write" selected="">Ask when needed · workspace write</option>',
+    );
+    expect(html).toContain(
+      '<option value="never/workspace-write">Never ask · workspace write</option>',
+    );
+    expect(html).toContain('<option value="">Default (HTTPS)</option>');
+    expect(html).toContain('<option value="ssh" selected="">SSH</option>');
+    // A mode name is one piece in a hint: no-break spaces keep it on one line.
+    expect(html).toContain('Default: Accept\u00a0edits.');
+    expect(html).toContain('Default: Ask\u00a0when\u00a0needed\u00a0·\u00a0workspace\u00a0write.');
+    expect(html).toContain('>Most permissive Claude mode<');
+  });
+
+  test('the default of a field with a unit names its unit in words', () => {
+    const at = (key: string, label: string, help: string) =>
+      helpOf(meta(key, label, 'int', { help }));
+    expect(at('limits.push_seconds', 'Push time (seconds)', 'One push. Default: 60.')).toBe(
+      'One push. Default: 60\u00a0seconds.',
+    );
+    expect(at('capture.quota_gib', 'Capture storage (GiB)', 'The disk. Default: 4.')).toBe(
+      'The disk. Default: 4\u00a0GiB.',
+    );
+    expect(at('x', 'Terminal history (lines)', 'The lines. Default 5000.')).toBe(
+      'The lines. Default: 5,000\u00a0lines.',
+    );
+    // No unit, a default in words, or a default that names its unit already: the help stays.
+    expect(at('max_sessions', 'Most sessions', 'The most. Default: 12.')).toBe(
+      'The most. Default: 12.',
+    );
+    expect(at('x', 'Idle (minutes)', 'Default: the first root.')).toBe('Default: the first root.');
+    expect(at('x', 'Idle (minutes)', 'Default: 30 minutes.')).toBe('Default: 30 minutes.');
+  });
+
+  test('a time unit has the short form of §5; tokens follow the model help numbers', () => {
+    expect(unitOf(meta('x', 'Lifetime (hours)', 'int'))).toEqual({ short: 'h', words: 'hours' });
+    expect(unitOf(meta('x', 'Login idle time (days)', 'int'))).toEqual({
+      short: 'd',
+      words: 'days',
+    });
+    expect(unitOf(meta('x', 'Grace (seconds)', 'int'))).toEqual({ short: 's', words: 'seconds' });
+    for (const key of ['model_help.per_call_max_output_tokens', 'model_help.daily_token_cap']) {
+      expect(unitOf(meta(key, 'Daily token cap', 'int'))).toEqual({
+        short: 'tokens',
+        words: 'tokens',
+      });
+      expect(helpOf(meta(key, 'Daily token cap', 'int'))).not.toContain('in tokens');
+    }
+    expect(fieldLabel(meta('model_help.daily_token_cap', 'Daily token cap', 'int'))).toBe(
+      'Daily token cap',
+    );
+  });
+
+  test('the label of a danger change in the confirmation is the label that the page shows', () => {
+    const grant = [meta('worker_grant.spawn_cap', 'Worker grant session limit', 'int')];
+    expect(labelOf(grant, 'worker_grant.spawn_cap')).toBe('Sessions per worker');
+    expect(labelOf(FIELDS, 'max_sessions')).toBe('Most sessions');
+    expect(labelOf(FIELDS, 'nope')).toBe('nope');
+  });
+
+  test('each section has an id for the section index', () => {
+    expect(sectionId('Shells and setup')).toBe('fd-set-sec-shells-and-setup');
+    expect(sectionId('Desktop tools')).toBe('fd-set-sec-desktop-tools');
+    expect(fields()).toContain('id="fd-set-sec-general"');
+  });
+
+  test('a top card shows under its heading, an after part after its section', () => {
+    const html = fields({
+      slots: {
+        Network: { top: <p>the network card</p> },
+        Folders: { after: <p>after the folders</p> },
+        Desktop: { after: <p>at the end</p> },
+      },
+    });
+    const network = /<section[^>]*aria-label="Network"[\s\S]*?<\/section>/.exec(html)?.[0] ?? '';
+    expect(network).toContain('</div><p>the network card</p><div class="fd-set-grid">');
+    const folders = html.indexOf('aria-label="Folders"');
+    const after = html.indexOf('<p>after the folders</p>');
+    expect(folders).toBeLessThan(after);
+    expect(after).toBeLessThan(html.indexOf('aria-label="Shells and setup"'));
+    // No Desktop section in the view: its after part ends the page.
+    expect(html.endsWith('<p>at the end</p>')).toBe(true);
+  });
+});

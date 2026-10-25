@@ -1,0 +1,207 @@
+/* The analytics page (B29, design analytics.md §3.10, §3.11): the totals, the `.fd-bars` chart,
+   the tables and the counter rows. Tokens only; the primitives come from base.css and page.css. */
+
+.fd-analytics .fd-an-window {
+  margin: 0 0 var(--sp-3);
+}
+.fd-an-sec {
+  margin: 0 0 var(--sp-5);
+}
+.fd-an-h {
+  margin: 0 0 var(--sp-3);
+  color: var(--text);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+}
+.fd-an-sec > .fd-note {
+  margin-top: var(--sp-2);
+}
+
+/* The totals: a value over a one-line label. */
+.fd-an-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--sp-4);
+}
+.fd-an-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-an-value {
+  font-family: var(--font-data);
+  font-size: var(--fs-24);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.fd-an-value[data-tone="fuel"] {
+  color: var(--fuel);
+}
+.fd-an-label {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.fd-an-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-3);
+}
+
+/* Tables: numbers to the right, shares as a meter. */
+.fd-an-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+th.fd-an-num {
+  text-align: right;
+}
+.fd-an-share {
+  width: 28%;
+  min-width: 80px;
+}
+
+/* Counter rows: a label, its value, an optional meter and a note. */
+.fd-an-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-an-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) minmax(60px, 160px) minmax(0, 200px);
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: var(--row-h);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--fs-ui);
+}
+.fd-an-row:last-child {
+  border-bottom: 0;
+}
+.fd-an-rowlabel {
+  color: var(--dim);
+}
+.fd-an-rowvalue {
+  font-variant-numeric: tabular-nums;
+}
+.fd-an-extra {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-an-learn {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-ui);
+}
+.fd-an-learn > li {
+  margin: var(--sp-1) 0;
+}
+.fd-an-sources {
+  margin: 0 0 var(--sp-5);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-an-sources > summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+.fd-an-sources > .fd-an-rows {
+  padding-top: var(--sp-2);
+}
+.fd-an-sources > .fd-an-rows > li {
+  padding: var(--sp-1) 0;
+}
+
+/* `.fd-bars`: a bar chart of one series (DESIGN-SYSTEM §3). */
+.fd-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.fd-bars-readout {
+  margin: 0;
+  min-height: 1.4em;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-variant-numeric: tabular-nums;
+}
+.fd-bars-plot {
+  position: relative;
+}
+.fd-bars-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.fd-bars-svg {
+  display: block;
+  width: 100%;
+  height: 160px;
+  overflow: visible;
+}
+.fd-bars-grid,
+.fd-bars-base {
+  stroke: var(--border-soft);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.fd-bars-start {
+  stroke: var(--border);
+  stroke-width: 1px;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.fd-bar {
+  fill: var(--fuel);
+  outline: none;
+}
+.fd-bars[data-tone="neutral"] .fd-bar {
+  fill: var(--dim);
+}
+.fd-bar:focus-visible,
+.fd-bar[data-active="true"] {
+  stroke: var(--focus);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+.fd-bars-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+.fd-bars-nodata {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
+@media (max-width: 639px) {
+  .fd-bars-svg {
+    height: 120px;
+  }
+  .fd-an-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+@media (forced-colors: active) {
+  .fd-bar {
+    fill: CanvasText;
+  }
+  .fd-bar:focus-visible,
+  .fd-bar[data-active="true"] {
+    stroke: Highlight;
+  }
+}

@@ -1,0 +1,415 @@
+// FS-3 (design §3.6, §3.7): the "Secret files" section of the project page: the list of paths, the
+// "Sync now" button and the table of the last report of each file.
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
+import { stationName } from '../board/fleet';
+import type {
+  Project,
+  SecretBrowseAnswer,
+  SecretFileReport,
+  SecretFilesView,
+  SecretStationReport,
+  StationView,
+} from '../gen';
+import { ApiError } from '../runtime/api';
+import { Icon, TriangleAlert } from '../ui/icons';
+import { useIntegrations } from './context';
+import { SecretBrowser } from './SecretBrowser';
+import { message } from './useLoad';
+
+/** The paths of the text area: one for each line, trimmed, without the empty lines. */
+export function parsePaths(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+const REFUSED: Readonly<Record<string, string>> = {
+  not_ignored: 'Not ignored by Git',
+  symlink: 'A link',
+  too_large: 'Larger than 512 KiB',
+  not_regular: 'Not a regular file',
+  invalid_path: 'Invalid path',
+  private_file: 'A private file of the station',
+};
+
+/** The text of one cell of the table: the state of one file on one station. */
+export function cellText(r: SecretStationReport): string {
+  switch (r.state) {
+    case 'same':
+      return 'Same';
+    case 'written':
+      return 'Copied';
+    case 'missing':
+      return 'Missing';
+    case 'refused':
+      return (r.code === undefined ? undefined : REFUSED[r.code]) ?? 'Refused';
+    case 'offline':
+      return 'Offline';
+    case 'failed':
+      return `Failed: ${r.message ?? r.code ?? 'unknown'}`;
+    default:
+      return 'Unknown';
+  }
+}
+
+/**
+ * One cell with its state glyph (state never by a word alone): the same or a copied file has the
+ * online dot and the ok ink; a missing file is faint; a refused or failed file is hazard with the
+ * warning sign; an offline station has the unreachable glyph.
+ */
+export function SecretCell({ report }: { readonly report: SecretStationReport }) {
+  const text = cellText(report);
+  switch (report.state) {
+    case 'same':
+    case 'written':
+      return (
+        <span className="fd-int-cell" data-tone="ok">
+          <span className="fd-dot" data-status="online" aria-hidden="true" />
+          {text}
+        </span>
+      );
+    case 'missing':
+      return (
+        <span className="fd-int-cell" data-tone="faint">
+          {text}
+        </span>
+      );
+    case 'refused':
+    case 'failed':
+      return (
+        <span className="fd-int-cell" data-tone="hazard">
+          <Icon of={TriangleAlert} size={12} />
+          {text}
+        </span>
+      );
+    case 'offline':
+      return (
+        <span className="fd-int-cell">
+          <span className="fd-dot" data-status="unreachable" aria-hidden="true" />
+          {text}
+        </span>
+      );
+    default:
+      return <span className="fd-int-cell">{text}</span>;
+  }
+}
+
+/** The note under the row of one file: the parts are joined by one space. */
+export function fileNote(f: SecretFileReport, stations: readonly StationView[]): string {
+  const parts: string[] = [];
+  const source = f.source === undefined ? undefined : stationName(f.source, stations);
+  if (f.synced_at !== undefined) {
+    const time = new Date(f.synced_at).toLocaleString();
+    parts.push(source === undefined ? `Last sync ${time}` : `Last sync ${time} from ${source}`);
+  }
+  if (f.outcome === 'not_run') parts.push('Not synced yet.');
+  if (f.conflict) {
+    parts.push(
+      `Two homes changed this file. ${source ?? 'One home'} had the newest copy; the other copies are in the station backups.`,
+    );
+  }
+  if (f.outcome === 'partial') parts.push('Some homes did not get the file.');
+  if (f.outcome === 'copied')
+    parts.push('Copied to every home that was missing it or had an older copy.');
+  if (f.outcome === 'same') parts.push('Every home has the same copy.');
+  if (f.outcome === 'nothing') {
+    parts.push(
+      'No home has this file yet, so there is nothing to copy. Create it in one home, then sync again.',
+    );
+  }
+  return parts.join(' ');
+}
+
+type Props = {
+  readonly project: Project;
+  readonly stations: readonly StationView[];
+  readonly view: SecretFilesView;
+  readonly draft: string;
+  readonly busy: 'save' | 'sync' | null;
+  readonly error: string | null;
+  readonly fieldError: string | null;
+  readonly onDraft: (text: string) => void;
+  readonly onSave: () => void;
+  readonly onSync: () => void;
+  /** Opens the browser of a home; absent: no "Browse…" button. */
+  readonly onBrowse?: (() => void) | undefined;
+  /** The browser panel, when it is open. */
+  readonly browser?: ReactNode;
+};
+
+/** Everything below the heading text: the text area, the buttons, the table and the alerts. */
+export function SecretFilesBody({
+  project,
+  stations,
+  view,
+  draft,
+  busy,
+  error,
+  fieldError,
+  onDraft,
+  onSave,
+  onSync,
+  onBrowse,
+  browser = null,
+}: Props) {
+  const homes = [...(project.homes ?? [])].sort((a, b) => a.position - b.position);
+  const ready = homes.filter((h) => h.state === 'ready').length;
+  const cannotSync = view.paths.length === 0 || ready < 2 || busy !== null;
+  // Save commits the list: a plain button (it has weight), on only while the list changed.
+  const changed = parsePaths(draft).join('\n') !== view.paths.join('\n');
+  return (
+    <>
+      <div className="fd-int-secret-field">
+        <textarea
+          className="fd-int-secret-paths"
+          aria-label="Secret file paths"
+          aria-describedby="fd-int-secret-hint"
+          placeholder={'.env\nconfig/local.toml'}
+          rows={4}
+          value={draft}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => onDraft(e.target.value)}
+        />
+        <span id="fd-int-secret-hint" className="fd-fieldhint">
+          One path per line, relative to the project folder.
+        </span>
+      </div>
+      {fieldError === null ? null : (
+        <p role="alert" className="fd-formerror">
+          {fieldError}
+        </p>
+      )}
+      <div className="fd-pane-row">
+        <button type="button" disabled={busy !== null || !changed} onClick={onSave}>
+          {busy === 'save' ? 'Saving…' : 'Save'}
+        </button>
+        {onBrowse === undefined || ready === 0 ? null : (
+          <button type="button" className="fd-ghost" onClick={onBrowse}>
+            Browse…
+          </button>
+        )}
+        <button type="button" className="fd-ghost" disabled={cannotSync} onClick={onSync}>
+          {busy === 'sync' ? 'Syncing…' : 'Sync now'}
+        </button>
+      </div>
+      {browser}
+      {error === null ? null : (
+        <p role="alert" className="fd-formerror">
+          {error}
+        </p>
+      )}
+      {view.files.length === 0 ? null : (
+        <div className="fd-int-secret-scroll">
+          <table className="fd-int-secret-table">
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                {homes.map((h) => (
+                  <th key={h.station_id} scope="col">
+                    {stationName(h.station_id, stations)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {view.files.map((f) => {
+                const note = fileNote(f, stations);
+                return (
+                  <Fragment key={f.path}>
+                    <tr>
+                      <th scope="row">
+                        <code>{f.path}</code>
+                      </th>
+                      {homes.map((h) => {
+                        const report = f.stations.find((s) => s.station_id === h.station_id);
+                        return (
+                          <td key={h.station_id} data-state={report?.state}>
+                            {report === undefined ? '—' : <SecretCell report={report} />}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {note === '' ? null : (
+                      <tr>
+                        <td className="fd-note" colSpan={homes.length + 1}>
+                          {note}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The draft with `path` as a new last line. */
+export function appendPath(draft: string, path: string): string {
+  if (draft === '') return path;
+  return `${draft}${draft.endsWith('\n') ? '' : '\n'}${path}`;
+}
+
+/** What the browser panel shows; `null` is a closed panel. */
+type Browse = {
+  readonly station: string;
+  readonly answer: SecretBrowseAnswer | null;
+  readonly error: string | null;
+  readonly busy: boolean;
+};
+
+/** The section; it shows nothing without the admin login. */
+export function SecretFiles({
+  project,
+  stations,
+}: {
+  readonly project: Project;
+  readonly stations: readonly StationView[];
+}) {
+  const env = useIntegrations();
+  const actions = env?.actions;
+  const id = project.project_id;
+  const [view, setView] = useState<SecretFilesView | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState<'save' | 'sync' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [browse, setBrowse] = useState<Browse | null>(null);
+  const turn = useRef(0);
+  const admin = actions?.canAdmin === true;
+  useEffect(() => {
+    if (actions === undefined || !admin) return undefined;
+    let live = true;
+    actions.secretFiles(id).then(
+      (v) => {
+        if (!live) return;
+        setView(v);
+        setDraft(v.paths.join('\n'));
+        setLoadError(null);
+      },
+      (e: unknown) => live && setLoadError(message(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [actions, admin, id]);
+  if (actions === undefined || !admin) return null;
+  const save = () => {
+    if (busy !== null) return;
+    setBusy('save');
+    setError(null);
+    setFieldError(null);
+    actions
+      .setSecretFiles(id, parsePaths(draft))
+      .then((v) => {
+        setView(v);
+        setDraft(v.paths.join('\n'));
+      })
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.field === 'paths') setFieldError(e.message);
+        else setError(message(e));
+      })
+      .finally(() => setBusy(null));
+  };
+  const homes = [...(project.homes ?? [])]
+    .filter((h) => h.state === 'ready')
+    .sort((a, b) => a.position - b.position)
+    .map((h) => ({
+      station_id: h.station_id,
+      name: stationName(h.station_id, stations),
+      path: h.path ?? '',
+    }));
+  // One read of a folder. A newer read makes the answer of an older one useless.
+  const load = (station: string, dir: string, keep: SecretBrowseAnswer | null) => {
+    const mine = ++turn.current;
+    setBrowse({ station, answer: keep, error: null, busy: true });
+    actions.browseSecretFiles(id, station, dir).then(
+      (answer) => {
+        if (mine === turn.current) setBrowse({ station, answer, error: null, busy: false });
+      },
+      (e: unknown) => {
+        if (mine === turn.current) {
+          setBrowse({ station, answer: keep, error: message(e), busy: false });
+        }
+      },
+    );
+  };
+  const toggleBrowse = () => {
+    if (browse !== null) {
+      turn.current += 1;
+      setBrowse(null);
+      return;
+    }
+    const first = homes[0];
+    if (first !== undefined) load(first.station_id, '', null);
+  };
+  const sync = () => {
+    if (busy !== null) return;
+    setBusy('sync');
+    setError(null);
+    actions
+      .syncSecretFiles(id)
+      .then((report) => setView((cur) => (cur === null ? cur : { ...cur, files: report.files })))
+      .catch((e: unknown) => setError(message(e)))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <section className="fd-panel fd-int-secrets" aria-label="Secret files">
+      <h3 className="fd-label">Secret files</h3>
+      <p className="fd-note">
+        Files that Git ignores, such as .env, copied between the homes of this project. The newest
+        copy wins; the replaced copy is kept on its station.
+      </p>
+      {view === null ? (
+        loadError === null ? (
+          <p role="status" className="fd-note">
+            Loading…
+          </p>
+        ) : (
+          <p role="alert" className="fd-formerror">
+            {loadError}
+          </p>
+        )
+      ) : (
+        <SecretFilesBody
+          project={project}
+          stations={stations}
+          view={view}
+          draft={draft}
+          busy={busy}
+          error={error}
+          fieldError={fieldError}
+          onDraft={setDraft}
+          onSave={save}
+          onSync={sync}
+          onBrowse={toggleBrowse}
+          browser={
+            browse === null ? null : (
+              <SecretBrowser
+                homes={homes}
+                station={browse.station}
+                answer={browse.answer}
+                error={browse.error}
+                busy={browse.busy}
+                draft={draft}
+                onStation={(station) => load(station, '', null)}
+                onDir={(dir) => load(browse.station, dir, browse.answer)}
+                onAdd={(path) => setDraft(appendPath(draft, path))}
+                onClose={() => {
+                  turn.current += 1;
+                  setBrowse(null);
+                }}
+              />
+            )
+          }
+        />
+      )}
+    </section>
+  );
+}

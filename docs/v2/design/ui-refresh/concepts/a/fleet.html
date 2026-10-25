@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet · Fleet Deck</title>
+<script>
+  const q = new URLSearchParams(location.search).get('theme');
+  if (q === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wdth,wght@0,75..125,200..900&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- rail -->
+  <nav class="rail" aria-label="Main">
+    <div class="logo" aria-label="Fleet Deck">FD</div>
+    <a href="#" class="rb on" data-tip="Fleet" aria-current="page"><i data-lucide="layout-grid"></i><span class="pip"></span></a>
+    <a href="#" class="rb" data-tip="Watch"><i data-lucide="eye"></i></a>
+    <a href="#" class="rb" data-tip="Activity"><i data-lucide="activity"></i></a>
+    <a href="#" class="rb" data-tip="Stations"><i data-lucide="server"></i></a>
+    <a href="#" class="rb" data-tip="Plans"><i data-lucide="file-text"></i></a>
+    <a href="#" class="rb" data-tip="Automations"><i data-lucide="repeat"></i></a>
+    <a href="#" class="rb" data-tip="Artifacts"><i data-lucide="boxes"></i></a>
+    <a href="#" class="rb" data-tip="Projects"><i data-lucide="folder-kanban"></i></a>
+    <a href="#" class="rb" data-tip="Files"><i data-lucide="folder"></i></a>
+    <a href="#" class="rb" data-tip="Shares"><i data-lucide="share-2"></i></a>
+    <a href="#" class="rb" data-tip="Terminals"><i data-lucide="square-terminal"></i></a>
+    <div class="grow"></div>
+    <a href="#" class="rb" data-tip="Settings"><i data-lucide="settings"></i></a>
+    <a href="#" class="rb" data-tip="Theme"><i data-lucide="sun-moon"></i></a>
+    <div class="avatar" title="Account">LM</div>
+  </nav>
+
+  <!-- bay: compact strips -->
+  <aside class="side" aria-label="Sessions">
+    <div class="side-top">
+      <span class="brand wide">Fleet Deck</span>
+      <span class="live"><i class="dot g"></i>Live</span>
+    </div>
+    <div class="field"><i data-lucide="search"></i><span>Jump to…</span><kbd><i data-lucide="command"></i>K</kbd></div>
+    <button class="btn solid block"><i data-lucide="plus"></i>New session<kbd style="margin-left:auto">N</kbd></button>
+
+    <div class="side-list">
+      <div class="grp" style="margin-top:20px">
+        <div class="grp-h"><b class="wide">Needs you</b><span class="count">2</span></div>
+        <div class="cstrip"><i class="hold h-y"></i><div class="cb"><div class="l1"><span class="cs">otter-n1rr</span><span class="when y">2 min</span></div><div class="l2">Fix flaky shim test</div></div></div>
+        <div class="cstrip"><i class="hold h-y"></i><div class="cb"><div class="l1"><span class="cs">kite-x81d</span><span class="when y">6 min</span></div><div class="l2">Stripe webhooks</div></div></div>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><b class="wide">Lighting</b><span class="n">2</span></div>
+        <div class="cstrip"><i class="hold h-g"></i><div class="cb"><div class="l1"><span class="cs">falcon-vf9n</span><span class="when">14 min</span></div><div class="l2">Fleet Deck UI</div></div></div>
+        <div class="cstrip"><i class="hold h-i"></i><div class="cb"><div class="l1"><span class="cs">heron-mc2q</span><span class="when">2 h</span></div><div class="l2">Omarchy integration docs</div></div></div>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><b class="wide">dev1</b><span class="n">1</span></div>
+        <div class="cstrip"><i class="hold h-g"></i><div class="cb"><div class="l1"><span class="cs">lynx-4kq2</span><span class="when">38 min</span></div><div class="l2">Rannoch checkout flow</div></div></div>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><b class="wide">mac-m4</b><span class="n">1</span></div>
+        <div class="cstrip"><i class="hold h-g"></i><div class="cb"><div class="l1"><span class="cs">wren-77ta</span><span class="when">9 min</span></div><div class="l2">Journzy iOS build</div></div></div>
+        <div class="more-row"><i data-lucide="chevron-right"></i>1 ended</div>
+      </div>
+    </div>
+
+    <div class="side-foot"><i data-lucide="server"></i><span>3 stations online</span></div>
+  </aside>
+
+  <!-- main -->
+  <main class="main">
+    <header class="page-h">
+      <div>
+        <h1 class="page-t wide">Fleet</h1>
+        <p class="page-s">7 sessions on 3 stations. <b>2 need you.</b></p>
+      </div>
+      <div class="seg" role="tablist" aria-label="Filter">
+        <button class="on">All</button><button>Working</button><button>Idle</button>
+      </div>
+    </header>
+
+    <section class="needs" aria-label="Needs you">
+      <div class="needs-h">
+        <b class="wide">Needs you</b><span class="count">2</span>
+        <div class="hints">
+          <span><span class="pair"><kbd>[</kbd><kbd>]</kbd></span>Move</span>
+          <span><kbd>a</kbd>Allow</span>
+          <span><kbd>d</kbd>Deny</span>
+        </div>
+      </div>
+
+      <article class="req">
+        <i class="hold h-y"></i>
+        <div>
+          <div class="req-top">
+            <div class="cell c1"><span class="cs">otter-n1rr</span><span class="model">Sonnet 5.5</span></div>
+            <div class="cell t"><span class="ttl"><span>Fix flaky shim test</span></span><span class="now y"><i data-lucide="shield-alert"></i><span>Permission for Bash</span></span></div>
+            <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>fleet-sync</span></span><span class="st">Lighting</span></div>
+            <div class="cell age y"><b>2 min</b><span class="sub">waiting</span></div>
+          </div>
+          <div class="req-act">
+            <code class="cmd">cargo nextest run -p fleetdeck-station -E 'test(shim)'</code>
+            <button class="btn yellow tight">Allow<kbd>a</kbd></button>
+            <button class="btn neutral tight">For session</button>
+            <button class="btn ghost danger tight">Deny<kbd>d</kbd></button>
+          </div>
+        </div>
+      </article>
+
+      <article class="req">
+        <i class="hold h-y"></i>
+        <div>
+          <div class="req-top">
+            <div class="cell c1"><span class="cs">kite-x81d</span><span class="model">GPT-6.1 Codex</span></div>
+            <div class="cell t"><span class="ttl"><span>Stripe webhooks</span></span><span class="now y"><i data-lucide="message-circle-question"></i><span>Question</span></span></div>
+            <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>rannoch/webhooks</span></span><span class="st">dev1</span></div>
+            <div class="cell age y"><b>6 min</b><span class="sub">waiting</span></div>
+          </div>
+          <div class="req-act">
+            <span class="ask"><span>Use the test key or the live key for the webhook secret?</span></span>
+            <button class="btn neutral tight">Test key</button>
+            <button class="btn neutral tight">Live key</button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- bay: Lighting -->
+    <section class="bay">
+      <div class="bay-h">
+        <h2 class="nm wide">Lighting</h2>
+        <span class="pf">Linux · x86_64</span>
+        <span class="state"><i class="dot g"></i>online</span>
+        <span class="slots"><span class="ticks" aria-hidden="true"><i class="y"></i><i class="g"></i><i class="n"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>3 of 12</span>
+      </div>
+      <div class="bay-list">
+        <article class="strip work">
+          <i class="hold h-g"></i>
+          <div class="cell c1"><span class="cs">falcon-vf9n</span><span class="model">Opus 5.5</span></div>
+          <div class="cell t"><span class="ttl"><span>Fleet Deck UI</span></span><span class="now"><span>Designing the new board: concept briefs</span></span></div>
+          <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>ui-refresh</span></span><span class="st">Lighting</span></div>
+          <div class="cell chg"><span class="chg-n"><span class="a">+412</span> <span class="d">−0</span></span><span class="chg-f">3 files</span></div>
+          <div class="cell age"><span>14 min</span></div>
+        </article>
+        <article class="strip">
+          <i class="hold h-i"></i>
+          <div class="cell c1"><span class="cs">heron-mc2q</span><span class="model">GPT-6.1 Codex</span></div>
+          <div class="cell t"><span class="ttl"><span>Omarchy integration docs</span></span><span class="now"><span>The docs build passes. Next?</span></span></div>
+          <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>docs/omarchy-integration</span></span><span class="st">Lighting</span></div>
+          <div class="cell chg"><span class="chg-n"><span class="a">+260</span> <span class="d">−31</span></span><span class="chg-f">4 files</span></div>
+          <div class="cell age"><span>2 h</span></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- bay: dev1 -->
+    <section class="bay">
+      <div class="bay-h">
+        <h2 class="nm wide">dev1</h2>
+        <span class="pf">Omarchy · x86_64</span>
+        <span class="state"><i class="dot g"></i>online</span>
+        <span class="slots"><span class="ticks" aria-hidden="true"><i class="y"></i><i class="g"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>2 of 12</span>
+      </div>
+      <div class="bay-list">
+        <article class="strip work">
+          <i class="hold h-g"></i>
+          <div class="cell c1"><span class="cs">lynx-4kq2</span><span class="model">Opus 5.5</span></div>
+          <div class="cell t"><span class="ttl"><span>Rannoch checkout flow</span><span class="chip"><i data-lucide="workflow"></i>2 subagents</span></span><span class="now"><i data-lucide="pencil-line"></i><b>Edit</b><code>src/checkout/cart.ts</code></span></div>
+          <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>rannoch/checkout</span></span><span class="st">dev1<span class="chip"><i data-lucide="git-pull-request"></i>PR #128</span></span></div>
+          <div class="cell chg"><span class="chg-n"><span class="a">+142</span> <span class="d">−37</span></span><span class="chg-f">6 files</span></div>
+          <div class="cell age"><span>38 min</span></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- bay: mac-m4 -->
+    <section class="bay">
+      <div class="bay-h">
+        <h2 class="nm wide">mac-m4</h2>
+        <span class="pf">macOS · arm64</span>
+        <span class="state"><i class="dot g"></i>online</span>
+        <span class="slots"><span class="ticks" aria-hidden="true"><i class="g"></i><i class="e"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>2 of 12</span>
+      </div>
+      <div class="bay-list">
+        <article class="strip work">
+          <i class="hold h-g"></i>
+          <div class="cell c1"><span class="cs">wren-77ta</span><span class="model">Sonnet 5.5</span></div>
+          <div class="cell t"><span class="ttl"><span>Journzy iOS build</span></span><span class="now"><i data-lucide="terminal"></i><b>Bash</b><code>xcodebuild -scheme Journzy test</code></span></div>
+          <div class="cell where"><span class="br"><i data-lucide="git-branch"></i><span>journzy/ios-ci</span></span><span class="st">mac-m4</span></div>
+          <div class="cell chg"><span class="chg-n"><span class="a">+18</span> <span class="d">−4</span></span><span class="chg-f">2 files</span></div>
+          <div class="cell age"><span>9 min</span></div>
+        </article>
+      </div>
+      <div class="ended"><i data-lucide="chevron-right"></i><span class="ring"></span>1 ended</div>
+    </section>
+  </main>
+
+  <!-- ops -->
+  <aside class="ops" aria-label="Operations">
+    <section>
+      <h3 class="wide"><i data-lucide="fuel" class="p"></i>Fuel</h3>
+      <div class="meter">
+        <div class="row"><span class="l">Claude<span>5-hour window</span></span><b class="p">62%</b></div>
+        <div class="bar"><i style="width:62%"></i></div>
+        <div class="note">Resets in 1 h 48 min</div>
+      </div>
+      <div class="meter">
+        <div class="row"><span class="l">Claude<span>weekly</span></span><b class="p">31%</b></div>
+        <div class="bar"><i style="width:31%"></i></div>
+        <div class="note">Resets Mon</div>
+      </div>
+      <div class="meter">
+        <div class="row"><span class="l">Codex<span>5-hour window</span></span><b class="p">18%</b></div>
+        <div class="bar"><i style="width:18%"></i></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>4.2 M</b><span>input tokens</span></div>
+        <div class="stat"><b>610 k</b><span>output tokens</span></div>
+        <div class="stat"><b>$38.40</b><span>today</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h3 class="wide"><i data-lucide="radar" class="r"></i>Radar<span class="end r">1 conflict</span></h3>
+      <div class="radar">
+        <i class="hold h-r"></i>
+        <div class="rb2">
+          <code>web/src/styles/tokens.css</code>
+          <span class="why">Both changed it in the last hour</span>
+          <div class="rwho"><i class="dot g"></i><span class="cs">falcon-vf9n</span><span>Fleet Deck UI</span></div>
+          <div class="rwho"><i class="dot"></i><span class="cs">heron-mc2q</span><span>Omarchy integration docs</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section style="border-bottom:0;margin-bottom:0;padding-bottom:0">
+      <h3 class="wide">Mail &amp; tasks</h3>
+      <div class="item"><span class="ic"><i data-lucide="mail"></i></span><span class="tx"><b>1 mail waiting</b><span>For delivery to heron-mc2q</span></span></div>
+      <div class="item"><span class="ic"><i data-lucide="list-checks"></i></span><span class="tx"><b>Add webhook retry tests</b><span>Assigned to kite-x81d, open</span></span></div>
+    </section>
+
+    <div class="ops-actions">
+      <button class="btn ghost sm"><i data-lucide="activity"></i>Activity</button>
+      <button class="btn ghost sm"><i data-lucide="send"></i>Assign</button>
+    </div>
+  </aside>
+</div>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>

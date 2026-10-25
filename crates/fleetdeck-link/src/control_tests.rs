@@ -1,0 +1,704 @@
+//! Control channel tests over in-memory WebSocket pairs. The paused tokio
+//! clock is the injected clock of the heartbeat and limit tests (G8).
+
+use std::time::Duration;
+
+use fleetdeck_core::identity::Identity;
+use fleetdeck_proto::IncarnationId;
+use fleetdeck_proto::link::{ControlFrame, Outcome, Scope, WireError};
+use fleetdeck_proto::version::{Negotiated, PROTO_MAX, feature};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
+use tokio::io::DuplexStream;
+use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::Role as WsRole;
+
+use super::*;
+use crate::hello::Channel;
+use crate::ws::ws_config;
+
+type Raw = WebSocketStream<DuplexStream>;
+
+async fn ws_pair(buffer: usize) -> (Raw, Raw) {
+    let (a, b) = tokio::io::duplex(buffer);
+    let cfg = Some(ws_config(Channel::Control));
+    let a = WebSocketStream::from_raw_socket(a, WsRole::Client, cfg).await;
+    let b = WebSocketStream::from_raw_socket(b, WsRole::Server, cfg).await;
+    (a, b)
+}
+
+fn negotiated(features: &[&str]) -> Negotiated {
+    Negotiated {
+        version: PROTO_MAX,
+        features: features.iter().map(|f| (*f).to_owned()).collect(),
+    }
+}
+
+fn other(role: Role) -> Role {
+    match role {
+        Role::Deck => Role::Station,
+        Role::Station => Role::Deck,
+    }
+}
+
+struct Side {
+    control: Control,
+    inbound: mpsc::Receiver<Inbound>,
+    grants: Arc<Grants>,
+    peer: Fingerprint,
+    /// The link table's signal for this side.
+    table: watch::Sender<Option<Closing>>,
+}
+
+fn side(ws: Raw, local: Role, features: &[&str], config: ControlConfig) -> Side {
+    let peer = Identity::generate().unwrap().fingerprint();
+    let grants = Grants::new();
+    let params = ChannelParams {
+        local,
+        peer_role: other(local),
+        peer,
+        negotiated: negotiated(features),
+        local_desktop_epoch: None,
+        peer_desktop_epoch: None,
+        grants: Arc::clone(&grants) as Arc<dyn GrantSource>,
+        config,
+    };
+    let (table, closing) = watch::channel(None);
+    let (control, inbound) = spawn(ws, params, closing, None);
+    Side {
+        control,
+        inbound,
+        grants,
+        peer,
+        table,
+    }
+}
+
+/// A deck and a station control channel over one in-memory socket.
+async fn pair(config: ControlConfig) -> (Side, Side) {
+    let (a, b) = ws_pair(1 << 20).await;
+    let deck = side(a, Role::Deck, feature::ALL, config);
+    let station = side(b, Role::Station, feature::ALL, config);
+    (deck, station)
+}
+
+/// One control channel with role `local`; the test drives the raw peer.
+async fn with_raw(
+    local: Role,
+    features: &[&str],
+    buffer: usize,
+    config: ControlConfig,
+) -> (Side, Raw) {
+    let (a, b) = ws_pair(buffer).await;
+    (side(a, local, features, config), b)
+}
+
+async fn send_raw(raw: &mut Raw, frame: &ControlFrame) {
+    let text = serde_json::to_string(frame).unwrap();
+    raw.send(Message::text(text)).await.unwrap();
+}
+
+/// The next control frame from the channel, skipping heartbeat pings.
+async fn recv_raw(raw: &mut Raw) -> Option<ControlFrame> {
+    loop {
+        match raw.next().await? {
+            Ok(Message::Text(t)) => {
+                let frame: ControlFrame = serde_json::from_str(t.as_str()).unwrap();
+                if !matches!(frame, ControlFrame::Ping { .. }) {
+                    return Some(frame);
+                }
+            }
+            Ok(Message::Close(_)) | Err(_) => return None,
+            Ok(_) => {}
+        }
+    }
+}
+
+fn inc() -> IncarnationId {
+    IncarnationId::from("inc-1".to_owned())
+}
+
+fn cid(n: u32) -> CommandId {
+    CommandId::from(format!("cmd-{n}"))
+}
+
+fn ack(seq: u64) -> ControlFrame {
+    ControlFrame::Ack {
+        incarnation: inc(),
+        station_seq: seq,
+    }
+}
+
+fn snapshot_end(seq: u64) -> ControlFrame {
+    ControlFrame::SnapshotEnd {
+        incarnation: inc(),
+        watermark: seq,
+        coordinator: None,
+    }
+}
+
+fn request(id: u64, method: &str, command_id: Option<CommandId>) -> ControlFrame {
+    ControlFrame::Request {
+        id,
+        command_id,
+        method: method.to_owned(),
+        params: json!({}),
+    }
+}
+
+fn err_code(outcome: &Outcome) -> &str {
+    match outcome {
+        Outcome::Err(WireError { code, .. }) => code,
+        Outcome::Ok(_) => "ok",
+    }
+}
+
+async fn next_request(side: &mut Side) -> InboundRequest {
+    match side.inbound.recv().await {
+        Some(Inbound::Request(r)) => r,
+        other => panic!("expected a request, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn requests_go_both_ways_and_the_receiver_checks_the_scopes_it_granted_now() {
+    let (mut deck, mut station) = pair(ControlConfig::default()).await;
+    station
+        .grants
+        .grant(station.peer, [Scope::Read, Scope::Drive]);
+    deck.grants.grant(deck.peer, [Scope::Coordinate]);
+
+    // deck → station, drive scope granted.
+    let call = {
+        let c = deck.control.clone();
+        tokio::spawn(async move {
+            c.request("session.prompt", Some(&cid(1)), json!({"x": 1}))
+                .await
+        })
+    };
+    let r = next_request(&mut station).await;
+    assert_eq!(
+        (r.method.as_str(), r.spec.scope),
+        ("session.prompt", Scope::Drive)
+    );
+    assert_eq!(r.command_id, Some(cid(1)));
+    station
+        .control
+        .respond(r.id, Outcome::Ok(json!("done")))
+        .await
+        .unwrap();
+    assert_eq!(call.await.unwrap().unwrap(), Outcome::Ok(json!("done")));
+    assert!(
+        station
+            .control
+            .respond(r.id, Outcome::Ok(json!(1)))
+            .await
+            .is_err(),
+        "answered twice"
+    );
+
+    // The station refuses a scope it did not grant; the application sees nothing.
+    let o = deck
+        .control
+        .request("approval.answer", Some(&cid(2)), json!({}))
+        .await
+        .unwrap();
+    assert_eq!(err_code(&o), "forbidden");
+
+    // station → deck.
+    let call = {
+        let c = station.control.clone();
+        tokio::spawn(async move { c.request("coordinator.query", None, json!({})).await })
+    };
+    let r = next_request(&mut deck).await;
+    assert_eq!(r.method, "coordinator.query");
+    deck.control
+        .respond(r.id, Outcome::Ok(json!([])))
+        .await
+        .unwrap();
+    assert_eq!(call.await.unwrap().unwrap(), Outcome::Ok(json!([])));
+
+    // Methods of the other role are refused before they are sent.
+    let o = deck
+        .control
+        .request("coordinator.call", Some(&cid(3)), json!({}))
+        .await
+        .unwrap();
+    assert_eq!(err_code(&o), "wrong_role");
+    let o = station
+        .control
+        .request("session.prompt", Some(&cid(4)), json!({}))
+        .await
+        .unwrap();
+    assert_eq!(err_code(&o), "wrong_role");
+    let o = deck
+        .control
+        .request("session.stop", None, json!({}))
+        .await
+        .unwrap();
+    assert_eq!(err_code(&o), "missing_command_id");
+
+    // Stream frames in their fixed directions.
+    station.control.send(snapshot_end(5)).await.unwrap();
+    assert_eq!(
+        deck.inbound.recv().await,
+        Some(Inbound::Frame(Box::new(snapshot_end(5))))
+    );
+    deck.control.send(ack(5)).await.unwrap();
+    assert_eq!(
+        station.inbound.recv().await,
+        Some(Inbound::Frame(Box::new(ack(5))))
+    );
+    assert!(station.control.send(ack(5)).await.is_err());
+    assert!(deck.control.send(snapshot_end(5)).await.is_err());
+    assert!(
+        deck.control
+            .send(ControlFrame::Ping { nonce: 1 })
+            .await
+            .is_err()
+    );
+
+    // A revocation applies to the next request.
+    station.grants.revoke(&station.peer);
+    let o = deck
+        .control
+        .request("station.info", None, json!({}))
+        .await
+        .unwrap();
+    assert_eq!(err_code(&o), "forbidden");
+    assert!(deck.control.ended().is_none() && station.control.ended().is_none());
+}
+
+#[tokio::test]
+async fn a_frame_in_the_wrong_direction_or_without_its_feature_closes_the_link() {
+    let all = feature::ALL;
+    let control_only = &[feature::CONTROL][..];
+    let cases: Vec<(Role, &[&str], Message, &str)> = vec![
+        // A station must not send an ack.
+        (
+            Role::Deck,
+            all,
+            Message::text(serde_json::to_string(&ack(1)).unwrap()),
+            "wrong_role",
+        ),
+        // A deck must not send events or snapshots.
+        (
+            Role::Station,
+            all,
+            Message::text(serde_json::to_string(&snapshot_end(1)).unwrap()),
+            "wrong_role",
+        ),
+        // A snapshot needs snapshots.v1.
+        (
+            Role::Deck,
+            control_only,
+            Message::text(serde_json::to_string(&snapshot_end(1)).unwrap()),
+            "protocol_error",
+        ),
+        // A response to a request that nobody sent.
+        (
+            Role::Deck,
+            all,
+            Message::text(r#"{"type":"response","id":9,"ok":null}"#),
+            "protocol_error",
+        ),
+        (
+            Role::Deck,
+            all,
+            Message::binary(vec![1u8, 2, 3]),
+            "protocol_error",
+        ),
+        (
+            Role::Deck,
+            all,
+            Message::text("{not json"),
+            "protocol_error",
+        ),
+    ];
+    for (i, (local, features, msg, reason)) in cases.into_iter().enumerate() {
+        let (s, mut raw) = with_raw(local, features, 1 << 16, ControlConfig::default()).await;
+        raw.send(msg).await.unwrap();
+        let end = s.control.closed().await;
+        assert_eq!(end.reason, reason, "case {i}: {}", end.detail);
+        match recv_raw(&mut raw).await {
+            Some(ControlFrame::Close { reason: r, .. }) => assert_eq!(r, reason, "case {i}"),
+            other => panic!("case {i}: expected close, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_repeated_open_request_id_closes_the_link() {
+    let (mut s, mut raw) = with_raw(
+        Role::Station,
+        feature::ALL,
+        1 << 16,
+        ControlConfig::default(),
+    )
+    .await;
+    s.grants.grant(s.peer, [Scope::Read]);
+    send_raw(&mut raw, &request(7, "station.info", None)).await;
+    assert_eq!(next_request(&mut s).await.id, 7);
+    send_raw(&mut raw, &request(7, "station.info", None)).await;
+    assert_eq!(s.control.closed().await.reason, "protocol_error");
+}
+
+/// A deck and a station that may call each other: the station granted the
+/// deck `read`, the deck granted the station `coordinate`.
+async fn granted_pair() -> (Side, Side) {
+    let (deck, station) = pair(ControlConfig::default()).await;
+    station.grants.grant(station.peer, [Scope::Read]);
+    deck.grants.grant(deck.peer, [Scope::Coordinate]);
+    (deck, station)
+}
+
+type Call = tokio::task::JoinHandle<Result<Outcome, LinkError>>;
+
+fn call(from: &Side, method: &'static str) -> Call {
+    let c = from.control.clone();
+    tokio::spawn(async move { c.request(method, None, json!({})).await })
+}
+
+/// Receives `n` requests at `side` and keeps them open.
+async fn hold(side: &mut Side, n: usize) -> Vec<InboundRequest> {
+    let mut held = Vec::new();
+    for _ in 0..n {
+        let r = tokio::time::timeout(Duration::from_secs(10), next_request(side));
+        held.push(r.await.expect("a request was not delivered"));
+    }
+    held
+}
+
+#[tokio::test]
+async fn at_most_128_requests_are_open_on_one_link_in_both_directions_together() {
+    // 100 deck → station requests and 28 station → deck requests fill the link.
+    let (mut deck, mut station) = granted_pair().await;
+    let mut calls: Vec<Call> = (0..100).map(|_| call(&deck, "station.info")).collect();
+    let mut at_station = hold(&mut station, 100).await;
+    calls.extend((0..28).map(|_| call(&station, "coordinator.query")));
+    let at_deck = hold(&mut deck, 28).await;
+    for side in [&deck, &station] {
+        assert_eq!(side.control.open_requests(), MAX_OUTSTANDING);
+    }
+
+    // The next request from either side is refused locally and never sent.
+    for (from, method) in [(&deck, "station.info"), (&station, "coordinator.query")] {
+        let o = from.control.request(method, None, json!({})).await.unwrap();
+        assert_eq!(err_code(&o), "too_many_requests");
+    }
+    assert!(deck.inbound.try_recv().is_err() && station.inbound.try_recv().is_err());
+
+    // An answer in one direction frees a slot for the other direction.
+    let first = at_station.remove(0);
+    station
+        .control
+        .respond(first.id, Outcome::Ok(json!(null)))
+        .await
+        .unwrap();
+    let freed = calls.remove(0);
+    assert_eq!(freed.await.unwrap().unwrap(), Outcome::Ok(json!(null)));
+    let extra = call(&station, "coordinator.query");
+    let r = next_request(&mut deck).await;
+    deck.control
+        .respond(r.id, Outcome::Ok(json!(1)))
+        .await
+        .unwrap();
+    assert_eq!(extra.await.unwrap().unwrap(), Outcome::Ok(json!(1)));
+    assert!(deck.control.ended().is_none() && station.control.ended().is_none());
+    drop((at_station, at_deck, calls));
+
+    // A peer that ignores the limit: with 64 own requests open, the 65th
+    // inbound request gets too_many_requests.
+    let (s, mut raw) = with_raw(
+        Role::Station,
+        feature::ALL,
+        1 << 20,
+        ControlConfig::default(),
+    )
+    .await;
+    s.grants.grant(s.peer, [Scope::Read]);
+    let own: Vec<Call> = (0..64).map(|_| call(&s, "coordinator.query")).collect();
+    for _ in 0..64 {
+        assert!(matches!(
+            recv_raw(&mut raw).await,
+            Some(ControlFrame::Request { .. })
+        ));
+    }
+    for id in 1..=65 {
+        send_raw(&mut raw, &request(id, "station.info", None)).await;
+    }
+    match recv_raw(&mut raw).await {
+        Some(ControlFrame::Response { id, outcome }) => {
+            assert_eq!((id, err_code(&outcome)), (65, "too_many_requests"));
+        }
+        other => panic!("expected a response, got {other:?}"),
+    }
+    assert_eq!(
+        (s.control.outstanding(), s.control.open_inbound()),
+        (64, 64)
+    );
+    assert!(s.control.ended().is_none());
+    drop(own);
+}
+
+/// Regression (round 16 review): both sides send at the same moment. Each
+/// side counts what it sent and what it serves, so the requests that both
+/// sides serve together never exceed the link limit.
+#[tokio::test]
+async fn simultaneous_requests_from_both_sides_never_open_more_than_128() {
+    let (mut deck, mut station) = granted_pair().await;
+    let mut calls: Vec<Call> = Vec::new();
+    for _ in 0..MAX_OUTSTANDING {
+        calls.push(call(&deck, "station.info"));
+        calls.push(call(&station, "coordinator.query"));
+    }
+    // Collect what each side serves until every call is served or refused.
+    let mut served = Vec::new();
+    let mut refused = 0;
+    let mut pending: Vec<Call> = calls;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        while let Ok(Inbound::Request(r)) = deck.inbound.try_recv() {
+            served.push((true, r));
+        }
+        while let Ok(Inbound::Request(r)) = station.inbound.try_recv() {
+            served.push((false, r));
+        }
+        let mut still = Vec::new();
+        for c in pending {
+            if c.is_finished() {
+                let o = c.await.unwrap().unwrap();
+                assert_eq!(err_code(&o), "too_many_requests");
+                refused += 1;
+            } else {
+                still.push(c);
+            }
+        }
+        pending = still;
+        assert!(
+            deck.control.open_inbound() + station.control.open_inbound() <= MAX_OUTSTANDING,
+            "both sides serve more than the link limit"
+        );
+        for side in [&deck, &station] {
+            assert!(side.control.open_requests() <= MAX_OUTSTANDING);
+        }
+        if served.len() + refused == 2 * MAX_OUTSTANDING {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "served {} refused {refused}",
+            served.len()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(served.len() <= MAX_OUTSTANDING, "served {}", served.len());
+    assert!(refused >= MAX_OUTSTANDING, "refused {refused}");
+
+    // Every served request can be answered; the link stays open.
+    for (at_deck, r) in served {
+        let side = if at_deck { &deck } else { &station };
+        side.control
+            .respond(r.id, Outcome::Ok(json!(null)))
+            .await
+            .unwrap();
+    }
+    for c in pending {
+        assert_eq!(c.await.unwrap().unwrap(), Outcome::Ok(json!(null)));
+    }
+    assert_eq!(deck.control.open_requests(), 0);
+    assert_eq!(station.control.open_requests(), 0);
+    assert!(deck.control.ended().is_none() && station.control.ended().is_none());
+}
+
+/// Regression: a raw peer sends its request while this node sends its own,
+/// at 127 open requests. Exactly one of the two requests is opened.
+#[tokio::test]
+async fn at_127_open_requests_only_one_of_two_crossing_requests_opens() {
+    let (mut ours_first, mut theirs_first) = (0, 0);
+    for _ in 0..20 {
+        let (mut s, mut raw) = with_raw(
+            Role::Station,
+            feature::ALL,
+            1 << 20,
+            ControlConfig::default(),
+        )
+        .await;
+        s.grants.grant(s.peer, [Scope::Read]);
+        let own: Vec<Call> = (0..64).map(|_| call(&s, "coordinator.query")).collect();
+        for _ in 0..64 {
+            assert!(matches!(
+                recv_raw(&mut raw).await,
+                Some(ControlFrame::Request { .. })
+            ));
+        }
+        for id in 1..=63 {
+            send_raw(&mut raw, &request(id, "station.info", None)).await;
+        }
+        hold(&mut s, 63).await;
+        assert_eq!(s.control.open_requests(), 127);
+
+        // The two requests cross on the wire.
+        let mine = call(&s, "coordinator.query");
+        send_raw(&mut raw, &request(64, "station.info", None)).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !(mine.is_finished() || s.control.outstanding() == 65) {
+            assert!(Instant::now() < deadline, "neither request settled");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        if mine.is_finished() {
+            // The peer's request came first: it opened, ours was refused locally.
+            let o = mine.await.unwrap().unwrap();
+            assert_eq!(err_code(&o), "too_many_requests");
+            let _theirs = next_request(&mut s).await;
+            assert_eq!(
+                (s.control.outstanding(), s.control.open_inbound()),
+                (64, 64)
+            );
+            theirs_first += 1;
+        } else {
+            // Ours went out first: the peer's request is refused.
+            loop {
+                match recv_raw(&mut raw).await {
+                    Some(ControlFrame::Request { .. }) => {}
+                    Some(ControlFrame::Response { id, outcome }) => {
+                        assert_eq!((id, err_code(&outcome)), (64, "too_many_requests"));
+                        break;
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert_eq!(
+                (s.control.outstanding(), s.control.open_inbound()),
+                (65, 63)
+            );
+            ours_first += 1;
+        }
+        assert_eq!(s.control.open_requests(), MAX_OUTSTANDING);
+        assert!(s.control.ended().is_none());
+        drop(own);
+    }
+    // Both orders end with exactly one open request; record which ran.
+    assert_eq!(ours_first + theirs_first, 20);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_blackholed_peer_is_detected_in_less_than_50_seconds() {
+    // The raw peer never reads and never writes.
+    let (s, _raw) = with_raw(Role::Deck, feature::ALL, 1 << 16, ControlConfig::default()).await;
+    let start = Instant::now();
+    let end = s.control.closed().await;
+    let took = start.elapsed();
+    assert_eq!(end.reason, "timeout", "{}", end.detail);
+    assert!(
+        took >= IDLE_LIMIT && took < Duration::from_secs(50),
+        "{took:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_heartbeat_keeps_an_idle_link_with_a_live_peer_open() {
+    let (deck, station) = pair(ControlConfig::default()).await;
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert!(deck.control.ended().is_none(), "{:?}", deck.control.ended());
+    assert!(
+        station.control.ended().is_none(),
+        "{:?}",
+        station.control.ended()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_full_application_queue_does_not_block_supersession() {
+    let config = ControlConfig {
+        queue: 2,
+        ..ControlConfig::default()
+    };
+    let (s, mut raw) = with_raw(Role::Deck, feature::ALL, 1 << 20, config).await;
+    // The application never reads; the station keeps sending.
+    for n in 0..50 {
+        send_raw(&mut raw, &snapshot_end(n)).await;
+    }
+    while s.inbound.len() < 2 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let start = Instant::now();
+    s.table.send_replace(Some(Closing {
+        reason: "superseded".into(),
+        detail: "a newer link".into(),
+    }));
+    let end = s.control.closed().await;
+    assert_eq!(end.reason, "superseded");
+    assert!(start.elapsed() <= CLEANUP_LIMIT, "{:?}", start.elapsed());
+    assert!(
+        matches!(recv_raw(&mut raw).await, Some(ControlFrame::Close { reason, .. }) if reason == "superseded")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_blocked_socket_and_a_full_send_queue_do_not_block_shutdown() {
+    let config = ControlConfig {
+        queue: 4,
+        ..ControlConfig::default()
+    };
+    // A tiny socket buffer that the raw peer never drains.
+    let (s, _raw) = with_raw(Role::Deck, feature::ALL, 256, config).await;
+    let sender = {
+        let c = s.control.clone();
+        tokio::spawn(async move {
+            let mut n = 0;
+            while c.send(ack(n)).await.is_ok() {
+                n += 1;
+            }
+            n
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!sender.is_finished(), "the sender waits for queue capacity");
+    let start = Instant::now();
+    s.control.close("shutdown", "the node stops");
+    let end = s.control.closed().await;
+    assert_eq!(end.reason, "shutdown");
+    assert!(start.elapsed() <= CLEANUP_LIMIT, "{:?}", start.elapsed());
+    let sent = sender.await.unwrap();
+    assert!(sent < 100, "{sent}");
+}
+
+#[tokio::test]
+async fn the_end_of_the_link_fails_open_requests_and_ends_the_inbound_queue() {
+    let (deck, mut station) = pair(ControlConfig::default()).await;
+    station.grants.grant(station.peer, [Scope::Read]);
+    let call = {
+        let c = deck.control.clone();
+        tokio::spawn(async move { c.request("station.info", None, json!({})).await })
+    };
+    next_request(&mut station).await;
+    station.control.close("bye", "the station stops");
+    let err = call.await.unwrap().unwrap_err();
+    assert_eq!(err.reason(), Some("bye"));
+    assert_eq!(deck.control.closed().await.reason, "bye");
+    let mut deck = deck;
+    assert_eq!(deck.inbound.recv().await, None);
+    assert!(
+        deck.control
+            .request("station.info", None, json!({}))
+            .await
+            .is_err()
+    );
+    // Dropping every handle closes the other side's link too.
+    let (deck, station) = pair(ControlConfig::default()).await;
+    drop(deck.control);
+    assert_eq!(station.control.closed().await.reason, "closed");
+}
+
+#[path = "control_cancel_tests.rs"]
+mod cancel;
+
+#[path = "control_rx_tests.rs"]
+mod rx;
+
+#[path = "control_refusal_tests.rs"]
+mod refusal;

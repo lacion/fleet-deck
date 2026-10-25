@@ -37,13 +37,3 @@ body:
       placeholder: I tried grouping by directory, but...
     validations:
       required: false
-  - type: checkboxes
-    id: constraints
-    attributes:
-      label: Design constraints
-      description: Fleet Deck holds a couple of hard lines. Please acknowledge them.
-      options:
-        - label: I understand Fleet Deck adds no runtime dependencies beyond `ws` without prior discussion
-          required: false
-        - label: I understand the daemon core makes zero model/LLM calls, and this proposal keeps it that way
-          required: false

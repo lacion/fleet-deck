@@ -1,0 +1,779 @@
+//! App-server replies and notifications → canonical events (ADR-002 §2.5).
+
+use fleetdeck_proto::event::{
+    BackgroundTask, ExpiredReason, FileChange, InputState, ProviderKind, ProviderRefs, ToolKind,
+    ToolStatus, TurnStatus, Usage,
+};
+use fleetdeck_proto::{Event, NodeId, TurnId};
+use serde_json::Value;
+
+use super::core::{CodexCore, HostRequest, Output, ToolNode};
+use super::truncate;
+
+#[path = "identity.rs"]
+mod identity;
+// `task.updated` from the agent states (B6).
+#[path = "agents.rs"]
+mod agents;
+// The kind and the title of a tool item (moved out of this file in B8).
+#[path = "map_tools.rs"]
+mod map_tools;
+use map_tools::{tool_kind, tool_title};
+// `model/list` and its pages (moved out of this file for the module size rule).
+#[path = "map_models.rs"]
+mod map_models;
+// The app candidate and the app requests (B15).
+#[path = "apps.rs"]
+pub(super) mod apps;
+
+/// Notifications that the core reads but maps to no event. Every other
+/// unknown method counts as an unknown frame, so a new protocol feature
+/// shows up in replay.
+pub const IGNORED_NOTIFICATIONS: &[&str] = &[
+    "thread/status/changed",
+    "thread/name/updated",
+    "thread/archived",
+    "thread/unarchived",
+    "thread/closed",
+    "thread/compacted",
+    "thread/goal/updated",
+    "thread/goal/cleared",
+    "thread/queue/changed",
+    "turn/plan/updated",
+    "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/fileChange/outputDelta",
+    "item/fileChange/patchUpdated",
+    "item/plan/delta",
+    "item/reasoning/summaryPartAdded",
+    "item/mcpToolCall/progress",
+    "account/updated",
+    "account/login/completed",
+    "mcpServer/startupStatus/updated",
+    "mcpServer/oauthLogin/completed",
+    "remoteControl/status/changed",
+    "hook/started",
+    "hook/completed",
+    "app/list/updated",
+    "warning",
+    "configWarning",
+    "deprecationNotice",
+    "model/rerouted",
+    "model/verification",
+];
+
+/// Notifications that map to canonical events (the arms of
+/// `on_notification`); a schema test checks both lists against the vendored
+/// app-server schema.
+pub const HANDLED_NOTIFICATIONS: &[&str] = &[
+    "thread/started",
+    "thread/settings/updated",
+    "turn/started",
+    "turn/completed",
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "serverRequest/resolved",
+    "turn/diff/updated",
+    "thread/tokenUsage/updated",
+    "skills/changed",
+    "error",
+];
+
+/// The longest input summary of a tool call.
+const SUMMARY_CHARS: usize = 200;
+
+pub(super) fn refs(pairs: &[(&str, Option<&str>)]) -> ProviderRefs {
+    pairs
+        .iter()
+        .filter_map(|(k, v)| v.map(|v| ((*k).to_owned(), Value::from(v))))
+        .collect()
+}
+
+pub(super) fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(Value::as_str)
+}
+
+/// Paths named by a `fileChange` item.
+pub(super) fn change_paths(item: &Value) -> Vec<String> {
+    item.get("changes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|c| str_at(c, "path"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The item type of the tool node that the core opens for a
+/// `item/tool/requestUserInput` question; Codex 0.160.0 starts no item for
+/// it (DL-068).
+pub(super) const QUESTION_ITEM: &str = "requestUserInput";
+
+fn change_kind(change: &Value) -> FileChange {
+    match change.pointer("/kind/type").and_then(Value::as_str) {
+        Some("add") => FileChange::Added,
+        Some("delete") => FileChange::Deleted,
+        _ => FileChange::Modified,
+    }
+}
+
+/// Paths of a unified diff (`diff --git a/X b/X`).
+fn diff_paths(diff: &str) -> Vec<String> {
+    diff.lines()
+        .filter_map(|l| l.strip_prefix("diff --git a/"))
+        .filter_map(|l| l.split(" b/").next())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn rpc_error(code: i64, message: String) -> Output {
+    Output::Emit(Event::Error {
+        code: format!("rpc_{code}"),
+        message,
+        retry_at: None,
+    })
+}
+
+impl CodexCore {
+    pub(super) fn on_response(
+        &mut self,
+        id: &Value,
+        result: Result<Value, (i64, String)>,
+    ) -> Vec<Output> {
+        let Some(kind) = id.as_str().and_then(|i| self.host_requests.remove(i)) else {
+            self.unknown_frames += 1;
+            return Vec::new();
+        };
+        match (kind, result) {
+            (HostRequest::Initialize, Ok(r)) => {
+                // `userAgent` is "<client>/<codex version> (...)".
+                self.provider_version = str_at(&r, "userAgent")
+                    .and_then(|ua| ua.split_whitespace().next())
+                    .and_then(|first| first.rsplit('/').next())
+                    .map(str::to_owned);
+                self.initialized = true;
+                vec![Output::Write(super::rpc::notification("initialized"))]
+            }
+            (
+                HostRequest::ThreadStart | HostRequest::ThreadResume | HostRequest::ThreadFork,
+                Ok(r),
+            ) => self.on_thread(&r),
+            (HostRequest::TurnStart { input_id, effort }, Ok(r)) => {
+                self.on_turn_accepted(&input_id, effort, &r)
+            }
+            (HostRequest::TurnSteer { input_id }, Ok(_)) => {
+                let turn = self.turn.clone();
+                self.set_input_state(&input_id, InputState::Received, turn)
+            }
+            (HostRequest::TurnStart { input_id, effort }, Err((code, message))) => {
+                self.turn_requested = false;
+                self.turn_input = None;
+                let mut out = self.set_input_state(&input_id, InputState::Refused, None);
+                out.push(rpc_error(code, message));
+                out.extend(self.refuse_held_interrupt("the turn did not start"));
+                out.extend(self.on_turn_refused_effort(effort));
+                out.extend(self.dispatch_follow_up());
+                out
+            }
+            (HostRequest::TurnSteer { input_id }, Err((code, message))) => {
+                let mut out = self.set_input_state(&input_id, InputState::Refused, None);
+                out.push(rpc_error(code, message));
+                out
+            }
+            (HostRequest::Interrupt(control_id), result) => {
+                let accepted = result.is_ok();
+                if !accepted {
+                    // A refused interrupt does not interrupt the turn.
+                    self.interrupt_requested = false;
+                }
+                vec![Output::Emit(Event::InterruptResult {
+                    control_id,
+                    accepted,
+                    message: result.err().map(|(_, m)| m),
+                })]
+            }
+            (HostRequest::BackgroundList, Ok(r)) => {
+                let tasks: Vec<BackgroundTask> = r
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| str_at(t, "processId"))
+                    .map(|id| BackgroundTask {
+                        task_id: id.to_owned(),
+                        task_kind: "background_terminal".to_owned(),
+                    })
+                    .collect();
+                if tasks == self.background {
+                    return Vec::new();
+                }
+                self.background.clone_from(&tasks);
+                vec![Output::Emit(Event::BackgroundUpdated { tasks })]
+            }
+            (HostRequest::Rollback, result) => self.on_rollback(result),
+            (HostRequest::ShellCommand { .. }, Ok(_)) => Vec::new(),
+            (HostRequest::ShellCommand { .. }, Err((code, message))) => {
+                self.shell_refused(code, &message)
+            }
+            (HostRequest::ModelList { pages, models }, Ok(r)) => {
+                self.on_model_list(pages, models, &r)
+            }
+            // The board shows no model selector; the session goes on.
+            (HostRequest::ModelList { .. }, Err(_)) => Vec::new(),
+            (HostRequest::SkillCatalog, Ok(r)) => self.on_skill_catalog(&r),
+            // A failed skill list is no session error (B11).
+            (HostRequest::SkillCatalog, Err(_)) => Vec::new(),
+            (_, Err((code, message))) => vec![rpc_error(code, message)],
+        }
+    }
+
+    fn on_thread(&mut self, r: &Value) -> Vec<Output> {
+        let thread = r.get("thread").cloned().unwrap_or_default();
+        self.thread_id = str_at(&thread, "id").map(str::to_owned);
+        let model = str_at(r, "model")
+            .or_else(|| str_at(&thread, "model"))
+            .map(str::to_owned);
+        self.thread_model.clone_from(&model);
+        let cwd = self
+            .spec
+            .cwd
+            .clone()
+            .unwrap_or_else(|| self.config.cwd.clone());
+        // The first root identity (DL-194 §9.9); after `session.started`, so
+        // that the event stays the first output of the answer.
+        let identity = self
+            .thread_id
+            .clone()
+            .map(|native_id| Output::NativeIdentity { native_id });
+        let started = Output::Emit(Event::SessionStarted {
+            provider: ProviderKind::Codex,
+            provider_instance: self.config.provider_instance.clone(),
+            provider_version: self.provider_version.clone(),
+            model,
+            cwd,
+            mode: self.mode(),
+            capabilities: Box::new(self.config.capabilities.clone()),
+            resumed: self.config.resumed,
+            provider_refs: refs(&[("thread_id", self.thread_id.as_deref())]),
+            title: None,
+            branch: None,
+            repo: None,
+        });
+        let mut out = vec![started];
+        out.extend(identity);
+        out.extend(self.effort_of_thread_answer(r));
+        if self.config.request_models {
+            out.push(self.model_list(0, Vec::new(), None));
+            out.push(self.skill_catalog());
+        }
+        out
+    }
+
+    fn on_turn_accepted(
+        &mut self,
+        input_id: &fleetdeck_proto::InputId,
+        effort: Option<super::core::EffortPick>,
+        r: &Value,
+    ) -> Vec<Output> {
+        self.turn_requested = false;
+        let mut out = Vec::new();
+        if let Some(m) = self.pending_mode.take() {
+            let name = m.name();
+            self.mode = Some(m);
+            out.push(Output::Emit(Event::ModeChanged { mode: name }));
+        }
+        if let Some(model) = self.pending_model.take() {
+            self.thread_model = Some(model.clone());
+            out.push(Output::Emit(Event::ModelChanged { model }));
+        }
+        out.extend(self.on_turn_effort(effort));
+        if let Some(native) = r.pointer("/turn/id").and_then(Value::as_str) {
+            out.extend(self.ensure_turn(native));
+        }
+        // Accepted, not confirmed: the reply names the turn that will consume
+        // the input; `Started` needs the input's own `userMessage` item.
+        let turn = self.turn.clone();
+        out.extend(self.set_input_state(input_id, InputState::Received, turn));
+        out
+    }
+
+    /// `turn/started` of the own thread: the turn runs, so a held interrupt
+    /// can go out now (trap 3).
+    fn on_turn_started(&mut self, native: &str) -> Vec<Output> {
+        if let Some(usage) = self.usage.as_mut() {
+            usage.turn_seen = true;
+        }
+        let mut out = self.ensure_turn(native);
+        if self.native_turn.as_deref() != Some(native) {
+            return out;
+        }
+        self.native_started = true;
+        if let Some(control_id) = self.interrupt_pending.clone()
+            && let Some(thread) = self.thread_id.clone()
+        {
+            out.extend(self.send_interrupt(&thread, native, control_id));
+        }
+        out
+    }
+
+    pub(super) fn on_notification(&mut self, method: &str, p: &Value) -> Vec<Output> {
+        match method {
+            // A sub-agent runs its own turns on a child thread; they never
+            // start, replace or end the session's turn (B6: they report).
+            "turn/started" | "turn/completed" if !self.own_thread(p) => {
+                self.on_child_turn(method, p)
+            }
+            "turn/started" => match p.pointer("/turn/id").and_then(Value::as_str) {
+                Some(native) => self.on_turn_started(native),
+                None => Vec::new(),
+            },
+            "turn/completed" => self.on_turn_completed(p),
+            "item/started" => self.on_item(p, false),
+            "item/completed" => self.on_item(p, true),
+            "item/agentMessage/delta" => self.delta(p, false),
+            "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => self.delta(p, true),
+            "serverRequest/resolved" => self.on_resolved(p),
+            "turn/diff/updated" => self.on_diff(p),
+            // The skill list changed: ask again, once the thread is open (B11).
+            "skills/changed" => {
+                if self.config.request_models && self.thread_id.is_some() {
+                    vec![self.skill_catalog()]
+                } else {
+                    Vec::new()
+                }
+            }
+            // A root thread statement; a sub-agent thread states nothing.
+            "thread/started" => identity::root_thread_id(p)
+                .map(|native_id| Output::NativeIdentity { native_id })
+                .into_iter()
+                .collect(),
+            "thread/tokenUsage/updated" => {
+                let own = self.own_thread(p);
+                let thread = str_at(p, "threadId")
+                    .or(self.thread_id.as_deref())
+                    .unwrap_or_default()
+                    .to_owned();
+                let delta = self
+                    .usage
+                    .get_or_insert_with(Default::default)
+                    .delta(&thread, own, p);
+                delta
+                    .map(|d| {
+                        Output::Emit(Event::UsageUpdated {
+                            usage: d.usage(self.thread_model.as_deref()),
+                            rate_limits: Vec::new(),
+                        })
+                    })
+                    .into_iter()
+                    .collect()
+            }
+            "thread/settings/updated" if self.own_thread(p) => self.on_settings_updated(p),
+            "thread/settings/updated" => Vec::new(),
+            "account/rateLimits/updated" => match super::limits::rate_limits(p) {
+                limits if limits.is_empty() => Vec::new(),
+                rate_limits => vec![Output::Emit(Event::UsageUpdated {
+                    usage: Usage::default(),
+                    rate_limits,
+                })],
+            },
+            "error" => {
+                let info = p.pointer("/error/codexErrorInfo");
+                let code = match info.and_then(Value::as_str) {
+                    // Trap 7: usage limits are their own state.
+                    Some("usageLimitExceeded") => "usage_limit".to_owned(),
+                    Some(other) => other.to_owned(),
+                    None => "provider_error".to_owned(),
+                };
+                vec![Output::Emit(Event::Error {
+                    code,
+                    message: p
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    retry_at: None,
+                })]
+            }
+            m if IGNORED_NOTIFICATIONS.contains(&m) => Vec::new(),
+            _ => {
+                self.unknown_frames += 1;
+                Vec::new()
+            }
+        }
+    }
+
+    /// Is this frame about the session's own thread (not a sub-agent thread)?
+    fn own_thread(&self, p: &Value) -> bool {
+        match (str_at(p, "threadId"), self.thread_id.as_deref()) {
+            (Some(t), Some(own)) => t == own,
+            _ => true,
+        }
+    }
+
+    fn delta(&mut self, p: &Value, reasoning: bool) -> Vec<Output> {
+        let (Some(turn_id), Some(text)) = (self.turn.clone(), str_at(p, "delta")) else {
+            return Vec::new();
+        };
+        // Sub-agent deltas stay out: their completed messages carry the text.
+        if !self.own_thread(p) || text.is_empty() {
+            return Vec::new();
+        }
+        let text = text.to_owned();
+        vec![Output::Emit(if reasoning {
+            Event::ReasoningDelta { turn_id, text }
+        } else {
+            Event::MessageDelta {
+                turn_id,
+                parent_node_id: None,
+                text,
+            }
+        })]
+    }
+
+    fn on_item(&mut self, p: &Value, completed: bool) -> Vec<Output> {
+        let item = p.get("item").cloned().unwrap_or_default();
+        let (Some(item_type), Some(item_id)) = (str_at(&item, "type"), str_at(&item, "id")) else {
+            self.unknown_frames += 1;
+            return Vec::new();
+        };
+        // B8: the item of a `!` command is the node `shell-<effect id>`.
+        if item_type == "commandExecution"
+            && let Some(out) = self.shell_item(p, &item, item_id, completed)
+        {
+            return out;
+        }
+        let own = self.own_thread(p);
+        match item_type {
+            "userMessage" if !completed && own => match str_at(&item, "clientId") {
+                Some(client) => {
+                    let turn = self.turn.clone();
+                    let id = fleetdeck_proto::InputId::new(client);
+                    self.set_input_state(&id, InputState::Started, turn)
+                }
+                None => Vec::new(),
+            },
+            "agentMessage" if completed => self.agent_message(p, &item, item_id, own),
+            "plan" if completed && own => match str_at(&item, "text") {
+                Some(text) => vec![Output::Emit(Event::PlanProposed {
+                    plan_id: self.ids.plan(),
+                    turn_id: self.turn.clone(),
+                    markdown: text.to_owned(),
+                })],
+                None => Vec::new(),
+            },
+            t => match tool_kind(t) {
+                Some(_) if completed => self.tool_completed(p, &item, item_id, t),
+                Some(kind) => self.tool_started(p, &item, item_id, t, kind),
+                None => Vec::new(),
+            },
+        }
+    }
+
+    /// A completed agent message. A sub-agent's message belongs to the tool
+    /// call that spawned its thread (D15 child timelines).
+    fn agent_message(&mut self, p: &Value, item: &Value, item_id: &str, own: bool) -> Vec<Output> {
+        let mut out = Vec::new();
+        let parent: Option<NodeId> = if own {
+            None
+        } else {
+            match str_at(p, "threadId").and_then(|t| self.child_threads.get(t)) {
+                Some(node) => Some(node.clone()),
+                // A thread that no tool call named: not this session's.
+                None => return out,
+            }
+        };
+        // An empty commentary message before a tool call carries nothing.
+        if let (Some(turn_id), Some(text)) = (self.turn.clone(), str_at(item, "text"))
+            && !text.is_empty()
+        {
+            out.push(Output::Emit(Event::MessageCompleted {
+                turn_id,
+                parent_node_id: parent,
+                text: text.to_owned(),
+            }));
+        }
+        if own
+            && str_at(item, "delivery") == Some("async")
+            && let Some(qs) = item.get("questions").and_then(Value::as_array)
+        {
+            let qs = qs.clone();
+            out.extend(self.on_async_questions(item_id, &qs));
+        }
+        out
+    }
+
+    pub(super) fn tool_started(
+        &mut self,
+        p: &Value,
+        item: &Value,
+        item_id: &str,
+        item_type: &str,
+        kind: ToolKind,
+    ) -> Vec<Output> {
+        if self.tools.contains_key(item_id) {
+            return Vec::new();
+        }
+        let node_id = NodeId(self.ids.next("node"));
+        let parent_node_id = str_at(p, "threadId")
+            .and_then(|t| self.child_threads.get(t))
+            .cloned();
+        self.link_child_threads(item, item_type, &node_id);
+        let order = self.tool_order();
+        self.tools.insert(
+            item_id.to_owned(),
+            ToolNode {
+                node_id: node_id.clone(),
+                order,
+                item_type: item_type.to_owned(),
+                done: false,
+                denied: false,
+                background: false,
+            },
+        );
+        let (title, input_summary) = tool_title(item, item_type);
+        let mut out = vec![Output::Emit(Event::ToolStarted {
+            node_id: node_id.clone(),
+            parent_node_id,
+            tool_kind: kind,
+            title,
+            input_summary,
+            files: change_paths(item),
+            provider_refs: refs(&[("item_id", Some(item_id)), ("item_type", Some(item_type))]),
+        })];
+        out.extend(self.agent_states(item, &node_id));
+        out
+    }
+
+    fn tool_completed(
+        &mut self,
+        p: &Value,
+        item: &Value,
+        item_id: &str,
+        item_type: &str,
+    ) -> Vec<Output> {
+        let mut out = Vec::new();
+        if !self.tools.contains_key(item_id)
+            && let Some(kind) = tool_kind(item_type)
+        {
+            // A completed item without a started item: start it first.
+            out.extend(self.tool_started(p, item, item_id, item_type, kind));
+        }
+        if let Some(node) = self.tools.get(item_id).map(|n| n.node_id.clone()) {
+            // The event of a state comes before the close of the call.
+            out.extend(self.agent_states(item, &node));
+        }
+        let Some(node) = self.tools.get_mut(item_id) else {
+            return out;
+        };
+        if node.done {
+            return out;
+        }
+        node.done = true;
+        let status = match str_at(item, "status") {
+            Some("declined") => ToolStatus::Denied,
+            Some("failed") => ToolStatus::Failed,
+            _ if node.denied => ToolStatus::Denied,
+            _ => ToolStatus::Ok,
+        };
+        let node_id = node.node_id.clone();
+        // `spawnAgent` names its child thread only in the completed item.
+        self.link_child_threads(item, item_type, &node_id);
+        let files = change_paths(item);
+        if item_type == "fileChange" && status == ToolStatus::Ok {
+            for change in item
+                .get("changes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(path) = str_at(change, "path") {
+                    out.extend(self.file_changed(path, change_kind(change), Some(&node_id)));
+                }
+            }
+        }
+        let exit_code = item
+            .get("exitCode")
+            .and_then(Value::as_i64)
+            .and_then(|c| i32::try_from(c).ok());
+        out.push(Output::Emit(Event::ToolCompleted {
+            node_id: node_id.clone(),
+            status,
+            files,
+            exit_code,
+            provider_refs: ProviderRefs::new(),
+        }));
+        // B15: the candidate of an MCP app comes after the close of its call.
+        if item_type == "mcpToolCall" && self.own_thread(p) {
+            let candidate = apps::candidate(item, &node_id);
+            out.extend(candidate.map(Output::AppCandidate));
+        }
+        out
+    }
+
+    /// A `collabAgentToolCall` names the sub-agent threads it started or waits
+    /// for. Their items get this node as parent. The first parent wins.
+    fn link_child_threads(&mut self, item: &Value, item_type: &str, node_id: &NodeId) {
+        if item_type != "collabAgentToolCall" {
+            return;
+        }
+        for t in item
+            .get("receiverThreadIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            self.child_threads
+                .entry(t.to_owned())
+                .or_insert_with(|| node_id.clone());
+        }
+    }
+
+    /// One `file.changed` per path and turn. `fileChange` items carry absolute
+    /// paths and `turn/diff/updated` carries paths relative to the thread cwd,
+    /// so relative paths are joined with the cwd before the duplicate check.
+    fn file_changed(
+        &mut self,
+        path: &str,
+        change: FileChange,
+        node_id: Option<&NodeId>,
+    ) -> Vec<Output> {
+        let cwd = self
+            .spec
+            .cwd
+            .clone()
+            .unwrap_or_else(|| self.config.cwd.clone());
+        // A path under the cwd counts as absolute; this also holds for a
+        // scrubbed fixture where the cwd is the placeholder `<workdir>`.
+        let path = if !path.starts_with('/') && !path.starts_with(cwd.as_str()) {
+            format!("{}/{path}", cwd.trim_end_matches('/'))
+        } else {
+            path.to_owned()
+        };
+        if self.files_seen.contains(&path) {
+            return Vec::new();
+        }
+        self.files_seen.push(path.clone());
+        vec![Output::Emit(Event::FileChanged {
+            path,
+            change,
+            node_id: node_id.cloned(),
+        })]
+    }
+
+    /// `turn/diff/updated`: keeps the aggregated diff; a path that no
+    /// `fileChange` item reported yet becomes a `file.changed`.
+    fn on_diff(&mut self, p: &Value) -> Vec<Output> {
+        let Some(diff) = str_at(p, "diff") else {
+            return Vec::new();
+        };
+        if !self.own_thread(p) {
+            return Vec::new();
+        }
+        self.turn_diff = Some(diff.to_owned());
+        diff_paths(diff)
+            .iter()
+            .flat_map(|path| self.file_changed(path, FileChange::Modified, None))
+            .collect()
+    }
+
+    fn on_turn_completed(&mut self, p: &Value) -> Vec<Output> {
+        let native = p.pointer("/turn/id").and_then(Value::as_str);
+        if native.is_some() && native != self.native_turn.as_deref() {
+            // Completion of a turn this core never saw start (another client).
+            return Vec::new();
+        }
+        let interrupted = p.pointer("/turn/status").and_then(Value::as_str) == Some("interrupted");
+        let mut out = self.shell_turn_end(interrupted);
+        out.extend(self.expire_open(ExpiredReason::TurnEnded));
+        let status = match p.pointer("/turn/status").and_then(Value::as_str) {
+            Some("completed") => TurnStatus::Done,
+            Some("interrupted") => TurnStatus::Interrupted,
+            _ => TurnStatus::Failed,
+        };
+        if status == TurnStatus::Done {
+            // A command that still runs when the turn completes became a
+            // background terminal. Its `item/completed` arrives later with
+            // the real status, so it stays open; every other tool closes
+            // (trap 6).
+            self.keep_background_commands();
+        }
+        out.extend(self.close_open_tools());
+        if let Some(turn_id) = self.turn.clone() {
+            out.extend(self.settle_inputs(&turn_id, status));
+        }
+        out.extend(self.refuse_held_interrupt("the turn ended first"));
+        out.extend(self.end_turn(status, None));
+        self.native_turn = None;
+        self.native_started = false;
+        self.interrupt_requested = false;
+        out.extend(self.dispatch_follow_up());
+        out
+    }
+
+    /// The inputs that a finished turn consumed end with the turn.
+    fn settle_inputs(&mut self, turn_id: &TurnId, status: TurnStatus) -> Vec<Output> {
+        let consumed: Vec<_> = self
+            .inputs
+            .iter()
+            .filter(|i| i.turn.as_ref() == Some(turn_id))
+            .map(|i| i.id.clone())
+            .collect();
+        let final_state = if status == TurnStatus::Done {
+            InputState::Completed
+        } else {
+            InputState::Cancelled
+        };
+        consumed
+            .iter()
+            .flat_map(|id| self.set_input_state(id, final_state, None))
+            .collect()
+    }
+
+    /// Marks the open `commandExecution` nodes as background work.
+    fn keep_background_commands(&mut self) {
+        for node in self.tools.values_mut() {
+            if !node.done && node.item_type == "commandExecution" {
+                node.background = true;
+            }
+        }
+    }
+
+    /// Closes every open tool that is not background work (trap 6).
+    pub(super) fn close_open_tools(&mut self) -> Vec<Output> {
+        self.close_tools(false)
+    }
+
+    /// Closes every open tool, background work too (the process ended).
+    pub(super) fn close_all_tools(&mut self) -> Vec<Output> {
+        self.close_tools(true)
+    }
+
+    fn close_tools(&mut self, background_too: bool) -> Vec<Output> {
+        let mut open: Vec<&mut ToolNode> = self
+            .tools
+            .values_mut()
+            .filter(|n| !n.done && (background_too || !n.background))
+            .collect();
+        open.sort_by_key(|n| n.order);
+        open.into_iter()
+            .map(|n| {
+                n.done = true;
+                Output::Emit(Event::ToolCompleted {
+                    node_id: n.node_id.clone(),
+                    status: if n.denied {
+                        ToolStatus::Denied
+                    } else {
+                        ToolStatus::Failed
+                    },
+                    files: Vec::new(),
+                    exit_code: None,
+                    provider_refs: ProviderRefs::new(),
+                })
+            })
+            .collect()
+    }
+}

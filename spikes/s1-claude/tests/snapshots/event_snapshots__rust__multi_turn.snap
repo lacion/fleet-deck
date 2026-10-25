@@ -1,0 +1,128 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "eae9e1d6-9a54-404d-b1f3-d0c225735de4"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-492c-8000-54071622843b",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0002-492c-8000-54071622843b"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-492c-8000-54071622843b",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "ok"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "ok"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 42,
+      "cost_usd": 0.00749475
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 42,
+      "cost_usd": 0.00749475
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-492c-8000-54071622843b",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-492c-8001-5407697d7466",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-2",
+    "provider_refs": {
+      "command_uuid": "00000001-0002-492c-8001-5407697d7466",
+      "session_id": "eae9e1d6-9a54-404d-b1f3-d0c225735de4"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-492c-8001-5407697d7466",
+    "turn_id": "turn-2",
+    "state": "started"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-2",
+    "text": "42"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-2",
+    "text": "42"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 58,
+      "cost_usd": 0.011456
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-2",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 58,
+      "cost_usd": 0.011456
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-492c-8001-5407697d7466",
+    "turn_id": "turn-2",
+    "state": "completed"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

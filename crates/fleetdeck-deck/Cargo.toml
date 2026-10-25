@@ -1,0 +1,43 @@
+[package]
+name = "fleetdeck-deck"
+description = "Fleet Deck v2 deck: registry, read model, fleet services, outbox, HTTP and WS API (PLAN §7)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ring = { workspace = true }
+base64 = { workspace = true }
+axum = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+rcgen = { workspace = true, features = ["pem"] }
+rustls = { workspace = true }
+rustls-webpki = { workspace = true }
+x509-parser = "0.18"
+tokio-rustls = { workspace = true }
+argon2 = { workspace = true }
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+fleetdeck-link = { path = "../fleetdeck-link" }
+async-trait = { workspace = true }
+rusqlite = { workspace = true }
+rusqlite_migration = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+rust-embed = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true }
+fleetdeck-station = { path = "../fleetdeck-station" }
+fleetdeck-testkit = { path = "../fleetdeck-testkit" }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

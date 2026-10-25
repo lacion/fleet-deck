@@ -1,0 +1,762 @@
+//! The display principal (R13 §5, DL-201): a read-only browser login for a
+//! wall display.
+//!
+//! - displays: a name, a ceiling (station ids), the owner's switches and an
+//!   optional binding to a desktop;
+//! - display sessions: a random cookie value of which only the SHA-256 hash
+//!   is stored, an idle limit of 30 days and an absolute limit of 90 days (a
+//!   use never moves the absolute limit);
+//! - one-time display links, single use, 5 minutes.
+//!
+//! The pairing by code is in [`super::displays_pairing`]. The store never
+//! holds a plain cookie, link or secret value.
+
+use fleetdeck_core::Secret;
+use fleetdeck_proto::display::{DisplayBinding, DisplayView};
+use fleetdeck_proto::{SessionId, StationId};
+use rusqlite::{Connection, OptionalExtension, params};
+
+use super::auth::{random_token, secret_hash};
+use super::display_directive_schema::invalidate_directive;
+use super::{DeckError, DeckStore, Result, call};
+use crate::knobs::DeckKnobs;
+
+/// A display link is valid for 5 minutes and one use.
+pub const DISPLAY_LINK_TTL_MS: i64 = 5 * 60 * 1000;
+/// The longest display name, in characters.
+pub const MAX_DISPLAY_NAME: usize = 63;
+/// The most stations in a ceiling.
+pub const MAX_CEILING: usize = 64;
+
+pub(super) const SESSION_PREFIX: &str = "fdisp1_";
+const LINK_PREFIX: &str = "fddlink1_";
+
+/// The V24 migration (R13 §5): the display tables. To reverse it, drop the
+/// four tables; no other table changes.
+pub const DISPLAYS_SQL: &str = "
+CREATE TABLE displays (
+    display_id         TEXT    PRIMARY KEY,
+    name               TEXT    NOT NULL,
+    ceiling            TEXT    NOT NULL,
+    show_diffs         INTEGER NOT NULL DEFAULT 0,
+    wake_on_needs_you  INTEGER NOT NULL DEFAULT 1,
+    quiet_hours        TEXT,
+    binding_station    TEXT,
+    binding_monitor    TEXT,
+    created_at         INTEGER NOT NULL,
+    last_seen          INTEGER,
+    revoked_at         INTEGER
+) STRICT;
+
+CREATE TABLE display_sessions (
+    session_hash  TEXT    PRIMARY KEY,
+    display_id    TEXT    NOT NULL,
+    created_at    INTEGER NOT NULL,
+    last_seen     INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE display_links (
+    token_hash  TEXT    PRIMARY KEY,
+    display_id  TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE display_pairings (
+    pairing_id     TEXT    PRIMARY KEY,
+    code           TEXT    NOT NULL,
+    verifier_hash  TEXT,
+    state          TEXT    NOT NULL CHECK (state IN ('pending', 'approved')),
+    source         TEXT    NOT NULL,
+    user_agent     TEXT    NOT NULL,
+    display_id     TEXT,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX display_pairings_code ON display_pairings(code);
+";
+
+/// A valid display login (a display session of a display that is not
+/// revoked).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayLogin {
+    pub session_hash: String,
+    pub display_id: String,
+    pub name: String,
+    pub ceiling: Vec<StationId>,
+}
+
+/// A stored display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayRecord {
+    pub display_id: String,
+    pub name: String,
+    pub ceiling: Vec<StationId>,
+    pub show_diffs: bool,
+    pub wake_on_needs_you: bool,
+    /// B17 wall apps: the wall may run an HTML artifact as an app.
+    pub allow_apps: bool,
+    pub quiet_hours: Option<String>,
+    pub binding: Option<DisplayBinding>,
+    pub created_at: i64,
+    pub last_seen: Option<i64>,
+    /// Fences link redemption, pairing approval, pairing claim and session
+    /// issue (R13 §5E item 2). A replacement and a revoke move it up.
+    pub auth_generation: i64,
+    /// The checked operation revision of a `wall.open` launch and of the
+    /// binding (R13 §6D items 1 and 2).
+    pub binding_revision: i64,
+}
+
+impl DisplayRecord {
+    /// The owner's view of the display.
+    #[must_use]
+    pub fn view(&self) -> DisplayView {
+        DisplayView {
+            display_id: self.display_id.clone(),
+            name: self.name.clone(),
+            ceiling: self.ceiling.clone(),
+            show_diffs: self.show_diffs,
+            wake_on_needs_you: self.wake_on_needs_you,
+            allow_apps: self.allow_apps,
+            quiet_hours: self.quiet_hours.clone(),
+            binding: self.binding.clone(),
+            created_at: self.created_at,
+            last_seen: self.last_seen,
+        }
+    }
+}
+
+/// A new display: what the owner chooses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewDisplay {
+    pub name: String,
+    pub ceiling: Vec<StationId>,
+}
+
+/// A change of the settings of a display. `None`: unchanged. `quiet_hours`
+/// is `Some(None)` to clear it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DisplayChange {
+    pub name: Option<String>,
+    pub ceiling: Option<Vec<StationId>>,
+    pub show_diffs: Option<bool>,
+    pub wake_on_needs_you: Option<bool>,
+    pub allow_apps: Option<bool>,
+    pub quiet_hours: Option<Option<String>>,
+}
+
+/// The answer of [`DeckStore::display_update_checked`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedUpdate {
+    Done(DisplayRecord),
+    /// The display does not exist or is revoked.
+    Unknown,
+    /// The change needs elevation against the row of this moment; nothing
+    /// changed.
+    NeedsElevation,
+}
+
+/// True when `change` gives the display more access than `old`: a station
+/// that the ceiling does not hold, or `show_diffs` or `allow_apps` from off
+/// to on.
+#[must_use]
+pub fn widens(old: &DisplayRecord, change: &DisplayChange) -> bool {
+    change
+        .ceiling
+        .as_ref()
+        .is_some_and(|c| c.iter().any(|s| !old.ceiling.contains(s)))
+        || (change.show_diffs == Some(true) && !old.show_diffs)
+        || (change.allow_apps == Some(true) && !old.allow_apps)
+}
+
+/// Deletes every session, every unused link and every pairing of a display.
+/// The caller holds the transaction.
+pub(super) fn delete_logins(conn: &Connection, display_id: &str) -> Result<()> {
+    for table in ["display_sessions", "display_links", "display_pairings"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE display_id = ?1"),
+            [display_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn invalid(message: &str) -> DeckError {
+    DeckError::Invalid(message.to_owned())
+}
+
+/// A trimmed display name of 1 to [`MAX_DISPLAY_NAME`] characters without a
+/// control character.
+///
+/// # Errors
+/// [`DeckError::Invalid`].
+pub fn clean_name(name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME {
+        return Err(invalid("a display name is 1-63 characters"));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(invalid("a display name has no control character"));
+    }
+    Ok(name.to_owned())
+}
+
+/// `HH:MM-HH:MM` with a valid hour and minute in each part.
+///
+/// # Errors
+/// [`DeckError::Invalid`].
+pub fn check_quiet_hours(text: &str) -> Result<()> {
+    fn part(p: &str) -> bool {
+        let b = p.as_bytes();
+        p.is_ascii()
+            && b.len() == 5
+            && b[2] == b':'
+            && [0, 1, 3, 4].iter().all(|i| b[*i].is_ascii_digit())
+            && p[..2].parse::<u8>().is_ok_and(|h| h < 24)
+            && p[3..].parse::<u8>().is_ok_and(|m| m < 60)
+    }
+    match text.split_once('-') {
+        Some((a, b)) if part(a) && part(b) => Ok(()),
+        _ => Err(invalid("the quiet hours are HH:MM-HH:MM")),
+    }
+}
+
+/// A ceiling of 1 to [`MAX_CEILING`] distinct stations that the deck pairs.
+pub(super) fn check_ceiling(conn: &Connection, ceiling: &[StationId]) -> Result<()> {
+    if ceiling.is_empty() || ceiling.len() > MAX_CEILING {
+        return Err(invalid("a ceiling is 1-64 stations"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ceiling {
+        if !seen.insert(id.as_str()) {
+            return Err(invalid("a ceiling names a station once"));
+        }
+        let known = conn
+            .query_row(
+                "SELECT 1 FROM stations WHERE station_id = ?1",
+                [id.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !known {
+            return Err(invalid("a ceiling names a station that is not paired"));
+        }
+    }
+    Ok(())
+}
+
+fn row_record(r: &rusqlite::Row<'_>) -> rusqlite::Result<(DisplayRecord, String)> {
+    let ceiling: String = r.get(2)?;
+    let station: Option<String> = r.get(6)?;
+    let monitor: Option<String> = r.get(7)?;
+    let binding = station.zip(monitor).map(|(s, m)| DisplayBinding {
+        station_id: StationId::new(s),
+        monitor: m,
+    });
+    Ok((
+        DisplayRecord {
+            display_id: r.get(0)?,
+            name: r.get(1)?,
+            ceiling: Vec::new(),
+            show_diffs: r.get::<_, i64>(3)? != 0,
+            wake_on_needs_you: r.get::<_, i64>(4)? != 0,
+            quiet_hours: r.get(5)?,
+            binding,
+            created_at: r.get(8)?,
+            last_seen: r.get(9)?,
+            auth_generation: r.get(10)?,
+            binding_revision: r.get(11)?,
+            allow_apps: r.get::<_, i64>(12)? != 0,
+        },
+        ceiling,
+    ))
+}
+
+const COLUMNS: &str = "display_id, name, ceiling, show_diffs, wake_on_needs_you, quiet_hours,
+    binding_station, binding_monitor, created_at, last_seen, auth_generation, binding_revision,
+    allow_apps";
+
+fn parse_ceiling(text: &str) -> Result<Vec<StationId>> {
+    let ids: Vec<String> = serde_json::from_str(text)?;
+    Ok(ids.into_iter().map(StationId::new).collect())
+}
+
+fn finish(pair: (DisplayRecord, String)) -> Result<DisplayRecord> {
+    let (mut record, ceiling) = pair;
+    record.ceiling = parse_ceiling(&ceiling)?;
+    Ok(record)
+}
+
+/// A live (not revoked) display.
+pub(super) fn load(conn: &Connection, display_id: &str) -> Result<Option<DisplayRecord>> {
+    conn.query_row(
+        &format!("SELECT {COLUMNS} FROM displays WHERE display_id = ?1 AND revoked_at IS NULL"),
+        [display_id],
+        row_record,
+    )
+    .optional()?
+    .map(finish)
+    .transpose()
+}
+
+/// Inserts a checked display. The caller holds the transaction.
+pub(super) fn insert(
+    conn: &Connection,
+    display_id: &str,
+    new: &NewDisplay,
+    now: i64,
+) -> Result<DisplayRecord> {
+    check_ceiling(conn, &new.ceiling)?;
+    let ids: Vec<&str> = new.ceiling.iter().map(StationId::as_str).collect();
+    conn.execute(
+        "INSERT INTO displays (display_id, name, ceiling, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![display_id, new.name, serde_json::to_string(&ids)?, now],
+    )?;
+    load(conn, display_id)?.ok_or_else(|| DeckError::Corrupt("a new display is missing".to_owned()))
+}
+
+/// A display session is alive: not expired, not older than the current
+/// longest time, not idle (under the current idle limit and under its own
+/// idle deadline), and its display is not revoked. A use refreshes
+/// `last_seen` and `idle_until` of the session and `last_seen` of the
+/// display; `expires_at` never moves, and a failed check changes nothing.
+fn touch_session(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    knobs: &DeckKnobs,
+) -> Result<Option<String>> {
+    let id: Option<String> = conn
+        .query_row(
+            "UPDATE display_sessions SET last_seen = ?2, idle_until = ?5
+             WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
+               AND idle_until > ?2 AND created_at > ?4
+               AND display_id IN (SELECT display_id FROM displays WHERE revoked_at IS NULL)
+               AND auth_generation = (SELECT auth_generation FROM displays
+                                      WHERE displays.display_id = display_sessions.display_id)
+             RETURNING display_id",
+            params![
+                session_hash,
+                now,
+                now - knobs.display_idle_ms,
+                now - knobs.display_max_ms,
+                now + knobs.display_idle_ms
+            ],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = &id {
+        conn.execute(
+            "UPDATE displays SET last_seen = ?2 WHERE display_id = ?1",
+            params![id, now],
+        )?;
+    }
+    Ok(id)
+}
+
+fn login_of(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    knobs: &DeckKnobs,
+) -> Result<Option<DisplayLogin>> {
+    let Some(id) = touch_session(conn, session_hash, now, knobs)? else {
+        return Ok(None);
+    };
+    Ok(load(conn, &id)?.map(|d| DisplayLogin {
+        session_hash: session_hash.to_owned(),
+        display_id: d.display_id,
+        name: d.name,
+        ceiling: d.ceiling,
+    }))
+}
+
+/// True while the display session and its display are valid (a refresh).
+pub(super) fn session_alive(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    knobs: &DeckKnobs,
+) -> Result<bool> {
+    Ok(touch_session(conn, session_hash, now, knobs)?.is_some())
+}
+
+impl DeckStore {
+    /// Checks a new display without writing: the cleaned name and a ceiling
+    /// of paired stations. A route calls it first, so a bad body is a 400
+    /// before the elevation check.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`]; a database error.
+    pub async fn display_validate(&self, new: NewDisplay) -> Result<NewDisplay> {
+        let name = clean_name(&new.name)?;
+        let ceiling = new.ceiling;
+        call(&self.inner.db, move |conn| {
+            check_ceiling(conn, &ceiling)?;
+            Ok(NewDisplay { name, ceiling })
+        })
+        .await
+    }
+
+    /// Checks a ceiling of paired stations without writing.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`]; a database error.
+    pub async fn display_validate_ceiling(&self, ceiling: Vec<StationId>) -> Result<()> {
+        call(&self.inner.db, move |conn| check_ceiling(conn, &ceiling)).await
+    }
+
+    /// Makes a display.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad name or ceiling; a database error.
+    pub async fn create_display(&self, new: NewDisplay) -> Result<DisplayRecord> {
+        let name = clean_name(&new.name)?;
+        let new = NewDisplay { name, ..new };
+        let id: String = fleetdeck_core::ids::new_id(self.inner.ids.as_ref());
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let record = insert(&tx, &id, &new, now)?;
+            tx.commit()?;
+            Ok(record)
+        })
+        .await
+    }
+
+    /// The displays that are not revoked, oldest first.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_list(&self) -> Result<Vec<DisplayRecord>> {
+        call(&self.inner.db, |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {COLUMNS} FROM displays WHERE revoked_at IS NULL
+                 ORDER BY created_at, display_id"
+            ))?;
+            let rows = stmt.query_map([], row_record)?;
+            rows.map(|r| finish(r?)).collect()
+        })
+        .await
+    }
+
+    /// A display that is not revoked.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_get(&self, display_id: String) -> Result<Option<DisplayRecord>> {
+        call(&self.inner.db, move |conn| load(conn, &display_id)).await
+    }
+
+    /// Changes the settings of a display with no elevation check (the caller
+    /// checked it). `None` when it does not exist or is revoked.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad value; a database error.
+    pub async fn display_update(
+        &self,
+        display_id: String,
+        change: DisplayChange,
+    ) -> Result<Option<DisplayRecord>> {
+        Ok(
+            match self
+                .display_update_checked(display_id, change, true)
+                .await?
+            {
+                CheckedUpdate::Done(record) => Some(record),
+                CheckedUpdate::Unknown | CheckedUpdate::NeedsElevation => None,
+            },
+        )
+    }
+
+    /// Changes the settings of a display. The elevation check reads the row
+    /// in the same transaction as the write (B17 §3.4.2): a change that gives
+    /// the display more access than the stored row has (a new station,
+    /// `show_diffs` or `allow_apps` from off to on) needs `elevated`, else
+    /// nothing changes and the answer is [`CheckedUpdate::NeedsElevation`].
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad value; a database error.
+    pub async fn display_update_checked(
+        &self,
+        display_id: String,
+        change: DisplayChange,
+        elevated: bool,
+    ) -> Result<CheckedUpdate> {
+        let name = change.name.as_deref().map(clean_name).transpose()?;
+        if let Some(Some(q)) = &change.quiet_hours {
+            check_quiet_hours(q)?;
+        }
+        let record = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let Some(old) = load(&tx, &display_id)? else {
+                return Ok(CheckedUpdate::Unknown);
+            };
+            if !elevated && widens(&old, &change) {
+                return Ok(CheckedUpdate::NeedsElevation);
+            }
+            if let Some(ceiling) = &change.ceiling {
+                check_ceiling(&tx, ceiling)?;
+            }
+            let ceiling = change.ceiling.as_ref().unwrap_or(&old.ceiling);
+            let ids: Vec<&str> = ceiling.iter().map(StationId::as_str).collect();
+            let quiet = change.quiet_hours.unwrap_or(old.quiet_hours);
+            let allow_apps = change.allow_apps.unwrap_or(old.allow_apps);
+            tx.execute(
+                "UPDATE displays SET name = ?2, ceiling = ?3, show_diffs = ?4,
+                     wake_on_needs_you = ?5, quiet_hours = ?6, allow_apps = ?7
+                 WHERE display_id = ?1",
+                params![
+                    display_id,
+                    name.as_deref().unwrap_or(&old.name),
+                    serde_json::to_string(&ids)?,
+                    i64::from(change.show_diffs.unwrap_or(old.show_diffs)),
+                    i64::from(change.wake_on_needs_you.unwrap_or(old.wake_on_needs_you)),
+                    quiet,
+                    i64::from(allow_apps),
+                ],
+            )?;
+            // A ceiling change deletes the stored directive: the display
+            // returns to `mission` (R13 §5C item 2).
+            // A change of `allow_apps` does the same, in both directions
+            // (B17 §3.4.2).
+            if change.ceiling.as_ref().is_some_and(|c| *c != old.ceiling)
+                || allow_apps != old.allow_apps
+            {
+                invalidate_directive(&tx, &display_id)?;
+            }
+            let record = load(&tx, &display_id)?;
+            tx.commit()?;
+            Ok(record.map_or(CheckedUpdate::Unknown, CheckedUpdate::Done))
+        })
+        .await?;
+        // The sockets of the wall take the new ceiling at once (R13 §5).
+        if matches!(record, CheckedUpdate::Done(_)) {
+            self.board_changed();
+        }
+        Ok(record)
+    }
+
+    /// Revokes a display: its sessions, links and approved pairings go, and
+    /// `revoked_at` is set. False when it does not exist or is revoked
+    /// already.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_revoke(&self, display_id: String) -> Result<bool> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let n = tx.execute(
+                "UPDATE displays SET revoked_at = ?2, auth_generation = auth_generation + 1,
+                     binding_revision = binding_revision + 1,
+                     binding_station = NULL, binding_monitor = NULL
+                 WHERE display_id = ?1 AND revoked_at IS NULL",
+                params![display_id, now],
+            )?;
+            if n == 1 {
+                // A revoke does what a replacement does (R13 §5E item 2).
+                delete_logins(&tx, &display_id)?;
+                invalidate_directive(&tx, &display_id)?;
+            }
+            tx.commit()?;
+            Ok(n == 1)
+        })
+        .await
+    }
+
+    /// Makes a display and its one-time link in one transaction. Returns the
+    /// display, the token and the link expiry.
+    ///
+    /// # Errors
+    /// [`DeckError::Invalid`] for a bad name or ceiling; a database error.
+    pub async fn create_display_with_link(
+        &self,
+        new: NewDisplay,
+    ) -> Result<(DisplayRecord, Secret<String>, i64)> {
+        let name = clean_name(&new.name)?;
+        let new = NewDisplay { name, ..new };
+        let id: String = fleetdeck_core::ids::new_id(self.inner.ids.as_ref());
+        let token = format!("{LINK_PREFIX}{}", random_token()?);
+        let hash = secret_hash(&token);
+        let now = self.now_ms();
+        let expires_at = now + DISPLAY_LINK_TTL_MS;
+        let record = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM display_links WHERE expires_at <= ?1", [now])?;
+            let record = insert(&tx, &id, &new, now)?;
+            tx.execute(
+                "INSERT INTO display_links (token_hash, display_id, created_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![hash, id, now, expires_at],
+            )?;
+            tx.commit()?;
+            Ok(record)
+        })
+        .await?;
+        Ok((record, Secret::new(token), expires_at))
+    }
+
+    /// The display login of a cookie value; refreshes the idle time of the
+    /// session and the last use of the display.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_session(&self, cookie: &Secret<String>) -> Result<Option<DisplayLogin>> {
+        let hash = secret_hash(cookie.expose());
+        let now = self.now_ms();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
+        call(&self.inner.db, move |conn| {
+            login_of(conn, &hash, now, &knobs_now())
+        })
+        .await
+    }
+
+    /// The login again, with the ceiling as it is now. `None` when the
+    /// session or its display ended (an open WebSocket asks).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_refresh(&self, login: &DisplayLogin) -> Result<Option<DisplayLogin>> {
+        let hash = login.session_hash.clone();
+        let now = self.now_ms();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
+        call(&self.inner.db, move |conn| {
+            login_of(conn, &hash, now, &knobs_now())
+        })
+        .await
+    }
+
+    /// True while the display session is alive (not expired, not idle, the
+    /// display not revoked, the same `auth_generation`). Like a login read, a
+    /// use refreshes `last_seen`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_session_alive(&self, session_hash: String) -> Result<bool> {
+        let now = self.now_ms();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
+        call(&self.inner.db, move |conn| {
+            session_alive(conn, &session_hash, now, &knobs_now())
+        })
+        .await
+    }
+
+    /// The absolute expiry of a display session.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_session_expires(&self, session_hash: String) -> Result<Option<i64>> {
+        call(&self.inner.db, move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT expires_at FROM display_sessions WHERE session_hash = ?1",
+                    [session_hash],
+                    |r| r.get(0),
+                )
+                .optional()?)
+        })
+        .await
+    }
+
+    /// Ends one display session. True when it existed.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn end_display_session(&self, session_hash: String) -> Result<bool> {
+        call(&self.inner.db, move |conn| {
+            Ok(conn.execute(
+                "DELETE FROM display_sessions WHERE session_hash = ?1",
+                [session_hash],
+            )? == 1)
+        })
+        .await
+    }
+}
+
+impl DeckStore {
+    /// The sessions that the author session of a wall app started (B17
+    /// §3.4.3): the direct spawn lineage of every grant of the author, in any
+    /// state (a grant that ended does not remove a spawn). A session that a
+    /// child started is not in the set. Rows without a session id are
+    /// dropped; the answer has no duplicates.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_app_lineage(
+        &self,
+        station: StationId,
+        session: SessionId,
+    ) -> Result<Vec<(StationId, SessionId)>> {
+        call(&self.inner.db, move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT l.station_id,
+                        COALESCE(l.session_id, json_extract(c.receipt, '$.result.session_id'))
+                 FROM coordinator_lineage l
+                 JOIN tokens t ON t.grant_id = l.grant_id
+                 LEFT JOIN outbox o ON o.outbox_id = l.start_outbox_id
+                 LEFT JOIN commands c ON c.command_id = o.command_id
+                 WHERE t.station_id = ?1 AND t.session_id = ?2",
+            )?;
+            let rows = stmt.query_map(params![station.as_str(), session.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })?;
+            let mut out: Vec<(StationId, SessionId)> = Vec::new();
+            for row in rows {
+                let (station, session) = row?;
+                let Some(session) = session else { continue };
+                let pair = (StationId::new(station), SessionId::from(session));
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_name_is_trimmed_and_checked() {
+        assert_eq!(clean_name("  Wall  ").unwrap(), "Wall");
+        assert!(clean_name("   ").is_err());
+        assert!(clean_name(&"x".repeat(64)).is_err());
+        assert!(clean_name(&"x".repeat(63)).is_ok());
+        assert!(clean_name("a\nb").is_err());
+    }
+
+    #[test]
+    fn quiet_hours_are_two_clock_times() {
+        for ok in ["22:00-07:30", "00:00-23:59"] {
+            assert!(check_quiet_hours(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "22:00",
+            "24:00-07:00",
+            "22:60-07:00",
+            "2:00-07:00",
+            "22:00-07:0x",
+        ] {
+            assert!(check_quiet_hours(bad).is_err(), "{bad}");
+        }
+    }
+}

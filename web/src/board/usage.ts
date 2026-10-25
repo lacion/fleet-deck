@@ -1,0 +1,362 @@
+// M3 6-9 (DL-303): usage and rate-limit meters. A part that no session
+// reported is "unknown", never zero; a total over sessions with unknown
+// parts says how many sessions it leaves out.
+import type { DeckSession, SessionSummary, StationView, Usage } from '../gen';
+import { countText, usdText } from '../ui/format';
+import { stationName } from './fleet';
+
+/** A fleet total of one usage part. */
+export type UsageTotal = {
+  /** The sum of the known parts; `null` when no session reported one. */
+  readonly known: number | null;
+  /** Sessions that did not report this part. */
+  readonly unknown: number;
+  /** Sessions whose known part is a lower bound (a partial count, or an old count apart). */
+  readonly partial: number;
+};
+
+export type FleetUsage = {
+  readonly input: UsageTotal;
+  readonly output: UsageTotal;
+  readonly cacheRead: UsageTotal;
+  readonly cacheWrite: UsageTotal;
+  readonly cost: UsageTotal;
+  /** A part of `cost` is inferred from a price table (R4.6), not reported. */
+  readonly costInferred: boolean;
+  /** Sessions with an old count that is not in these totals (DL-449). */
+  readonly oldCounts: number;
+};
+
+/** The new-rule usage of a session and its old count (DL-449). */
+export type SplitUsage = {
+  /** The usage counted by the new rules; `null` when the whole total is an old count. */
+  readonly current: Usage | null;
+  /** The old count; `null` when there is none. */
+  readonly old: Usage | null;
+  /** Unix ms: the old count is the usage before it; `null` when the whole total is old. */
+  readonly oldUntil: number | null;
+};
+
+/** Any part of the usage is known (the same rule as `Usage::is_empty` in the protocol). */
+function hasKnownPart(u: Usage): boolean {
+  return [
+    u.input_tokens,
+    u.output_tokens,
+    u.cost_usd,
+    u.cache_read_tokens,
+    u.cache_write_tokens,
+  ].some((v) => v !== null && v !== undefined);
+}
+
+/** Splits the usage of a session into its new-rule usage and its old count (DL-449). */
+export function splitUsage(summary: SessionSummary): SplitUsage {
+  const usage = summary.usage;
+  if (usage.scheme !== undefined) {
+    return {
+      current: usage,
+      old: summary.usage_legacy?.usage ?? null,
+      oldUntil: summary.usage_legacy?.until ?? null,
+    };
+  }
+  if (hasKnownPart(usage)) return { current: null, old: usage, oldUntil: null };
+  return { current: usage, old: null, oldUntil: null };
+}
+
+/** One part of every session; a session without `current` leaves it unknown. */
+function total(
+  sessions: readonly SplitUsage[],
+  part: (u: Usage) => number | null | undefined,
+  partial: (u: Usage) => boolean,
+): UsageTotal {
+  let known: number | null = null;
+  let unknown = 0;
+  let lower = 0;
+  for (const s of sessions) {
+    const value = s.current === null ? null : (part(s.current) ?? null);
+    if (value === null) {
+      unknown += 1;
+      continue;
+    }
+    known = (known ?? 0) + value;
+    if (s.current !== null && (partial(s.current) || s.old !== null)) lower += 1;
+  }
+  return { known, unknown, partial: lower };
+}
+
+/** The usage of the shown sessions, summed per part. Only new-rule usage is summed (DL-449). */
+export function fleetUsage(sessions: readonly DeckSession[]): FleetUsage {
+  const split = sessions.map((s) => splitUsage(s.summary));
+  const tokensPartial = (u: Usage) => u.tokens_partial === true;
+  return {
+    input: total(split, (u) => u.input_tokens, tokensPartial),
+    output: total(split, (u) => u.output_tokens, tokensPartial),
+    cacheRead: total(split, (u) => u.cache_read_tokens, tokensPartial),
+    cacheWrite: total(split, (u) => u.cache_write_tokens, tokensPartial),
+    cost: total(
+      split,
+      (u) => u.cost_usd,
+      (u) => u.cost_partial === true,
+    ),
+    costInferred: split.some(
+      (s) => s.current !== null && s.current.cost_usd !== null && s.current.cost_inferred,
+    ),
+    oldCounts: split.filter((s) => s.old !== null).length,
+  };
+}
+
+/**
+ * The text of a total: "unknown", the sum, or the sum and its gaps: "at least 1,500 (2 sessions
+ * unknown)", "at least 1,500 (1 partial)", "at least 1,500 (2 unknown, 1 partial)".
+ */
+export function totalText(t: UsageTotal, format: (n: number) => string): string {
+  if (t.known === null) return 'unknown';
+  const sum = format(t.known);
+  if (t.unknown === 0 && t.partial === 0) return sum;
+  if (t.partial === 0) {
+    return `at least ${sum} (${t.unknown} ${t.unknown === 1 ? 'session' : 'sessions'} unknown)`;
+  }
+  if (t.unknown === 0) return `at least ${sum} (${t.partial} partial)`;
+  return `at least ${sum} (${t.unknown} unknown, ${t.partial} partial)`;
+}
+
+/** A token count with digit groups ("1,500"): `countText` of ui/format (DESIGN-SYSTEM §5). */
+export const tokens = (n: number): string => countText(n);
+
+/** A cost with digit groups and cents ("$1.20", "$51,735.86"): `usdText` (§5: one format). */
+export const dollars = (n: number): string => usdText(n);
+
+/**
+ * The word of the input token total: "new input", as "output" (one word for one count on every
+ * surface, DESIGN-SYSTEM §1). Both providers count the input that the prompt cache did not hold
+ * (cache reads and writes are other counts), and only new-rule usage is summed (DL-441, DL-449).
+ */
+export const inputLabel = (): string => 'new input';
+
+/**
+ * The name of a session cost on every surface (the ops glance, Properties, the strip): the price
+ * that the provider reports at its API rates. It counts the cached input, which the token totals
+ * leave out, and an owner on a subscription never pays it: "cost" read as money spent.
+ */
+export const API_PRICES = 'at API prices';
+
+/** What a cost at API prices is, for the title of the number: of one session or of the shown ones. */
+export function apiPricesTitle(sessions: number): string {
+  const whose = sessions === 1 ? 'this session' : 'these sessions';
+  return `What the tokens of ${whose} cost at the provider's API prices, cached input included. A subscription does not bill it.`;
+}
+
+/**
+ * The cost of one session: "$1.20", or "≈ $1.20 inferred" (R4.6); "at least " in front when the
+ * cost is a lower bound. `null` when unknown.
+ */
+export function costText(usage: Usage, format: (n: number) => string = dollars): string | null {
+  if (usage.cost_usd === null) return null;
+  const text = format(usage.cost_usd);
+  const base = usage.cost_inferred ? `≈ ${text} inferred` : text;
+  return usage.cost_partial === true ? `at least ${base}` : base;
+}
+
+/**
+ * The title of the cost of one session: what "at API prices" is, and for an inferred cost the
+ * version of the price table that made it.
+ */
+export function costTitle(usage: Usage): string {
+  const base = apiPricesTitle(1);
+  return usage.cost_inferred && usage.prices !== undefined
+    ? `${base} Fleet Deck inferred it from its price table of ${usage.prices}.`
+    : base;
+}
+
+/** A day as "2026-10-23" (UTC): the date in the titles of an old count and a recount. */
+export const dateText = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/** The fleet cost total: "≈" in front when any part is inferred (R4.6). */
+export function costTotalText(usage: FleetUsage): string {
+  const text = totalText(usage.cost, dollars);
+  return usage.costInferred ? `≈ ${text}` : text;
+}
+
+/** One rate-limit meter: the latest window of a scope of one provider
+ * account (station + provider instance). */
+export type RateMeter = {
+  readonly key: string;
+  readonly stationId: string;
+  readonly instance: string;
+  /** "Station · instance": the Usage tab, where every account has its own row. */
+  readonly label: string;
+  /** The provider display name of the instance: "Claude", "Codex", "Personal". */
+  readonly provider: string;
+  /** The station name (the glance shows it only when several stations report limits). */
+  readonly station: string;
+  readonly scope: string;
+  /** `null`: the provider did not say (unknown, not zero). */
+  readonly usedPercent: number | null;
+  readonly resetsAt: number | null;
+};
+
+/** The latest window per station, provider instance and scope, from the
+ * most recently updated session that reported it. The tightest window
+ * (highest use) is first; a window with unknown use is last (R4.1). */
+export function rateMeters(
+  sessions: readonly DeckSession[],
+  stations: readonly StationView[],
+): RateMeter[] {
+  const latest = new Map<string, { at: number; meter: RateMeter }>();
+  for (const s of sessions) {
+    const sum = s.summary;
+    const instance = sum.provider_instance ?? sum.provider ?? 'unknown';
+    for (const limit of sum.rate_limits) {
+      const key = `${s.station_id}/${instance}/${limit.scope}`;
+      const seen = latest.get(key);
+      if (seen !== undefined && seen.at >= sum.updated_at) continue;
+      latest.set(key, {
+        at: sum.updated_at,
+        meter: {
+          key,
+          stationId: s.station_id,
+          instance,
+          label: `${stationName(s.station_id, stations)} · ${instance}`,
+          provider: providerName(instance),
+          station: stationName(s.station_id, stations),
+          scope: limit.scope,
+          usedPercent: limit.used_percent,
+          resetsAt: limit.resets_at,
+        },
+      });
+    }
+  }
+  return [...latest.values()].map((v) => v.meter).sort(tighter);
+}
+
+/** The display name of a provider instance: "claude" → "Claude", "codex" → "Codex". */
+export function providerName(instance: string): string {
+  if (instance === 'claude') return 'Claude';
+  if (instance === 'codex') return 'Codex';
+  return instance.charAt(0).toUpperCase() + instance.slice(1);
+}
+
+/** The words of a rate-limit scope: "five_hour" → "5-hour window" (never the raw protocol scope). */
+export const SCOPE_TEXT: Readonly<Record<string, string>> = {
+  five_hour: '5-hour window',
+  seven_day: 'weekly window',
+  weekly: 'weekly window',
+};
+
+/** The words of a scope; a scope without words loses its underscores ("seven_day_opus" → "seven day opus"). */
+export const scopeText = (scope: string): string => SCOPE_TEXT[scope] ?? scope.replace(/_/g, ' ');
+
+/** Orders meters: highest use first, unknown use last, then by key. */
+function tighter(a: RateMeter, b: RateMeter): number {
+  if (a.usedPercent !== b.usedPercent) {
+    if (a.usedPercent === null) return 1;
+    if (b.usedPercent === null) return -1;
+    return b.usedPercent - a.usedPercent;
+  }
+  return a.key.localeCompare(b.key);
+}
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+/**
+ * When a window resets: "resets in 2 h 10 min", "resets Mon 14:30" (local
+ * weekday and time) when it is more than a day away, "reset due" when the time is past (R4.1).
+ */
+export function resetsText(resetsAt: number, now: number): string {
+  const ms = resetsAt - now;
+  if (ms <= 0) return 'reset due';
+  if (ms > DAY_MS) {
+    const d = new Date(resetsAt);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const day = d.toLocaleDateString(undefined, { weekday: 'short' });
+    return `resets ${day} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  const minutes = Math.ceil(ms / MINUTE_MS);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `resets in ${m} min`;
+  return m === 0 ? `resets in ${h} h` : `resets in ${h} h ${m} min`;
+}
+
+/** The tightest window with a known use among the given meters, or `null`. */
+export function tightest(meters: readonly RateMeter[]): RateMeter | null {
+  return meters.find((m) => m.usedPercent !== null) ?? null;
+}
+
+/** The tightest window of one provider instance of one station, or `null`. */
+export function instanceLimit(
+  meters: readonly RateMeter[],
+  stationId: string,
+  instance: string,
+): RateMeter | null {
+  return tightest(meters.filter((m) => m.stationId === stationId && m.instance === instance));
+}
+
+/** From this use a limit warns (R4.2). */
+export const WARN_PERCENT = 80;
+
+/** The warning chip for the given meters: nothing under 80%, "Limit 85% · 5-hour window", or "Limit reached" at 100% (R4.2). */
+export function limitChip(
+  meters: readonly RateMeter[],
+): { readonly tone: 'act' | 'hazard'; readonly text: string } | null {
+  const m = tightest(meters);
+  if (m === null || m.usedPercent === null || m.usedPercent < WARN_PERCENT) return null;
+  if (m.usedPercent >= 100)
+    return { tone: 'hazard', text: `Limit reached · ${scopeText(m.scope)}` };
+  return { tone: 'act', text: `Limit ${Math.round(m.usedPercent)}% · ${scopeText(m.scope)}` };
+}
+
+/** The provider label of the spawn form with the limit of its instance (R4.3): "claude · 42% of 5-hour window, resets in 1 h". */
+export function limitSuffix(m: RateMeter | null, now: number): string {
+  if (m === null || m.usedPercent === null) return '';
+  const resets = m.resetsAt === null ? '' : `, ${resetsText(m.resetsAt, now)}`;
+  return `${Math.round(m.usedPercent)}% of ${scopeText(m.scope)}${resets}`;
+}
+
+/** The instance with the most room: the lowest tightest use; only when at least two instances report and the lowest is unique. */
+export function mostRoom(limits: ReadonlyMap<string, RateMeter | null>): string | null {
+  const known = [...limits].filter(
+    (e): e is [string, RateMeter] => e[1] !== null && e[1].usedPercent !== null,
+  );
+  if (known.length < 2) return null;
+  const used = (m: RateMeter) => m.usedPercent ?? 0;
+  const least = Math.min(...known.map((e) => used(e[1])));
+  const lowest = known.filter((e) => used(e[1]) === least);
+  return lowest.length === 1 ? (lowest[0]?.[0] ?? null) : null;
+}
+
+/** The text of a meter, for example "42% used, resets in 2 h 10 min". */
+export function meterText(m: RateMeter, now: number): string {
+  const used = m.usedPercent === null ? 'use unknown' : `${Math.round(m.usedPercent)}% used`;
+  return m.resetsAt === null ? used : `${used}, ${resetsText(m.resetsAt, now)}`;
+}
+
+/** The model-help use of one station today, under the "Fleet Deck" scope (R10, DL-167). */
+export type AssistMeter = {
+  readonly key: string;
+  readonly label: string;
+  readonly tokens: number;
+  readonly cap: number;
+};
+
+/** One meter for each station whose model help is on. A station without a cap has it off. */
+export function assistMeters(stations: readonly StationView[]): AssistMeter[] {
+  const out: AssistMeter[] = [];
+  for (const st of stations) {
+    const info = st.info;
+    const cap = info?.assist_cap;
+    if (info == null || cap == null) continue;
+    out.push({
+      key: `${st.station_id}/fleetdeck`,
+      label: `${st.name} · Fleet Deck`,
+      tokens: info.assist_tokens_today ?? 0,
+      cap,
+    });
+  }
+  return out.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** The text of a model-help meter, for example "1,200 of 200,000 tokens today". */
+export function assistText(m: AssistMeter): string {
+  return `${tokens(m.tokens)} of ${tokens(m.cap)} tokens today`;
+}

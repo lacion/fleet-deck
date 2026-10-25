@@ -1,0 +1,116 @@
+/* B17 §3.3: the Remote page of one wall display (design `docs/v2/design/wall-control.md`). The
+   mirror is the wall page drawn at the logical size of the bound monitor and scaled down to the
+   width of its box; the pad is a panel of plain buttons (DESIGN-SYSTEM §3, §4.7). */
+
+.fd-remote-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+
+.fd-remote-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+/* ── the mirror: a box with the aspect ratio of the monitor, the wall inside it ──────────────── */
+.fd-remote-mirror {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin: 0;
+}
+
+.fd-remote-box {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: var(--r-card);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* The screen has the logical size of the monitor (inline width and height) and a scale; the wall
+   root fills it instead of the viewport, and its base unit follows the height of the screen. */
+.fd-remote-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+
+.fd-remote-screen .fd-wall-root {
+  --fd-wall-rem: clamp(14px, calc(var(--fd-remote-h) / 80), 28px);
+
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.fd-remote-screen .fd-wall-root[data-shape="ultra"] {
+  --fd-wall-rem: clamp(16px, calc(var(--fd-remote-h) / 80), 28px);
+}
+
+/* ── the pad ─────────────────────────────────────────────────────────────────────────────── */
+.fd-remote-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.fd-remote-pad {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.fd-remote-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-remote-views {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+}
+
+.fd-remote-mode {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  text-align: center;
+}
+
+.fd-remote-areas {
+  align-self: flex-start;
+}
+
+.fd-remote-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.fd-remote-keys > .fd-note {
+  margin: var(--sp-2) 0 0;
+}
+
+@media (max-width: 899px) {
+  .fd-remote-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

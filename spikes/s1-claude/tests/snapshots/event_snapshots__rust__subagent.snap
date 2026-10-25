@@ -1,0 +1,168 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "7333d019-4acf-4ac8-8348-002830961a4c"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0003-45fb-8000-559856d5a04b"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "subagent",
+    "title": "Agent",
+    "provider_refs": {
+      "tool_use_id": "toolu_01TvKBs1MANWCEmWcRCzwT5j"
+    }
+  },
+  {
+    "kind": "background.updated",
+    "tasks": [
+      {
+        "task_id": "aec7cbebd3902b8ce",
+        "task_kind": "local_agent"
+      }
+    ]
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "ok"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "The"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " sub"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "agent is running"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " in the background."
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " I'll wait for"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " it to complete."
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "The subagent is running in the background. I'll wait for it to complete."
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 517,
+      "cost_usd": 0.0144198
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 517,
+      "cost_usd": 0.0144198
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-45fb-8000-559856d5a04b",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "background.updated",
+    "tasks": []
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-3",
+    "provider_refs": {
+      "origin": "provider",
+      "session_id": "7333d019-4acf-4ac8-8348-002830961a4c"
+    }
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-3",
+    "text": "sub"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-3",
+    "text": "-ok"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-3",
+    "text": "sub-ok"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 57,
+      "cost_usd": 0.043495450000000005
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-3",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 57,
+      "cost_usd": 0.043495450000000005
+    }
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

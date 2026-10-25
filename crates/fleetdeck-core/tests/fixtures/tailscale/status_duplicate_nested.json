@@ -1,0 +1,7 @@
+{
+  "BackendState": "Running",
+  "Self": {"HostName": "a", "DNSName": "a.t.ts.net.", "TailscaleIPs": ["100.64.0.1"]},
+  "Peer": {
+    "nodekey:p1": {"HostName": "x", "TailscaleIPs": ["100.64.0.2"], "Unknown": {"k": 1, "k": 2}}
+  }
+}

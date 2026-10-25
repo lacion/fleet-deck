@@ -1,0 +1,68 @@
+// DL-175: the "Show" menu at the top right of the chat column: what the chat shows (design ui-pass X2).
+// Each item is a label row with a real checkbox (base.css draws the box, its focus and forced colors).
+import { type KeyboardEvent, useRef, useState } from 'react';
+import { useDismiss } from '../ui/dismiss';
+import { type ChatFilter, FILTER_KEYS, FILTER_LABEL, type FilterCounts } from './filter';
+
+export function FilterBar(props: {
+  readonly filter: ChatFilter;
+  readonly counts: FilterCounts;
+  readonly onChange: (next: ChatFilter) => void;
+}) {
+  const { filter, counts, onChange } = props;
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  const close = () => {
+    if (ref.current) ref.current.open = false;
+  };
+  useDismiss(ref, open, close);
+  const onKeyDown = (event: KeyboardEvent<HTMLDetailsElement>) => {
+    if (event.key !== 'Escape' || !ref.current?.open) return;
+    event.stopPropagation();
+    close();
+    ref.current.querySelector('summary')?.focus();
+  };
+  const hidden = FILTER_KEYS.filter((key) => !filter.show[key]).length;
+  return (
+    // In the chat log the menu is a control, not news: its label changes are not announced.
+    <div className="fd-chat-filters" aria-live="off">
+      <details
+        className="fd-menu fd-chat-show"
+        ref={ref}
+        onKeyDown={onKeyDown}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
+        <summary className="fd-ghost fd-sm" data-variant="toggle">
+          {hidden > 0 ? `Show (${hidden} hidden)` : 'Show'}
+        </summary>
+        <div className="fd-menu-body" role="group" aria-label="Chat filters">
+          {FILTER_KEYS.map((key) => {
+            const on = filter.show[key];
+            return (
+              <label key={key} className="fd-chat-show-item">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onChange({ ...filter, show: { ...filter.show, [key]: !on } })}
+                />
+                {FILTER_LABEL[key]}
+                {!on && counts[key] > 0 ? (
+                  <span className="fd-chat-filter-count">{counts[key]}</span>
+                ) : null}
+              </label>
+            );
+          })}
+          <div className="fd-menu-sep" />
+          <label className="fd-chat-show-item">
+            <input
+              type="checkbox"
+              checked={filter.compact}
+              onChange={() => onChange({ ...filter, compact: !filter.compact })}
+            />
+            Compact tools
+          </label>
+        </div>
+      </details>
+    </div>
+  );
+}

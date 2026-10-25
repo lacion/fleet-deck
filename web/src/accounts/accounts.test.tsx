@@ -1,0 +1,692 @@
+import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { AccountsList, AccountView } from '../gen';
+import { DeckError } from '../settings/http';
+import { station } from '../testing/fleet';
+import type { AccountActions } from './actions';
+import { AppDialog, TokenDialog } from './AccountDialogs';
+import { AccountsTab, envTokenText } from './AccountsTab';
+import {
+  appSteps,
+  claimFinish,
+  connectedText,
+  endedText,
+  finishOauth,
+  loginProblem,
+  oauthErrorText,
+  pollForgeLogin,
+  redirectUrlOf,
+  sendApp,
+  sendToken,
+  startForgeLogin,
+} from './flow';
+import { DeviceLoginPanel, ForgeConnect, safeUrl } from './ForgeSection';
+
+const noop = () => {};
+
+const account = (
+  extra: Partial<AccountView> & Pick<AccountView, 'account_id' | 'kind'>,
+): AccountView => ({ method: 'oauth', status: 'ok', message: '', ...extra });
+
+const LIST: AccountsList = {
+  accounts: [
+    account({ account_id: 'gh-1', kind: 'github', method: 'cli', site: 'github.com', user: 'ana' }),
+    account({
+      account_id: 'jira-1',
+      kind: 'jira',
+      site: 'acme.atlassian.net',
+      user: 'ana@acme.test',
+      status: 'needs_login',
+    }),
+  ],
+  apps: [{ kind: 'jira', client_id: 'abc123', has_secret: true, generation: 2 }],
+  env_tokens: ['GH_TOKEN', 'GITLAB_TOKEN'],
+};
+
+type Fake = Partial<AccountActions>;
+
+const DEFAULTS: AccountActions = {
+  list: async () => LIST,
+  forgeLogin: async () => ({
+    login_id: 'l1',
+    code: 'ABCD-1234',
+    url: 'https://github.com/login/device',
+    expires_in: 900,
+  }),
+  forgeLoginStatus: async () => ({ state: 'pending' as const }),
+  logout: async () => {},
+  containers: async () => ({ containers: [] }),
+  setApp: async () => ({
+    kind: 'jira' as const,
+    client_id: 'abc',
+    has_secret: true,
+    generation: 1,
+  }),
+  setToken: async () => account({ account_id: 't', kind: 'jira' }),
+  oauthStart: async () => ({ authorize_url: 'https://auth.atlassian.com/authorize' }),
+  oauthFinish: async () =>
+    account({ account_id: 'jira-2', kind: 'jira', site: 'acme.atlassian.net', user: 'ana' }),
+};
+
+/** Fake actions that record each call (the name and the arguments). */
+function fake(over: Fake = {}) {
+  const calls: { name: string; arg: unknown }[] = [];
+  const merged: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+  for (const [name, fn] of Object.entries({ ...DEFAULTS, ...over })) {
+    merged[name] = (...args: unknown[]) => {
+      calls.push({ name, arg: args });
+      return (fn as (...a: unknown[]) => Promise<unknown>)(...args);
+    };
+  }
+  return { actions: merged as unknown as AccountActions, calls };
+}
+
+const tab = (route: Partial<Parameters<typeof AccountsTab>[0]['route']> = {}, list = LIST) =>
+  renderToStaticMarkup(
+    <AccountsTab
+      route={{
+        name: 'settings',
+        tab: 'accounts',
+        station: null,
+        finish: null,
+        oauthError: null,
+        ...route,
+      }}
+      stations={[station('station-a'), station('station-b')]}
+      navigate={noop}
+      actions={fake().actions}
+      origin="https://deck.example"
+      initial={list}
+    />,
+  );
+
+const tabAt = (origin: string, list: AccountsList) =>
+  renderToStaticMarkup(
+    <AccountsTab
+      route={{ name: 'settings', tab: 'accounts', station: null, finish: null, oauthError: null }}
+      stations={[station('station-a')]}
+      navigate={noop}
+      actions={fake().actions}
+      origin={origin}
+      initial={list}
+    />,
+  );
+
+describe('the built-in Linear app (DL-185)', () => {
+  // The station offers the built-in app (the release gate is open).
+  const ON: AccountsList = { ...LIST, linear_builtin: true };
+  const NOTE =
+    'The built-in Linear app works only from the board on the deck machine at https://127.0.0.1:7420 or https://localhost:7420. Open the board there, or set up your own Linear app.';
+
+  test('without an owner Linear app the section says so and Connect is on', () => {
+    // ON has a Jira app only.
+    const html = tabAt('https://127.0.0.1:7420', ON);
+    expect(html).toContain('Uses the built-in Fleet Deck app.');
+    expect(html).toContain('aria-label="Linear not connected"');
+    expect(html).toContain('Set up your own OAuth app…');
+    expect(html).not.toContain('Set up the OAuth app first. Then you can connect.');
+    expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
+  });
+
+  test('the localhost note shows for every other origin and not for the two registered ones', () => {
+    const list = ON;
+    for (const ok of ['https://127.0.0.1:7420', 'https://localhost:7420']) {
+      expect(tabAt(ok, list)).not.toContain(NOTE);
+    }
+    for (const other of [
+      'https://deck.example',
+      'https://127.0.0.1:7421',
+      'http://127.0.0.1:7420',
+      'https://[::1]:7420',
+      'https://100.64.0.1:7420',
+    ]) {
+      const html = tabAt(other, list);
+      expect(html).toContain(NOTE);
+      expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
+    }
+  });
+
+  test('with the flag off or missing, Linear without an app says how to connect', () => {
+    for (const list of [LIST, { ...LIST, linear_builtin: false }]) {
+      const html = tabAt('https://deck.example', list);
+      expect(html).not.toContain('Uses the built-in Fleet Deck app.');
+      expect(html).not.toContain(NOTE);
+      // One line says what the account gives (the buttons say how it connects); there is no
+      // disabled Connect button until an app exists.
+      expect(html).toContain('Connect Linear to start sessions from its issues.');
+      expect(html).not.toContain('Set up an OAuth app or use an API token.');
+      expect(html).not.toContain('No OAuth app yet.');
+      expect(html).not.toContain('Set up the OAuth app first.');
+      expect(html).toContain('Set up OAuth app…');
+      expect(html).not.toContain('Set up your own OAuth app…');
+      expect(html).not.toContain('>Connect Linear<');
+    }
+  });
+
+  test('with an owner Linear app the section is as before', () => {
+    const list: AccountsList = {
+      ...ON,
+      apps: [{ kind: 'linear', client_id: 'own-1', has_secret: true, generation: 1 }],
+    };
+    const html = tabAt('https://deck.example', list);
+    expect(html).not.toContain('Uses the built-in Fleet Deck app.');
+    expect(html).not.toContain(NOTE);
+    expect(html).toContain('own-1');
+  });
+
+  test('an account with needs_reconnect shows its message and "Connect again"', () => {
+    const message = 'The Linear app of this account changed. Connect the account again.';
+    const list: AccountsList = {
+      ...LIST,
+      accounts: [
+        account({
+          account_id: 'linear-1',
+          kind: 'linear',
+          site: 'https://linear.app/acme',
+          user: 'Ana',
+          status: 'needs_reconnect',
+          message,
+        }),
+      ],
+    };
+    const html = tabAt('https://127.0.0.1:7420', list);
+    expect(html).toContain('>Connect again<');
+    expect(html).toContain(message);
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="needs_you" aria-hidden="true"></span>Reconnect needed',
+    );
+    expect(html).not.toContain('>Reconnect<');
+    // The other states have no "Connect again".
+    expect(tab()).not.toContain('>Connect again<');
+  });
+});
+
+describe('the Accounts tab (DL-173)', () => {
+  test('the scope line: a station select when there is more than one station', () => {
+    const html = tab();
+    expect(html).toContain(
+      '<p class="fd-set-scope">Accounts on <select class="fd-ghost fd-sm" aria-label="Station">',
+    );
+    expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
+    const one = renderToStaticMarkup(
+      <AccountsTab
+        route={{ name: 'settings', tab: 'accounts', station: null, finish: null, oauthError: null }}
+        stations={[station('station-a')]}
+        navigate={noop}
+        actions={fake().actions}
+        initial={LIST}
+      />,
+    );
+    expect(one).not.toContain('aria-label="Station"');
+    expect(one).toContain('Accounts on <span class="fd-wide">Alpha</span>');
+  });
+
+  test('the env token warning names the variables', () => {
+    expect(envTokenText(['GH_TOKEN'])).toBe(
+      'GH_TOKEN in the station environment override a login. Remove them from the station’s environment to use the login here.',
+    );
+    expect(tab()).toContain('GH_TOKEN, GITLAB_TOKEN in the station environment override a login.');
+    expect(tab({}, { ...LIST, env_tokens: [] })).not.toContain('in the station environment');
+  });
+
+  test('two sections; a connected kind folds its connect block, the other one is open', () => {
+    const html = tab();
+    expect(html).toContain('GitHub and GitLab');
+    expect(html).toContain('Jira and Linear');
+    expect(html).toContain('github.com');
+    expect(html).toContain('>Log out<');
+    // GitHub has an account: no Connect button next to it, only "Connect another…".
+    expect(html).toMatch(
+      /<button type="button" class="fd-sm" aria-expanded="false"><svg[^>]*>[\s\S]*?<\/svg>Connect another GitHub account…<\/button>/,
+    );
+    expect(html).not.toContain('>Connect GitHub<');
+    // GitLab has none: its server field and its Connect button.
+    expect(html).toContain('>Server<');
+    expect(html).toContain('value="gitlab.com"');
+    expect(html).toContain('placeholder="gitlab.com"');
+    expect(html).toContain('>Connect GitLab<');
+    expect(html).not.toContain('GitLab host');
+  });
+
+  test('one table for the trackers: an account row, a Not connected row, the folds after it', () => {
+    const trackers = tab().slice(tab().indexOf('aria-label="Jira and Linear"'));
+    const table = trackers.indexOf('aria-label="Jira and Linear accounts"');
+    expect(table).toBeGreaterThan(-1);
+    // The Jira account, then Linear without an account: the same structure as GitHub and GitLab.
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeGreaterThan(table);
+    expect(trackers.indexOf('aria-label="Account jira-1"')).toBeLessThan(
+      trackers.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(trackers.indexOf('aria-label="Linear not connected"')).toBeLessThan(
+      trackers.indexOf('Connect another Jira account…'),
+    );
+    expect(trackers).not.toContain('OAuth app <code>abc123</code>');
+    expect(trackers).not.toContain('>Connect Jira<');
+    expect(trackers).not.toContain('No account connected.');
+    expect(trackers).not.toContain('fd-set-trackerhead');
+  });
+
+  test('a tracker without an account but with an app: Connect is on', () => {
+    const html = tab({}, { ...LIST, accounts: [] });
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('<span class="fd-dot" data-status="idle" aria-hidden="true"></span>');
+    expect(jira).toContain('Not connected');
+    expect(jira).toContain('OAuth app <code>abc123</code>');
+    expect(jira).toContain('secret set');
+    expect(jira).toContain('Set up OAuth app…');
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Connect Jira<\/button>/);
+    expect(jira).toContain('Use an API token…');
+    // The row says "Not connected" in its own words, not the line of an empty table.
+    expect(html.slice(html.indexOf('aria-label="Jira and Linear"'))).not.toContain(
+      'No account connected.',
+    );
+  });
+
+  test('Jira without an owner app has no built-in app (DL-185)', () => {
+    const html = tab({}, { ...LIST, accounts: [], apps: [] });
+    const jira = html.slice(
+      html.indexOf('aria-label="Jira not connected"'),
+      html.indexOf('aria-label="Linear not connected"'),
+    );
+    expect(jira).toContain('Connect Jira to start sessions from its issues.');
+    expect(jira).not.toContain('>Connect Jira<');
+    // Two ways to do one step: two plain buttons, one look.
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Set up OAuth app…<\/button>/);
+    expect(jira).toMatch(/<button type="button" class="fd-sm">Use an API token…<\/button>/);
+  });
+
+  test('the account rows: the method and the status in words, the site without its scheme', () => {
+    const html = tab(
+      {},
+      {
+        ...LIST,
+        accounts: [
+          ...LIST.accounts,
+          account({
+            account_id: 'lin-1',
+            kind: 'linear',
+            site: 'https://linear.app/acme',
+            user: 'Ana',
+          }),
+        ],
+      },
+    );
+    expect(html).toContain('GitHub <span class="fd-badge">CLI login</span>');
+    expect(html).toContain('Jira <span class="fd-badge">OAuth</span>');
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="online" aria-hidden="true"></span>Connected',
+    );
+    expect(html).toContain(
+      '<span class="fd-dot" data-status="needs_you" aria-hidden="true"></span>Needs login',
+    );
+    expect(html).toContain('>linear.app/acme<');
+    expect(html).not.toContain('>https://linear.app/acme<');
+    expect(html).not.toContain('>cli<');
+    expect(html).not.toContain('>connected<');
+  });
+
+  test('"Reconnect" shows for needs_login', () => {
+    expect(tab()).toContain('>Reconnect<');
+    expect(tab({}, { ...LIST, accounts: [LIST.accounts[0] as AccountView] })).not.toContain(
+      '>Reconnect<',
+    );
+  });
+
+  test('?oauth_error shows the sentence', () => {
+    expect(oauthErrorText('invalid_state')).toBe(
+      'The login did not finish (invalid_state). Try again.',
+    );
+    expect(tab({ oauthError: 'invalid_state' })).toContain(
+      'The login did not finish (invalid_state). Try again.',
+    );
+    expect(tab()).not.toContain('The login did not finish');
+  });
+
+  test('without a station it says so', () => {
+    const html = renderToStaticMarkup(
+      <AccountsTab
+        route={{ name: 'settings', tab: 'accounts', station: null, finish: null, oauthError: null }}
+        stations={[]}
+        navigate={noop}
+        actions={fake().actions}
+      />,
+    );
+    expect(html).toContain('Add a station first.');
+  });
+});
+
+describe('the device login', () => {
+  test('the panel shows the code, Copy code and a safe link', () => {
+    const html = renderToStaticMarkup(
+      <DeviceLoginPanel
+        kind="github"
+        login={{
+          login_id: 'l1',
+          code: 'ABCD-1234',
+          url: 'https://github.com/login/device',
+          expires_in: 900,
+        }}
+        state={{ state: 'pending' }}
+      />,
+    );
+    expect(html).toContain('ABCD-1234');
+    expect(html).toContain('Copy code');
+    expect(html).toContain('href="https://github.com/login/device"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain('Open https://github.com/login/device');
+    expect(html).toContain('15 minutes');
+    expect(html).toContain('Waiting for you');
+  });
+
+  test('a link that is not https is not shown', () => {
+    expect(safeUrl('javascript:alert(1)')).toBeNull();
+    expect(safeUrl('http://github.com/login/device')).toBeNull();
+    expect(safeUrl('https://gitlab.com/oauth/device')).toBe('https://gitlab.com/oauth/device');
+    const html = renderToStaticMarkup(
+      <DeviceLoginPanel
+        kind="github"
+        login={{ login_id: 'l', code: 'A', url: 'javascript:alert(1)', expires_in: 60 }}
+        state={{ state: 'pending' }}
+      />,
+    );
+    expect(html).not.toContain('href=');
+  });
+
+  test('the end states say what happened', () => {
+    const login = {
+      login_id: 'l',
+      code: 'A',
+      url: 'https://github.com/login/device',
+      expires_in: 60,
+    };
+    const done = renderToStaticMarkup(
+      <DeviceLoginPanel kind="github" login={login} state={{ state: 'done', user: 'ana' }} />,
+    );
+    expect(done).toContain('Connected as ana.');
+    expect(done).not.toContain('Waiting for you');
+    const expired = renderToStaticMarkup(
+      <DeviceLoginPanel kind="github" login={login} state={{ state: 'expired' }} />,
+    );
+    expect(expired).toContain('The code expired.');
+    expect(endedText({ state: 'failed', code: 'device_flow_unsupported' })).toBe(
+      'This CLI or this server has no device login.',
+    );
+    expect(endedText({ state: 'pending' })).toBeNull();
+  });
+
+  test('a running login renders in the connect block', () => {
+    const html = renderToStaticMarkup(
+      <ForgeConnect
+        kind="github"
+        station="station-a"
+        actions={fake().actions}
+        onConnected={noop}
+        onToken={noop}
+        initialRun={{
+          phase: 'running',
+          login: {
+            login_id: 'l1',
+            code: 'WXYZ-9999',
+            url: 'https://github.com/login/device',
+            expires_in: 900,
+          },
+          state: { state: 'pending' },
+        }}
+      />,
+    );
+    expect(html).toContain('WXYZ-9999');
+    const error = renderToStaticMarkup(
+      <ForgeConnect
+        kind="gitlab"
+        station="station-a"
+        actions={fake().actions}
+        onConnected={noop}
+        onToken={noop}
+        initialRun={{
+          phase: 'error',
+          text: 'This CLI or this server has no device login.',
+          token: true,
+        }}
+      />,
+    );
+    expect(error).toContain('Use a token instead');
+  });
+
+  test('the three error codes have a sentence each; only two offer a token', async () => {
+    expect(loginProblem('env_token_present', 'x')).toMatchObject({ token: false });
+    expect(loginProblem('env_token_present', 'x').text).toContain('overrides the login');
+    expect(loginProblem('device_flow_unsupported', 'x').token).toBe(true);
+    expect(loginProblem('unexpected_cli_output', 'x').token).toBe(true);
+    expect(loginProblem('other', 'fallback')).toEqual({ text: 'fallback', token: false });
+    for (const code of ['env_token_present', 'device_flow_unsupported', 'unexpected_cli_output']) {
+      const { actions } = fake({
+        forgeLogin: () => Promise.reject(new DeckError(409, 'fixed text', code, {})),
+      });
+      const out = await startForgeLogin(actions, 'st', 'github', 'github.com');
+      expect(out).toMatchObject({ kind: 'error', code });
+    }
+  });
+
+  test('the polling asks every time until the login is done, then stops', async () => {
+    const states = [
+      { state: 'pending' },
+      { state: 'pending' },
+      { state: 'done', user: 'ana' },
+      { state: 'pending' },
+    ] as const;
+    let i = 0;
+    const { actions, calls } = fake({
+      forgeLoginStatus: () => Promise.resolve(states[i++] ?? { state: 'pending' as const }),
+    });
+    const seen: string[] = [];
+    const waits: number[] = [];
+    await pollForgeLogin(actions, 'st', 'l1', {
+      signal: new AbortController().signal,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      onState: (s) => seen.push(s.state),
+    });
+    expect(seen).toEqual(['pending', 'pending', 'done']);
+    expect(waits).toEqual([2000, 2000, 2000]);
+    expect(calls.filter((c) => c.name === 'forgeLoginStatus')).toHaveLength(3);
+  });
+
+  test('failed and expired also stop it; an abort stops it; three misses fail it', async () => {
+    for (const end of [{ state: 'failed', code: 'x' }, { state: 'expired' }] as const) {
+      const { actions, calls } = fake({ forgeLoginStatus: () => Promise.resolve(end) });
+      await pollForgeLogin(actions, 's', 'l', {
+        signal: new AbortController().signal,
+        wait: async () => {},
+        onState: noop,
+      });
+      expect(calls).toHaveLength(1);
+    }
+    const controller = new AbortController();
+    const { actions, calls } = fake();
+    await pollForgeLogin(actions, 's', 'l', {
+      signal: controller.signal,
+      wait: async () => {
+        controller.abort();
+      },
+      onState: noop,
+    });
+    expect(calls).toHaveLength(0);
+    const down = fake({ forgeLoginStatus: () => Promise.reject(new Error('net')) });
+    const seen: string[] = [];
+    await pollForgeLogin(down.actions, 's', 'l', {
+      signal: new AbortController().signal,
+      wait: async () => {},
+      onState: (s) => seen.push(s.state),
+    });
+    expect(seen).toEqual(['failed']);
+    expect(down.calls).toHaveLength(3);
+  });
+});
+
+describe('the OAuth app dialog', () => {
+  test('Jira: the four steps with the redirect URL, and Copy', () => {
+    const url = redirectUrlOf('https://deck.example');
+    expect(url).toBe('https://deck.example/oauth/callback');
+    const html = renderToStaticMarkup(
+      <AppDialog
+        kind="jira"
+        redirectUrl={url}
+        initialClientId=""
+        busy={false}
+        error={null}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(html).toContain('Set up the Jira OAuth app');
+    expect(html).toContain(
+      'Open developer.atlassian.com, then Console, then Create, then OAuth 2.0 integration.',
+    );
+    expect(html).toContain(
+      'Add the permission Jira API with the scopes read:jira-work, write:jira-work, read:jira-user; offline access is added by Fleet Deck.',
+    );
+    expect(html).toContain('Set the callback URL to https://deck.example/oauth/callback.');
+    expect(html).toContain('Paste the client id and the secret here.');
+    expect(html).toContain('Copy</button>');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('Client id');
+    expect(html).toContain('Client secret');
+  });
+
+  test('Linear has three steps', () => {
+    expect(appSteps('linear', 'https://x/oauth/callback')).toEqual([
+      'Open linear.app, then Settings, then API, then OAuth applications, then New.',
+      'Set the callback URL to https://x/oauth/callback.',
+      'Paste the client id and the secret here.',
+    ]);
+    expect(appSteps('jira', 'u')).toHaveLength(4);
+  });
+
+  test('the token dialog asks for what the kind needs', () => {
+    const jira = renderToStaticMarkup(
+      <TokenDialog
+        kind="jira"
+        initialSite=""
+        busy={false}
+        error={null}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(jira).toContain('Jira site');
+    expect(jira).toContain('Account email');
+    expect(jira).toContain('API token');
+    const linear = renderToStaticMarkup(
+      <TokenDialog
+        kind="linear"
+        initialSite=""
+        busy={false}
+        error={null}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(linear).toContain('Personal API key');
+    expect(linear).not.toContain('Account email');
+    const github = renderToStaticMarkup(
+      <TokenDialog
+        kind="github"
+        initialSite="github.com"
+        busy={false}
+        error={null}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(github).toContain('value="github.com"');
+    expect(github).not.toContain('value="ghp');
+  });
+
+  test('a secret is cleared before the call, and no result holds it', async () => {
+    let typed = 'client-secret-xyz';
+    const order: string[] = [];
+    const { actions, calls } = fake({
+      setApp: () => {
+        order.push('call');
+        return Promise.resolve({ kind: 'jira', client_id: 'abc', has_secret: true, generation: 3 });
+      },
+    });
+    const out = await sendApp(actions, 'st', 'jira', ' abc ', {
+      read: () => typed,
+      clear: () => {
+        order.push('clear');
+        typed = '';
+      },
+    });
+    expect(order).toEqual(['clear', 'call']);
+    expect(typed).toBe('');
+    expect(out.ok).toBe(true);
+    expect(JSON.stringify(out)).not.toContain('client-secret-xyz');
+    expect(calls[0]?.arg).toEqual([
+      'st',
+      { kind: 'jira', client_id: 'abc', client_secret: 'client-secret-xyz' },
+    ]);
+    let token = 'tok-123';
+    const failing = fake({
+      setToken: () => Promise.reject(new DeckError(400, 'fixed text', 'invalid_field', {})),
+    });
+    const bad = await sendToken(
+      failing.actions,
+      'st',
+      { kind: 'jira', site: ' https://a.atlassian.net ', email: '' },
+      {
+        read: () => token,
+        clear: () => {
+          token = '';
+        },
+      },
+    );
+    expect(bad).toEqual({ ok: false, text: 'fixed text' });
+    expect(token).toBe('');
+    expect(failing.calls[0]?.arg).toEqual([
+      'st',
+      { kind: 'jira', site: 'https://a.atlassian.net', token: 'tok-123' },
+    ]);
+  });
+});
+
+describe('the OAuth finish', () => {
+  test('a transaction is posted once, also when the page renders twice', () => {
+    expect(claimFinish('t-unique-1')).toBe(true);
+    expect(claimFinish('t-unique-1')).toBe(false);
+    expect(claimFinish('t-unique-2')).toBe(true);
+  });
+
+  test('success gives "Connected as <user> (<site>)"', async () => {
+    const { actions, calls } = fake();
+    const out = await finishOauth(actions, 't-9');
+    expect(out.ok).toBe(true);
+    expect(calls[0]).toEqual({ name: 'oauthFinish', arg: ['t-9'] });
+    if (out.ok) expect(connectedText(out.account)).toBe('Connected as ana (acme.atlassian.net)');
+    expect(connectedText({ user: 'ana' })).toBe('Connected as ana');
+  });
+
+  test('an error shows the fixed text of the deck', async () => {
+    const { actions } = fake({
+      oauthFinish: () =>
+        Promise.reject(
+          new DeckError(
+            404,
+            'This sign-in is unknown, used or expired.',
+            'unknown_transaction',
+            {},
+          ),
+        ),
+    });
+    expect(await finishOauth(actions, 't')).toEqual({
+      ok: false,
+      text: 'This sign-in is unknown, used or expired.',
+    });
+  });
+});

@@ -1,0 +1,627 @@
+/* R13 P2c, P3c: the pair page and the wall display card (the wall scope of wall.css), the Displays
+   page of the settings and the Desktop panel of a station card (board tokens, DESIGN-SYSTEM §4.7). */
+
+/* ── the pair page: the code on a plate, centered at any width ────────────────────────────── */
+.fd-pair {
+  place-items: center;
+  text-align: center;
+}
+
+.fd-pair-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  max-width: 100%;
+  padding: var(--sp-6) 0;
+}
+
+.fd-pair-title {
+  margin: 0;
+  font-size: var(--fs-hero);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.fd-pair-code {
+  margin: var(--sp-2) 0;
+  max-width: 100%;
+  padding: var(--sp-4) clamp(var(--sp-4), 4dvw, var(--sp-6));
+  background: var(--raised);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--shadow-lift);
+  font-family: var(--font-data);
+  font-size: min(calc(var(--fs-display) * 2), 14dvw);
+  font-variant-ligatures: none;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.fd-pair-line {
+  max-width: 40ch;
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-heading);
+}
+
+.fd-pair .fd-wall-note {
+  font-size: var(--fs-ui);
+}
+
+/* the card of an artifact that a wall cannot show */
+.fd-wall-card {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-page);
+  text-align: center;
+}
+
+.fd-wall-artifact .fd-art-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.fd-wall-artifact .fd-art-md {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* ── the Displays page (Settings › Displays) ──────────────────────────────────────────────── */
+.fd-disp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+
+.fd-disp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+/* The heading row of a section: the heading, and "Add a wall display" at the right. The row keeps
+   the height of the button when the empty state holds it. */
+.fd-disp-section > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  min-height: var(--ctl-h-sm);
+}
+
+.fd-disp-title {
+  font-size: var(--fs-heading);
+  font-weight: 600;
+}
+
+.fd-disp-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A display, a waiting pairing and the add form: one panel each (they have their own actions).
+   The fields are `Field layout="row"` of page.css (§4.7); a card only adds its padding. */
+.fd-disp-row,
+.fd-disp-pending,
+.fd-disp-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+  container-type: inline-size;
+}
+
+.fd-disp-row p,
+.fd-disp-pending p,
+.fd-disp-add p {
+  margin: 0;
+}
+
+/* The cost of a wall: a readable measure, not one line across the panel. */
+.fd-disp-add > .fd-note {
+  max-width: 72ch;
+}
+
+/* The heading of a display: its name, the link state and the menu. On a narrow card the link
+   state takes a line of its own under the name, and the menu stays at the top right. The name is
+   a card title (§2.3, 14px weight 600): one step under the section heading "Wall displays". */
+.fd-disp-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+}
+
+.fd-disp-name {
+  grid-row: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.fd-disp-head > .fd-menu {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+/* The link state: the glyph of a link (an online dot or a hollow ring), then its words. */
+.fd-disp-seen {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+@container (min-width: 640px) {
+  .fd-disp-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .fd-disp-seen {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .fd-disp-head > .fd-menu {
+    grid-column: 3;
+  }
+}
+
+.fd-disp-source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.fd-disp-source > strong {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  font-weight: 600;
+}
+
+.fd-disp-agent {
+  overflow-wrap: anywhere;
+  color: var(--faint);
+}
+
+/* The station choices: one row of checkboxes in the control column. */
+.fd-disp-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  min-width: 0;
+}
+
+.fd-disp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--ctl-h);
+  cursor: pointer;
+}
+
+/* The note in place of the choices sits on the line of its label. */
+.fd-disp-nochoice {
+  display: flex;
+  align-items: center;
+  min-height: var(--ctl-h);
+}
+
+/* A phone: the station choices are a grid of two columns of 44px check rows, so that no name
+   stands alone on a line of its own. */
+@media (max-width: 640px) {
+  .fd-disp-choices {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--sp-4);
+  }
+
+  .fd-disp-choices > .fd-disp-check {
+    min-width: 0;
+    min-height: var(--tap-min);
+    overflow-wrap: anywhere;
+  }
+}
+
+/* The choices of the Send to wall dialog (a stacked form): the legend, then one choice a line. */
+.fd-disp-modes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* The display choice of a waiting pairing keeps the width of its two segments. */
+.fd-disp-modeseg {
+  justify-self: start;
+}
+
+/* The pairing code: six digits, the width of a short field (§4.7: a number field is 160px). The
+   :not() parts give the rule the weight of the row field rule of page.css. */
+.fd-disp-pending .fd-fieldcontrol > input.fd-disp-code:not([type="checkbox"]):not([type="radio"]) {
+  max-width: 160px;
+  font-family: var(--font-data);
+  font-variant-ligatures: none;
+  letter-spacing: 0.12em;
+}
+
+/* Quiet hours: "From" and "to" before the two times, on one line under the switch. */
+.fd-disp-quiet {
+  gap: var(--sp-2) var(--sp-4);
+}
+
+.fd-disp-time {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+
+.fd-disp-row .fd-disp-time > input[type="time"] {
+  width: 112px;
+  max-width: 112px;
+}
+
+/* A touch screen: the 16px field type ("07:00 AM") needs a wider field; on a narrow card the two
+   parts keep one line with the smaller gap. */
+@media (pointer: coarse) {
+  .fd-disp-row .fd-disp-time > input[type="time"] {
+    width: 120px;
+    max-width: 120px;
+  }
+}
+
+/* A phone: the two times on two lines, the words right-aligned in one column, so that the two
+   fields start at one x ("From [22:00]" over "  to [07:00]"). */
+@media (max-width: 639px) {
+  .fd-disp-quiet {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .fd-disp-time {
+    display: grid;
+    grid-template-columns: 3em auto;
+    text-align: end;
+  }
+}
+
+/* Discard and Save of a changed card end it: right-aligned under a rule. The --border-soft rule
+   of a form is 1.06:1 on the --surface card; --border shows it. */
+.fd-disp-row > .fd-formactions {
+  border-top-color: var(--border);
+}
+
+/* The link that the add panel made: the text, the URL and its actions, the QR code at the right. */
+.fd-disp-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-2) var(--sp-4);
+}
+
+.fd-disp-link > :not(.fd-disp-qr) {
+  grid-column: 1;
+}
+
+.fd-disp-url {
+  display: block;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--code);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-data);
+  overflow-wrap: anywhere;
+}
+
+.fd-disp-linkactions,
+.fd-disp-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-disp-qr {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+
+.fd-disp-qr .fd-wall-qr {
+  display: block;
+  width: 160px;
+  height: 160px;
+  border-radius: var(--r-ctl);
+}
+
+@media (max-width: 639px) {
+  .fd-disp-link {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-disp-qr {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+/* A confirmation in place: a raised row with its text and the two answers. */
+.fd-disp-confirm {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-lift);
+}
+
+.fd-disp-confirm > p {
+  flex: 1 1 12rem;
+  margin: 0;
+}
+
+/* The ghost answer on the --raised row: the --raised hover would be the fill of the row (1:1). */
+@media (hover: hover) {
+  .fd-disp-confirm > .fd-ghost:hover:not(:disabled) {
+    background-color: var(--badge-bg);
+  }
+}
+
+/* ── Wall pages (B17): the allow-list under the displays ─────────────────────────────────── */
+/* One panel: the heading, the notes, the add form, then the list. The notes keep a readable measure;
+   the warning about a secret in an address is in --hazard (its words say it too). */
+.fd-wp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+}
+
+.fd-wp p {
+  margin: 0;
+}
+
+.fd-wp > .fd-note {
+  max-width: 72ch;
+}
+
+.fd-wp > .fd-note.fd-wp-hazard {
+  color: var(--hazard);
+}
+
+.fd-wp-form {
+  min-width: 0;
+}
+
+/* The list: one row for each page, a rule between them. The host is data, so it is mono. */
+.fd-wp-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-wp-row:first-child {
+  border-top: 0;
+}
+
+.fd-wp-name {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.fd-wp-host {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-data);
+}
+
+.fd-wp-fit {
+  grid-column: 2;
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+.fd-wp-delete {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.fd-wp-confirm,
+.fd-wp-error {
+  grid-column: 1 / -1;
+}
+
+/* ── the Desktop panel of a station card (Computer Use) ───────────────────────────────────── */
+.fd-desk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  margin-top: var(--sp-2);
+}
+
+.fd-desk > summary {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.fd-desk p {
+  margin: 0;
+}
+
+/* The facts: one row each, the name at the left and the value at the right. */
+.fd-desk-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+}
+
+.fd-desk-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 28px;
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-desk-facts dt {
+  color: var(--dim);
+}
+
+.fd-desk-facts dd {
+  margin: 0;
+  text-align: right;
+}
+
+.fd-desk-monitors,
+.fd-desk-walls {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-desk-monitors > li,
+.fd-desk-walls > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: var(--row-h);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-desk-monitor {
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-desk-monitor > strong {
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  font-weight: 600;
+}
+
+.fd-desk-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+}
+
+/* The switches of the desktop: one row each. */
+.fd-desk > .fd-desk-buttons > .fd-disp-check {
+  flex: 1 0 100%;
+}
+
+.fd-desk-record {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-desk-record input[type="number"] {
+  width: 6rem;
+}
+
+.fd-desk-result,
+.fd-desk-shot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-desk-shot .fd-art-image {
+  max-width: 100%;
+  border-radius: var(--r-card);
+}
+
+.fd-desk-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+
+/* The four forms: each a section under a rule; the fields share a row when the card is wide. */
+.fd-desk-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  align-items: end;
+  gap: var(--sp-2) var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-desk-form:has(textarea) > .fd-fieldwrap:has(input),
+.fd-desk-form > .fd-fieldwrap:has(textarea),
+.fd-desk-form > .fd-fielderror {
+  grid-column: 1 / -1;
+}
+
+.fd-desk-form > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.fd-desk-previews {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}

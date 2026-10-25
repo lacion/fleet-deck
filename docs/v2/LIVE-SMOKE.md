@@ -1,0 +1,857 @@
+# Live smoke tests (M2 P5-5)
+
+The normal checks (`make check`) are offline. They use fakes (`fake-claude`, `fake-codex`) and recorded fixtures. The live smoke tests are the only tests that start the real provider CLIs. Run them by hand when a provider CLI changes, or before a release.
+
+## What the tests do
+
+The file is `crates/fleetdeck-providers/tests/live_smoke.rs`. It has one test for each provider:
+
+| Test | CLI | Mode | What it checks |
+|---|---|---|---|
+| `live_claude_smoke` | `claude` (with `--safe-mode`, DL-005) | `default` | The probe gives a version and the CLI is not signed out. A session starts in a new temporary directory. One turn ends `done`, the answer contains `pong`, and no approval is requested. A graceful stop works. |
+| `live_codex_smoke` | `codex app-server` (effort `low`) | `untrusted/read-only` | The same checks for Codex. |
+| `live_codex_shell_smoke` | `codex app-server` (effort `low`) | `untrusted/read-only` | The `!` path of DL-196 (B8) on the real CLI. No model call happens. `session.shell_command` sends `thread/shellCommand` for `pwd && echo fd-shell-ok`. The events come in order: `run.started` (origin `shell`, summary `!pwd && echo fd-shell-ok`), `tool.started` (node `shell-e-live-1`, kind `shell`), `tool.output` (the marker and the temporary directory), `tool.completed` (`ok`, exit code 0, `provider_refs.shell` = `done`), `turn.completed`, `run.completed`. The run has no assistant message. A second command, `exit 3`, ends `tool.completed` `failed` with exit code 3. Run: `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture live_codex_shell`. |
+| `claude_and_codex_authenticate_to_a_loopback_mcp_endpoint_with_the_env_handoff` | `claude` (with `--strict-mcp-config`, `--disable-slash-commands`), then `codex` | Claude `default`; Codex `never/read-only` | The coordinator credential handoff, provider half (ADR-006 §8.5, DL-219, DL-220). A loopback MCP probe records the digest of each `Authorization` header. Each session finds the probe tool, calls it exactly once and repeats its answer. Every request carries the handed-off credential, and the credential is in no command line and in no provider settings file. A pass sets the minimum version in `fleetdeck_providers::coordinator::VERIFIED`. |
+| `fleetdeck-station` `manager::coordinator_live_tests::a_live_claude_coordinator_binds_and_calls_the_station_ingress_once`, `a_live_codex_coordinator_binds_and_calls_the_station_ingress_once` | `claude`, `codex` through the station | as above | Test 31, station half (DL-220): a deck start with a grant through the real station path and the station MCP ingress. The binding is pending, then active at generation 1 with the native id of `session.started`; exactly one tool call reaches the forward with that binding; stop revokes it; the credential is in no command line, station store file or provider settings file. Run: `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-station --lib -- --ignored --nocapture --test-threads 1 coordinator_live_tests`. |
+| `fleetdeck-cli` `live_bridge::claude_passes_the_token_to_the_stdio_bridge`, `codex_passes_the_token_to_the_stdio_bridge` | `claude`, `codex` | Claude `default`; Codex `never/read-only` | The stdio bridge of a shim host (DL-194 §9.10). A stub station socket records the digest of each `AUTH` line. The provider starts `fleetdeck mcp-bridge` through a wrapper that records the digest of `FLEETDECK_COORDINATOR_TOKEN`, calls the `fleet_ping` tool exactly once and repeats its answer. Every `AUTH` carries the minted token, and the token is in no command line and no file of the temporary directory. A control round without the token forwarding must show no `seen` record and no authenticated connection. A pass sets the minimum version in `fleetdeck_providers::coordinator::BRIDGE_VERIFIED`. Run: `make smoke-live-bridge`. |
+
+The prompt is `Reply with the single word pong. Do not use any tool.` Each step has a time limit of 180 s. The temporary directory is removed after the test.
+
+## Requirements
+
+- The `claude` and `codex` CLIs are on `PATH` and signed in. To use other binaries, set `FD_CLAUDE_BIN` and `FD_CODEX_BIN`.
+- Network access to the provider.
+
+> **Caution:** the tests use your provider accounts and spend a small number of tokens.
+
+## How to run the tests
+
+1. Run both tests:
+
+   ```sh
+   make smoke-live
+   ```
+
+2. To run one provider only, use the test name:
+
+   ```sh
+   FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture live_codex
+   ```
+
+## Why the tests do not run by default
+
+- Each test has `#[ignore]`, so `cargo test`, `cargo nextest run` and `make check` skip it.
+- Each test also does nothing unless `FD_LIVE_SMOKE=1`. A run with `--ignored` and without the flag prints `skipped` and passes.
+
+## Last result
+
+| Date | Claude | Codex | Result |
+|---|---|---|---|
+| 2026-10-11 | 2.1.289 (`oauth_token`) | 0.160.0 (`chatgpt`) | Both passed (`make smoke-live`, 7.1 s). |
+| 2026-10-12 | 2.1.296 (`oauth_token`) | not run (no coordinated start) | Coordinator handoff test passed for Claude (34 s, DL-219). |
+| 2026-10-12 | 2.1.296 (`oauth_token`) | 0.160.0 (`chatgpt`) | Coordinator handoff test 31 passed for both providers: provider half (49 s) and station half `coordinator_live_tests` (46 s), DL-220. |
+
+`live_codex_shell_smoke`: 2026-10-16, pass on Linux (WSL2) with Codex 0.162.1.
+
+`live_bridge` (DL-194 §9.10): 2026-10-16, pass on Linux (WSL2) with Claude 2.1.301 and Codex 0.162.1, both control rounds included. `BRIDGE_VERIFIED` lists Claude 2.1.296 and Codex 0.162.1.
+
+<!-- desktop-smoke:begin -->
+## Desktop (R13)
+
+The desktop smoke list needs a real Hyprland desktop, a signed-in board and one station on that desktop. Run `make desktop-smoke` to print this list. The command runs nothing else.
+
+Every step is a board step. No step needs you at the station. The station can be a remote machine.
+
+### P5a: owner screenshots and artifact deletion (DL-233)
+
+The supported baseline of the screenshot tool is `grim 1.5.0`. The code calls `grim -t png -s 1 -l 6 -o <monitor> -`, and `grim` writes the PNG to its standard output.
+
+Set up:
+
+1. Open the board and go to Settings, then the station tab of the station.
+2. Turn on "Desktop control" if it is off.
+3. Turn on "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+4. Leave "Screenshot monitors" empty. An empty list allows every monitor.
+5. Open the station card. The Desktop panel must show a "Screenshot" button for each monitor.
+
+Items:
+
+1. **Each monitor.**
+   1. Press "Screenshot" for each monitor, one monitor at a time.
+   2. Expect an image in the Desktop panel and an "Open the screenshot" link.
+   3. Open the link. The viewer shows the same image.
+   4. Find the artifact in the artifact list. Its title is `Desktop capture · <station name>/<monitor>`.
+   5. Write the `grim` version of the station in the result.
+2. **A scaled monitor.**
+   1. Press "Screenshot" for a monitor with a scale other than 1.
+   2. Expect an image. Write the image size in the result.
+   3. The error "The monitor exceeds the screenshot size limit." is correct in one case only. One side is more than 8192 pixels, or the monitor has more than 16,777,216 pixels.
+3. **A monitor with DPMS off.**
+   1. Press "Screen off" for one monitor and confirm.
+   2. Press "Screenshot" for the same monitor.
+   3. Write the result in the table. The board must show an image or an error text within 45 seconds.
+   4. Turn the monitor on again from the Desktop panel.
+4. **The lock state (`hyprlock`).**
+   1. Check that the Desktop panel shows "Locked" as "off".
+   2. Press "Screenshot". Expect an image. This proves that `locked == Some(false)` on the real desktop.
+   3. Do not lock the screen of a remote station for this smoke. Two station tests cover the locked case: `a_locked_or_unknown_lock_state_before_the_capture_refuses_it` and `a_screen_that_locks_during_the_capture_discards_the_output`.
+5. **A stalled `grim`.**
+   1. The station kills a stalled `grim` and all its child processes as one group. The board cannot start a stall.
+   2. If one screenshot ends with an error, press "Screenshot" again at once.
+   3. Expect an image, and not the error "A capture is already running.". This shows that the station freed its capture slot.
+   4. The test `capture_through_shim_exec_kills_a_stalled_group_at_the_timeout` covers the group kill.
+6. **A remote station, from the board.**
+   1. Use a station that is on another machine.
+   2. Press "Screenshot" in its Desktop panel. Expect the image.
+   3. Find the artifact in the artifact list.
+   4. Open the artifact and press "Delete artifact". Confirm.
+   5. Expect "Deleted." The artifact leaves the artifact list.
+   6. The board can show "Hidden on this deck. Waiting for station deletion." In that case, wait. The station deletes its copy when its link is up. The board then shows "Deleted."
+
+Result:
+
+| Date | `grim` version | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P5a on the owner's Omarchy machine is open (DL-233 item d). |
+
+### P8 provisioning (DL-234)
+
+Do this smoke after the release task of the owner. The release task supplies the pinned `fleetdeck-bin` package, its SHA-256, the trusted `/etc/fleetdeck-provision-release.json` and the installer image step. Before that task, a binary run of the bootstrap stops at `release_untrusted`, and P8-11 puts the real end-to-end run here.
+
+The steps are in `docs/v2/operations.md` section 15. After the first login of the new machine, every step is a board step. No step needs you at the new machine.
+
+Set up:
+
+1. On your deck machine, make the file: `fleetdeck deck provision-file <name> --deck <tailnet name>:7421 --out <private folder>/provision.toml`.
+2. Put the file on a supported medium as `fleetdeck/provision.toml`.
+3. Make sure that the new machine has its own Tailscale enrollment key and its own disk-encryption credential.
+
+Items:
+
+1. **A fresh machine from the medium.**
+   1. Install a fresh machine with the trusted installer image and the medium.
+   2. Expect the file `<config home>/fleetdeck/provision.toml` on the new machine, made by the image.
+   3. Log in. Expect no terminal window from the hook.
+2. **The notification.**
+   1. Expect a notification "Fleet Deck pairing" with the text "Approve this station fingerprint on the board:" and 16 groups of four characters.
+   2. Open the board. Stations, "Add station", "A computer on my tailnet", then "Add" on the row of the new machine.
+   3. Expect the request card "<name> asks to join this deck" with the text "Compare all 16 groups with the fingerprint shown on the new machine. Approve only if every group matches."
+   4. Compare the 16 groups on the card with the 16 groups in the notification. Write in the result that every group matched.
+3. **The approval.**
+   1. Select "Yes, the codes match. Add <name>". Sign in again when the board asks.
+   2. Expect the station on the board with its link up.
+4. **The providers.**
+   1. Open the station card. Expect the provider versions of the station.
+   2. A provider that is signed out is a warning only. A provider that is `broken` or `unknown` stops the bootstrap with `provider_probe_failed`.
+5. **The Omarchy integration.**
+   1. The bootstrap installs the Omarchy integration and checks its status as its last step.
+   2. Open the station card on the board. Expect the Desktop panel of the station. Write in the result what the board shows.
+6. **A refused pairing asks again.**
+   1. Use a machine that you have not approved yet.
+   2. When the request card shows, select "No, refuse".
+   3. Wait 10 minutes. Expect a new request card with the same 16 groups. Open the pairing window again when the board shows that it is closed.
+   4. Approve it. Expect the station on the board.
+7. **A clone test.**
+   1. Install two machines from one medium. Use a distinct Tailscale enrollment key and a distinct disk-encryption credential for each machine.
+   2. Expect two different fingerprints in the two notifications and on the two request cards.
+   3. Write both fingerprints in the result.
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P8 waits for the release task of the owner (DL-234 item b). |
+
+### P4 Omarchy integration (DL-235)
+
+The contract is `docs/v2/design/omarchy-p4.md` section 5. The items 1 to 13 below are the 13 items of that section. A difference changes the asset files, not the Rust code. Do this smoke on the owner's Omarchy machines: the server with the wall display and the laptop.
+
+These items watch the desktop of the machine, on your own screen. No item asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. The integration is installed by the first login of P8 (see the P8 provisioning smoke, item 5, and `docs/v2/operations.md` section 15). On a station that P8 did not provision, install the integration from the board: see the part "Omarchy from the board (DL-243)" below.
+2. Open the board and go to Settings, then the station tab of the station. Turn on "Desktop control" if it is off. The board asks for a recent sign-in.
+3. On the same tab, turn on "Fleet summary for the desktop shell". The board asks for a recent sign-in. The install can already have turned it on.
+4. Go to the deck settings. Turn on "Desktop control" if it is off.
+5. On the server, open a wall display that is bound to the station (the form "Open a wall" in the Desktop panel of the station card).
+6. Keep at least one session that needs you (an open approval or question) ready on the server.
+
+Items:
+
+1. **The Omarchy version.**
+   1. Find the Omarchy version of each machine the way you normally read it on that machine.
+   2. Compare it with `4.0.0.alpha` (commit `51bfd1d`). Write both versions in the result.
+   3. No board path shows this value yet.
+2. **The plugin and the bar widget.**
+   1. Look at the bar. Expect the Fleet Deck widget in the `right` section. Expect the text `<working> · ⚠<needs_you>` (the warning part only when a session needs you).
+   2. Expect the urgent color when a session needs you. In the board, answer the request. Expect the urgent color to go away.
+   3. Turn off "Fleet summary for the desktop shell" on the board. Expect the dim color in the widget. Turn it on again.
+   4. The widget shows live counts. This proves the Quickshell `Process` and the line reader.
+   5. Press the middle mouse button on the widget. This proves `Quickshell.execDetached` (item 11 checks the result).
+   6. Write in the result that `omarchy plugin validate` has no board path yet, and that the widget shows as proof.
+3. **The panel.**
+   1. Press the left mouse button on the widget. Expect the panel with the sessions that need you, the counts and the usage line.
+   2. Press `Esc`. Expect the panel to close.
+   3. Press `SUPER + CTRL + F`. Expect the same panel. Press `Esc`.
+   4. In the panel, press `j` and `k` to move. Press `Enter` on a request. Expect the browser to open the board at that request. Expect no approval control in the panel.
+4. **Hyprland rules and keys.**
+   1. Expect the wall window to have no border. This proves that the window rule matches the window class.
+   2. Open a preview window. Expect it to float at 1280 by 800.
+   3. Open the Omarchy key list. Expect the four Fleet Deck keys with their descriptions: "Fleet Deck panel", "Fleet Deck wall", "Fleet Deck: next session that needs you on the wall" and "Fleet Deck: next wall mode". Expect no collision with an Omarchy key.
+   4. Expect each key to work from the session `PATH`. This proves the managed line in `hyprland.lua`.
+5. **The hooks.**
+   1. Log out and log in. Expect the widget to show data without a manual start. This shows that the hook `post-boot` ran.
+   2. If the widget shows no data, write it in the result. The source copy shows only the hooks `post-update`, `theme-set` and `font-set`.
+   3. Change the Omarchy theme. Expect the board palette of item 6 to follow. This shows that the hook `theme-set` ran.
+6. **The theme.**
+   1. On the board, open the theme row at the foot of the sidebar (on a phone, the More page).
+   2. Open the list "Use the Omarchy theme of". Expect the station in the list after a theme change.
+   3. Select the station. Expect the board to show the colors of the Omarchy theme.
+   4. Switch the Omarchy theme again. Expect the board to follow within 60 seconds.
+   5. Open the wall display. Expect the wall to use the same colors.
+   6. Select "Off". Expect the normal theme.
+7. **Notifications.**
+   1. Make a new request that needs you on the server.
+   2. Expect a notification with the title "<callsign> needs you" and the text "<Kind> on <station>". Expect the application name "Fleet Deck".
+   3. Click the notification. Expect the browser to open the board at that request.
+   4. Write the result. If no notification shows, `busctl` or `jq` can be missing. No board path shows this yet.
+8. **Passwordless sudo.**
+   1. This check has no board path yet. Write the `omarchy-sudo` line of `fleetdeck doctor` as you see it on the machine.
+   2. Expect `warn` when Omarchy has an active passwordless sudo grant, and `ok` when it has none.
+9. **The crash diagnosis.**
+   1. Open the Omarchy menu. Expect the rows "Fleet", "Open the board" and "Diagnose the last crash".
+   2. Select "Diagnose the last crash". Expect a notification "A crash diagnosis session started".
+   3. Open the board. Expect a new supervised session. Expect its first message to name the process, PID, binary, signal and time of the newest crash.
+   4. If the answer is "Add your home directory to allowed_roots to diagnose a crash.", change "Allowed folders" on the station tab. The board asks for a recent sign-in.
+10. **The screensaver.**
+    1. Turn the screensaver on from the board: see the part "Omarchy from the board (DL-243)" below. Write in the result whether it is on.
+    2. If it is on, start the Omarchy screensaver. Expect the large `FLEET` word, the number of sessions that need you, the counts and the usage line.
+    3. Write the width, the height and the centering that you see.
+11. **The wall hotkeys.**
+    1. Press `SUPER + ALT + W`. Expect the wall window to take focus. Press it again while the wall is on the active workspace. Expect the previous workspace.
+    2. Close the wall window. Press `SUPER + ALT + W`. Expect no change. The command prints "No Fleet Deck wall window is open." on the terminal only.
+    3. Press `SUPER + ALT + N`. Expect the wall to show the next session that needs you.
+    4. Press `SUPER + ALT + M`. Expect the next wall mode. The order is mission, focus on a request, ambient.
+12. **The menu rows.**
+    1. Open the Omarchy menu. Expect the group "Fleet" with its icon.
+    2. Select "Open the board". Expect the board in the browser.
+    3. Select "Diagnose the last crash". Expect the result of item 9.
+13. **End to end.**
+    1. On the server, with a bound wall: the widget, the notification and its click, "Open the board", `SUPER + ALT + N` and `SUPER + ALT + M` all work (items 2, 7, 11, 12).
+    2. On the laptop, with no bound wall: press `SUPER + ALT + N`. Expect the answer "This station has no wall display bound to it." (`not_bound`). It shows on the terminal only.
+    3. The theme reaches the board (item 6). The screensaver works when it is on (item 10).
+    4. The removal and the new install are board steps: see the part "Omarchy from the board (DL-243)" below.
+
+Result:
+
+| Date | Machines | Omarchy versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P4 on the owner's Omarchy machines is open (DL-235 item a). |
+
+### Omarchy from the board (DL-243)
+
+The contract is `docs/v2/design/omarchy-admin.md` revision 5. The owner guide is `docs/v2/operations.md` section 7.5, part "Omarchy from the board". Do this smoke on the owner's Omarchy machines: the server and the laptop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. Where a step looks at the screen of a machine, you start the Omarchy screensaver and watch the screen (no command, no file edit). The board checks are the lines of the card. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Use a station that P8 did not provision, with no Fleet Deck integration installed. The items 1 to 5 use it.
+2. Open the board and go to Settings, then the station tab of the station. Find the card "Omarchy".
+3. Each button asks "Confirm it is you" with the text "This change needs it: Omarchy integration." The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Install on a station that P8 did not provision.**
+   1. Expect the line "Integration: not installed" and the button **Install**.
+   2. Press **Install** and confirm. Expect "Working…" while the install runs (up to 60 seconds).
+   3. Expect "Integration: installed", "Plugin: on" and "Hyprland line: present".
+   4. Expect the buttons **Uninstall** and **Turn the screensaver on**, and no **Install**.
+   5. Look at the bar of the machine. Expect the Fleet Deck widget (see the P4 item 2). Write what the card and the bar show.
+2. **Turn the screensaver on.**
+   1. Press **Turn the screensaver on** and confirm. Expect "Screensaver: on" and the button **Turn the screensaver off**.
+   2. Wait one minute.
+   3. Start the Omarchy screensaver on that machine and watch its screen. Expect the Fleet Deck text: the large `FLEET` word, the number of sessions that need you, the counts and the usage line.
+3. **Turn the screensaver off.**
+   1. Press **Turn the screensaver off** and confirm. Expect "Screensaver: off" and the button **Turn the screensaver on**.
+   2. Start the Omarchy screensaver again and watch the screen. Expect the original screensaver back, not the Fleet Deck text.
+4. **Turn it on again.**
+   1. Press **Turn the screensaver on** and confirm. Wait one minute.
+   2. Start the Omarchy screensaver and watch the screen. Expect the Fleet Deck text again.
+5. **Uninstall.**
+   1. Press **Uninstall** and confirm. Expect "Working…" and then "Integration: not installed". Expect no screensaver line.
+   2. Start the Omarchy screensaver and watch the screen. Expect the original screensaver, not the Fleet Deck text.
+   3. Expect the button **Install** again. The kept original needs no check: the card does not show its path.
+6. **Retry provisioning on a station with `integration_failed`.**
+   1. Use a station whose card shows "Provisioning stopped: The Omarchy integration install or its status check did not succeed." Expect the button **Retry provisioning**.
+   2. Press it and confirm. Expect "Provisioning is running" and then, within about 10 minutes, a new state. The card reads the state by itself every 5 seconds.
+   3. On success, expect "Provisioning: complete" and "Last retry: complete". When the bootstrap stops again, expect "Last retry: stopped with an error" and the same stop line.
+   4. Write what the card shows at the end.
+
+Result:
+
+| Date | Machines | Omarchy versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of the Omarchy management from the board is open (DL-243 item d). |
+
+### P6 coordinator desktop tools (DL-237)
+
+The contract is `docs/v2/design/omarchy-p6.md`. The owner guide is `docs/v2/operations.md` section 7.6. Do this smoke on the owner's Omarchy machines. The coordinator runs on one station (it can be a machine with no desktop). The tools act on a second station that has a Hyprland desktop and `grim`. Use the server with the wall display as the second station, and the laptop as the first.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Open the board and go to Settings, then the Deck tab. Turn on "Fleet control" and "Desktop control" if they are off. The board asks for a recent sign-in.
+2. Go to the station tab of the coordinator station. Turn on "Fleet control on this station". The board asks for a recent sign-in.
+3. Go to the station tab of the second station. Turn on "Fleet control on this station", "Desktop control" and "Desktop screenshots". Leave "Screenshot monitors" empty. An empty list allows every monitor.
+4. Open a wall display that is bound to the second station (the form "Open a wall" in the Desktop panel of its station card).
+5. Choose a web page that the second station serves on `localhost`, for the preview item. Give its address to the coordinator in the item.
+
+Items:
+
+1. **The grant.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and "Screenshots: capture a whole monitor of a grant station and read its own screenshots".
+   3. Expect the two disclosures under the switches. The preview text is "Opening a preview runs web content as your user on that station, and the page can make network requests." The screenshot text starts with "This agent can capture the whole selected monitor". Expect the note "Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them."
+   4. In the group "Grant stations", select the second station. Expect "This station (always)" to be on and not changeable.
+   5. Leave the limits at 300, 20 and 64. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   6. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect its stations, and the text "desktop actions 0 of 300", "screenshots 0 of 20" and "image reads 0 of 64 MiB".
+2. **The information.**
+   1. Ask the coordinator for the desktop information of the second station.
+   2. Expect its monitors (name, size, scale, "focused"), the walls and the abilities of the station.
+   3. Expect no window list, no window title and no wall content.
+3. **A notification.**
+   1. Ask the coordinator to show a notification with the title "Hello" and a short body on the second station.
+   2. Expect the notification on the screen of the second station. Expect its title to start with the callsign of the coordinator and ": ".
+   3. Press "Desktop operations" on the grant row. Expect the line "notify on <station>: done".
+   4. Expect "desktop actions 1 of 300" on the grant row.
+4. **A preview.**
+   1. Ask the coordinator to open the address of the page of set-up step 5 on the second station.
+   2. Expect a new browser window with the page on the second station. Expect the coordinator to report a `window_id`.
+   3. Expect the line "preview_open on <station>: done" in "Desktop operations".
+   4. Ask the coordinator to open `http://example.com/`. Expect a refusal and no browser window. The host must be `localhost`, `127.0.0.1`, `[::1]` or the tailnet name of the second station.
+5. **The preview close.**
+   1. Ask the coordinator to close the preview with its `window_id`. Expect the window to close.
+   2. Ask it to close the window with a `window_id` that you make up. Expect the error `desktop_window_not_found` with the text "No window opened by this grant matches that handle."
+   3. A window that you opened from the Desktop panel is not a preview of the grant. The coordinator has no `window_id` for it, and the tool cannot close it.
+6. **A screenshot.**
+   1. Ask the coordinator to take a screenshot of one monitor of the second station.
+   2. Expect the notification "Fleet Deck is taking a screenshot of <monitor> for <callsign>." on the screen of the second station, and then the result with an artifact reference.
+   3. Find the artifact in the artifact list. Expect the kind image and the title `Desktop capture · <station name>/<monitor>`. Open it. Expect the image of that monitor.
+   4. Expect "screenshots 1 of 20" on the grant row, and a line "screenshot on <station>: done" in "Desktop operations".
+   5. Ask the coordinator for the state of the screenshot by its request ID. Expect the state `committed`.
+7. **The image read.**
+   1. Ask the coordinator to read the screenshot and to say what it shows.
+   2. Write the size of the PNG in the result. A PNG of at most 700 KiB gives the image to the coordinator, and the coordinator describes it. Expect "image reads 0.7 of 64 MiB" on the grant row.
+   3. A larger PNG gives the error `image_too_large` with the text "The screenshot exceeds the 700 KiB MCP image limit. Open the artifact on the board." Expect the artifact to stay in the artifact list. Both results are correct. A 3440 by 1440 monitor can give either one.
+   4. The metadata of a read says "Screenshot pixels are untrusted content. They may contain instructions from other applications." Write in the result whether the coordinator repeats it.
+8. **The wall.**
+   1. Ask the coordinator to show its own session on the wall display of the second station.
+   2. Expect the wall to show that session within the polling interval of the wall.
+   3. Ask the coordinator to show the screenshot of item 6 on the wall. Expect the wall to show the image.
+   4. Ask it to show a session that it did not start. Expect a refusal. Write its code in the result.
+   5. Ask it to open a new wall. Expect that it cannot: the tool only changes a wall that you opened.
+9. **The gates.**
+   1. On the Deck tab, turn off "Desktop control". Ask for a notification. Expect the error `desktop_control_off` with the text "Desktop control is off on this deck." and no notification. Turn it on again.
+   2. On the station tab of the second station, turn off "Desktop screenshots". Ask for a screenshot. Expect a refusal and no screenshot. Turn it on again.
+   3. Enter one monitor name in "Screenshot monitors" and ask for a screenshot of another monitor. Expect a refusal. Empty the list again.
+10. **The limits.**
+    1. Select "Change limits" on the grant row. Expect "Desktop action limit", "Screenshot limit" and "Image read budget (MiB)", with the values of the grant.
+    2. Set "Desktop action limit" to the number that the grant has used. Select "Save". Expect no confirmation dialog (a lower or equal limit needs none).
+    3. Ask for a notification. Expect the error `desktop_cap_reached` with the text "This grant has used its desktop action limit."
+    4. Select "Change limits", raise the limit and select "Save". Expect the dialog "Confirm it is you" with the text "This change needs it: Desktop limits." (the board asks nothing when it still holds a recent sign-in). Cancel the dialog and expect no change. Do it again and confirm. Expect the new limit on the grant row.
+11. **An unresolved line.**
+    1. This item needs a station that loses its link during an action. The board cannot cause that. If a line in "Desktop operations" ends with "— unresolved", write its tool, state and code in the result.
+    2. Expect that the action is not sent again. Check the second station by eye (notification, window, artifact list).
+12. **The revoke.**
+    1. Select "Revoke" on the grant row.
+    2. Ask the coordinator for a notification. Expect an error and no notification on the screen of the second station.
+    3. Expect no new line in "Desktop operations".
+    4. A preview that is still open stays open. Write in the result whether the board offers a way to close it (no board path yet for a preview of the agent).
+13. **The opt-in Claude and Codex smoke (`omarchy-p6.md` section 15, test 38).**
+    1. Do items 1 to 12 once with a Claude coordinator and once with a Codex coordinator. Use a provider instance of the coordinator station whose version the station accepts for a coordinator (`handoff_unverified` means that it does not). Write both provider versions in the result.
+    2. The checks that this item needs: the authenticated discovery of the nine tools (item 2 shows `desktop_info`), a notification and a preview on the second station (items 3 and 4), a screenshot artifact (item 6), an image read (item 7), the revoke and the refusal of the next action (item 12).
+    3. All enablement and all approvals are board steps. If a provider asks you to approve a tool in its own terminal, write that in the result.
+
+Result:
+
+| Date | Machines | Provider versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P6 on the owner's Omarchy machines, and the opt-in Claude and Codex smoke, are open (DL-237 item b). |
+
+### P5b owner recordings (DL-239)
+
+The contract is `docs/v2/design/omarchy-p5b.md` (section 17, test 52, and section 18). The owner guide is `docs/v2/operations.md` section 7.7. The supported baseline of the recorder is `wf-recorder 0.5.0`. The code starts it through the hidden `shim-exec` command, with the output file on FD 3. Newer releases are not supported until a test shows that they work. Do this smoke on the owner's Omarchy machine, on a station with a Hyprland desktop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Open the board and go to Settings, then the Deck tab. Turn on "Desktop control" if it is off.
+2. Go to the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+3. Leave "Screenshot monitors" empty. An empty list allows every monitor.
+4. Open the station card and open the Desktop panel. Each monitor must show "Duration (seconds)" with the value 30, a "Record" button and the disclosure "Records the whole selected monitor, including other applications, notifications and private information visible there. No audio is recorded. The recording is stored as an ordinary artifact until deleted."
+5. If "Record" is off, read the reason line. "The recording tool wf-recorder is not installed." means that the tool is missing. Install it from the board (part "Install desktop tools from the board (DL-250)").
+
+Items:
+
+1. **A short recording.**
+   1. Enter 10 in "Duration (seconds)" for one monitor. Press "Record".
+   2. Expect "Preparing recording", then "Recording". "Record" and "Screenshot" must be off for every monitor of the station while it runs.
+   3. After about 10 seconds, expect "Stopping recording" or "Saving recording", and then the link "Open the recording".
+   4. Open the link. The viewer shows the line `Desktop recording · <station name>/<monitor> · <time>` above the player. The artifact title is `Desktop recording · <station name>/<monitor>`, and its kind is "Video".
+   5. Press play. Expect video of the monitor with no audio. Expect that the video did not start by itself.
+   6. Write the monitor size and the file size in the result.
+2. **Stop at about 5 seconds.**
+   1. Enter 10 and press "Record". After about 5 seconds of "Recording", press "Stop recording".
+   2. Expect "Stopping recording", "Saving recording" and then "Open the recording".
+   3. Open it. Expect a clip of about 5 seconds. The viewer line ends with "requested 10 s, saved <n> s".
+3. **The screenshot switch during a recording.**
+   1. Enter 30 and press "Record". Wait for "Recording".
+   2. Go to the station tab of the station. Turn off "Desktop screenshots". The board asks for no sign-in.
+   3. Go back to the Desktop panel. Expect, within a few seconds, the text "The recording was interrupted before it was saved."
+   4. Open the artifact list. Expect no new recording artifact.
+   5. Turn on "Desktop screenshots" again. The board asks for a recent sign-in.
+4. **The lock during a recording.**
+   1. Do this item only on a machine where you can unlock the screen yourself. The board has no way to unlock a screen (no board path yet).
+   2. Enter 30 and press "Record". Wait for "Recording".
+   3. In the Desktop panel press "Lock the screen" and confirm.
+   4. Expect, within a few seconds, the text "The screen is locked or its lock state is unknown." Expect no new recording artifact.
+   5. Unlock the screen.
+5. **Play and seek.**
+   1. Record 30 seconds. Open the recording.
+   2. Press play. Drag the position control to the middle of the clip. Expect that the video goes on from there with no long wait.
+   3. Press "Download". Expect a file that a media player opens.
+   4. Write the browser name and version in the result.
+6. **Delete it.**
+   1. Open the recording and press "Delete artifact". Confirm. The board asks for a recent sign-in.
+   2. Expect "Deleted." The recording leaves the artifact list.
+7. **Open it on the wall.**
+   1. Record 10 seconds again. Open the recording.
+   2. Open a wall display that is bound to the station (the form "Open a wall" in the Desktop panel), if none is open.
+   3. In the viewer press "Send to wall…", choose the display and press "Send".
+   4. Expect the wall to show the card "Open this artifact on your own device" and no video.
+   5. Delete this recording (item 6).
+8. **The real recorder: retained FD and finalization (required).** This item is required before you rely on recordings (DL-239 item b, `omarchy-p5b.md` section 18). The unit tests use a fake recorder.
+   1. Enter 120 in "Duration (seconds)". Press "Record".
+   2. Wait the whole time. Do not press "Stop recording". Expect "Recording" for about 2 minutes, then "Saving recording", and then "Open the recording". The text "The recording tool failed." or "The recording file could not be verified." means that the retained FD or the finalization does not work with this `wf-recorder`. Write the text in the result and stop here.
+   3. Open the recording. Press play and seek to the end. Expect a clip of about 120 seconds that plays in the browser. The viewer line shows both lengths only when they differ by more than 1 second.
+   4. Write the `wf-recorder` version in the result (read it on the card "Desktop tools": it shows the package version when a package owns the program). Write the size of the file.
+   5. The board shows no process list. Whether a recorder process stays on the station after the recording has no board path yet. Write "no board path yet" in the result for this check.
+   6. Delete the recording (item 6).
+
+Result:
+
+| Date | `wf-recorder` version | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P5b-1, and the real-recorder item 8, are open (DL-239 item b). |
+
+### P5b-2 agent recordings (DL-241)
+
+The contract is `docs/v2/design/omarchy-p5b.md` section 13 (section 17, test 52, and section 18). The owner guide is `docs/v2/operations.md` section 7.7, part "Agent recordings (P5b-2)". Do this smoke on the owner's Omarchy machines after the P5b-1 item 8 (the real recorder) passed. The coordinator runs on the first station (it can be a machine with no desktop). The recording is on a second station that has a Hyprland desktop, `grim` and `wf-recorder`. Use the server with the wall display as the second station, and the laptop as the first.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Do the set-up steps 1 to 3 of the P6 smoke: the Deck tab ("Fleet control" and "Desktop control"), the station tab of the coordinator station ("Fleet control on this station"), and the station tab of the second station ("Fleet control on this station", "Desktop control" and "Desktop screenshots", with "Screenshot monitors" empty).
+2. Open the board and go to the Desktop panel of the second station. Each monitor must show "Record". If "Record" is off, read the reason line (see the P5b-1 set-up).
+
+Items:
+
+1. **The grant with the allowance.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect the switch "Allow monitor recordings" to show. Turn the screenshots switch off and on: expect the recordings switch to go off and to hide.
+   3. Turn on "Allow monitor recordings". Expect the fields "Recording limit" with 5 and "Recording time limit (seconds)" with 600, and this note: "This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video."
+   4. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   5. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect the text "recordings 0 of 5, recording time 0 s of 600 s" in its line.
+2. **A recording of a monitor of another station.**
+   1. Ask the coordinator to record 10 seconds of one monitor of the second station.
+   2. Expect the notification "Fleet Deck is recording <monitor> for <callsign> for up to 10 seconds." on the screen of the second station. Expect it before the recording starts, and not later.
+   3. Wait about 10 seconds. Expect the coordinator to report a result with an artifact reference, the monitor, the size and the saved length. Expect no video, no image and no file path in the result.
+   4. Write the monitor size, the file size and the saved length in the result.
+3. **Play it.**
+   1. Find the recording in the artifact list. Expect the kind "Video". Open it.
+   2. Press play. Expect video of the monitor with no audio, and no autostart. Seek to the middle and expect that it goes on from there.
+   3. Ask the coordinator to read the artifact as an image. Expect a refusal (the artifact is unknown to the tool). A recording never reaches the agent.
+4. **The grant row.**
+   1. Look at the grant line after item 2. Expect "recordings 1 of 5, recording time 10 s of 600 s". A recording also uses one desktop action and one capture: expect "desktop actions 1 of 300" and "screenshots 1 of 20".
+5. **Stop an agent recording.**
+   1. Ask the coordinator to record 60 seconds of one monitor. Expect the notification of item 2.
+   2. Open the Desktop panel of the second station. Expect its phase "Recording" and the button "Stop recording" within a few seconds. Reload the board and expect the same.
+   3. After about 10 seconds press "Stop recording". Expect "Stopping recording", "Saving recording" and then the saved recording.
+   4. Open the recording in the artifact list. Expect a clip of about 10 seconds. Ask the coordinator for the state of the recording. Expect the stop reason `owner_stop`.
+6. **Revoke during a recording.**
+   1. Ask the coordinator to record 60 seconds. After about 10 seconds select "Revoke" on the grant row.
+   2. Expect the recording to end within about 6 seconds. Expect the coordinator to report `authority_lost`.
+   3. Open the artifact list. Expect no new recording artifact.
+   4. Look at the grant line. Expect the revoked state. Expect "recordings 3 of 5, recording time 130 s of 600 s": the stopped recording and the revoked recording keep their charge (no refund).
+7. **A session without the allowance has no recording tool.**
+   1. Start a second coordinator session with "Screenshots" on and "Allow monitor recordings" off. Look at the grant line. Expect no text about recordings.
+   2. Ask the coordinator which desktop tools it has. Expect `screenshot`, `capture_status` and `read_capture_image`, and no `record_monitor`.
+   3. Ask it to record a monitor. Expect that it has no such tool, or that the call is refused with `recording_not_allowed`.
+   4. Revoke this grant and the grant of item 6.
+
+Result:
+
+| Date | Machines | `wf-recorder` version | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P5b-2 is open (DL-241 item c). |
+
+### P7 agent keyboard and pointer input (DL-245)
+
+The contract is `docs/v2/design/omarchy-p7.md` (sections 15 and 16). The owner guide is `docs/v2/operations.md` section 7.8. This smoke is required before you rely on agent input. P7 is built, but it stays experimental and off by default until this smoke passes and you accept what it shows. Do it on the owner's Omarchy machines after the P6 smoke passed. The coordinator runs on one station (it can be a machine with no desktop). The input acts on a second station that has a Hyprland desktop and `wtype`. Use the server with the wall display as the second station, and the laptop as the first. Item 9 needs a station whose desktop also runs your board: it uses the laptop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use dummy content only. Do not test with a real approval or a real secret. The smoke must not approve a real dangerous operation.
+
+> **Caution:** the coordinator types and presses keys on a real desktop. The focus can change after Fleet Deck checks it, so a key can reach another window. Keep every other window on the second station harmless while you run this smoke. Keep one board open on another device (for example a phone), because the deck signs out the boards of the machine where the agent types (item 9).
+
+Set up:
+
+1. Do the set-up steps 1 to 3 of the P6 smoke: the Deck tab ("Fleet control" and "Desktop control"), the station tab of the coordinator station ("Fleet control on this station"), and the station tab of the second station ("Fleet control on this station", "Desktop control" and "Desktop screenshots", with "Screenshot monitors" empty).
+2. Leave "Allow agent desktop input" off on the station tab of the second station. Item 2 turns it on.
+3. Choose a dummy web page that the second station serves on `localhost`. It must have a text field that has the focus when the page loads, a button that only changes a line of text on the page, and a link to the address of your board. Give its address to the coordinator in the items.
+4. After you upgrade a deck to this version, every board login ends once (the migration V37). Sign in again.
+5. Open the Desktop panel of the second station. Write the "Omarchy" version that the panel shows.
+
+Items:
+
+1. **The grant with the allowance.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls". Expect no input switch yet.
+   3. Turn on "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect the switch "Allow keyboard input and pointer movement in this agent's previews" to show. Turn "Desktop" off and on. Expect the input switch to go off and to hide when you turn "Desktop" off.
+   4. Turn on the input switch. Expect the line "Scope: this caller's preview windows" (fixed text, no selector), the fields "Input action limit" with 100 and "Typed character limit" with 20000, and the note "While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device."
+   5. Expect the red disclosure: "This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
+   6. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   7. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect "input actions 0 of 100, typed characters 0 of 20000" in its line.
+2. **The station setting.**
+   1. Ask the coordinator to open the dummy page as a preview on the second station. Expect a window and a `window_id`.
+   2. With "Allow agent desktop input" still off, ask the coordinator to type the word "hello" in that preview. Expect a refusal and no letter in the field. Write the code and the text in the result.
+   3. On the station tab of the second station, turn on "Allow agent desktop input". Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to use keyboard input and pointer movement on this station. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+3. **Text and keys.**
+   1. Ask the coordinator to type "hello" in the preview. Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an agent preview." on the screen of the second station, before the letters appear. Expect "hello" in the text field, and a result `done` with no echo of the text.
+   2. Expect "input actions 1 of 100, typed characters 5 of 20000" on the grant row, and the line "type_text on <station>: done" in "Desktop operations".
+   3. Ask for the key `Shift+Tab`, then `Tab`, then `Return`. Expect that each press shows the notification first. Expect the dummy button to react to `Return` when it has the focus. Write which key did what.
+   4. Ask for the chords `Alt+Tab`, `F5` and `CTRL+A`. Expect `invalid_params` for each, no notification and no change on the screen.
+   5. Ask for a text with a new line. Expect `invalid_params`.
+4. **The `wtype` behavior (record).**
+   1. Write the version of `wtype` and of Hyprland and Chromium in the result (read them on the card "Desktop tools": it shows the package version when a package owns the program).
+   2. Ask the coordinator to type each of these texts, one call each, in the text field. Write for each whether the field shows exactly the text: a text that starts with a dash, for example `-n --help`; a text with quotes and a backslash; an accented text, for example `café`; a text with a combining accent; a non-Latin text, for example `Привет`; an emoji.
+   3. Ask for a text of 2,000 characters. Write the time from the notification to the result, and whether the field shows all the characters.
+   4. Write the keyboard layout of the station (the card "Desktop tools" shows it). Write whether the accented and non-Latin texts follow it.
+   5. Write whether a modifier stays pressed after a call. Ask for the key `Shift+a`, then for the key `a`. Write whether the field shows `Aa` or `AA`.
+5. **The focus (record).**
+   1. Ask for a text while the preview is a tiled window, and again while it is a floating window. Write whether the text always lands in the preview.
+   2. Open a second preview, and ask for a text in the first one. Write whether the first one gets the text and whether it gets the focus.
+   3. Do the same with the preview on a second monitor, and on a workspace that is not the visible one. Write what the coordinator reports each time. Write any letter that reached a window that is not the preview.
+   4. Write whether the Hyprland setting makes the focus follow the pointer. Write whether a pointer movement changes the focus (item 6).
+   5. Ask the coordinator to open a dialog or an overlay on the preview (a page that opens a dialog), and then to type. Write the result.
+6. **The pointer (record).**
+   1. Ask the coordinator for the desktop information of the second station. Write the size and the scale of each monitor.
+   2. Ask it to move the pointer to the point 10, 10 of the preview. Expect the notification "Fleet Deck is moving the pointer for <callsign> in an agent preview." and a result `done`. Write where the pointer stands, and that no click happened.
+   3. Do it for the bottom right point of the preview, then for one point outside the preview. Expect `input_destination_unavailable` with the text "The pointer destination is not available inside this preview." for the point outside, and no movement.
+   4. On a monitor with a scale other than 1 (for example 1.5 or 2), ask for the points 0, 0 and the last point in each direction. Write how far the pointer is from the expected point, in logical coordinates. The coordinates are not screenshot pixels.
+   5. Do the same on a monitor that is left of or above the first monitor (a negative origin), and on a rotated monitor if there is one. Write the result.
+   6. Put the preview where a layer surface of the level `top` or `overlay` (for example the status bar) covers a part of it. Ask for a point under that surface. Expect `input_destination_unavailable`. Ask for a point of the same preview that no layer covers. Expect `done`. Write both results. The wallpaper lies below windows, so it must never refuse a point.
+   7. Place a second window over a part of the preview. Ask for a point under it. Expect `input_destination_unavailable`.
+7. **The board barrier (record).**
+   1. Ask the coordinator to open the address of your board as a preview. Ask it to type. A station that dials the deck knows the host of the deck from its pairing record and marks a preview that it launches on that host. Expect `input_board_forbidden` with the text "Fleet Deck board and wall windows cannot receive agent input." for such a station. A station that the deck dials knows no deck host. Write which of the two cases this station is, and what the call answers.
+   2. In the dummy page, ask the coordinator to press `Tab` until the link to the board has the focus, then `Return`. Write whether the preview now shows the board, and what the next input call answers (`input_board_forbidden`, `focus_changed` or `done`). Expect that a title with "Fleet Deck" is refused.
+   3. Write the case that you can find where a board page in a preview does not have "Fleet Deck" in its title and the input goes on. This is the accepted false negative of the contract. It is a result to write, not a failure to fix.
+   4. Ask the coordinator to type in a wall window of the second station by a made-up `window_id`. Expect `desktop_window_not_found` with the text "No window opened by this grant matches that handle." The coordinator has no handle for a wall.
+8. **The limits and the stop.**
+   1. Select "Change limits" on the grant row. Expect "Input action limit" and "Typed character limit" with the values of the grant, and the other limits of the grant.
+   2. Set "Input action limit" to the number that the grant has used. Select "Save". Expect no confirmation dialog. Ask for a key. Expect `input_cap_reached` with the text "This grant has used its input action limit." Expect that the use does not change.
+   3. Raise the limit and select "Save". Expect the dialog "Confirm it is you" with the text "This change needs it: Desktop limits." Cancel it and expect no change. Do it again and confirm. Ask for a key and expect `done`.
+   4. Set "Typed character limit" to 3 and ask for a text of 4 characters. Expect `input_characters_reached` with the text "This grant has used its typed-character limit." Write the use on the grant row.
+   5. Ask for a long text (2,000 characters). While it runs, open the Desktop panel of the second station and, in "Agent previews", select "Close" next to the preview. Expect the input to stop and the coordinator to report an error. Write the code and how many characters arrived.
+   6. Open a new preview. Ask for a long text. While it runs, turn off "Allow agent desktop input" on the station tab. Expect the input to stop. Turn it on again.
+   7. Ask for a long text. While it runs, select "Revoke" on the grant row. A running input does not see a revoke: it can finish. Write what happened. Ask for another key. Expect an error and no input.
+   8. Start a second grant like item 1. On the Deck tab, turn off "Desktop control". Ask for a key. Expect `desktop_control_off` with the text "Desktop control is off on this deck." Turn it on again.
+   9. In the Desktop panel, turn on "Do not disturb". Ask for a key. Write whether the notification shows, and whether the input goes on. Turn "Do not disturb" off again.
+   10. A notification that fails cannot be caused from the board (no board path yet). The unit tests cover it.
+9. **The board sign-out (record).**
+   1. Use a station whose desktop also runs your board in a browser: the laptop. Start a new coordinator grant with the allowance. Select the laptop as the coordinator station and as the grant station. Turn on "Allow agent desktop input" on its station tab.
+   2. Keep the board open on another device (a phone). Keep the board open on the laptop too.
+   3. Ask the coordinator to open the dummy page as a preview on the laptop and to type "hello".
+   4. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent used desktop input on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the typing and the sign-out.
+   5. On the laptop, try to sign in at once. Expect the line "An agent is using desktop input on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the input ended (5 seconds and then 60 seconds).
+   6. From the board on the other device, revoke the grant. Expect it to work (a board on another address is not signed out).
+   7. Write whether the deck sees the laptop through its own address. When you reach the deck through a proxy or a VPN that the station does not report, write whether the laptop board is signed out. The contract expects that it is not (open item DL-245 h), and that a deck behind a proxy signs out every board.
+   8. Write what the page where a member joins shows when a sign-in is blocked (expect a generic error, DL-245 item g).
+10. **The tools of each provider.**
+    1. Ask a Claude coordinator and a Codex coordinator which desktop tools they have. Expect `key_press`, `type_text` and `pointer_move` next to the P6 tools, and no `pointer_click` and no `scroll`.
+    2. Start a coordinator with "Desktop" and "Screenshots" on and the input switch off. Expect no input tool in its list, and no input text on its grant row.
+    3. Write the provider versions, and whether a provider asked you to approve a tool in its own terminal.
+11. **The click and the other windows.**
+    1. Ask the coordinator to click, to scroll, and to type in a window that it did not open. Expect that it has no such tool, or `desktop_window_not_found`. Write the answer.
+
+Record the other items of section 15 of the contract that you can test from the board in the same run. Write "no board path yet" for an item that needs you at the machine (the physical keyboard or pointer while the agent types, several seats, and a real notification failure).
+
+Result:
+
+| Date | Machines | `wtype` / Hyprland / Chromium versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P7 is open (DL-245 item c). Do not rely on agent input before it passes. |
+
+### P7b agent pointer clicks and input in other windows (DL-247)
+
+The contract is `docs/v2/design/omarchy-p7b.md` (sections 16 and 17). The owner guide is `docs/v2/operations.md` section 7.9. This smoke is required before you rely on agent clicks or on agent input in other application windows. P7b is built, but both capabilities stay experimental and off by default until this smoke passes and you accept what it shows. The PRE-PR review is also pending (DL-247 item a). Do it on the owner's Omarchy machines after the P7 smoke passed. The coordinator runs on one station (it can be a machine with no desktop). The agent acts on a second station that has a Hyprland desktop, `wtype` and `wlrctl`. Use the server with the wall display as the second station, and the laptop as the first. Item 12 needs a station whose desktop also runs your board: it uses the laptop.
+
+The smoke needs a separate recorded acceptance for each of three things: clicks in the previews of the agent (items 1, 3 and 4), keyboard input and pointer movement in other windows (items 2, 5 and 6), and clicks in other windows (items 2, 5 and 7). Items 8 to 14 apply to all three.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use dummy content only. Do not test with a real approval or a real secret. The smoke must not approve a real dangerous operation.
+
+> **Caution:** the coordinator clicks, types and presses keys on a real desktop, and with the scope for other windows it can do this in your existing applications, including terminals and signed-in browser windows. The focus and the receiving window can change after Fleet Deck checks them. Close every window of a real account and every terminal on the second station before you run this smoke. Keep one board open on another device (for example a phone), because the deck signs out the boards of the machine where the agent acts (item 12).
+
+Set up:
+
+1. Do the set-up steps 1, 3 and 5 of the P7 smoke. After you upgrade a deck to this version, the migration V38 keeps every login. The board does not ask you to sign in again for it.
+2. On the station tab of the second station, turn on "Allow agent desktop input" and leave **Allow agent clicks** and **Allow agent input in other application windows** off. Items 3 and 6 turn them on.
+3. Use the dummy web page of the P7 smoke. Add to it a button that only changes a line of text on the page, a second button at another place, and a field that shows a count of the clicks that it received. The second station must have `wlrctl`. A station without it is a result to write (item 3 step 7). Installing `wlrctl` has no board path yet.
+4. Open a second dummy application window that the agent did not open (for example another browser window with the same dummy page, opened by you on the second station). Keep it harmless.
+
+Items:
+
+1. **The grant with the click.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect no click option and no group "Input windows" yet.
+   3. Turn on "Allow keyboard input and pointer movement in this agent's previews". Expect the option **Allow pointer clicks** (off), the note "Allows this agent to move the pointer and send a left click in its permitted windows. A click can submit forms or approve actions. The pointer or receiving surface can change after Fleet Deck checks it.", and the group "Input windows" with "This agent's preview windows" selected and "Other application windows on the grant stations". Expect the red disclosure to end with "Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
+   4. Turn on **Allow pointer clicks**. Expect the red disclosure to end with "Unrestricted window input is unavailable. This feature is experimental until its live smoke passes."
+   5. Turn "Desktop" off and on. Expect the input switch, the click option and the group "Input windows" to go off and to hide when you turn "Desktop" off.
+   6. Turn the input switch and **Allow pointer clicks** on again. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control, Agent pointer clicks." (the board asks nothing when it still holds a recent sign-in).
+   7. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect "clicks allowed" after "input actions 0 of 100, typed characters 0 of 20000" in its line.
+2. **The grant with the scope for other windows.**
+   1. Start a second session like item 1 steps 1 to 3. Select "Other application windows on the grant stations". Expect the option **Allow input in other application windows** (off), the line "Scope: other application windows on the grant stations", and the red disclosure "This agent can list window positions, view permitted screenshots, and type, press keys and move the pointer in existing applications, including terminals and signed-in browser windows. If clicks are enabled, it can click there too. It can read personal information and act using your logged-in accounts. Fleet Deck refuses detected board and wall windows, but detection and targeting are incomplete. Board sign-out protects this deck only at the machine addresses it records. Agents run as your OS user." Expect that the red disclosure of the input switch no longer has the sentence about unavailable features.
+   2. Try to start the session without the option **Allow input in other application windows**. Expect the line "Check "Allow input in other application windows" to give this agent the broader scope." and no start.
+   3. Turn on **Allow input in other application windows**. Start the session once with **Allow pointer clicks** off and once with it on (two sessions, for items 5 to 7). Expect the dialog text "This change needs it: Fleet control, Agent input in other application windows." for the first, and "This change needs it: Fleet control, Agent pointer clicks, Agent input in other application windows." for the second.
+   4. Expect "input in other application windows" on the grant line of each (and "clicks allowed" on the second).
+3. **The station settings and the click in a preview.**
+   1. Ask the coordinator of item 1 to open the dummy page as a preview on the second station. Expect a window and a `window_id`.
+   2. With **Allow agent clicks** off, ask the coordinator to click the button of the preview. Expect `input_click_disabled` with the text "Agent pointer clicks are disabled on the target station." and no click. Write the code and the text.
+   3. On the station tab of the second station, turn on **Allow agent clicks**. Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to send one left pointer click at a time in their permitted windows on this station. Needs Allow agent desktop input. Turning this off stops new clicks and requests interruption of an active click; already sent input cannot be undone."
+   4. Ask for a click on the button of the preview (x and y from the top-left corner of the window, in logical coordinates). Expect the notification "Fleet Deck is clicking for <callsign> in an agent preview." on the screen of the second station, before the click. Expect the page to react once, and the result `done` with no echo of the point. Write the count of clicks that the page shows.
+   5. Expect "input actions 1 of 100, typed characters 0 of 20000" on the grant row and the line "pointer_click on <station>: done" in "Desktop operations".
+   6. Ask for a click at a point outside the preview, then at a point that another window covers. Expect `input_destination_unavailable` with the text "The pointer destination is not available inside the target window." for each, and no click. A click always uses this broader text, also in a preview.
+   7. If the second station has no `wlrctl`, ask for a click and expect `input_click_tool_missing` with the text "The pointer click tool wlrctl is not installed on the target station." Write the result. There is no board path to remove `wlrctl` to cause it.
+   8. Ask the coordinator of a grant without the click (the session of the P7 smoke) for a click. Expect that it has no `pointer_click` tool. Write the answer.
+4. **The click recording (record).**
+   1. Write the versions of Hyprland, Chromium and `wlrctl` in the result (read them on the card "Desktop tools": it shows the package version when a package owns the program).
+   2. Write whether the Hyprland session and the Wayland socket of `wlrctl` are the same one. The board cannot show this. An ambiguous setup refuses with `input_click_tool_unsupported` and the text "The target desktop cannot use the configured pointer click tool." Write whether you got this text. There is no board path to cause it.
+   3. Write where the pointer stands after a click. The board has no view of the pointer (no board path yet): look at the screen. Write whether the creation of the virtual pointer by `wlrctl` kept the cursor at the checked point.
+   4. Ask for two clicks, one call each, on the button that counts clicks. Write whether the page counts one click or two for each call, whether it reads two calls as a double click, and whether the press and the release both reach the page.
+   5. Write whether a modifier key, a held physical button or a pointer grab (for example an open menu) changes what a click does. Write whether the focus follows the pointer in this Hyprland setting.
+5. **The window list.**
+   1. Ask a coordinator with the scope (item 2) for the window list of the second station. Expect each window with a `window_id` of 32 lower-case hexadecimal characters, a position and size, the monitors that it overlaps, whether it has the focus, and `expires_in_ms`. Expect the monitors with a name, a position and a size. Expect no title, no class, no address, no process number and no workspace name. Write what the list holds.
+   2. Check that the windows that you see on the second station and that are on a shown workspace are in the list, that a window on a workspace that is not shown is not, and that no board and no wall window is in the list. Expect no count of left-out windows. Write any difference.
+   3. Ask for a screenshot of the monitor and compare it with the monitor and window positions of the list. Write whether the windows are where the list says.
+   4. Wait 60 seconds and ask for a click or a key with an old `window_id`. Expect `desktop_window_not_found` with the text "No input window available to this grant matches that handle." List again and expect a new `window_id`.
+   5. Close the dummy window that the agent listed, open it again, and ask for input with the old `window_id`. Expect `desktop_window_not_found`. List again and expect a new `window_id`.
+   6. Ask for 11 list reads in 60 seconds. Expect `rate_limited` for the eleventh. Ask for two list reads at the same time. Expect `busy` for the second.
+   7. Lock the screen of the second station and ask for the list. Expect `screen_locked` with the text "The screen is locked or its lock state is unknown." and no list. Unlock it.
+   8. Put a window on a second monitor that "Screenshot monitors" does not allow (on the station tab, set "Screenshot monitors" to the other monitor for this step, and clear it afterward). Expect that the window is not in the list.
+   9. Ask a coordinator with only the P7 allowance, and a coordinator with the scope off, for the window list. Expect no `window_list` tool.
+6. **Keyboard and movement in a listed window.**
+   1. With a grant that has the scope and no click (item 2), and with **Allow agent input in other application windows** off on the station, ask for a key in a listed window. Expect `input_any_disabled` with the text "Agent input in other application windows is disabled on the target station." and no key.
+   2. Turn on **Allow agent input in other application windows** on the station tab of the second station. Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to use keyboard input, pointer movement and, when allowed, clicks in other application windows on this station, including terminals and signed-in browser windows. Needs Allow agent desktop input. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+   3. Ask for the text "hello" in the field of the window that you opened yourself (item 4 of the set-up). Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an application window." before the letters, "hello" in the field, and a result `done`.
+   4. Ask for a pointer move in that window. Expect the notification "Fleet Deck is moving the pointer for <callsign> in an application window." and a result `done`. Write where the pointer stands.
+   5. Ask for a key in a preview that the agent opened. Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an application window." (the scope uses the broader variant for every call). Write the result.
+   6. Ask the coordinator to try `window_close` with a `window_id` of the list. Expect `desktop_window_not_found`. The list gives input only.
+   7. Ask for a key in a window that is not in the list, by a made-up `window_id`. Expect `desktop_window_not_found`.
+   8. Write whether the input stays in the window that was listed when another window gets the focus before the call.
+   9. Ask for a key after you switch the workspace of the window away. Expect `desktop_window_not_found`, no change of the workspace and no input. Write the code.
+7. **Clicks in a listed window.**
+   1. Use the session with the scope and the click (item 2). Turn on **Allow agent clicks** on the station (item 3). Ask for a click on the button of the window that you opened. Expect the notification "Fleet Deck is clicking for <callsign> in an application window." and the page to react once.
+   2. Ask for a click on a point that another window covers, on a point of a `top` or `overlay` layer (for example the status bar over the window), and on a point of a `background` or `bottom` layer. Expect `input_destination_unavailable` for the first two. Expect `done` for a point that no layer covers, and for a point under a `background` or `bottom` layer only. Write the result for each.
+   3. Move the window between the list and the click (drag it yourself). Expect a refusal for the changed rectangle and no click. Write the code.
+   4. Write whether a click that opens a dialog or closes the window gives `done` or an unknown outcome.
+   5. Ask for a click while the owner moves the physical pointer. Write the result (no board path yet to time the move).
+8. **The geometry (record).**
+   1. Do item 3 step 4 and item 7 step 1 on a monitor with a scale other than 1 (for example 1.5 or 2). Write how far the click is from the expected point, in logical coordinates.
+   2. Do the same on a monitor that is left of or above the first one (a negative origin), on a rotated monitor if there is one, on a second monitor, and on a special workspace. Write the result.
+   3. Place a window across two monitors, with one of them not allowed by "Screenshot monitors". Expect that the window is not in the list and that a click on its preview is refused. Write the result.
+9. **Popups and overlap (record).**
+   1. Open a native dialog or a menu on the window. Ask for a click on the dialog. Write that the list does not show the dialog, and what the click does.
+   2. Place a second window over a part of the first one. Ask for a click under it. Expect `input_destination_unavailable`.
+10. **The deadlines (record).**
+    1. Write the time from the notification to the result of a click, and of a list read.
+    2. Write whether a click ever ends with `desktop_timeout` and the text "The input outcome is unknown. Inspect the target application before issuing another input request. Do not retry automatically." Write whether the grant row and "Desktop operations" mark it "— unresolved".
+11. **The board and wall barrier (record).**
+    1. Open the address of your board in a browser window that you open yourself. List the windows. Expect that the window is not in the list when the station detects it as a board window. Write whether it is listed, because the detector is incomplete for an ordinary browser window with another title. This is the accepted false negative of the contract. It is a result to write, not a failure to fix.
+    2. Ask for a click in a wall window by a made-up `window_id`. Expect `desktop_window_not_found`.
+    3. Write whether the list holds a terminal or a signed-in browser window. This is the authority that the owner is asked about (DL-247 item d). Write whether you accept it.
+12. **The board sign-out (record).**
+    1. Use the laptop (a station whose desktop also runs your board in a browser) as the coordinator station and as the grant station, with a click grant. Turn on "Allow agent desktop input" and **Allow agent clicks** on its station tab. Keep the board open on another device and on the laptop.
+    2. Ask the coordinator to open the dummy page as a preview on the laptop and to click. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent used desktop input on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the click and the sign-out.
+    3. On the laptop, try to sign in at once. Expect the line "An agent is using desktop input on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the click ended.
+    4. Ask for a window list on the laptop. Expect no sign-out.
+    5. Write whether the deck sees the laptop through its own address, and whether the laptop board is signed out when you reach the deck through a proxy or a VPN that the station does not report. The contract expects that it is not.
+13. **Limits, stop and kill switches.**
+    1. Set "Input action limit" to the number that the grant has used. Ask for a click. Expect `input_cap_reached` with the text "This grant has used its input action limit." Write the use on the grant row. A list read does not use the limit: expect the list to work.
+    2. Try "Change limits" on a grant with the click and the scope. Expect only the limit fields. Expect that the click and the scope do not change.
+    3. Select "Revoke" on the grant row. Ask for a click and for a list. Expect an error and no input.
+    4. On the Deck tab, turn off "Desktop control". Ask for a click and for a list. Expect `desktop_control_off` with the text "Desktop control is off on this deck." Turn it on again.
+    5. Turn off **Allow agent clicks** on the station tab. Ask for a click. Expect `input_click_disabled`. Turn off **Allow agent input in other application windows** and ask for a key and for a list. Expect `input_any_disabled`. Turn the settings on again.
+    6. Turn on "Do not disturb" in the Desktop panel. Ask for a click. Write whether the notification shows and whether the click goes on. Turn "Do not disturb" off again.
+    7. Lock the screen of the second station and ask for a click. Expect `screen_locked`. Unlock it.
+    8. A notification that fails, and an interruption while the click tool runs, cannot be caused from the board (no board path yet). The unit tests cover them.
+14. **The tools of each provider.**
+    1. Ask a Claude coordinator and a Codex coordinator with the click and the scope which desktop tools they have. Expect `pointer_click` and `window_list` next to `key_press`, `type_text`, `pointer_move` and the P6 tools, and no `scroll`.
+    2. Ask the same for a coordinator with the input switch on and without the click and without the scope. Expect none of the two new tools.
+    3. Ask each provider to repeat a click request with the same request ID. Expect the same result and no second click. Ask for the status of a click. Write how each provider handles an unknown outcome.
+    4. Write the provider versions, and whether a provider asked you to approve a tool in its own terminal.
+
+Record the other items of section 17 of the contract that you can test from the board in the same run. Write "no board path yet" for an item that needs you at the machine (the physical keyboard or pointer while the agent acts, several seats, a real notification failure, and the versions and the seat of the compositor).
+
+Result:
+
+| Date | Machines | `wlrctl` / `wtype` / Hyprland / Chromium versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | Preview clicks: open. |
+| (not run) | | | | Keyboard and movement in other windows: open. |
+| (not run) | | | | Clicks in other windows: open. The live smoke of P7b is open (DL-247 item b). Do not rely on agent clicks or on input in other windows before it passes. |
+
+### Board paths for the remaining owner actions (DL-249)
+
+The contract is `docs/v2/design/board-gaps.md` (BG-2, BG-3 and BG-4; BG-1 has its own part below, DL-250). The owner guides are `docs/v2/operations.md` section 7.5 (part "Repair an installer conflict"), section 10 (part "Stop the processes of a lost run") and section 15.5. This smoke is required before you rely on these repairs. The PRE-PR reviews of BG-2, BG-3 and BG-4 are done (DL-249 item a).
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. A step that needs a fault on a station has no board path to cause the fault. Use a station that already has the fault. When you have none, write "not run: no board path yet to cause the fault" in the result for that item. Use a machine and a session that hold nothing of value: a stop signals real processes, and a replacement moves real files.
+
+Set up:
+
+1. Items 1 to 4 need an Omarchy station that is linked to the deck, with the card "Omarchy" (the station tab of Settings). Its card must show the line "Integration: installed, <n> files changed or missing", or **Install** must stop with "The installer refused: some files were changed." The board has no way to create this conflict (no board path yet to create it). Use a station where it already happened. A file that Fleet Deck did not install, and that has the name of an integration file, causes the first state. A recorded integration file that you edited causes the second state.
+2. Items 5 and 6 need a session whose board dialog "Previous run of this session" lists a live process of a lost run. The board has no way to make a lost run with a live process (no board path yet to create it). Use a session that is in this state, on a Linux station that supports `execution_stop.v1`.
+3. Items 7 to 10 need a new machine that stopped in the first setup before it was linked, with a terminal code. The board has no way to cause the stop (no board path yet to cause it). A provisioning file that is wrong for its machine causes it (for example a changed file, `config_changed`, or a conflicting station configuration, `config_conflict`). Make the file on your deck machine as in the P8 smoke (section 15.1 of `docs/v2/operations.md`). A wrong pin gives no report at all (a residual): write it in the result.
+4. Each repair and stop button asks "Confirm it is you". The text names "Omarchy integration" for the repair, "Stop previous run processes" for the stop and "Setup reports" for the reports. The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Review the files to replace.**
+   1. On the card of the station, press **Review files to replace…**. Expect the dialog "Review files to replace".
+   2. Expect each file that Fleet Deck did not install, checked and fixed, with "Not recorded by Fleet Deck: replaced, and a copy is kept."
+   3. Expect each recorded integration file that you edited, not checked, with "You edited this recorded integration file. Fleet Deck will keep it unless you select it."
+   4. Expect the line "Replace the listed integration files? Fleet Deck will keep a separate copy of each current file." and the buttons **Keep copies and replace** and **Cancel**.
+   5. Press **Cancel**. Expect no change on the card. Write what the dialog listed.
+2. **Replace the files.**
+   1. Press **Review files to replace…** again. Leave the recorded edits that you want to keep unchecked. Press **Keep copies and replace**, and confirm.
+   2. Expect "Replaced N files. The kept copies are listed under Repairs." and the card line "Integration: installed" when no other file is changed.
+   3. Open **Repairs**. Expect one new row with the date, the state `Complete`, and for each file the state `Replaced` and the line "Kept copy: <path>". Write the paths.
+   4. Expect the files that you left unchecked to stay as they were: the card must not replace them.
+   5. Review again. Expect "No file needs to be replaced." when nothing is left, and **Keep copies and replace** off.
+3. **Restore a kept copy.**
+   1. In **Repairs**, press **Restore kept copies…** on the new row. Expect the dialog "Restore kept copies". Expect each file with "Keep the current file aside, then copy the kept file back" (or "Remove the file that Fleet Deck added" for a file that had no old file). Expect all boxes unchecked and **Restore selected** off.
+   2. Select one file. Press **Restore selected**, and confirm. Expect "Restored 1 file. The kept copies stay."
+   3. Expect the file state `Restored` and the line "Kept copy: <path>" on the row. The kept copy stays.
+   4. Press **Restore kept copies…** again. Expect "Nothing to restore" for that file.
+4. **The failures that the board can show.**
+   1. Press **Review files to replace…** on a station of an older build, if you have one. Expect no button and no **Repairs** section.
+   2. Open the dialog on two boards at the same time, and confirm on the first. Confirm on the second. Expect "The files changed since this review. Review the replacement plan again." on the second.
+   3. Write "no board path yet" in the result for: an interrupted repair (so **Resume repair** and the state `Incomplete` have no way to show), a restore of a file that changed after the repair, a kept copy that someone removed, and a full disk. The unit tests cover them.
+5. **Stop the processes of a lost run.**
+   1. Open the session, then the session menu, then **Check the previous run**. Expect the dialog "Previous run of this session" with the live processes, and **Mark as ended** off.
+   2. Expect **Stop these processes…**. Press it. Expect "Reading the stop plan…" and then "Processes to stop" with the command names, and the confirmation "Stop the listed processes from this previous run? Fleet Deck will ask them to exit, then force-stop surviving targets after five seconds. Unsaved work may be lost."
+   3. Expect a process that left the group and the session (if the run has one) in the list "Processes that left its group (they do not block)" with the note "Processes outside the run's group and session are listed for information and will not be stopped."
+   4. Press **Stop processes**, and confirm. Expect a result within 20 seconds: "Fleet Deck stopped <n> processes. <k> needed a force stop."
+   5. Press **Check the previous run** again. Expect no live process of the run. Write the numbers `n` and `k`.
+   6. Press **Mark as ended**. Expect the dialog to allow it only after the fresh check. Resume the session. Write the result.
+6. **The refusals of the stop.**
+   1. Wait 30 seconds after the plan loads. Press **Stop processes**. Expect the board to read the plan again and show it for review. No process stops.
+   2. For a lost run of an older Fleet Deck build (no recorded leader identity), expect "Fleet Deck cannot safely prove that these processes belong to the previous run. No processes were stopped." and no confirm button. Write "not run" when you have no such session.
+   3. Open the dialog on a station of an older build, if you have one. Expect "This station's build cannot stop the processes of a lost run from the board."
+   4. Write "no board path yet" in the result for: a station restart during the stop, a forked process during the stop and a refused signal. The unit tests cover them.
+7. **Open the window and read a report.**
+   1. On the board, open Stations, **Add station** and "A computer on my tailnet". Find "Setup reports from unpaired keys". Expect "Reporting is closed. Unpaired keys cannot send setup reports." and **Open setup reports for one hour**.
+   2. Press the button, and confirm. Expect "Reporting is open until <time>." Expect the pairing window to stay as it was. Opening one window never opens the other.
+   3. Wait for the supervisor of the new machine (about 11 minutes at most when it reported before you opened the window). Expect a row with "This key has not been paired. Its name and setup status are self-reported.", the full key in groups, "Reported name: <name>", the text of the code, "Phase: <phase>", "Received: <time>" and "Last contact: <time>".
+   4. Compare the key with the fingerprint that the new machine showed at its first login (section 15.1, step 4 of the guide). Write whether they match. Write the code text and the phase.
+   5. Expect no new row in "Stations", no paired mark and no grant.
+8. **Allow one setup retry.**
+   1. For a code that allows a retry (for example `integration_failed` or `provider_probe_failed`), expect **Allow one setup retry**. For a disabled code (for example `config_changed`), expect "Retrying cannot repair this condition. Fleet Deck has no board repair for it yet." and no retry button. Write which one you saw.
+   2. Press **Allow one setup retry**. Expect "Allow this key to try setup once more? This does not pair it, change its trusted deck, replace its identity, or override setup checks." Press **Allow one retry**, and confirm.
+   3. Expect "Retry allowed. The setup supervisor will check again within about ten minutes while it is running." and **Cancel retry**. The board must not say that the retry started.
+   4. Press **Cancel retry**. Expect the row without the retry line. Allow the retry again.
+   5. Wait. Expect "The retry was sent to the station." and no **Cancel retry**. Then expect a new report or a linked station.
+   6. A retry never repairs a trust or configuration code: write what happened to the code after the retry (the same code again is correct for a condition that the retry cannot repair).
+9. **The window and the limits.**
+   1. Press **Close setup reports**. Expect "Reporting is closed. Unpaired keys cannot send setup reports." Wait more than 10 minutes. Expect the row's "Last contact" not to change.
+   2. Press **Dismiss report**. Expect the row to go. Open the window again. Expect the row to return only with the next report of the station.
+   3. Write "no board path yet" in the result for: 64 reports at once, a false report from another key, a station with an old hook (no supervisor), a station that stops the network, and the rate limits. The unit tests cover them.
+10. **A station that links after a retry.**
+    1. When the retry cleared the condition, approve the pairing as in section 15.1 step 5 of the guide. Expect the station to appear on the board.
+    2. Expect the report row to go (or to show no new report). Write the result.
+
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | Installer conflict repair: open. |
+| (not run) | | | Stop of a lost run: open. |
+| (not run) | | | Setup reports and one setup retry: open. The live smoke of BG-2, BG-3 and BG-4 is open (DL-249 item d). Do not rely on these repairs before it passes. |
+
+### Install desktop tools from the board (DL-250)
+
+The contract is `docs/v2/design/board-gaps.md` section 2 (revisions 4 and 5). The owner guide is `docs/v2/operations.md` section 7.10. Do this smoke on the owner's Omarchy machines: the server and the laptop. It is required before you rely on the installation of the desktop tools. The PRE-PR review of BG-1 is also pending (DL-250 item a).
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use a machine that holds nothing of value: the installation changes the packages of the machine as root.
+
+Set up:
+
+1. Use an Omarchy station that is linked to the deck. Open the board and go to Settings, then the station tab of the station. Find the card "Desktop tools" right after the card "Omarchy".
+2. Items 3 to 7 need a tool that is missing and that Fleet Deck can install, for example `wf-recorder`. Item 7 needs a second missing tool, for example `wtype`. The board has no way to remove a tool (no board path yet to remove a tool). Use a station where the tools are missing. When none is missing, write "not run: no board path yet to remove a tool" in the result for these items.
+3. Items 4 and 5 need `sudo` to ask for the station password. When the card shows "Passwordless sudo is enabled on this station.", `sudo` asks no password. Then write "not run: passwordless sudo is on" for the items 4 and 5 and go on with the other items.
+4. The station setting "Board terminals" (`allow_shell`) must be on. Have the station password of the user ready.
+5. The button **Open installation terminal** asks "Confirm it is you". The text says "This change needs it: Install desktop tools." The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Refresh diagnostics.**
+   1. Press **Refresh diagnostics**. Expect one line for each of the nine tools: `wtype`, `wf-recorder`, `wlrctl`, `grim`, `busctl`, `jq`, Hyprland, Chromium and `notify-send`.
+   2. For a tool that is present, expect "Present" and, when a package owns it, `· version <version> (package)`. For a tool that is missing, expect "Missing".
+   3. Expect the line "Keyboard layouts: <list>" with the layout that you use, the line "Fleet plugin: valid" (or "not installed" when the integration is not installed) and, when passwordless sudo is on, "Passwordless sudo is enabled on this station."
+   4. Write what the card shows. Write the versions that the card shows for `wtype`, `wf-recorder`, Hyprland, Chromium and `wlrctl`. Compare the nine lines with what you know of the machine. Write each difference.
+2. **Review the plan, then cancel.**
+   1. Press **Install desktop tools…**. Expect "Reading the install plan…" and then the plan: "To install: <tools>", "Already present: <tools>", the command `sudo pacman -S --needed --noconfirm <repository>/<name> …`, "Packages in the transaction:" with one line `<repository>/<name> <version>` for each package, and the confirmation "This opens a board terminal to install the listed packages as root. Review the transaction and enter your station password there if sudo asks."
+   2. Expect each line of the transaction to start with `core/` or `extra/`. Write each package and its version. Write a line that starts with another repository (this is a failure: the plan must be refused instead).
+   3. If `wlrctl` is missing, expect "Fleet Deck has no supported package source for wlrctl on this station." and no command for it.
+   4. Press **Cancel**. Expect the panel to close and no change on the card.
+3. **Install a missing tool.**
+   1. Press **Install desktop tools…** and then **Open installation terminal**. Confirm it is you.
+   2. Expect the panel "Installation terminal" with "Connecting…" or "Starting…", and then "Installing… Enter your station password in the terminal if sudo asks." Expect a row in "Installations" with the state "Running" and the button **Reattach**.
+   3. Expect the prompt of `sudo` in the terminal. Click the terminal and type the station password. Expect that nothing that you type shows. Press Enter.
+   4. Expect the output of `pacman` for the packages of the plan. Expect no question that waits for an answer: a conflict or a removal stops the transaction with the answer no.
+   5. When the run ends, expect "The package transaction finished." and, for each tool of the run, "<tool>: Installed. Desktop compatibility has not been verified." Expect the card to show the tool as "Present" with a package version, and the row in "Installations" to show "Finished" and **Show output**.
+   6. Write the lines of the panel and the version that the card shows. Write "no board path yet" for a check that the tool works with the compositor: the board does not prove it.
+4. **A wrong password.** Do this item at the start of an installation of a tool that is still missing (the second tool of the setup, or the same tool on another machine).
+   1. At the prompt of `sudo`, type a wrong password and press Enter. Expect `sudo` to say that the password is wrong and to ask again. Expect that nothing that you typed shows, also not in the new prompt.
+   2. Type the right password. Expect the install to go on.
+   3. Write whether any typed text showed in the terminal, in the output after a reattach (item 5) or in **Show output** after the end. Any typed text there is a failure.
+5. **Detach and reattach.**
+   1. While `sudo` waits for the password (or while `pacman` runs), press **Detach**. Expect the panel to close and the row in "Installations" to stay "Running".
+   2. Wait a few seconds. Press **Reattach** on the row. Expect the panel and the earlier output first (the prompt or the lines of `pacman`), then the live output.
+   3. Reload the browser tab, open the card again and press **Reattach**. Expect the same.
+   4. Finish the installation as in item 3. Write the result.
+6. **The result lines.**
+   1. After a finished installation, press **Show output** on its row. Expect the saved output and no way to type: input is not sent.
+   2. For a run that ended with an error, expect "The package transaction ended with code <n>." and the row "Ended with code <n>". The board has no way to cause an error (no board path yet). Write the result of a run that ended with an error, or "not run" when none did.
+   3. Write "no board path yet" for a run that ends in "The installed packages differ from the reviewed plan." and for a run in the state "Runner lost". The board has no way to cause them. The unit tests cover them.
+7. **A station restart during an installation.**
+   1. Start an installation of a second missing tool and stay at the prompt of `sudo`, or wait while `pacman` runs.
+   2. Restart the station from the board: in Settings, on the station tab, press the button "Restart <station name>…" and confirm. The board asks "Confirm it is you" for "Restart". Wait until the station is live again.
+   3. Open the card. Expect the row in "Installations" in the state "Running" (or "Finished" when the transaction ended during the restart). Press **Reattach**. Expect the saved output first.
+   4. If `sudo` still waits, type the password and finish the installation. Expect "The package transaction finished." and the tool as "Present". Expect that the station did not start a second installation by itself.
+   5. Write what the list and the panel showed after the restart.
+8. **The refusals.**
+   1. While an installation runs, press **Install desktop tools…** and then **Open installation terminal** on the same board, for a plan that has a tool. Expect "Another installation is running on this station."
+   2. Turn "Board terminals" off in the station settings (this change needs an elevation) and press **Open installation terminal**. Expect "Board terminals are disabled on this station. Enable them in station settings to install desktop tools." Turn the setting on again.
+   3. Open the card for a station of an older build, if you have one. Expect no card, or "This station's build cannot install desktop tools from the board." in the install panel.
+   4. Write "no board path yet" in the result for: a system configuration that root does not own (the plan is refused without names), a package from another repository, a database refresh between the plan and the install, a full disk, a network failure during the download, and the audit rows `station.maintenance` (the board has no view of the audit). The unit tests cover them.
+
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | Install desktop tools from the board: open. The live smoke of BG-1 is open (DL-250 item b). Do not rely on the installation before it passes. |
+
+<!-- desktop-smoke:end -->

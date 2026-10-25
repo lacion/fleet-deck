@@ -1,0 +1,214 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "104cd3af-e27f-495d-9c33-41b2da9406e2"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-48f8-8000-559ac3c90760",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0003-48f8-8000-559ac3c90760"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-48f8-8000-559ac3c90760",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "shell",
+    "title": "Bash",
+    "provider_refs": {
+      "tool_use_id": "toolu_01ABwL5zpFCdZPhSrVrBbNzQ"
+    }
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-3",
+    "node_id": "node-2",
+    "request_kind": "command",
+    "title": "Bash",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "allow_always",
+        "label": "Allow always (this session)"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "40cb9b94-efbb-401f-b947-690f88d1afc8",
+      "tool_use_id": "toolu_01ABwL5zpFCdZPhSrVrBbNzQ"
+    }
+  },
+  {
+    "kind": "approval.resolved",
+    "request_id": "req-3",
+    "option_id": "allow"
+  },
+  {
+    "kind": "background.updated",
+    "tasks": [
+      {
+        "task_id": "b1t65ezjh",
+        "task_kind": "local_bash"
+      }
+    ]
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "ok"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "started"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "started"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 238,
+      "cost_usd": 0.01252735
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 238,
+      "cost_usd": 0.01252735
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0003-48f8-8000-559ac3c90760",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "background.updated",
+    "tasks": []
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-4",
+    "provider_refs": {
+      "origin": "provider",
+      "session_id": "104cd3af-e27f-495d-9c33-41b2da9406e2"
+    }
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": "Background"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " task completed."
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " File"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " `"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": "fd-bg."
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": "txt` was"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " created and the sleep"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " command"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": " finished"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-4",
+    "text": "."
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-4",
+    "text": "Background task completed. File `fd-bg.txt` was created and the sleep command finished."
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 144,
+      "cost_usd": 0.05886985
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-4",
+    "status": "done",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 144,
+      "cost_usd": 0.05886985
+    }
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

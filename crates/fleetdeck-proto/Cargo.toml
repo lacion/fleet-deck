@@ -1,0 +1,21 @@
+[package]
+name = "fleetdeck-proto"
+description = "Fleet Deck v2 wire types: canonical events, commands, link frames, protocol versions (PLAN §12)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

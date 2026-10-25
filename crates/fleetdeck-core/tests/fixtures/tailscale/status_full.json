@@ -1,0 +1,57 @@
+{
+  "Version": "1.76.1-t0000",
+  "BackendState": "Running",
+  "TailscaleIPs": ["100.64.0.10", "fd7a:115c:a1e0::a"],
+  "Self": {
+    "ID": "nSELF1",
+    "PublicKey": "nodekey:0000",
+    "HostName": "deck-box",
+    "DNSName": "deck-box.tail1234.ts.net.",
+    "OS": "linux",
+    "UserID": 1001,
+    "TailscaleIPs": ["100.64.0.10", "fd7a:115c:a1e0::a"],
+    "Online": true,
+    "Relay": "fra"
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tail1234.ts.net",
+  "CurrentTailnet": {
+    "Name": "owner@example.com",
+    "MagicDNSSuffix": "tail1234.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "Peer": {
+    "nodekey:p1": {
+      "ID": "nPEER1",
+      "HostName": "laptop",
+      "DNSName": "laptop.tail1234.ts.net.",
+      "OS": "macOS",
+      "UserID": 1001,
+      "TailscaleIPs": ["100.64.0.11", "fd7a:115c:a1e0::b"],
+      "Online": true,
+      "Tags": null
+    },
+    "nodekey:p2": {
+      "ID": "nPEER2",
+      "HostName": "build-server",
+      "DNSName": "build-server.tail1234.ts.net.",
+      "OS": "linux",
+      "UserID": 2002,
+      "TailscaleIPs": ["100.64.0.12"],
+      "Online": false,
+      "Tags": ["tag:ci", "tag:servers"],
+      "ShareeNode": true
+    },
+    "nodekey:p3": {
+      "HostName": "friend-phone",
+      "TailscaleIPs": ["100.64.0.13"],
+      "UserID": 3003,
+      "Extra": {"nested": [1, 2, {"k": "v"}]}
+    }
+  },
+  "User": {
+    "1001": {"ID": 1001, "LoginName": "owner@example.com", "DisplayName": "Owner"},
+    "2002": {"ID": 2002, "LoginName": "tagged-devices", "DisplayName": "Tagged devices"},
+    "3003": {"ID": 3003, "LoginName": "friend@example.org", "DisplayName": "Friend"}
+  }
+}

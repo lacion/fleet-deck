@@ -1,0 +1,270 @@
+// DL-140: the facts, the place chips and the details of a session header ("Flight Deck" §4.5).
+import type { ReactNode } from 'react';
+import { relativeAge } from '../app/sessions';
+import { providerLabel } from '../board/lanes';
+import { limitChip, rateMeters } from '../board/usage';
+import type { DeckSession } from '../gen';
+import { useProjects } from '../integrations/context';
+import { IssueChip } from '../integrations/IssueChip';
+import { PrChip } from '../integrations/PrChip';
+import { digestLines, GeneratedMark } from '../ui/generated';
+import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
+import {
+  countText,
+  homeShort,
+  isRiskyMode,
+  modeLabel,
+  modelFamily,
+  modelText,
+  modelTitle,
+} from '../ui/format';
+import { isHibernated } from '../views/hibernate';
+import { CopyButton } from './CopyButton';
+import { FolderChip } from './PathFit';
+
+/**
+ * The card says `working` for background work too (an `activity: background` without a run): then
+ * no turn runs, so there is nothing to interrupt and the composer sends a new prompt.
+ */
+function inBackground(session: DeckSession): boolean {
+  return session.status === 'working' && session.summary.current_run === null;
+}
+
+/** The word of the status fact. A hibernated session says so. */
+export function statusWord(session: DeckSession): string {
+  if (isHibernated(session)) return 'Hibernated';
+  switch (session.status) {
+    case 'needs_you':
+      return 'Needs you';
+    case 'working':
+      return inBackground(session) ? 'Working in background' : 'Working';
+    case 'verifying':
+      return 'Verifying';
+    case 'queued':
+      return 'Queued';
+    case 'idle':
+      return 'Idle';
+    case 'ended':
+      return 'Ended';
+    case 'lost':
+      return 'Lost';
+    case 'unreachable':
+      return 'Unreachable';
+  }
+}
+
+/** The tone of the permission mode badge: hazard only for a mode that skips the approvals, `plan` for plan, none else. */
+export function modeTone(mode: string): 'plan' | 'hazard' | undefined {
+  if (isRiskyMode(mode)) return 'hazard';
+  return mode === 'plan' ? 'plan' : undefined;
+}
+
+/** The status glyph and word of a session. */
+export function StatusFact({ session }: { readonly session: DeckSession }) {
+  return (
+    <span
+      className="fd-sh-status"
+      data-status={session.status}
+      title={inBackground(session) ? 'Background work runs; no turn is active.' : undefined}
+    >
+      <span className="fd-dot" data-status={session.status} aria-hidden="true" />
+      {statusWord(session)}
+    </span>
+  );
+}
+
+/** The model and the provider of a session (the callsign cell shows them under the callsign). */
+export function Who({ session }: { readonly session: DeckSession }) {
+  const s = session.summary;
+  return (
+    <span className="fd-sh-who">
+      <span
+        className="fd-sh-model"
+        data-family={modelFamily(s.model) ?? undefined}
+        title={modelTitle(s.model, s.effort)}
+      >
+        {modelText(s.model, s.effort)}
+      </span>
+      <span className="fd-sh-provider">{providerLabel(s.provider)}</span>
+    </span>
+  );
+}
+
+/** The permission mode fact; absent without a mode and for `default`. */
+function ModeFact({ session }: { readonly session: DeckSession }) {
+  const s = session.summary;
+  if (!s.mode || s.mode === 'default') return null;
+  const tone = modeTone(s.mode);
+  return (
+    <span className="fd-badge fd-sh-mode" data-tone={tone} title={`Permission mode: ${s.mode}`}>
+      <Icon
+        of={tone === 'hazard' ? ShieldAlert : s.mode === 'acceptEdits' ? Pencil : Shield}
+        size={13}
+      />
+      {modeLabel(s.mode)}
+    </span>
+  );
+}
+
+/** The issue, the pull request, the rate limit and (with `status`) the status of a session. */
+export function Facts({
+  session,
+  status = true,
+}: {
+  readonly session: DeckSession;
+  readonly status?: boolean;
+}) {
+  const s = session.summary;
+  const projects = useProjects();
+  const limit = limitChip(rateMeters([session], []));
+  return (
+    <>
+      {status ? <StatusFact session={session} /> : null}
+      <IssueChip summary={s} projects={projects} station={session.station_id} />
+      <PrChip card={session} />
+      {limit === null ? null : (
+        <span className="fd-badge" data-tone={limit.tone}>
+          {limit.text}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** The status, model, mode and provider facts of a session (the phone menu puts the mode last). */
+export function Badges({
+  session,
+  modeLast = false,
+}: {
+  readonly session: DeckSession;
+  readonly modeLast?: boolean;
+}) {
+  return (
+    <>
+      <Facts session={session} />
+      {modeLast ? null : <ModeFact session={session} />}
+      <Who session={session} />
+      {modeLast ? <ModeFact session={session} /> : null}
+    </>
+  );
+}
+
+/** The station, the branch and the folder of a session as chips, then the mode. */
+export function Place({
+  station,
+  branch,
+  cwd,
+  session,
+}: {
+  readonly station: string;
+  readonly branch: string | null;
+  readonly cwd: string | null;
+  /** With a session, the permission mode follows the place. */
+  readonly session?: DeckSession;
+}) {
+  return (
+    <span className="fd-sh-place">
+      <span className="fd-badge fd-sh-chip" title="Station">
+        <Icon of={Server} size={13} />
+        {station}
+      </span>
+      {branch ? (
+        <span className="fd-badge fd-sh-chip" data-mono="" title={`Branch: ${branch}`}>
+          <Icon of={GitBranch} size={13} />
+          <span>{branch}</span>
+        </span>
+      ) : null}
+      {cwd ? <FolderChip cwd={cwd} /> : null}
+      {session === undefined ? null : <ModeFact session={session} />}
+    </span>
+  );
+}
+
+/**
+ * The mark after the label of a text that model help wrote: the 12px sparkles of `GeneratedMark`
+ * (§7), named for a summary ("Generated"; the title mark of `ui/generated` says "Named by").
+ */
+export function GeneratedText() {
+  return <GeneratedMark label="Generated" title="Written by model help" />;
+}
+
+/** The generated summary of a session as a list, or `null` without one. */
+export function DigestList({ digest }: { readonly digest: string | null | undefined }) {
+  const lines = digestLines(digest);
+  if (lines.length === 0) return null;
+  return (
+    <ul className="fd-sh-digest">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+/** `2 min` → `2 min ago`; a change under a minute ago: `just now` (as the Properties since text). */
+export function agoText(age: string): string {
+  return age === 'now' ? 'just now' : `${age} ago`;
+}
+
+/**
+ * The facts of a session that the header does not show: its id (with a copy button), worktree,
+ * generated summary, last change (`now`: Unix ms) and event count; `fleet` is the fleet-control
+ * fact of a coordinator. The session menu shows them while the Properties panel is closed (the
+ * phone has none: there the menu is the one place of the last change).
+ */
+export function Details({
+  session,
+  now,
+  fleet,
+}: {
+  readonly session: DeckSession;
+  readonly now: number;
+  readonly fleet?: ReactNode;
+}) {
+  const s = session.summary;
+  return (
+    <dl className="fd-sh-details">
+      <div>
+        <dt>Session</dt>
+        <dd>
+          <span className="fd-sh-sid" title={s.session_id}>
+            {s.session_id}
+          </span>
+          <CopyButton text={s.session_id} label="Copy the session id" />
+        </dd>
+      </div>
+      {s.worktree ? (
+        <div>
+          <dt>Worktree</dt>
+          <dd>
+            <span title={s.worktree}>{homeShort(s.worktree)}</span>
+          </dd>
+        </div>
+      ) : null}
+      {digestLines(s.digest).length > 0 ? (
+        <div data-field="digest">
+          <dt>
+            Summary <GeneratedText />
+          </dt>
+          <dd>
+            <DigestList digest={s.digest} />
+          </dd>
+        </div>
+      ) : null}
+      <div>
+        <dt>Updated</dt>
+        <dd>{agoText(relativeAge(s.updated_at, now))}</dd>
+      </div>
+      <div>
+        <dt>Events</dt>
+        <dd>{countText(s.session_seq)}</dd>
+      </div>
+      {fleet == null ? null : (
+        <div data-field="fleet">
+          <dt>Fleet control</dt>
+          <dd>{fleet}</dd>
+        </div>
+      )}
+    </dl>
+  );
+}

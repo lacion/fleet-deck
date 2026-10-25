@@ -1,0 +1,15 @@
+/* DL-167: text from the model help is labeled as generated. */
+.fd-generated {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  color: var(--faint);
+}
+.fd-sh-line > .fd-generated {
+  align-self: center;
+  margin-top: 0;
+}
+.fd-sh-digest {
+  margin: 0;
+  padding-left: 16px;
+}

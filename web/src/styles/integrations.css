@@ -1,0 +1,1004 @@
+/* R3 (DL-164): the projects, the issue and pull request views, and their dialogs. */
+
+/* ---------- the projects page ---------- */
+
+.fd-int {
+  min-width: 0;
+}
+
+.fd-int-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin: 0;
+}
+
+/* The projects table: the texts of a row share one baseline (the 12px mono folder sat 2px above the
+   13px names when every cell was centered on its own line), and the padding puts that line in the
+   middle of the 36px row: a bare baseline put it at the top. The row menu centers on the row. */
+@media (min-width: 641px) {
+  .fd-int-projects td {
+    padding-block: calc((var(--row-h) - 1lh) / 2) 0;
+    vertical-align: baseline;
+  }
+  .fd-int-projects td.fd-cell-actions {
+    padding-block: 0;
+    line-height: 1;
+    vertical-align: middle;
+  }
+}
+
+/* The row menus float over the page, so the wrapper must not clip them (`overflow-x: auto` makes
+   the vertical overflow clip too). A phone shows cards that never overflow sideways. Above 640px
+   the folder column gives way (ellipsis) and the actions column is narrow, so the table fits its
+   width there as well. */
+.fd-int-projectswrap {
+  overflow: visible;
+}
+
+/* The whole row opens the project: the name link covers it (::after); the row menu sits above the
+   cover. The name is the row's title, not a blue link: the row hover and the pointer say it opens. */
+.fd-int-projects tbody tr {
+  position: relative;
+}
+.fd-int-projects .fd-cell-name a {
+  color: var(--text);
+  font-weight: 600;
+}
+.fd-int-projects .fd-cell-name a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.fd-int-projects .fd-cell-name a:focus-visible {
+  outline: none;
+}
+.fd-int-projects tbody tr:has(.fd-cell-name a:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+/* The row menu column is as narrow as its menu. */
+.fd-int-projects .fd-cell-actions {
+  width: 1%;
+}
+.fd-int-projects .fd-cell-actions > :is(.fd-menu, span, button) {
+  position: relative;
+  z-index: 1;
+}
+.fd-int-projects .fd-cell-actions > span {
+  margin-right: var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+/* The folder: one mono line that keeps its end (`PathTail` drops whole leading folders). */
+.fd-int-projects .fd-int-path {
+  display: block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A phone: each project is a compact card without column labels (each value says what it is):
+   the name with the row menu at its right, one meta line "Lighting · …/projects/fleet-deck" (the
+   folder gives way), then the forge and tracker badges. An empty cell is absent (page.css hides a
+   td:empty). The lines sit 4px and 8px apart (no row gap: the two zero-height line breaks added
+   one each). */
+@media (max-width: 640px) {
+  .fd-int-projects tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--sp-2);
+    /* No box around the table: the card text starts on the page gutter. */
+    padding-inline: 0;
+  }
+  /* The whole card is the tap target (the name link covers the row, 80px and more): the name
+     itself needs no 44px line of its own, which pushed the meta line 36px down. */
+  .fd-int-projects .fd-cell-name a.fd-tap {
+    min-height: 0;
+  }
+  .fd-int-projects td:is([data-label="Station"], [data-label="Folder"]) {
+    margin-top: var(--sp-1);
+  }
+  .fd-int-projects td {
+    padding: 0;
+  }
+  /* page.css makes every labelled cell a 28px flex row with padding: here the cells sit on
+     one meta line. */
+  .fd-int-projects td[data-label] {
+    display: inline-flex;
+    min-height: 0;
+    padding: 0;
+  }
+  .fd-int-projects td[data-label]::before {
+    content: none;
+  }
+  .fd-int-projects td.fd-cell-name {
+    flex: 1 1 0;
+    min-width: 0;
+    order: 1;
+  }
+  .fd-int-projects td.fd-cell-actions {
+    flex: none;
+    width: auto;
+    margin: 0;
+    order: 2;
+  }
+  /* The 44px menu button of a touch screen reaches into the card padding instead of pushing the
+     meta line down. */
+  @media (pointer: coarse) {
+    .fd-int-projects td.fd-cell-actions {
+      margin-block: calc((var(--tap-min) - 1lh) / -2);
+    }
+  }
+  /* A line break after the name row, and one after the meta line. */
+  .fd-int-projects tbody tr::before,
+  .fd-int-projects tbody tr::after {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+  }
+  .fd-int-projects tbody tr::before {
+    order: 3;
+  }
+  .fd-int-projects td[data-label="Station"] {
+    flex: none;
+    order: 4;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  /* The folder takes the rest of the station line and gives way there (never a line of its own
+     that starts with the dot). */
+  .fd-int-projects td[data-label="Folder"] {
+    flex: 1 1 0;
+    min-width: 0;
+    order: 5;
+  }
+  /* The path box takes the width of its cell, whatever its text: `PathTail` measures this box, and
+     a box as wide as its text shrank to a cut path and never grew back ("…/Fleet-Deck" where
+     "~/Projects/Fleet-Deck" fits). */
+  .fd-int-projects td[data-label="Folder"] > .fd-int-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+  .fd-int-projects td[data-label="Station"] + td[data-label="Folder"]::before {
+    content: "·";
+    display: inline;
+    flex: none;
+    width: auto;
+    margin-right: var(--sp-2);
+    color: var(--faint);
+    font-family: var(--font-ui);
+    font-size: var(--fs-meta);
+    font-weight: 400;
+  }
+  .fd-int-projects tbody tr::after {
+    order: 6;
+  }
+  .fd-int-projects td[data-label="Forge"],
+  .fd-int-projects td[data-label="Trackers"] {
+    flex: none;
+    max-width: 100%;
+    margin-top: var(--sp-2);
+    order: 7;
+  }
+  .fd-int-projects td[colspan] {
+    flex: 1 1 100%;
+    order: 8;
+    margin-top: var(--sp-1);
+  }
+}
+
+.fd-int-form {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-int-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-int-form input:not([type="checkbox"]),
+.fd-int-form select,
+.fd-int-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+.fd-int-error {
+  color: var(--hazard);
+}
+.fd-int-preflight {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-int-preflight ul {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---------- the project page: header line, panels, tabs ---------- */
+
+/* The summary under the title (§4.3): the place of the project (the station, a dot and the folder
+   in mono), then the badges of its forge and its trackers. A short line puts the badges on a line
+   of their own; the place stays one line (never a line that starts with a dot). The folder keeps
+   its end (`PathTail` drops whole leading folders) and never breaks in a word. */
+.fd-int-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  min-width: 0;
+}
+.fd-int-place {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.fd-int-where .fd-int-place > span {
+  flex: none;
+}
+.fd-int-sep {
+  color: var(--faint);
+}
+/* The folder box is as wide as its whole path (`--fd-int-path-ch`, one `ch` per mono character),
+   not as its cut text: `PathTail` sees the room it has, and the box grows back with the window.
+   It gives way when the line is short; the start ellipsis is the fallback. */
+.fd-int-place > .fd-int-path {
+  flex: 0 1 auto;
+  width: var(--fd-int-path-ch, auto);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-data);
+  direction: rtl;
+  text-align: left;
+}
+.fd-int-list > li > code {
+  color: var(--dim);
+  font-size: var(--fs-data);
+}
+/* A section of the project with its own actions: a --surface panel (the Setup tab). */
+.fd-int-setup > .fd-panel {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+.fd-int-setup > .fd-panel > :is(h2, h3, h4, p) {
+  margin: 0;
+}
+.fd-int-setup > .fd-panel > h3.fd-label {
+  color: var(--text);
+  font-size: var(--fs-title);
+}
+/* The project tabs have the tab row of a page (the Settings tabs, settings.css .fd-set-tabs): the
+   text on the page gutter (page.css), 24px apart, the underline as wide as the text. */
+.fd-int-project > .fd-pane-tabs {
+  gap: var(--sp-5);
+}
+.fd-int-project > .fd-pane-tabs [role="tab"] {
+  padding: 0;
+}
+
+/* A home: the station (600), the folder (mono --dim; it takes the room and keeps its end), the
+   status glyph and its word; the reason of a state that is not ready on a line under it. Retry
+   and Remove stand in one column at the right of every row. */
+.fd-int-homes .fd-int-list > li {
+  flex-wrap: nowrap;
+  /* The buttons sit on the first line of a home that has a reason under it. */
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-2);
+}
+.fd-int-homes .fd-int-list > li > button {
+  flex: none;
+}
+.fd-int-homes .fd-int-list > li > button:first-of-type {
+  margin-left: auto;
+}
+.fd-int-home {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--sp-2);
+  min-width: 0;
+}
+.fd-int-home-station {
+  flex: none;
+  font-weight: 600;
+}
+.fd-int-home > .fd-int-path {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--fs-data);
+  direction: rtl;
+  text-align: left;
+}
+.fd-int-home-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-int-home-state[data-state="ready"] {
+  color: var(--ok);
+}
+.fd-int-home-state[data-state="failed"] {
+  color: var(--hazard);
+}
+.fd-int-home-reason {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+/* "Add home" is a ghost button: its icon lines up with the text of the rows above it. */
+.fd-int-homes > .fd-pane-row > .fd-ghost:first-child {
+  margin-left: calc(-1 * var(--sp-2));
+}
+
+/* The paths of the secret files: the field and its hint. */
+.fd-int-secret-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+/* A cell of the secret files table: the state glyph, then its word in the tone of the state. */
+.fd-int-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fd-int-cell[data-tone="ok"] {
+  color: var(--ok);
+}
+.fd-int-cell[data-tone="faint"] {
+  color: var(--faint);
+}
+.fd-int-cell[data-tone="hazard"] {
+  color: var(--hazard);
+}
+.fd-int-tab {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-int-tab > section {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-int-tab > section > .fd-label {
+  margin: 0;
+}
+.fd-int-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.fd-int-filters label {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-int-search {
+  flex: 1 1 200px;
+  max-width: 420px;
+}
+.fd-int-search input {
+  width: 100%;
+  min-width: 0;
+}
+.fd-int-check {
+  display: inline-flex;
+  flex-direction: row;
+  gap: var(--sp-2);
+  align-items: center;
+}
+/* The selection bar: a selection is blue. */
+.fd-int-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  min-height: var(--row-h);
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--focus-bg);
+  border: 0;
+  border-radius: var(--r-card);
+  box-shadow: inset 3px 0 0 var(--focus);
+}
+.fd-int-split {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.fd-int-split[data-open="true"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+.fd-int-main {
+  min-width: 0;
+}
+
+/* A list of a project: 36px rows divided by the faintest rule. */
+.fd-int-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-int-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-2);
+  align-items: center;
+  min-width: 0;
+  min-height: var(--row-h);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-int-list > li:last-child {
+  border-bottom: 0;
+}
+.fd-int-tab .fd-int-list > li {
+  padding: 0 var(--sp-2);
+  transition: background-color var(--t-fast);
+}
+@media (hover: hover) {
+  .fd-int-tab .fd-int-list > li:hover {
+    background: var(--hover-bg);
+  }
+}
+.fd-int-list > li > input[type="checkbox"] {
+  flex: none;
+}
+/* An issue or a pull request: one line, the whole row opens the preview. */
+.fd-int-row {
+  display: flex;
+  flex: 1 1 280px;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: var(--row-h);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 400;
+  text-align: left;
+}
+@media (hover: hover) {
+  .fd-int-row:hover:not(:disabled) {
+    background: transparent;
+  }
+}
+.fd-int-row:focus-visible {
+  outline-offset: -2px;
+}
+/* The open row: selected (the --raised-hi fill and the blue marker of .fd-selbar). */
+.fd-int-list > li[data-open="true"] {
+  background: var(--raised-hi);
+}
+@media (hover: hover) {
+  .fd-int-tab .fd-int-list > li[data-open="true"]:hover {
+    background: var(--raised-hi);
+  }
+}
+.fd-int-key {
+  flex: none;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-int-title {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-int-meta {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.fd-int-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  align-items: center;
+  flex-basis: 100%;
+  padding: 0 0 var(--sp-2) var(--sp-6);
+}
+.fd-int-actions:empty {
+  display: none;
+}
+.fd-int-session {
+  text-decoration: none;
+}
+.fd-int-groups {
+  display: grid;
+  gap: var(--sp-5);
+}
+.fd-int-groups > section {
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-int-groups h4,
+.fd-int-detail h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.fd-int-groups .fd-int-list {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ---------- the preview pane ---------- */
+
+.fd-int-preview {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-panel);
+  overflow-wrap: anywhere;
+}
+.fd-int-preview-head {
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-2)) calc(-1 * var(--sp-2)) 0;
+}
+.fd-int-detail {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-int-detail h3 {
+  margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 640;
+  line-height: 1.15;
+}
+.fd-int-detail p {
+  margin: 0;
+}
+.fd-int-outside {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-int-outside-note {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-int-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-int-image {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: var(--r-card);
+}
+.fd-int-image-alt {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--code);
+  border-radius: var(--r-card);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-int-comments,
+.fd-int-links,
+.fd-int-files,
+.fd-int-checks {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-int-files {
+  gap: 2px;
+  font-size: var(--fs-meta);
+}
+.fd-int-files .fd-add {
+  color: var(--ok);
+}
+.fd-int-files .fd-del {
+  color: var(--hazard);
+}
+.fd-int-log {
+  max-height: 260px;
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  overflow: auto;
+  background: var(--code);
+  border-radius: var(--r-card);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  white-space: pre-wrap;
+}
+
+/* ---------- dialogs ---------- */
+
+.fd-int-dialog {
+  min-width: 0;
+}
+.fd-int-question {
+  margin: 0;
+  font-weight: 600;
+}
+.fd-int-quote {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  overflow: auto;
+  background: var(--code);
+  border-radius: var(--r-card);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  white-space: pre-wrap;
+}
+.fd-int-result ul {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-int-fail {
+  color: var(--hazard);
+}
+
+/* ---------- the chips of a session strip or card ---------- */
+
+.fd-int-issuechip {
+  display: inline-flex;
+  margin: 4px 0 0 12px;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  a.fd-int-issuechip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}
+.fd-int-prchip {
+  display: inline-flex;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  a.fd-int-prchip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}
+
+/* ---------- the project of a session (DL-176) ---------- */
+
+/* A link chip has its Lucide icon (§4.1): folder-git, the icon of Projects. */
+.fd-int-projectchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  a.fd-int-projectchip:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}
+/* A badge of the project header that opens the repository on the forge. */
+a.fd-int-badge {
+  text-decoration: none;
+}
+@media (hover: hover) {
+  a.fd-int-badge:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}
+/* The sessions of a project are strips: one column, 6px apart (§4.1). The list is the `fleet`
+   container of the strip rules (home.css): a narrow list gives two-line strips, as on the board.
+   The strip grid reads the where column from --fd-where-w, which the fleet board declares: the
+   list declares it too (168px, 16% of the list up to 260px on a wide one), or the strip grid has
+   no columns and every field stacks in one cell. */
+.fd-int-sessions {
+  --fd-where-w: 168px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  container: fleet / inline-size;
+}
+@container fleet (min-width: 721px) {
+  .fd-int-sessions > * {
+    --fd-where-w: clamp(168px, 16cqi, 260px);
+  }
+}
+/* The head of the live sessions: the Live label and its count at the left, the one primary of the
+   tab (New session in this project, small) at the right; the strips follow under it. */
+.fd-int-livehead {
+  justify-content: space-between;
+  min-height: var(--ctl-h);
+}
+.fd-int-tab .fd-int-livehead > .fd-label {
+  margin: 0;
+}
+/* No live session: the empty state of the tab (§4.7) sits close above the Ended fold. */
+.fd-int-tab[data-tab="sessions"] > .fd-emptystate {
+  padding-bottom: var(--sp-5);
+}
+/* The ended strips fold under the fleet lane's Ended row (home.css .fd-lane-ended). */
+.fd-int-ended {
+  margin: 0;
+}
+.fd-int-ended > .fd-int-sessions {
+  margin-top: var(--sp-1);
+}
+
+/* ---------- Fleet Sync: same repository, secret files, advanced remote ---------- */
+
+.fd-int-same,
+.fd-int-secrets {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+.fd-int-same > *,
+.fd-int-secrets > * {
+  margin: 0;
+}
+.fd-int-secrets textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+@media (pointer: coarse) {
+  /* 16px on a touch screen (--fs-field): iOS zooms into a smaller field. */
+  .fd-int-secrets textarea {
+    font-size: max(var(--fs-data), var(--fs-field));
+  }
+}
+.fd-int-secret-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+.fd-int-secret-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.fd-int-secret-table th,
+.fd-int-secret-table td {
+  height: var(--row-h);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+.fd-int-secret-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.fd-int-secret-table thead th {
+  height: auto;
+  padding-bottom: var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fd-int-secret-table tbody th {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 400;
+}
+.fd-int-advanced > summary {
+  display: inline-flex;
+  align-items: center;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .fd-int-advanced > summary:hover {
+    color: var(--text);
+  }
+}
+.fd-int-advanced[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+@media (max-width: 640px) {
+  .fd-int-secret-table {
+    min-width: 480px;
+  }
+}
+
+/* ---------- a phone: one pane at a time ---------- */
+
+@media (max-width: 640px) {
+  .fd-int-split[data-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fd-int-split[data-open="true"] > .fd-int-main {
+    display: none;
+  }
+  .fd-int-row {
+    flex-wrap: wrap;
+    gap: 2px var(--sp-2);
+    padding: var(--sp-2) 0;
+  }
+  .fd-int-title {
+    flex-basis: 100%;
+    order: -1;
+    white-space: normal;
+  }
+  .fd-int-actions {
+    padding-left: 0;
+  }
+  .fd-int-search {
+    max-width: none;
+  }
+}
+
+/* ---------- the "Browse…" panel of the secret files ---------- */
+
+.fd-secret-browse {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--code);
+  border: 0;
+  border-radius: var(--r-card);
+}
+.fd-secret-browse > * {
+  margin: 0;
+}
+.fd-secret-browse label {
+  display: grid;
+  gap: var(--sp-1);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-secret-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-secret-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.fd-secret-crumbs li + li::before {
+  content: "/";
+  color: var(--faint);
+}
+.fd-secret-crumbs button {
+  height: auto;
+  min-height: 0;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 400;
+}
+@media (hover: hover) {
+  .fd-secret-crumbs button:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+  }
+}
+.fd-secret-crumbs button[aria-current="location"] {
+  color: var(--text);
+  font-weight: 500;
+}
+/* A touch screen: a crumb is the way up the folder tree, so it keeps the 44px target. */
+@media (pointer: coarse) {
+  .fd-secret-crumbs button {
+    min-height: var(--tap-min);
+    padding: 0 var(--sp-2);
+  }
+}
+.fd-secret-entries {
+  display: grid;
+  gap: 1px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.fd-secret-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: var(--ctl-h);
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-ctl);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-secret-entry > button:only-child {
+  width: 100%;
+  justify-content: flex-start;
+  margin: 0 calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1);
+  background: transparent;
+  border-color: transparent;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-weight: 400;
+}
+@media (hover: hover) {
+  .fd-secret-entry > button:only-child:hover:not(:disabled) {
+    background: var(--raised);
+  }
+}
+.fd-secret-entry .fd-icon {
+  color: var(--faint);
+}
+.fd-secret-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-secret-entry[data-muted="true"] {
+  color: var(--faint);
+}

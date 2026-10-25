@@ -1,0 +1,93 @@
+# Fleet Deck v2 Cargo workspace.
+# Product crates live under crates/ (PLAN §12). The Phase 0 spike crates under
+# spikes/ stay members so that they keep building and passing (M2 goal).
+[workspace]
+resolver = "3"
+members = [
+    "crates/fleetdeck-proto",
+    "crates/fleetdeck-core",
+    "crates/fleetdeck-link",
+    "crates/fleetdeck-providers",
+    "crates/fleetdeck-station",
+    "crates/fleetdeck-deck",
+    "crates/fleetdeck-cli",
+    "crates/fleetdeck-testkit",
+    "spikes/spike-canon",
+    "spikes/s1-claude",
+    "spikes/s2-codex",
+    "spikes/s4-link",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+portable-pty = "0.9"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+insta = { version = "1", features = ["json"] }
+proptest = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+ulid = "1"
+ed25519-dalek = { version = "3", features = ["pkcs8", "alloc"] }
+async-trait = "0.1"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+ring = "0.17"
+base64 = "0.22.1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite_migration = "2.6"
+rustls-pki-types = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+toml = "1"
+rustix = { version = "1.1", default-features = false, features = ["std", "system", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net", "signal", "io-std"] }
+tracing = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio", "ws"] }
+argon2 = { version = "0.5", features = ["std"] }
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "service"] }
+http = "1"
+bytes = "1"
+http-body-util = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# The board assets in the deck binary (PLAN §12; M2 P4-4).
+rust-embed = { version = "8.13", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+
+# Small dev and test builds: line tables only for our crates (a backtrace
+# keeps file:line), no debug info for the dependencies (most of the size of a
+# target directory), no incremental cache (short-lived worktrees rarely
+# rebuild enough for it to pay off, and it multiplies the target size).
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+[profile.dev.package."*"]
+debug = false
+# Full debug info for a debugger: `cargo build --profile debugging`.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+# Password hashing is slow without optimization; tests hash several times.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
